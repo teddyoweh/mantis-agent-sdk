@@ -56,6 +56,13 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.22] — 2026-06-30
+
+### Changed
+
+- **Input is framed with horizontal rules** above and below it (the toolbar
+  draws the lower rule), matching Claude Code's prompt framing.
+
 ## [1.1.21] — 2026-06-30
 
 ### Fixed

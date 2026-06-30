@@ -756,6 +756,8 @@ class MantisTUI:
         completer = _MantisCompleter()
 
         def bottom_toolbar() -> Any:
+            import shutil  # noqa: PLC0415
+
             label, symbol, color = MODES[self.mode_idx]
             if self.mode_idx == 0:
                 left = "  ? for shortcuts"
@@ -763,7 +765,12 @@ class MantisTUI:
                 left = f"  {symbol}{label} (shift+tab to cycle)"
             right = f"{self.model} "
             pad = " " * max(1, 70 - len(left) - len(right))
+            # A dim rule on the first line frames the input from below (the run
+            # loop prints a matching rule above it), Claude-Code style.
+            width = shutil.get_terminal_size((80, 24)).columns
+            rule = "─" * width
             return HTML(
+                f'<style fg="ansibrightblack">{rule}</style>\n'
                 f'<style fg="{self._toolbar_fg()}">{left}</style>'
                 f'{pad}<style fg="ansibrightblack">{right}</style>'
             )
@@ -1510,6 +1517,9 @@ class MantisTUI:
         try:
             while True:
                 try:
+                    # Rule above the input (the toolbar draws the matching rule
+                    # below it), framing the prompt Claude-Code style.
+                    self.console.print(f"[ansibrightblack]{'─' * self.console.width}[/]")
                     line = await session.prompt_async(
                         "› ", placeholder=self._placeholder()
                     )
