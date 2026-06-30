@@ -532,6 +532,10 @@ class MantisTUI:
             "the result. The user asking is the permission; they are watching the "
             "output.\n\n"
             "Rules:\n"
+            "- read_file, write_file, edit_file, ls, grep, etc. are TOOLS — call "
+            "them directly. They are NOT shell programs, so never run them inside "
+            "bash (e.g. `bash(\"edit_file ...\")` fails). To change a file use the "
+            "edit_file/write_file tools, never an interactive editor (nano/vim).\n"
             "- Never tell the user to run a command themselves. Run it yourself "
             "with bash and show them the actual output.\n"
             "- 'find/show/list/check X' = call the tool now and report the real "
@@ -617,9 +621,39 @@ class MantisTUI:
 
         return max(available, key=score)
 
+    def _restore_last_model(self) -> None:
+        """If the user didn't pick a model (no --model, no $MANTIS_AGENT_MODEL),
+        reopen on the one they left off with last session — wiring its backend +
+        key from the catalog. Skipped silently if that provider is no longer
+        enabled, so we never restore a model that would just error."""
+        from . import catalog  # noqa: PLC0415
+
+        if os.environ.get("MANTIS_AGENT_MODEL") or self.model != "qwen2.5-7b-instruct":
+            return  # an explicit choice — respect it
+        last = catalog.get_last_model()
+        if not last:
+            return
+        model = last["model"]
+        prov = catalog.provider_for_model(model)
+        if prov is not None:
+            key = catalog.api_key_for(prov)
+            if not key:
+                return  # provider disabled since — don't restore a dead model
+            self.model, self.backend, self.api_key = model, prov.base_url, key
+        else:
+            self.model = model
+            if last.get("backend"):
+                self.backend = last["backend"]
+
     def _resolve_model(self) -> None:
         """Point ``self.model`` at something that actually exists, or explain how
         to get it. Called once at startup, before the banner is drawn."""
+        from . import catalog  # noqa: PLC0415
+
+        # Hosted models are served by their provider, not Ollama — don't let the
+        # local-model resolver below swap them out for an installed Ollama model.
+        if catalog.provider_for_model(self.model):
+            return
         available, reachable = self._available_models()
         if self.model in available:
             return
@@ -1372,6 +1406,7 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
+        self._restore_last_model()  # reopen on last session's model (if no override)
         self._resolve_model()  # so the banner + first turn use a model that exists
         # Full reset BEFORE drawing: clear the screen AND scrollback and home the
         # cursor, so the banner starts at the very top with nothing above it (the
