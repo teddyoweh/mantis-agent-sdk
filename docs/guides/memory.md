@@ -7,7 +7,7 @@ on demand.
 ## Layout
 
 ```
-~/.any-agent/memory/
+~/.mantis-agent/memory/
 ├── INDEX.md           one-line entry per memory file (always loaded)
 ├── user_role.md       — example: "user is a fintech BE engineer"
 ├── feedback_no_pii.md — example: "never log card numbers"
@@ -16,7 +16,7 @@ on demand.
     └── retries.md
 ```
 
-Override the root with `ANY_AGENT_HOME=/path`.
+Override the root with `MANTIS_AGENT_HOME=/path`.
 
 ## Entry format
 
@@ -42,7 +42,7 @@ Types:
 ## Writing memory
 
 ```python
-from any_agent_sdk import MemoryEntry, save_memory_entry, update_memory_index
+from mantis_agent import MemoryEntry, save_memory_entry, update_memory_index
 
 entry = MemoryEntry(
     slug="user_role",
@@ -59,7 +59,7 @@ update_memory_index([entry, ...])   # rewrites INDEX.md
 ## Reading memory
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     list_memory_entries,
     load_memory_entry,
     load_memory_index,
@@ -122,7 +122,7 @@ update_memory_index(
 )
 ```
 
-This creates `~/.any-agent/memory/stripe/INDEX.md` and moves the
+This creates `~/.mantis-agent/memory/stripe/INDEX.md` and moves the
 entries. Root `INDEX.md` gets a single pointer line to the subdir.
 
 ## Best practices

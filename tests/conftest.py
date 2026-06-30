@@ -32,14 +32,14 @@ def mock_backend() -> Any:
     """Return a MockProvider instance if the sibling module is present.
 
     The mock provider is built by another agent. Tests that depend on it
-    should ``pytest.importorskip("any_agent_sdk.providers.mock")`` at the
+    should ``pytest.importorskip("mantis_agent.providers.mock")`` at the
     top of the test or use this fixture and let the skip-on-missing kick in.
     """
 
-    mock_module = pytest.importorskip("any_agent_sdk.providers.mock")
+    mock_module = pytest.importorskip("mantis_agent.providers.mock")
     cls = getattr(mock_module, "MockProvider", None)
     if cls is None:
-        pytest.skip("MockProvider not exported from any_agent_sdk.providers.mock")
+        pytest.skip("MockProvider not exported from mantis_agent.providers.mock")
     return cls()
 
 
@@ -52,7 +52,7 @@ def mock_backend() -> Any:
 def simple_tools() -> list[Any]:
     """A trio of toy tools covering string / numeric / dict-returning shapes."""
 
-    from any_agent_sdk import tool
+    from mantis_agent import tool
 
     @tool
     async def echo(text: str) -> str:

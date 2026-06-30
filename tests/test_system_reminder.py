@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from any_agent_sdk import (
+from mantis_agent import (
     UserMessage,
     build_live_context_block,
     is_system_reminder,
@@ -19,7 +19,7 @@ from any_agent_sdk import (
     strip_system_reminders,
     wrap_system_reminder,
 )
-from any_agent_sdk.system_reminder import (
+from mantis_agent.system_reminder import (
     CLOSE_TAG,
     OPEN_TAG,
     USER_CONTEXT_PREAMBLE,

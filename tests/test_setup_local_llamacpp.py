@@ -1,4 +1,4 @@
-"""``any-agent setup-local-llamacpp`` — CPU-friendly GGUF catalog + install helper.
+"""``mantis-agent setup-local-llamacpp`` — CPU-friendly GGUF catalog + install helper.
 
 These tests cover the pure / mockable bits: the catalog shape, the
 default recommendation, environment detection, the URL builder, the
@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
-from any_agent_sdk import cli
-from any_agent_sdk.setup_local_llamacpp import (
+from mantis_agent import cli
+from mantis_agent.setup_local_llamacpp import (
     CPU_FRIENDLY_GGUF_MODELS,
     DEFAULT_GGUF_RECOMMENDATION,
     DEFAULT_LLAMACPP_PORT,
@@ -95,7 +95,7 @@ def test_catalog_mirrors_ollama_default_size() -> None:
     """The default GGUF pick should match the Ollama default's parameter
     class — users swapping paths shouldn't see a behavior cliff."""
 
-    from any_agent_sdk.setup_local import DEFAULT_RECOMMENDATION as OLLAMA_DEFAULT
+    from mantis_agent.setup_local import DEFAULT_RECOMMENDATION as OLLAMA_DEFAULT
 
     default = next(m for m in CPU_FRIENDLY_GGUF_MODELS if m.tag == DEFAULT_GGUF_RECOMMENDATION)
     # Both defaults are Qwen 1.5B-class. The exact parameter strings
@@ -200,11 +200,11 @@ def test_is_llamacpp_server_installed_returns_bool() -> None:
 def test_is_llamacpp_server_installed_uses_shutil_which() -> None:
     """We accept either `llama-server` (modern) or `server` (legacy)."""
 
-    with patch("any_agent_sdk.setup_local_llamacpp.shutil.which") as which:
+    with patch("mantis_agent.setup_local_llamacpp.shutil.which") as which:
         which.side_effect = lambda name: "/usr/bin/server" if name == "server" else None
         assert is_llamacpp_server_installed() is True
 
-    with patch("any_agent_sdk.setup_local_llamacpp.shutil.which", return_value=None):
+    with patch("mantis_agent.setup_local_llamacpp.shutil.which", return_value=None):
         assert is_llamacpp_server_installed() is False
 
 
@@ -269,14 +269,14 @@ def test_install_instructions_mentions_platform() -> None:
 
 
 def test_env_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANY_AGENT_MODELS_DIR", "/custom/path/models")
+    monkeypatch.setenv("MANTIS_AGENT_MODELS_DIR", "/custom/path/models")
     assert default_models_dir() == "/custom/path/models"
 
 
 def test_xdg_data_home_used_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANY_AGENT_MODELS_DIR", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_MODELS_DIR", raising=False)
     monkeypatch.setenv("XDG_DATA_HOME", "/xdg/data")
-    assert default_models_dir() == os.path.join("/xdg/data", "any-agent", "models")
+    assert default_models_dir() == os.path.join("/xdg/data", "mantis-agent", "models")
 
 
 def test_default_models_dir_returns_absolute_string(
@@ -284,7 +284,7 @@ def test_default_models_dir_returns_absolute_string(
 ) -> None:
     """Without overrides, the default is a real, non-empty path."""
 
-    monkeypatch.delenv("ANY_AGENT_MODELS_DIR", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_MODELS_DIR", raising=False)
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     out = default_models_dir()
     assert isinstance(out, str)
@@ -352,7 +352,7 @@ def test_download_gguf_writes_file_and_returns_path(
             return f"http://127.0.0.1:{port}/{filename}"
 
         monkeypatch.setattr(
-            "any_agent_sdk.setup_local_llamacpp.huggingface_gguf_url", fake_url
+            "mantis_agent.setup_local_llamacpp.huggingface_gguf_url", fake_url
         )
 
         target = download_gguf(
@@ -397,7 +397,7 @@ def test_download_gguf_is_idempotent_when_file_exists(
     # if the function tries to download, the test crashes (which is
     # exactly the signal we want).
     monkeypatch.setattr(
-        "any_agent_sdk.setup_local_llamacpp.huggingface_gguf_url",
+        "mantis_agent.setup_local_llamacpp.huggingface_gguf_url",
         lambda repo, filename: "http://127.0.0.1:0/should-not-be-called",
     )
 
@@ -431,11 +431,11 @@ def test_print_gguf_model_table_runs() -> None:
 
 
 def test_cli_setup_local_llamacpp_list_flag_dispatches_to_table() -> None:
-    """``any-agent setup-local-llamacpp --list`` must dispatch to the
+    """``mantis-agent setup-local-llamacpp --list`` must dispatch to the
     table printer (not the orchestrator) and exit clean."""
 
     with patch(
-        "any_agent_sdk.setup_local_llamacpp.print_gguf_model_table"
+        "mantis_agent.setup_local_llamacpp.print_gguf_model_table"
     ) as printer:
         rc = cli.main(["setup-local-llamacpp", "--list"])
     assert rc == 0
@@ -448,7 +448,7 @@ def test_cli_setup_local_llamacpp_forwards_args_to_orchestrator() -> None:
     glue forgot to pass it through."""
 
     with patch(
-        "any_agent_sdk.setup_local_llamacpp.run_setup_local_llamacpp"
+        "mantis_agent.setup_local_llamacpp.run_setup_local_llamacpp"
     ) as runner:
         runner.return_value = 0
         rc = cli.main([
@@ -472,11 +472,11 @@ def test_cli_setup_local_llamacpp_forwards_args_to_orchestrator() -> None:
 
 
 def test_cli_setup_local_llamacpp_defaults_when_no_flags() -> None:
-    """A bare ``any-agent setup-local-llamacpp`` (no args) must still
+    """A bare ``mantis-agent setup-local-llamacpp`` (no args) must still
     dispatch — defaults fill in for everything."""
 
     with patch(
-        "any_agent_sdk.setup_local_llamacpp.run_setup_local_llamacpp"
+        "mantis_agent.setup_local_llamacpp.run_setup_local_llamacpp"
     ) as runner:
         runner.return_value = 0
         rc = cli.main(["setup-local-llamacpp"])
@@ -517,7 +517,7 @@ def test_orchestrator_rejects_unknown_model() -> None:
     cleanly with a non-zero code rather than silently downloading
     something they didn't intend."""
 
-    from any_agent_sdk.setup_local_llamacpp import run_setup_local_llamacpp
+    from mantis_agent.setup_local_llamacpp import run_setup_local_llamacpp
 
     rc = run_setup_local_llamacpp(model="totally-fake-model-tag")
     assert rc == 2
@@ -530,16 +530,16 @@ def test_orchestrator_skip_download_path_exits_clean(
     download_gguf and should still return cleanly even if the server
     isn't running — it just won't run the smoke test."""
 
-    from any_agent_sdk.setup_local_llamacpp import run_setup_local_llamacpp
+    from mantis_agent.setup_local_llamacpp import run_setup_local_llamacpp
 
     # Force the "server not running" branch deterministically.
     monkeypatch.setattr(
-        "any_agent_sdk.setup_local_llamacpp.is_llamacpp_running",
+        "mantis_agent.setup_local_llamacpp.is_llamacpp_running",
         lambda **kwargs: False,
     )
     # And make sure we never call the downloader.
     with patch(
-        "any_agent_sdk.setup_local_llamacpp.download_gguf"
+        "mantis_agent.setup_local_llamacpp.download_gguf"
     ) as dl:
         rc = run_setup_local_llamacpp(skip_download=True)
     assert rc == 0

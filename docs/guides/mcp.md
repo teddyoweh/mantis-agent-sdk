@@ -2,7 +2,7 @@
 
 The [Model Context Protocol](https://modelcontextprotocol.io/) standardises
 how tools, prompts, and resources expose themselves to LLMs.
-`any-agent-sdk` is both an MCP **client** (any agent can talk to MCP
+`mantis-agent-sdk` is both an MCP **client** (any agent can talk to MCP
 servers) and an MCP **server-runtime** (you can author servers in-process
 using the same `@tool` decorator).
 
@@ -11,7 +11,7 @@ using the same `@tool` decorator).
 The fastest way to expose a set of tools as an MCP server:
 
 ```python
-from any_agent_sdk import create_sdk_mcp_server, tool
+from mantis_agent import create_sdk_mcp_server, tool
 
 @tool
 async def add(a: int, b: int) -> int:
@@ -111,13 +111,13 @@ If a server requests sampling and no handler is set, the server sees a
 
 ## Authoring an out-of-process server
 
-The same `@tool` decorator works for stdio servers — `any-agent-sdk`
+The same `@tool` decorator works for stdio servers — `mantis-agent-sdk`
 ships a minimal runtime you can install as a script:
 
 ```python
 # my_server.py
-from any_agent_sdk import tool
-from any_agent_sdk.mcp import SdkServer
+from mantis_agent import tool
+from mantis_agent.mcp import SdkServer
 
 @tool
 async def echo(text: str) -> str:

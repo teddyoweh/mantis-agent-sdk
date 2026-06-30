@@ -1,4 +1,4 @@
-"""Tests for ``any_agent_sdk.tracing`` + Agent integration.
+"""Tests for ``mantis_agent.tracing`` + Agent integration.
 
 We test three things:
 
@@ -30,7 +30,7 @@ import json
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     InMemoryTracer,
     OTelTracer,
@@ -40,7 +40,7 @@ from any_agent_sdk import (
     UserMessage,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -50,8 +50,8 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.types import ToolUseBlock, Usage
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.types import ToolUseBlock, Usage
 
 
 # ---------------------------------------------------------------------------

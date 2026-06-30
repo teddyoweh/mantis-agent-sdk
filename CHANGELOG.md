@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `any-agent-sdk` are documented here.
+All notable changes to `mantis-agent-sdk` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -42,7 +42,7 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   privacy default that matches what production teams ship to SaaS
   observability backends. Four new public exports: `Tracer`, `Span`,
   `InMemoryTracer`, `OTelTracer`. Example:
-  `python -m any_agent_sdk.examples.with_tracing`.
+  `python -m mantis_agent.examples.with_tracing`.
 
 - **Structured output via `response_format`.** New `Agent(response_format=...)`
   and `ClaudeAgentOptions(response_format=...)` fields accept the OpenAI
@@ -59,17 +59,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 ## [1.0.0] — 2026-05-17
 
 First stable release. The public API — the set of names in
-`any_agent_sdk.__all__` — is now covered by the SemVer guarantee
+`mantis_agent.__all__` — is now covered by the SemVer guarantee
 documented in [SEMVER.md](SEMVER.md).
 
 ### Added
 
-- **Locked public API surface.** `any_agent_sdk.__all__` is now the
+- **Locked public API surface.** `mantis_agent.__all__` is now the
   single source of truth for what is covered by SemVer. A new test
   (`tests/test_public_api_surface.py`) snapshots the set and fails on
   unintentional drift.
-- **`__version__` from package metadata.** `any_agent_sdk.__version__`
-  now reads from `importlib.metadata.version("any-agent-sdk")` when the
+- **`__version__` from package metadata.** `mantis_agent.__version__`
+  now reads from `importlib.metadata.version("mantis-agent-sdk")` when the
   package is installed, so it always tracks `pyproject.toml`.
 - **`SEMVER.md`** — the versioning policy.
 - **`RELEASING.md`** — the release runbook.
@@ -77,7 +77,7 @@ documented in [SEMVER.md](SEMVER.md).
   trusted publishing (OIDC). No long-lived API token required.
 - **`.github/workflows/test.yml`** — CI matrix on Python 3.11, 3.12, 3.13.
 - Expanded `__all__` to include every Claude SDK parity symbol that was
-  previously imported at the top of `any_agent_sdk` but only
+  previously imported at the top of `mantis_agent` but only
   conventionally public: `ClaudeAgentOptions`, `ClaudeSDKClient`,
   `ClaudeSDKError`, `CLIConnectionError`, `AgentDefinition`,
   `HookMatcher`, `HookInput`, `HookJSONOutput`, `ClaudeHookContext`,
@@ -109,19 +109,19 @@ A non-exhaustive summary:
   in `AssistantMessage.content`.
 - **MCP**: stdio / sse / http transports, in-process server via
   `create_sdk_mcp_server`, elicitation, sampling.
-- **Sessions**: JSONL transcript persistence, `~/.any-agent/` layout,
+- **Sessions**: JSONL transcript persistence, `~/.mantis-agent/` layout,
   fork + resume from arbitrary checkpoint, memory entries + index,
   `<system-reminder>` and `isMeta` injection, auto-compaction.
 - **Budget**: per-model pricing, `max_usd` ceiling →
   `BudgetExceededError`, `total_cost_usd` and `modelUsage` on
   `ResultMessage`, `max_turns` ceiling.
-- **Local setup**: `any-agent setup-local` for Ollama (Linux/macOS/Windows)
-  and `any-agent setup-local-llamacpp` for llama.cpp.
+- **Local setup**: `mantis-agent setup-local` for Ollama (Linux/macOS/Windows)
+  and `mantis-agent setup-local-llamacpp` for llama.cpp.
 - **Examples**: 16 verified examples across ≥3 backends, including
   `quickstart`, `ollama_local`, `with_thinking`, `tools_option`,
   `mcp_calculator`, `system_prompt`, `fireworks_hosted`,
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/any-agent-sdk/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/teddyoweh/any-agent-sdk/releases/tag/v1.0.0
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/teddyoweh/mantis-agent-sdk/releases/tag/v1.0.0

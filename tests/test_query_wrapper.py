@@ -11,11 +11,11 @@ import pytest
 
 # The mock provider may not be ready in every checkout. importorskip means
 # the whole file no-ops cleanly when it isn't.
-mock_module = pytest.importorskip("any_agent_sdk.providers.mock")
+mock_module = pytest.importorskip("mantis_agent.providers.mock")
 
-from any_agent_sdk import tool  # noqa: E402
-from any_agent_sdk.providers import base as provider_base  # noqa: E402
-from any_agent_sdk.query import (  # noqa: E402
+from mantis_agent import tool  # noqa: E402
+from mantis_agent.providers import base as provider_base  # noqa: E402
+from mantis_agent.query import (  # noqa: E402
     SDKAssistantMessage,
     SDKResultMessage,
     SDKSystemMessage,

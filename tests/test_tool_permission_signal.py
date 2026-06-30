@@ -11,7 +11,7 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     AssistantMessage,
     ClaudeAgentOptions,
@@ -26,7 +26,7 @@ from any_agent_sdk import (
     query,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -36,8 +36,8 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.permissions import PermissionContext
-from any_agent_sdk.providers.mock import MockProvider
+from mantis_agent.permissions import PermissionContext
+from mantis_agent.providers.mock import MockProvider
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ def test_can_use_tool_receives_ToolPermissionContext() -> None:
                 result = msg
         return result
 
-    from any_agent_sdk.providers.base import register
+    from mantis_agent.providers.base import register
     register("mock", lambda: provider)
 
     anyio.run(main)
@@ -215,7 +215,7 @@ def test_can_use_tool_signal_observed_by_callback() -> None:
     PermissionContext with a pre-fired signal — ClaudeAgentOptions
     doesn't yet expose a 'permissions' field directly."""
 
-    from any_agent_sdk import UserMessage
+    from mantis_agent import UserMessage
 
     turn1, turn2 = _two_turn_script('{"text": "hi"}')
     provider = _TwoTurnMock(turn1, turn2)

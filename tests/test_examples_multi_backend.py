@@ -26,7 +26,7 @@ shows up across all three columns of the matrix at once.
 Backend installation
 --------------------
 Each backend kind is installed by registering ``MockProvider`` under
-that name in ``any_agent_sdk.providers.base`` for the duration of one
+that name in ``mantis_agent.providers.base`` for the duration of one
 test, then restoring the original factory afterward. The MockProvider
 is scripted with the events the example's flow expects — usually a
 two-turn shape (tool_use → tool_result → final text) or a one-turn
@@ -40,7 +40,7 @@ speed.
 
 Coverage
 --------
-All 16 example modules under ``any_agent_sdk/examples/`` get a row in
+All 16 example modules under ``mantis_agent/examples/`` get a row in
 the matrix. Each row × backend combination either runs the example's
 ``main()`` directly OR mirrors its call pattern (for the few examples
 that have I/O side effects — stdio MCP, streaming UI prints, sub-agent
@@ -60,7 +60,7 @@ from typing import Any
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     AssistantMessage,
     ClaudeAgentOptions,
@@ -72,7 +72,7 @@ from any_agent_sdk import (
     query,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -83,9 +83,9 @@ from any_agent_sdk.events import (
     StreamEvent,
     TextDelta,
 )
-from any_agent_sdk.providers import base as provider_base
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.types import (
+from mantis_agent.providers import base as provider_base
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.types import (
     ToolUseBlock,
     Usage,
 )
@@ -468,7 +468,7 @@ async def _verify_mcp_calculator(backend_kind: str, model: str, url: str) -> Non
     MCP bridge resolves the tools into the agent's registry, and the
     scripted mock plays a tool_use → text turn that hits one of them."""
 
-    from any_agent_sdk import create_sdk_mcp_server
+    from mantis_agent import create_sdk_mcp_server
 
     @tool
     async def add(a: int, b: int) -> str:
@@ -535,7 +535,7 @@ async def _verify_multi_agent_research(backend_kind: str, model: str, url: str) 
     research sub-agent which is exposed as a tool. The mock scripts a
     single tool_use on the sub-agent followed by a final text answer."""
 
-    from any_agent_sdk import as_subagent_tool
+    from mantis_agent import as_subagent_tool
 
     @tool
     async def web_search(query: str) -> str:
@@ -756,7 +756,7 @@ async def _verify_with_tracing(backend_kind: str, model: str, url: str) -> None:
     verify the tracer is wired across every backend in the matrix and
     the span tree finalises with a non-None duration on each span."""
 
-    from any_agent_sdk import InMemoryTracer
+    from mantis_agent import InMemoryTracer
 
     tracer = InMemoryTracer()
 
@@ -784,8 +784,8 @@ async def _verify_with_thinking(backend_kind: str, model: str, url: str) -> None
     the script emits a ThinkingDelta + TextDelta and we assert both
     surface to the consumer."""
 
-    from any_agent_sdk.events import ThinkingDelta
-    from any_agent_sdk.types import ThinkingBlock
+    from mantis_agent.events import ThinkingDelta
+    from mantis_agent.types import ThinkingBlock
 
     mock = _ScriptedMock(
         [
@@ -843,7 +843,7 @@ def _is_result(msg: Any) -> bool:
 
     if isinstance(msg, ResultMessage):
         return True
-    from any_agent_sdk.query import SDKResultMessage
+    from mantis_agent.query import SDKResultMessage
 
     return isinstance(msg, SDKResultMessage)
 
@@ -851,7 +851,7 @@ def _is_result(msg: Any) -> bool:
 def _is_assistant(msg: Any) -> bool:
     if isinstance(msg, AssistantMessage):
         return True
-    from any_agent_sdk.query import SDKAssistantMessage
+    from mantis_agent.query import SDKAssistantMessage
 
     return isinstance(msg, SDKAssistantMessage)
 
@@ -866,7 +866,7 @@ def _assistant_text_blocks(msg: Any) -> list[Any]:
     if isinstance(msg, AssistantMessage):
         blocks = msg.content
     else:
-        from any_agent_sdk.query import SDKAssistantMessage
+        from mantis_agent.query import SDKAssistantMessage
 
         if isinstance(msg, SDKAssistantMessage):
             blocks = msg.message.content
@@ -939,7 +939,7 @@ def test_example_count_matches_roadmap() -> None:
 
     from pathlib import Path
 
-    examples_dir = Path(__file__).resolve().parent.parent / "any_agent_sdk" / "examples"
+    examples_dir = Path(__file__).resolve().parent.parent / "mantis_agent" / "examples"
     on_disk = sorted(
         f.name
         for f in examples_dir.iterdir()

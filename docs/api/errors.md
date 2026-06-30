@@ -5,7 +5,7 @@ The full error hierarchy.
 ```
 Exception
 ├── ClaudeSDKError                 (Claude SDK compatibility base)
-│   ├── AgentError                 (any-agent base)
+│   ├── AgentError                 (mantis-agent base)
 │   │   ├── AuthError              (401, missing API key)
 │   │   ├── ProviderError          (provider-side 4xx/5xx)
 │   │   │   └── RateLimitError     (429)
@@ -19,7 +19,7 @@ Exception
 ## Public errors
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     AgentError,
     AuthError,
     BudgetExceededError,
@@ -99,7 +99,7 @@ stdio MCP transport errors — process spawn failure, broken pipe, etc.
 The general pattern:
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     query, BudgetExceededError, RateLimitError, ToolExecutionError,
 )
 

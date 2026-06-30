@@ -25,7 +25,7 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     AssistantMessage,
     ClaudeAgentOptions,
@@ -38,8 +38,8 @@ from any_agent_sdk import (
     UserMessage,
     tool,
 )
-from any_agent_sdk.compat_query import query as compat_query
-from any_agent_sdk.events import (
+from mantis_agent.compat_query import query as compat_query
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -49,9 +49,9 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers import base as provider_base
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.types import (
+from mantis_agent.providers import base as provider_base
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.types import (
     AssistantMessage as InternalAssistantMessage,
     ToolResultBlock,
     UserMessage as InternalUserMessage,
@@ -408,8 +408,8 @@ def test_compat_query_streams_assistant_before_next_turn(_force_mock_provider):
 
         # Patch _build_agent so it uses our _TwoTurnMock instead of
         # the default MockProvider.
-        from any_agent_sdk import compat_query as _cq
-        from any_agent_sdk.agent import Agent as _RealAgent
+        from mantis_agent import compat_query as _cq
+        from mantis_agent.agent import Agent as _RealAgent
 
         def _make(opts_dict):
             agent = _RealAgent(

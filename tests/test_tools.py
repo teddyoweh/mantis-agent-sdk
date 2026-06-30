@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from any_agent_sdk import Tool, ToolRegistry, tool
+from mantis_agent import Tool, ToolRegistry, tool
 
 
 # ---------------------------------------------------------------------------

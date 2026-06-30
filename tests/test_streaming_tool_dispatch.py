@@ -27,7 +27,7 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     AssistantMessage,
     TextBlock,
@@ -37,8 +37,8 @@ from any_agent_sdk import (
     UserMessage,
     tool,
 )
-from any_agent_sdk.errors import StreamProtocolError
-from any_agent_sdk.events import (
+from mantis_agent.errors import StreamProtocolError
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -49,10 +49,10 @@ from any_agent_sdk.events import (
     StreamEvent,
     TextDelta,
 )
-from any_agent_sdk.hooks import HookContext, HookResult, Hooks
-from any_agent_sdk.permissions import Deny, PermissionContext
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.types import (
+from mantis_agent.hooks import HookContext, HookResult, Hooks
+from mantis_agent.permissions import Deny, PermissionContext
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.types import (
     AssistantMessage as InternalAssistantMessage,
     ToolResultBlock,
     UserMessage as InternalUserMessage,

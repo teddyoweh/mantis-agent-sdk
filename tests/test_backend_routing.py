@@ -3,7 +3,7 @@
 ``ClaudeAgentOptions(model="qwen2.5:7b")`` works without a ``backend=``
 kwarg because ``infer_backend`` maps the Ollama-tag shape to
 ``http://localhost:11434``. Same script with ``model="Qwen/Qwen2.5-72B-Instruct-Turbo"``
-goes to Together AI. Explicit ``backend=`` and ``$ANY_AGENT_BASE_URL``
+goes to Together AI. Explicit ``backend=`` and ``$MANTIS_AGENT_BASE_URL``
 still win over inference.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from any_agent_sdk.routing import (
+from mantis_agent.routing import (
     BackendRoutingError,
     FIREWORKS_DEFAULT,
     GEMINI_DEFAULT,
@@ -120,7 +120,7 @@ def test_bare_name_falls_back_to_ollama() -> None:
 def test_explicit_backend_wins_over_everything(monkeypatch) -> None:
     """``backend=`` passed in always wins, even when env or inference disagree."""
 
-    monkeypatch.setenv("ANY_AGENT_BASE_URL", "http://env-says-this.example.com")
+    monkeypatch.setenv("MANTIS_AGENT_BASE_URL", "http://env-says-this.example.com")
     assert (
         resolve_backend("qwen2.5:7b", explicit="http://user-says-this.example.com")
         == "http://user-says-this.example.com"
@@ -128,16 +128,16 @@ def test_explicit_backend_wins_over_everything(monkeypatch) -> None:
 
 
 def test_env_var_wins_over_inference(monkeypatch) -> None:
-    """When no ``backend=``, ``$ANY_AGENT_BASE_URL`` beats inference."""
+    """When no ``backend=``, ``$MANTIS_AGENT_BASE_URL`` beats inference."""
 
-    monkeypatch.setenv("ANY_AGENT_BASE_URL", "http://vllm-local:8000/v1")
+    monkeypatch.setenv("MANTIS_AGENT_BASE_URL", "http://vllm-local:8000/v1")
     assert resolve_backend("qwen2.5:7b") == "http://vllm-local:8000/v1"
 
 
 def test_inference_used_when_no_explicit_no_env(monkeypatch) -> None:
     """No ``backend=``, no env var → fall through to inference."""
 
-    monkeypatch.delenv("ANY_AGENT_BASE_URL", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
     assert resolve_backend("Qwen/Qwen2.5-72B-Instruct-Turbo") == TOGETHER_DEFAULT
     assert resolve_backend("qwen2.5:7b") == OLLAMA_DEFAULT
 
@@ -145,7 +145,7 @@ def test_inference_used_when_no_explicit_no_env(monkeypatch) -> None:
 def test_empty_explicit_is_treated_as_unset(monkeypatch) -> None:
     """``backend=""`` shouldn't short-circuit the chain."""
 
-    monkeypatch.delenv("ANY_AGENT_BASE_URL", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
     assert resolve_backend("qwen2.5:7b", explicit="") == OLLAMA_DEFAULT
 
 
@@ -160,24 +160,24 @@ def test_compat_query_routes_hf_model_to_together(monkeypatch) -> None:
     Agent ends up with the Together base URL even though no
     ``backend=`` was passed."""
 
-    monkeypatch.delenv("ANY_AGENT_BASE_URL", raising=False)
-    from any_agent_sdk.compat_query import _build_agent
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    from mantis_agent.compat_query import _build_agent
 
     agent = _build_agent({"model": "Qwen/Qwen2.5-72B-Instruct-Turbo"})
     assert agent.backend == TOGETHER_DEFAULT
 
 
 def test_compat_query_routes_ollama_tag_to_localhost(monkeypatch) -> None:
-    monkeypatch.delenv("ANY_AGENT_BASE_URL", raising=False)
-    from any_agent_sdk.compat_query import _build_agent
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    from mantis_agent.compat_query import _build_agent
 
     agent = _build_agent({"model": "qwen2.5:7b"})
     assert agent.backend == OLLAMA_DEFAULT
 
 
 def test_compat_query_explicit_backend_wins(monkeypatch) -> None:
-    monkeypatch.setenv("ANY_AGENT_BASE_URL", "http://env-default")
-    from any_agent_sdk.compat_query import _build_agent
+    monkeypatch.setenv("MANTIS_AGENT_BASE_URL", "http://env-default")
+    from mantis_agent.compat_query import _build_agent
 
     agent = _build_agent(
         {"model": "qwen2.5:7b", "backend": "http://explicit-wins"}

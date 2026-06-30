@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from any_agent_sdk.streaming.thinking_parser import (
+from mantis_agent.streaming.thinking_parser import (
     DEFAULT_THINKING_TAGS,
     TextChunk,
     ThinkingChunk,
@@ -144,7 +144,7 @@ def test_capability_carries_default_tags() -> None:
     """Every ModelCapability ships with a default tag set so providers can
     just pass it to ThinkingParser(tags=…) without thinking about it."""
 
-    from any_agent_sdk import lookup_model
+    from mantis_agent import lookup_model
 
     cap = lookup_model("deepseek-r1-distill-qwen-32b")
     assert cap.emits_inline_thinking is True

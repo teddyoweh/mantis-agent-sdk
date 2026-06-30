@@ -1,4 +1,4 @@
-# any-agent-sdk
+# mantis-agent-sdk
 
 **Claude Agent SDK for open-source models.** Drop-in compatible with `claude-agent-sdk` — swap the import, keep your code — but the agent loop runs against Llama, Qwen, DeepSeek, Mixtral, Phi, Gemma, or anything you serve through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter.
 
@@ -7,7 +7,7 @@
 from claude_agent_sdk import query, ClaudeAgentOptions, tool
 
 # After
-from any_agent_sdk import query, ClaudeAgentOptions, tool
+from mantis_agent import query, ClaudeAgentOptions, tool
 ```
 
 That's it. Every canonical Claude SDK example runs verbatim. The wire format underneath is OpenAI-compat or Ollama; the surface above is Anthropic-shaped.
@@ -17,13 +17,13 @@ That's it. Every canonical Claude SDK example runs verbatim. The wire format und
 ## Quick start
 
 ```bash
-pip install any-agent-sdk
-any-agent setup-local         # installs Ollama if missing, pulls qwen2.5:1.5b, verifies
+pip install mantis-agent-sdk
+mantis-agent setup-local         # installs Ollama if missing, pulls qwen2.5:1.5b, verifies
 ```
 
 ```python
 import asyncio
-from any_agent_sdk import query, ClaudeAgentOptions, tool, AssistantMessage
+from mantis_agent import query, ClaudeAgentOptions, tool, AssistantMessage
 
 @tool
 async def get_weather(city: str) -> str:
@@ -99,12 +99,12 @@ options = ClaudeAgentOptions(
 Or set it once for the whole process via env:
 
 ```bash
-export ANY_AGENT_BASE_URL=https://gpu-box.internal:8000/v1
-export ANY_AGENT_API_KEY=...
+export MANTIS_AGENT_BASE_URL=https://gpu-box.internal:8000/v1
+export MANTIS_AGENT_API_KEY=...
 python my_agent.py
 ```
 
-Precedence: explicit `backend=` > `$ANY_AGENT_BASE_URL` > model-name inference > Ollama default.
+Precedence: explicit `backend=` > `$MANTIS_AGENT_BASE_URL` > model-name inference > Ollama default.
 
 ---
 
@@ -135,7 +135,7 @@ Ranked by current OSS leaderboards (Arena Elo · GPQA · SWE-bench, May 2026). P
 | 19 | **Phi 4 small**       | 8 GB local                 | `phi4:small`                              | Compact reasoning                                   |
 | 20 | **DeepSeek-R1 8B/14B**| 8–12 GB local              | `deepseek-r1:8b` / `:14b`                 | Reasoning on a mainstream laptop                    |
 
-**CPU-laptop tier** (no GPU, ≤ 8 GB RAM) — `any-agent setup-local` picks from this list:
+**CPU-laptop tier** (no GPU, ≤ 8 GB RAM) — `mantis-agent setup-local` picks from this list:
 
 | # | Tag                  | Params | RAM   | Tools | Reasoning | Notes                              |
 |--:|----------------------|-------:|------:|:-----:|:---------:|------------------------------------|
@@ -151,14 +151,14 @@ Ranked by current OSS leaderboards (Arena Elo · GPQA · SWE-bench, May 2026). P
 | C10 | `smollm2:135m`      | 135M   | 2 GB  | no    | no        | Tiny — sanity-check install        |
 
 ```bash
-any-agent setup-local           # one command — installs Ollama if missing, pulls C1, smoke tests
-any-agent setup-local --list    # see the catalog
-any-agent setup-local --model qwen2.5:3b
+mantis-agent setup-local           # one command — installs Ollama if missing, pulls C1, smoke tests
+mantis-agent setup-local --list    # see the catalog
+mantis-agent setup-local --model qwen2.5:3b
 ```
 
 ### How to actually call them
 
-Auto-routing reads the model name shape (see `any_agent_sdk/routing.py`):
+Auto-routing reads the model name shape (see `mantis_agent/routing.py`):
 
 | Shape                                      | Backend it routes to                          | Env to set                                  |
 |--------------------------------------------|-----------------------------------------------|---------------------------------------------|
@@ -170,7 +170,7 @@ Auto-routing reads the model name shape (see `any_agent_sdk/routing.py`):
 | `claude-*`                                 | refused — use the real `claude-agent-sdk`     | —                                           |
 | anything else                              | Ollama default                                | —                                           |
 
-For Groq, Moonshot (Kimi native), DeepSeek native, OpenRouter, Cerebras, DeepInfra, Anyscale, LM Studio, self-hosted vLLM / llama.cpp / TGI — pass `backend=` explicitly or set `ANY_AGENT_BASE_URL` (see **Custom backend** above). The pattern is the same: it's an OpenAI-compatible URL plus an API key.
+For Groq, Moonshot (Kimi native), DeepSeek native, OpenRouter, Cerebras, DeepInfra, Anyscale, LM Studio, self-hosted vLLM / llama.cpp / TGI — pass `backend=` explicitly or set `MANTIS_AGENT_BASE_URL` (see **Custom backend** above). The pattern is the same: it's an OpenAI-compatible URL plus an API key.
 
 ---
 
@@ -178,7 +178,7 @@ For Groq, Moonshot (Kimi native), DeepSeek native, OpenRouter, Cerebras, DeepInf
 
 The Claude Agent SDK is the best-designed agent runtime in the open. Streaming tool dispatch, 28-event hook system, permission rules per source, MCP across four transports, sub-agents, sessions with fork/resume, auto-compaction — none of the OSS alternatives ship the whole set. LangGraph is too heavy and skips MCP. smolagents is too small. llama-stack is tightly scoped. The Anthropic and OpenAI agent SDKs are bound to their hosted APIs.
 
-any-agent-sdk is the same surface, model-agnostic underneath. You write to Anthropic's design; you run it on whatever you can serve.
+mantis-agent-sdk is the same surface, model-agnostic underneath. You write to Anthropic's design; you run it on whatever you can serve.
 
 Plus the OSS-specific bits the hosted SDKs don't need to think about:
 
@@ -192,7 +192,7 @@ Plus the OSS-specific bits the hosted SDKs don't need to think about:
 ## Observability
 
 ```python
-from any_agent_sdk import Agent, InMemoryTracer, UserMessage, TextBlock
+from mantis_agent import Agent, InMemoryTracer, UserMessage, TextBlock
 
 tracer = InMemoryTracer()
 agent = Agent(model="claude-sonnet-4.5", tools=[...], tracer=tracer)
@@ -215,7 +215,7 @@ tracer.write_jsonl("trace.jsonl")
 To push the same spans into an existing OpenTelemetry pipeline:
 
 ```python
-from any_agent_sdk import OTelTracer
+from mantis_agent import OTelTracer
 tracer = OTelTracer(service_name="my-agent")          # requires opentelemetry-api
 agent  = Agent(model="claude-sonnet-4.5", tracer=tracer)
 ```
@@ -227,7 +227,7 @@ agent  = Agent(model="claude-sonnet-4.5", tracer=tracer)
 Live example you can run with no API key:
 
 ```bash
-python -m any_agent_sdk.examples.with_tracing
+python -m mantis_agent.examples.with_tracing
 ```
 
 ---
@@ -237,8 +237,8 @@ python -m any_agent_sdk.examples.with_tracing
 v1.0 ships when this is true on a fresh machine:
 
 ```bash
-pip install any-agent-sdk
-any-agent setup-local
+pip install mantis-agent-sdk
+mantis-agent setup-local
 # ...10-line script with 2 tools + 5-turn agent task...
 python my_agent.py   # Just Works on the first try
 ```
@@ -305,7 +305,7 @@ What's shipped — and what's still ahead. Check our progress.
 
 **Sessions + state**
 - [x] JSONL transcript persistence
-- [x] `~/.any-agent/` directory + per-session paths
+- [x] `~/.mantis-agent/` directory + per-session paths
 - [x] Memory entries + index
 - [x] `<system-reminder>` + `isMeta` injection
 - [x] Auto-compaction at token threshold
@@ -326,11 +326,11 @@ What's shipped — and what's still ahead. Check our progress.
 - [x] `max_turns` ceiling
 
 **Local install**
-- [x] `any-agent setup-local` — installs Ollama if missing, pulls a CPU-friendly model, smoke tests
+- [x] `mantis-agent setup-local` — installs Ollama if missing, pulls a CPU-friendly model, smoke tests
 - [x] 12-entry CPU-friendly catalog (135M → 8B params)
 - [x] Auto-install of Ollama on Linux/macOS via official script
 - [x] Windows installer wrapper
-- [x] llama.cpp `setup-local` alternative for users who prefer it (`any-agent setup-local-llamacpp`)
+- [x] llama.cpp `setup-local` alternative for users who prefer it (`mantis-agent setup-local-llamacpp`)
 
 **Examples (run verbatim against DeepSeek-R1 1.5B on local Ollama)**
 - [x] `quickstart.py`
@@ -340,7 +340,7 @@ What's shipped — and what's still ahead. Check our progress.
 - [x] `mcp_calculator.py`
 - [x] `system_prompt.py`
 - [x] `fireworks_hosted.py` runs against live Fireworks
-- [x] `vllm_self_hosted.py` runs against live vLLM (+ `ANY_AGENT_MOCK=1` offline mode)
+- [x] `vllm_self_hosted.py` runs against live vLLM (+ `MANTIS_AGENT_MOCK=1` offline mode)
 - [x] `multi_agent_research.py` end-to-end with sub-agents
 
 **1.0 prerequisites**
@@ -355,7 +355,7 @@ What's shipped — and what's still ahead. Check our progress.
 ## Drop-in compatibility — what works today
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     # Core
     query, ClaudeAgentOptions, ClaudeSDKClient,
 

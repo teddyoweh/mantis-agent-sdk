@@ -11,7 +11,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from any_agent_sdk.types import (
+from mantis_agent.types import (
     AssistantMessage,
     ContentBlock,
     ImageBlock,

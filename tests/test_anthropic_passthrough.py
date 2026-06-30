@@ -1,7 +1,7 @@
 """Anthropic passthrough — offline tests.
 
 The adapter ships with one purpose: A/B parity testing of an
-any-agent-sdk run against real Claude. These tests verify the parts
+mantis-agent-sdk run against real Claude. These tests verify the parts
 that don't need live API contact:
 
 * Construction + auth header derivation (env-var fallback, missing-key
@@ -31,9 +31,9 @@ import anyio
 import httpx
 import pytest
 
-from any_agent_sdk.capabilities import HOSTED_PROFILES, hosted_profile_from_url
-from any_agent_sdk.errors import AuthError, ProviderError
-from any_agent_sdk.events import (
+from mantis_agent.capabilities import HOSTED_PROFILES, hosted_profile_from_url
+from mantis_agent.errors import AuthError, ProviderError
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -45,7 +45,7 @@ from any_agent_sdk.events import (
     TextDelta,
     ThinkingDelta,
 )
-from any_agent_sdk.providers.anthropic_passthrough import (
+from mantis_agent.providers.anthropic_passthrough import (
     ANTHROPIC_DEFAULT_BASE_URL,
     ANTHROPIC_DEFAULT_VERSION,
     AnthropicPassthroughProvider,
@@ -55,8 +55,8 @@ from any_agent_sdk.providers.anthropic_passthrough import (
     _normalize_tools,
     _split_system,
 )
-from any_agent_sdk.providers.base import detect_provider, resolve
-from any_agent_sdk.types import (
+from mantis_agent.providers.base import detect_provider, resolve
+from mantis_agent.types import (
     AssistantMessage,
     SystemMessage,
     TextBlock,
@@ -170,7 +170,7 @@ class TestProviderInit:
         )
 
     def test_capability_override(self) -> None:
-        from any_agent_sdk.capabilities import BackendCapability
+        from mantis_agent.capabilities import BackendCapability
 
         custom = BackendCapability(
             kind="anthropic",
@@ -794,7 +794,7 @@ class TestAgentBuildsProvider:
     def test_anthropic_api_url_builds_passthrough_provider(
         self, monkeypatch
     ) -> None:
-        from any_agent_sdk import Agent
+        from mantis_agent import Agent
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
         agent = Agent(
@@ -808,7 +808,7 @@ class TestAgentBuildsProvider:
     def test_sentinel_backend_builds_passthrough_provider(
         self, monkeypatch
     ) -> None:
-        from any_agent_sdk import Agent
+        from mantis_agent import Agent
 
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
         agent = Agent(

@@ -7,7 +7,7 @@ or trigger side effects in response to specific events.
 ## The shape
 
 ```python
-from any_agent_sdk import HookMatcher, ClaudeAgentOptions
+from mantis_agent import HookMatcher, ClaudeAgentOptions
 
 async def log_tool(hook_input, hook_ctx):
     print(f"[{hook_input.event}] {hook_input.tool_name}")
@@ -89,7 +89,7 @@ Return `None` to do nothing. Return a `HookJSONOutput` to mutate the
 in-flight value:
 
 ```python
-from any_agent_sdk import HookJSONOutput
+from mantis_agent import HookJSONOutput
 
 async def normalise(hook_input, hook_ctx):
     if hook_input.event == "PreToolUse":
@@ -117,7 +117,7 @@ model call) without an exception.
 A `Plugin` bundles hooks alongside tools and a system-prompt addition:
 
 ```python
-from any_agent_sdk import Plugin
+from mantis_agent import Plugin
 
 logging_plugin = Plugin(
     tools=[],

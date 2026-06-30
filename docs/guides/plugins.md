@@ -8,7 +8,7 @@ mutating shared state.
 ## Anatomy
 
 ```python
-from any_agent_sdk import Plugin, HookMatcher, tool
+from mantis_agent import Plugin, HookMatcher, tool
 
 @tool
 async def log_event(name: str, payload: dict) -> str:
@@ -41,7 +41,7 @@ A plugin has four parts (all optional):
 ## Attaching
 
 ```python
-from any_agent_sdk import ClaudeAgentOptions
+from mantis_agent import ClaudeAgentOptions
 
 options = ClaudeAgentOptions(
     model="qwen2.5:7b",

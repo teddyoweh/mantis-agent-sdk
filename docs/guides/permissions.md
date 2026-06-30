@@ -9,7 +9,7 @@ before dispatch.
 The single hook for permission decisions:
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     ClaudeAgentOptions,
     PermissionResultAllow,
     PermissionResultDeny,

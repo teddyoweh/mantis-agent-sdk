@@ -2,8 +2,8 @@
 
 For each canonical example shipped at
 https://github.com/anthropics/claude-agent-sdk-python/tree/main/examples
-we keep a verbatim copy under ``any_agent_sdk/examples/``, modified only
-by replacing ``from claude_agent_sdk`` → ``from any_agent_sdk``. These
+we keep a verbatim copy under ``mantis_agent/examples/``, modified only
+by replacing ``from claude_agent_sdk`` → ``from mantis_agent``. These
 tests assert each one:
 
   1. Parses (AST-clean)
@@ -11,7 +11,7 @@ tests assert each one:
   3. Yields the right message shapes when run against a MockProvider
 
 This is the litmus test for drop-in compatibility. If anything here
-fails, Spawn workflows that swap claude_agent_sdk for any_agent_sdk will
+fails, Spawn workflows that swap claude_agent_sdk for mantis_agent will
 break — and that's the whole reason this SDK exists.
 """
 
@@ -25,7 +25,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES_DIR = REPO_ROOT / "any_agent_sdk" / "examples"
+EXAMPLES_DIR = REPO_ROOT / "mantis_agent" / "examples"
 
 
 # The verbatim-from-Claude examples (only the import line is rewritten).
@@ -51,7 +51,7 @@ def test_example_parses(name: str) -> None:
 
 @pytest.mark.parametrize("name", VERBATIM_EXAMPLES)
 def test_example_imports_resolve(name: str) -> None:
-    """Every symbol the example imports from any_agent_sdk exists.
+    """Every symbol the example imports from mantis_agent exists.
 
     We load the module via importlib but stop *before* asyncio.run()
     fires — the example's ``if __name__ == "__main__":`` guard does
@@ -60,7 +60,7 @@ def test_example_imports_resolve(name: str) -> None:
 
     path = EXAMPLES_DIR / name
     spec = importlib.util.spec_from_file_location(
-        f"any_agent_sdk._verbatim_example_{name.replace('.', '_')}", path
+        f"mantis_agent._verbatim_example_{name.replace('.', '_')}", path
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -70,18 +70,18 @@ def test_example_imports_resolve(name: str) -> None:
 
 def test_only_import_line_differs_from_claude() -> None:
     """The verbatim examples should differ from upstream Claude only by
-    the ``claude_agent_sdk`` → ``any_agent_sdk`` substitution.
+    the ``claude_agent_sdk`` → ``mantis_agent`` substitution.
 
     We don't have the upstream files on disk in CI, so this test is a
     soft check: confirm each example contains the canonical
-    ``from any_agent_sdk import`` line and NO leftover
+    ``from mantis_agent import`` line and NO leftover
     ``from claude_agent_sdk`` reference.
     """
 
     for name in VERBATIM_EXAMPLES:
         path = EXAMPLES_DIR / name
         text = path.read_text(encoding="utf-8")
-        assert "from any_agent_sdk" in text, (
+        assert "from mantis_agent" in text, (
             f"{name}: missing canonical import"
         )
         assert "from claude_agent_sdk" not in text, (
@@ -97,9 +97,9 @@ def test_only_import_line_differs_from_claude() -> None:
 
 def test_top_level_surface_matches_claude_sdk_python() -> None:
     """The public symbols Claude's examples import from
-    ``claude_agent_sdk`` (top level) all exist on ``any_agent_sdk``."""
+    ``claude_agent_sdk`` (top level) all exist on ``mantis_agent``."""
 
-    import any_agent_sdk
+    import mantis_agent
 
     # The set of names the canonical examples actually import. Grep'd
     # from the 16 official examples in the upstream repo (May 2026).
@@ -117,16 +117,16 @@ def test_top_level_surface_matches_claude_sdk_python() -> None:
         "query",
         "tool",
     }
-    missing = expected - set(dir(any_agent_sdk))
+    missing = expected - set(dir(mantis_agent))
     assert not missing, f"missing public symbols: {missing}"
 
 
 def test_types_submodule_surface_matches() -> None:
     """``from claude_agent_sdk.types import HookContext, HookInput,
     HookJSONOutput, HookMatcher, Message, ResultMessage, AssistantMessage,
-    TextBlock`` works on ``any_agent_sdk.types`` too."""
+    TextBlock`` works on ``mantis_agent.types`` too."""
 
-    import any_agent_sdk.types as ttypes
+    import mantis_agent.types as ttypes
 
     for name in (
         "HookContext",
@@ -139,7 +139,7 @@ def test_types_submodule_surface_matches() -> None:
     ):
         obj = getattr(ttypes, name, None)
         assert obj is not None, (
-            f"any_agent_sdk.types.{name} not exposed — Claude SDK compat broken"
+            f"mantis_agent.types.{name} not exposed — Claude SDK compat broken"
         )
 
 
@@ -152,7 +152,7 @@ def test_claude_positional_tool_decorator() -> None:
     """``@tool("name", "desc", {"a": float, "b": float})`` returns a Tool
     with the right name + JSON schema derived from the type dict."""
 
-    from any_agent_sdk import tool
+    from mantis_agent import tool
 
     @tool("add", "Add two numbers", {"a": float, "b": float})
     async def add_numbers(args: dict) -> dict:
@@ -180,7 +180,7 @@ def test_query_yields_claude_shaped_messages() -> None:
 
     import anyio
 
-    from any_agent_sdk import (
+    from mantis_agent import (
         Agent,
         AssistantMessage,
         ClaudeAgentOptions,
@@ -190,7 +190,7 @@ def test_query_yields_claude_shaped_messages() -> None:
         UserMessage,
         query,
     )
-    from any_agent_sdk.events import (
+    from mantis_agent.events import (
         ContentBlockDelta,
         ContentBlockStart,
         ContentBlockStop,
@@ -199,8 +199,8 @@ def test_query_yields_claude_shaped_messages() -> None:
         MessageStop,
         TextDelta,
     )
-    from any_agent_sdk.providers.mock import MockProvider
-    from any_agent_sdk.types import Usage
+    from mantis_agent.providers.mock import MockProvider
+    from mantis_agent.types import Usage
 
     events = [
         MessageStart(message_id="m1", model="mock-7b"),
@@ -214,7 +214,7 @@ def test_query_yields_claude_shaped_messages() -> None:
     # Inject the provider via env override — compat_query builds the
     # agent from options. Patch provider routing via the mock entry.
     import os
-    from any_agent_sdk.providers.base import register
+    from mantis_agent.providers.base import register
 
     register("mock", lambda: MockProvider(scripted_events=events))
 

@@ -32,11 +32,11 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import Tool, ToolUseBlock, tool
-from any_agent_sdk.permissions import PermissionContext
-from any_agent_sdk.streaming.executor import StreamingToolExecutor
-from any_agent_sdk.tools import ToolRegistry
-from any_agent_sdk.types import ToolResultBlock
+from mantis_agent import Tool, ToolUseBlock, tool
+from mantis_agent.permissions import PermissionContext
+from mantis_agent.streaming.executor import StreamingToolExecutor
+from mantis_agent.tools import ToolRegistry
+from mantis_agent.types import ToolResultBlock
 
 
 # ---------------------------------------------------------------------------

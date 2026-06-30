@@ -7,7 +7,7 @@ handles routing, dispatch, result threading, and parallelism.
 ## The basic shape
 
 ```python
-from any_agent_sdk import tool
+from mantis_agent import tool
 
 @tool
 async def get_weather(city: str) -> str:
@@ -43,7 +43,7 @@ async for msg in query(
 Or with `ClaudeAgentOptions`:
 
 ```python
-from any_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from mantis_agent import ClaudeAgentOptions, ClaudeSDKClient
 
 opts = ClaudeAgentOptions(
     model="qwen2.5:7b",
@@ -61,7 +61,7 @@ a single text content block. You can return a list of content blocks
 directly if you want images or structured data:
 
 ```python
-from any_agent_sdk import TextBlock
+from mantis_agent import TextBlock
 
 @tool
 async def render(spec: str) -> list[dict]:
@@ -101,7 +101,7 @@ second is still streaming in. See [Streaming](streaming.md).
 ## Built-in tools
 
 ```python
-from any_agent_sdk import WebFetch, WebSearch
+from mantis_agent import WebFetch, WebSearch
 
 options = {
     "tools": [WebFetch(), WebSearch(num_results=5)],
@@ -119,7 +119,7 @@ filesystem, a database, a remote API — wrap them in an in-process MCP
 server:
 
 ```python
-from any_agent_sdk import create_sdk_mcp_server
+from mantis_agent import create_sdk_mcp_server
 
 calc = create_sdk_mcp_server(
     name="calculator",
@@ -142,7 +142,7 @@ should abort the whole agent loop — raise a `ToolExecutionError` with
 `fatal=True`:
 
 ```python
-from any_agent_sdk import ToolExecutionError
+from mantis_agent import ToolExecutionError
 
 @tool
 async def query_db(sql: str) -> str:

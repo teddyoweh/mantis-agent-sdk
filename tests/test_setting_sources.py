@@ -2,7 +2,7 @@
 
 The Claude Agent SDK exposes ``ClaudeAgentOptions(setting_sources=[...])``
 to declare which on-disk settings layers should contribute to the run.
-Previously: any-agent-sdk accepted the field but did nothing with it.
+Previously: mantis-agent-sdk accepted the field but did nothing with it.
 Now: each named source resolves to a real path, the layers merge in
 declared order (later overrides earlier), and the merged result
 populates option defaults the user didn't pass explicitly.
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     ClaudeAgentOptions,
     KNOWN_SETTING_KEYS,
     SETTING_SOURCES,
@@ -45,12 +45,12 @@ from any_agent_sdk import (
 
 
 @pytest.fixture
-def tmp_anyagent_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point ``$ANYAGENT_HOME`` at a tmpdir so ``user`` source isolates."""
+def tmp_mantis_agent_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point ``$MANTIS_AGENT_HOME`` at a tmpdir so ``user`` source isolates."""
 
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setenv("ANYAGENT_HOME", str(home))
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(home))
     return home
 
 
@@ -68,19 +68,19 @@ def tmp_project(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_user_path_uses_anyagent_home(tmp_anyagent_home: Path) -> None:
+def test_resolve_user_path_uses_mantis_agent_home(tmp_mantis_agent_home: Path) -> None:
     p = resolve_setting_path("user")
-    assert p == tmp_anyagent_home / "settings.json"
+    assert p == tmp_mantis_agent_home / "settings.json"
 
 
 def test_resolve_project_path_uses_cwd(tmp_project: Path) -> None:
     p = resolve_setting_path("project", cwd=tmp_project)
-    assert p == tmp_project / ".anyagent" / "settings.json"
+    assert p == tmp_project / ".mantis-agent" / "settings.json"
 
 
 def test_resolve_local_path_uses_cwd(tmp_project: Path) -> None:
     p = resolve_setting_path("local", cwd=tmp_project)
-    assert p == tmp_project / ".anyagent" / "settings.local.json"
+    assert p == tmp_project / ".mantis-agent" / "settings.local.json"
 
 
 def test_resolve_unknown_source_raises() -> None:
@@ -103,14 +103,14 @@ def test_setting_sources_canonical_tuple() -> None:
 
 
 def test_load_missing_returns_empty(
-    tmp_anyagent_home: Path, tmp_project: Path
+    tmp_mantis_agent_home: Path, tmp_project: Path
 ) -> None:
     assert load_setting_source("user") == {}
     assert load_setting_source("project", cwd=tmp_project) == {}
     assert load_setting_source("local", cwd=tmp_project) == {}
 
 
-def test_save_then_load_roundtrip(tmp_anyagent_home: Path) -> None:
+def test_save_then_load_roundtrip(tmp_mantis_agent_home: Path) -> None:
     data = {
         "model": "qwen2.5-7b-instruct",
         "max_turns": 5,
@@ -129,28 +129,28 @@ def test_save_then_load_roundtrip(tmp_anyagent_home: Path) -> None:
 
 
 def test_save_creates_parent_dir(tmp_project: Path) -> None:
-    # tmp_project/.anyagent does NOT exist yet; save_setting_source
+    # tmp_project/.mantis-agent does NOT exist yet; save_setting_source
     # must create it on demand.
     path = save_setting_source("project", {"model": "foo"}, cwd=tmp_project)
     assert path.parent.exists()
-    assert path.parent.name == ".anyagent"
+    assert path.parent.name == ".mantis-agent"
 
 
-def test_load_rejects_broken_json(tmp_anyagent_home: Path) -> None:
+def test_load_rejects_broken_json(tmp_mantis_agent_home: Path) -> None:
     path = resolve_setting_path("user")
     path.write_text("{not valid json", encoding="utf-8")
     with pytest.raises(ValueError, match="invalid JSON"):
         load_setting_source("user")
 
 
-def test_load_rejects_non_object_json(tmp_anyagent_home: Path) -> None:
+def test_load_rejects_non_object_json(tmp_mantis_agent_home: Path) -> None:
     path = resolve_setting_path("user")
     path.write_text("[1, 2, 3]", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a JSON object"):
         load_setting_source("user")
 
 
-def test_load_empty_file_returns_empty_dict(tmp_anyagent_home: Path) -> None:
+def test_load_empty_file_returns_empty_dict(tmp_mantis_agent_home: Path) -> None:
     path = resolve_setting_path("user")
     path.write_text("", encoding="utf-8")
     assert load_setting_source("user") == {}
@@ -161,12 +161,12 @@ def test_load_empty_file_returns_empty_dict(tmp_anyagent_home: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_update_creates_when_missing(tmp_anyagent_home: Path) -> None:
+def test_update_creates_when_missing(tmp_mantis_agent_home: Path) -> None:
     update_setting_source("user", {"model": "foo"})
     assert load_setting_source("user") == {"model": "foo"}
 
 
-def test_update_deep_merges_nested(tmp_anyagent_home: Path) -> None:
+def test_update_deep_merges_nested(tmp_mantis_agent_home: Path) -> None:
     save_setting_source("user", {"permissions": {"allow": ["Bash"]}})
     update_setting_source("user", {"permissions": {"deny": ["WebFetch"]}})
     assert load_setting_source("user") == {
@@ -174,7 +174,7 @@ def test_update_deep_merges_nested(tmp_anyagent_home: Path) -> None:
     }
 
 
-def test_update_unions_lists(tmp_anyagent_home: Path) -> None:
+def test_update_unions_lists(tmp_mantis_agent_home: Path) -> None:
     save_setting_source("user", {"allowed_tools": ["Read"]})
     update_setting_source("user", {"allowed_tools": ["Bash", "Read"]})
     # Read was already there — should not appear twice.
@@ -182,7 +182,7 @@ def test_update_unions_lists(tmp_anyagent_home: Path) -> None:
     assert loaded["allowed_tools"] == ["Read", "Bash"]
 
 
-def test_update_replaces_scalars(tmp_anyagent_home: Path) -> None:
+def test_update_replaces_scalars(tmp_mantis_agent_home: Path) -> None:
     save_setting_source("user", {"model": "foo", "max_turns": 5})
     update_setting_source("user", {"model": "bar"})
     # max_turns preserved; model replaced.
@@ -237,7 +237,7 @@ def test_merge_pure_function_does_not_mutate_inputs() -> None:
 
 
 def test_load_settings_in_order(
-    tmp_anyagent_home: Path, tmp_project: Path
+    tmp_mantis_agent_home: Path, tmp_project: Path
 ) -> None:
     save_setting_source("user", {"model": "user-model", "max_turns": 10})
     save_setting_source(
@@ -253,7 +253,7 @@ def test_load_settings_in_order(
 
 
 def test_load_settings_handles_missing_sources(
-    tmp_anyagent_home: Path, tmp_project: Path
+    tmp_mantis_agent_home: Path, tmp_project: Path
 ) -> None:
     # Only the user source exists; the other two are absent — load_settings
     # must not error.
@@ -267,7 +267,7 @@ def test_load_settings_empty_list_returns_empty() -> None:
 
 
 def test_load_settings_subset_of_sources(
-    tmp_anyagent_home: Path, tmp_project: Path
+    tmp_mantis_agent_home: Path, tmp_project: Path
 ) -> None:
     # Caller picks ``["user", "local"]`` only — project is skipped even if
     # it exists.
@@ -378,7 +378,7 @@ def test_known_setting_keys_lists_documented_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_options_emit_setting_sources_in_query_opts(tmp_anyagent_home: Path) -> None:
+def test_options_emit_setting_sources_in_query_opts(tmp_mantis_agent_home: Path) -> None:
     opts = ClaudeAgentOptions(setting_sources=["user", "project"]).to_query_options()
     assert opts["setting_sources"] == ["user", "project"]
 
@@ -389,7 +389,7 @@ def test_options_omit_setting_sources_when_unset() -> None:
 
 
 def test_build_agent_applies_settings_to_model(
-    tmp_anyagent_home: Path,
+    tmp_mantis_agent_home: Path,
 ) -> None:
     """End-to-end: settings.json on disk affects what model the agent runs.
 
@@ -399,7 +399,7 @@ def test_build_agent_applies_settings_to_model(
 
     save_setting_source("user", {"model": "qwen2.5-7b-instruct"})
 
-    from any_agent_sdk.compat_query import _build_agent, _normalize_options
+    from mantis_agent.compat_query import _build_agent, _normalize_options
 
     options = ClaudeAgentOptions(setting_sources=["user"])
     opts = _normalize_options(options)
@@ -408,13 +408,13 @@ def test_build_agent_applies_settings_to_model(
 
 
 def test_build_agent_explicit_model_overrides_settings(
-    tmp_anyagent_home: Path,
+    tmp_mantis_agent_home: Path,
 ) -> None:
     """If the user passes model= explicitly, settings.json is ignored."""
 
     save_setting_source("user", {"model": "from-settings"})
 
-    from any_agent_sdk.compat_query import _build_agent, _normalize_options
+    from mantis_agent.compat_query import _build_agent, _normalize_options
 
     options = ClaudeAgentOptions(
         model="from-explicit-arg",
@@ -426,7 +426,7 @@ def test_build_agent_explicit_model_overrides_settings(
 
 
 def test_build_agent_layers_three_sources(
-    tmp_anyagent_home: Path, tmp_project: Path
+    tmp_mantis_agent_home: Path, tmp_project: Path
 ) -> None:
     """Three sources merge: user < project < local, later wins."""
 
@@ -434,7 +434,7 @@ def test_build_agent_layers_three_sources(
     save_setting_source("project", {"model": "from-project"}, cwd=tmp_project)
     save_setting_source("local", {"max_tokens": 4096}, cwd=tmp_project)
 
-    from any_agent_sdk.compat_query import _build_agent, _normalize_options
+    from mantis_agent.compat_query import _build_agent, _normalize_options
 
     options = ClaudeAgentOptions(
         cwd=str(tmp_project),
@@ -450,12 +450,12 @@ def test_build_agent_layers_three_sources(
     assert agent.max_tokens == 4096
 
 
-def test_build_agent_no_sources_unchanged(tmp_anyagent_home: Path) -> None:
+def test_build_agent_no_sources_unchanged(tmp_mantis_agent_home: Path) -> None:
     """``setting_sources=None`` is the same as not passing the field."""
 
     save_setting_source("user", {"model": "ignored"})
 
-    from any_agent_sdk.compat_query import _build_agent, _normalize_options
+    from mantis_agent.compat_query import _build_agent, _normalize_options
 
     # No setting_sources — file on disk should be ignored.
     options = ClaudeAgentOptions()
@@ -466,7 +466,7 @@ def test_build_agent_no_sources_unchanged(tmp_anyagent_home: Path) -> None:
 
 
 def test_persistence_records_back_to_source(
-    tmp_anyagent_home: Path,
+    tmp_mantis_agent_home: Path,
 ) -> None:
     """Saving a delta back to a source persists and survives a reload.
 
@@ -485,6 +485,6 @@ def test_persistence_records_back_to_source(
 
     # And a separate source ("project") doesn't inherit it.
     with pytest.MonkeyPatch.context() as m:
-        m.chdir(tmp_anyagent_home)  # any tmpdir cwd
+        m.chdir(tmp_mantis_agent_home)  # any tmpdir cwd
         # No project file written → empty.
-        assert load_setting_source("project", cwd=tmp_anyagent_home) == {}
+        assert load_setting_source("project", cwd=tmp_mantis_agent_home) == {}

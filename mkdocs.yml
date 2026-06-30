@@ -1,8 +1,8 @@
-site_name: any-agent-sdk
+site_name: mantis-agent-sdk
 site_description: Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents.
-site_url: https://teddyoweh.github.io/any-agent-sdk/
-repo_url: https://github.com/teddyoweh/any-agent-sdk
-repo_name: teddyoweh/any-agent-sdk
+site_url: https://teddyoweh.github.io/mantis-agent-sdk/
+repo_url: https://github.com/teddyoweh/mantis-agent-sdk
+repo_name: teddyoweh/mantis-agent-sdk
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -76,9 +76,9 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/teddyoweh/any-agent-sdk
+      link: https://github.com/teddyoweh/mantis-agent-sdk
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/any-agent-sdk/
+      link: https://pypi.org/project/mantis-agent-sdk/
 
 nav:
   - Home: index.md

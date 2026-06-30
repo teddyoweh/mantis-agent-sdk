@@ -38,7 +38,7 @@ Runs a single agent loop and yields every message it produces.
 
 ```python
 import asyncio
-from any_agent_sdk import query
+from mantis_agent import query
 
 async def main():
     async for msg in query(
@@ -101,7 +101,7 @@ async with ClaudeSDKClient(options) as client:
 If you need finer control than `ClaudeSDKClient`, use `Agent`:
 
 ```python
-from any_agent_sdk import Agent
+from mantis_agent import Agent
 
 agent = Agent(
     model="qwen2.5:7b",

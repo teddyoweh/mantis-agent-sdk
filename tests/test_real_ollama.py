@@ -1,7 +1,7 @@
 """Real-backend test against a local Ollama instance.
 
 Skipped when Ollama isn't reachable at the default URL. Set
-``ANY_AGENT_OLLAMA_MODEL`` to override the default ``llama3.2:3b``.
+``MANTIS_AGENT_OLLAMA_MODEL`` to override the default ``llama3.2:3b``.
 
 This is the closest thing to the README's acceptance test:
 ``ollama pull llama3.2:3b`` + 10-line script + tool call + works first try.
@@ -15,8 +15,8 @@ import socket
 import anyio
 import pytest
 
-from any_agent_sdk import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
-from any_agent_sdk.providers.ollama import OllamaProvider
+from mantis_agent import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
+from mantis_agent.providers.ollama import OllamaProvider
 
 
 def _ollama_reachable(host: str = "127.0.0.1", port: int = 11434) -> bool:
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-MODEL = os.environ.get("ANY_AGENT_OLLAMA_MODEL", "llama3.2:3b")
+MODEL = os.environ.get("MANTIS_AGENT_OLLAMA_MODEL", "llama3.2:3b")
 
 
 @tool

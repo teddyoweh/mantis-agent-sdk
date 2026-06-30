@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import anyio
 
-from any_agent_sdk import (
+from mantis_agent import (
     ClaudeAgentOptions,
     PermissionResultDeny,
     ResultMessage,
@@ -20,8 +20,8 @@ from any_agent_sdk import (
     query,
     tool,
 )
-from any_agent_sdk import TextBlock
-from any_agent_sdk.events import (
+from mantis_agent import TextBlock
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -31,7 +31,7 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers.mock import MockProvider
+from mantis_agent.providers.mock import MockProvider
 
 
 @tool
@@ -101,7 +101,7 @@ def test_denial_surfaces_in_result_permission_denials() -> None:
         return result
 
     # Register the mock under the "mock" provider name so the agent uses it.
-    from any_agent_sdk.providers.base import register
+    from mantis_agent.providers.base import register
     register("mock", lambda: provider)
 
     result = anyio.run(main)
@@ -136,7 +136,7 @@ def test_clean_run_has_empty_denials_list() -> None:
                 result = msg
         return result
 
-    from any_agent_sdk.providers.base import register
+    from mantis_agent.providers.base import register
     register("mock", lambda: provider)
 
     result = anyio.run(main)

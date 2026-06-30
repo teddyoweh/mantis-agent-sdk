@@ -4,7 +4,7 @@ Every option you can pass to `query()` or `ClaudeSDKClient`. Accepted as
 a dataclass or a plain `dict`.
 
 ```python
-from any_agent_sdk import ClaudeAgentOptions, HookMatcher, Plugin
+from mantis_agent import ClaudeAgentOptions, HookMatcher, Plugin
 
 options = ClaudeAgentOptions(
     model="qwen2.5:7b",
@@ -92,7 +92,7 @@ See [MCP servers](../guides/mcp.md), [Sub-agents](../guides/sub-agents.md).
 | `setting_sources` | `list[str] \| None` | None | JSON files to load and merge. |
 | `cwd` | `str \| None` | `os.getcwd()` | Working directory the agent reports. |
 | `session_id` | `str \| None` | (generated) | Reuse this id to resume. |
-| `persist` | `bool \| str` | `True` | `True` → `~/.any-agent/sessions/`, `False` → in-memory, `"path"` → write there. |
+| `persist` | `bool \| str` | `True` | `True` → `~/.mantis-agent/sessions/`, `False` → in-memory, `"path"` → write there. |
 
 ## Observability
 

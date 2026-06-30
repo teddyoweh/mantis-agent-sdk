@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from any_agent_sdk.capabilities import (
+from mantis_agent.capabilities import (
     HOSTED_PROFILES,
     BackendCapability,
     ModelCapability,

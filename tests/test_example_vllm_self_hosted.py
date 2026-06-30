@@ -4,7 +4,7 @@ The example has two run modes:
 
   * **Real vLLM** — requires a reachable OpenAI-compat server (default
     ``http://localhost:8000/v1``, override with ``VLLM_BASE_URL``).
-  * **Offline mock** — guarded by ``ANY_AGENT_MOCK=1``; uses a scripted
+  * **Offline mock** — guarded by ``MANTIS_AGENT_MOCK=1``; uses a scripted
     :class:`MockProvider` to exercise the tool-call → tool-result →
     final-answer path with zero network.
 
@@ -30,7 +30,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from any_agent_sdk.examples import vllm_self_hosted as example
+from mantis_agent.examples import vllm_self_hosted as example
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +152,13 @@ def test_mock_provider_yields_two_turns_in_order():
     """First stream() must emit a tool_use → stop; second must emit a
     text answer → stop. Flipping order deadlocks the demo."""
 
-    from any_agent_sdk.events import (
+    from mantis_agent.events import (
         ContentBlockStart,
         ContentBlockStop,
         MessageStart,
         MessageStop,
     )
-    from any_agent_sdk.types import TextBlock, ToolUseBlock
+    from mantis_agent.types import TextBlock, ToolUseBlock
 
     provider = example._build_mock_provider()
 
@@ -219,8 +219,8 @@ def test_main_mock_mode_exercises_tool_path(capsys, monkeypatch, tmp_path):
     """main() in mock mode must dispatch ``search_docs``, thread the
     result back, and print the success marker."""
 
-    monkeypatch.setenv("ANY_AGENT_MOCK", "1")
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.setenv("MANTIS_AGENT_MOCK", "1")
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
     # Mock mode must skip the preflight entirely — assert that by making
     # _vllm_is_reachable explode if called.
     def boom(*_a, **_kw):
@@ -239,9 +239,9 @@ def test_main_live_mode_unreachable_server_raises_systemexit(monkeypatch, tmp_pa
     """Live mode must fail fast with an actionable hint when the server
     isn't up — not silently call httpx and connection-refused."""
 
-    monkeypatch.delenv("ANY_AGENT_MOCK", raising=False)
-    monkeypatch.delenv("ANY_AGENT_NO_PREFLIGHT", raising=False)
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.delenv("MANTIS_AGENT_MOCK", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_NO_PREFLIGHT", raising=False)
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
     monkeypatch.setattr(example, "_vllm_is_reachable", lambda *_a, **_kw: False)
 
     with pytest.raises(SystemExit) as excinfo:
@@ -249,20 +249,20 @@ def test_main_live_mode_unreachable_server_raises_systemexit(monkeypatch, tmp_pa
 
     msg = str(excinfo.value)
     assert "vLLM not reachable" in msg
-    assert "ANY_AGENT_MOCK=1" in msg
+    assert "MANTIS_AGENT_MOCK=1" in msg
     # And the hint must include the exact start command so a user can
     # copy-paste their way out.
     assert "vllm.entrypoints.openai.api_server" in msg
 
 
 def test_main_live_mode_preflight_can_be_disabled(monkeypatch, tmp_path):
-    """``ANY_AGENT_NO_PREFLIGHT=1`` should skip the reachability check
+    """``MANTIS_AGENT_NO_PREFLIGHT=1`` should skip the reachability check
     even when the server is down — for users whose preflight URL is
     blocked but who know the chat endpoint works."""
 
-    monkeypatch.delenv("ANY_AGENT_MOCK", raising=False)
-    monkeypatch.setenv("ANY_AGENT_NO_PREFLIGHT", "1")
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.delenv("MANTIS_AGENT_MOCK", raising=False)
+    monkeypatch.setenv("MANTIS_AGENT_NO_PREFLIGHT", "1")
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
     def boom(*_a, **_kw):
         raise AssertionError("preflight must be skipped when NO_PREFLIGHT=1")
     monkeypatch.setattr(example, "_vllm_is_reachable", boom)
@@ -285,9 +285,9 @@ def test_main_live_mode_uses_env_overrides(monkeypatch, tmp_path):
     query options. A regression here would silently send requests to
     the default URL even when the user pointed elsewhere."""
 
-    monkeypatch.delenv("ANY_AGENT_MOCK", raising=False)
-    monkeypatch.delenv("ANY_AGENT_NO_PREFLIGHT", raising=False)
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.delenv("MANTIS_AGENT_MOCK", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_NO_PREFLIGHT", raising=False)
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
     monkeypatch.setenv("VLLM_BASE_URL", "https://gpu.example/v1")
     monkeypatch.setenv("VLLM_MODEL", "Qwen/Qwen2.5-72B-Instruct")
 
@@ -334,21 +334,21 @@ def test_example_module_exposes_expected_top_level_names():
 
 
 def test_example_runs_in_mock_mode_via_subprocess(tmp_path):
-    """Run ``python -m any_agent_sdk.examples.vllm_self_hosted`` in mock
+    """Run ``python -m mantis_agent.examples.vllm_self_hosted`` in mock
     mode as a subprocess. Catches regressions where in-process tests
     pass but the example's ``if __name__ == '__main__'`` path breaks."""
 
     repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env["ANY_AGENT_MOCK"] = "1"
-    env["ANY_AGENT_HOME"] = str(tmp_path / "anyagent_home")
-    Path(env["ANY_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
+    env["MANTIS_AGENT_MOCK"] = "1"
+    env["MANTIS_AGENT_HOME"] = str(tmp_path / "mantis_agent_home")
+    Path(env["MANTIS_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "any_agent_sdk.examples.vllm_self_hosted",
+            "mantis_agent.examples.vllm_self_hosted",
         ],
         cwd=str(repo_root),
         env=env,
@@ -376,19 +376,19 @@ def test_example_subprocess_unreachable_server_exits_nonzero(tmp_path, monkeypat
 
     repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env.pop("ANY_AGENT_MOCK", None)
-    env.pop("ANY_AGENT_NO_PREFLIGHT", None)
+    env.pop("MANTIS_AGENT_MOCK", None)
+    env.pop("MANTIS_AGENT_NO_PREFLIGHT", None)
     # Point at a port nothing will ever listen on so the preflight is
     # guaranteed to fail in <2s on every CI box.
     env["VLLM_BASE_URL"] = "http://127.0.0.1:1/v1"
-    env["ANY_AGENT_HOME"] = str(tmp_path / "anyagent_home")
-    Path(env["ANY_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
+    env["MANTIS_AGENT_HOME"] = str(tmp_path / "mantis_agent_home")
+    Path(env["MANTIS_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "any_agent_sdk.examples.vllm_self_hosted",
+            "mantis_agent.examples.vllm_self_hosted",
         ],
         cwd=str(repo_root),
         env=env,
@@ -402,4 +402,4 @@ def test_example_subprocess_unreachable_server_exits_nonzero(tmp_path, monkeypat
     )
     combined = result.stdout + result.stderr
     assert "vLLM not reachable" in combined
-    assert "ANY_AGENT_MOCK=1" in combined
+    assert "MANTIS_AGENT_MOCK=1" in combined

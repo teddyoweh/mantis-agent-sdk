@@ -35,8 +35,8 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import tool
-from any_agent_sdk.mcp import (
+from mantis_agent import tool
+from mantis_agent.mcp import (
     ElicitationNotSupportedError,
     ElicitationRequest,
     ElicitationResult,
@@ -45,8 +45,8 @@ from any_agent_sdk.mcp import (
     SdkServerConfig,
     create_sdk_server,
 )
-from any_agent_sdk.mcp.client import _ELICITATION_ERROR_CODE
-from any_agent_sdk.mcp.server import SdkServer
+from mantis_agent.mcp.client import _ELICITATION_ERROR_CODE
+from mantis_agent.mcp.server import SdkServer
 
 
 pytestmark = pytest.mark.anyio
@@ -313,7 +313,7 @@ async def test_unknown_server_initiated_method_replied_not_found() -> None:
 
         async def receive(self):
             await self._close.wait()
-            from any_agent_sdk.mcp.transports.base import TransportClosed
+            from mantis_agent.mcp.transports.base import TransportClosed
             raise TransportClosed("done")
 
         async def close(self):

@@ -5,7 +5,7 @@ Five minutes from a clean Python env to a streaming agent with tool use.
 ## 1. Install
 
 ```bash
-pip install any-agent-sdk
+pip install mantis-agent-sdk
 ```
 
 ## 2. Choose a backend
@@ -18,15 +18,15 @@ Any of these works. Pick whichever you have credentials for.
     ollama pull qwen2.5:7b
     ```
 
-    No env vars. `any-agent-sdk` will auto-discover Ollama on
+    No env vars. `mantis-agent-sdk` will auto-discover Ollama on
     `http://localhost:11434`.
 
 === "Together / Fireworks / Groq / vLLM (hosted OpenAI-compat)"
 
     ```bash
-    export ANY_AGENT_BASE_URL=https://api.together.xyz/v1
-    export ANY_AGENT_API_KEY=$TOGETHER_API_KEY
-    export ANY_AGENT_MODEL=Qwen/Qwen2.5-72B-Instruct
+    export MANTIS_AGENT_BASE_URL=https://api.together.xyz/v1
+    export MANTIS_AGENT_API_KEY=$TOGETHER_API_KEY
+    export MANTIS_AGENT_MODEL=Qwen/Qwen2.5-72B-Instruct
     ```
 
 === "OpenAI"
@@ -47,7 +47,7 @@ Any of these works. Pick whichever you have credentials for.
 
 ```python
 import asyncio
-from any_agent_sdk import query, tool
+from mantis_agent import query, tool
 
 
 @tool
@@ -91,7 +91,7 @@ result in plain English.
   result).
 - `@tool` decorates an async Python function. The signature becomes the
   JSON schema sent to the model.
-- `options={"model": "qwen2.5:7b"}` — `any-agent-sdk` auto-routes from
+- `options={"model": "qwen2.5:7b"}` — `mantis-agent-sdk` auto-routes from
   the model name. `qwen2.5:7b` → Ollama. No `backend=` argument needed.
 - `max_turns=4` puts a hard ceiling on the agent loop. Pair it with
   `max_usd=0.10` for cost limits — see [Budget](../guides/budget.md).
@@ -101,7 +101,7 @@ result in plain English.
 For a session that survives multiple `query()` calls:
 
 ```python
-from any_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from mantis_agent import ClaudeSDKClient, ClaudeAgentOptions
 
 async def main():
     options = ClaudeAgentOptions(
@@ -115,7 +115,7 @@ async def main():
             ...
 ```
 
-The transcript is persisted to `~/.any-agent/sessions/{session_id}.jsonl`
+The transcript is persisted to `~/.mantis-agent/sessions/{session_id}.jsonl`
 between calls and can be [forked or resumed](../guides/sessions.md) later.
 
 ## Next steps

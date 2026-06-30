@@ -1,12 +1,12 @@
 # API reference
 
-The public surface — what you can import from `any_agent_sdk` and rely on
+The public surface — what you can import from `mantis_agent` and rely on
 across minor versions.
 
 ## Top-level imports
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     # Core
     query,
     ClaudeSDKClient,
@@ -96,10 +96,10 @@ from any_agent_sdk import (
 
 Public surface follows semver from 1.0. Until then:
 
-- Names listed in `any_agent_sdk.__all__` are stable across patch
+- Names listed in `mantis_agent.__all__` are stable across patch
   versions.
-- Anything imported from submodules (`any_agent_sdk.streaming.*`,
-  `any_agent_sdk.providers.*`) is implementation detail and may move
+- Anything imported from submodules (`mantis_agent.streaming.*`,
+  `mantis_agent.providers.*`) is implementation detail and may move
   freely.
 - Settings file schema and JSONL transcript format are stable across
   minor versions even today.

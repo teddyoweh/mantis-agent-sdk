@@ -22,13 +22,13 @@ from typing import Any
 
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     ClaudeAgentOptions,
     create_sdk_mcp_server,
     tool,
 )
-from any_agent_sdk.compat_query import _build_agent
-from any_agent_sdk.providers.ollama import _to_openai_tool
+from mantis_agent.compat_query import _build_agent
+from mantis_agent.providers.ollama import _to_openai_tool
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +186,7 @@ def test_cli_run_does_not_reference_removed_content_blocks_attr() -> None:
     not ``msg.content_blocks``. Static grep on the CLI source catches
     regressions cheaper than booting a real run."""
 
-    from any_agent_sdk import cli
+    from mantis_agent import cli
 
     src = inspect.getsource(cli._cmd_run_async)
     assert "msg.message.content" in src, (

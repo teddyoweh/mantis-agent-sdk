@@ -1,6 +1,6 @@
 # Message types
 
-`any-agent-sdk` exposes two parallel shapes:
+`mantis-agent-sdk` exposes two parallel shapes:
 
 - **Flat shape** (`SDKMessage` family) — matches the Claude Agent SDK
   exactly. Yielded by `query()` and `client.query()`.
@@ -12,7 +12,7 @@ You can mostly work with the flat shape and never touch the internal one.
 ## Flat shape (`SDKMessage`)
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     SDKAssistantMessage,
     SDKCompactBoundaryMessage,
     SDKMessage,
@@ -71,7 +71,7 @@ class SDKResultMessage:
 ## Internal shape (`Message`)
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     AssistantMessage,
     Message,
     SystemMessage as InternalSystemMessage,
@@ -84,7 +84,7 @@ implementation-internal. Use them when you need to feed a pre-built
 transcript into `query(prompt=[...])`:
 
 ```python
-from any_agent_sdk import AssistantMessage, UserMessage, TextBlock
+from mantis_agent import AssistantMessage, UserMessage, TextBlock
 
 seed = [
     UserMessage(role="user", content=[TextBlock(text="hi")]),
@@ -99,7 +99,7 @@ async for msg in query(prompt=seed, options={...}):
 Both shapes share the same block types:
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     TextBlock,
     ThinkingBlock,
     ToolUseBlock,
@@ -120,7 +120,7 @@ All blocks implement `.to_dict()` for serialisation.
 ## Usage and cost
 
 ```python
-from any_agent_sdk import Usage, ModelUsage
+from mantis_agent import Usage, ModelUsage
 
 @dataclass
 class Usage:

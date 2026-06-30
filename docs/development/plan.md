@@ -1,4 +1,4 @@
-# any-agent-sdk — full plan (v2, OSS-first)
+# mantis-agent-sdk — full plan (v2, OSS-first)
 
 > **One line.** Claude Code for open-source models. A production-grade agent
 > runtime — streaming, tools, MCP, sub-agents, hooks, permissions, compaction —
@@ -188,7 +188,7 @@ For Path A, tool results go in the `tool` role message with `tool_call_id` (Open
 ### 3.2 Module layout
 
 ```
-any_agent_sdk/
+mantis_agent/
   __init__.py                public API surface
   types.py                   universal Message, ContentBlock, Usage (msgspec)
   events.py                  normalized StreamEvent variants
@@ -229,7 +229,7 @@ any_agent_sdk/
     elicitation.py           handle JSON-RPC -32042 mid-tool URL prompts
   subagent.py                spawn + manage sub-agents (asyncio task or subprocess)
   skills.py                  Skill registry, prefetch, search
-  cli.py                     `any-agent` CLI (chat, run, eval-tools, list-models)
+  cli.py                     `mantis-agent` CLI (chat, run, eval-tools, list-models)
   examples/
     quickstart.py
     ollama_local.py
@@ -424,7 +424,7 @@ This is the single most important runtime optimization, from the upstream compar
 
 Why this matters: on a turn where the assistant streams 3 tool calls and each tool takes 4 s, the naive loop waits 12 s after the message finalizes. The streaming loop starts tool #1 the moment its JSON closes — if all three tools start within 1 s of each other in the stream, total tool time is ~4 s. **3× speedup on a typical multi-tool turn.**
 
-Concurrency safety is checked per-input via `Tool.is_concurrency_safe(input)`. Default cap from `ANY_AGENT_MAX_TOOL_CONCURRENCY=10`. Sibling-abort: when one tool errors and has `abort_siblings_on_error=True` (default for `bash`-like tools), a per-batch `anyio.CancelScope` cancels in-flight siblings so subprocesses die fast.
+Concurrency safety is checked per-input via `Tool.is_concurrency_safe(input)`. Default cap from `MANTIS_AGENT_MAX_TOOL_CONCURRENCY=10`. Sibling-abort: when one tool errors and has `abort_siblings_on_error=True` (default for `bash`-like tools), a per-batch `anyio.CancelScope` cancels in-flight siblings so subprocesses die fast.
 
 ---
 
@@ -541,7 +541,7 @@ Plus benchmarking targets we promise to hit at GA:
 - Token-to-event latency overhead: **< 200 µs** per event versus a hand-written httpx + json-loads loop (measured on Qwen 2.5 7B on local vLLM).
 - Memory: **< 50 MB resident** for an idle Agent + 5 tools, baseline Python.
 - Tool dispatch latency: tool call kicked off **< 5 ms** after the closing `</tool_call>` token in Path B/C; **< 1 ms** after `tool_call.id` finalizes in Path A.
-- Cold-start: `import any_agent_sdk` to `Agent` constructed and one request sent in **< 250 ms** (lazy provider imports do their job).
+- Cold-start: `import mantis_agent` to `Agent` constructed and one request sent in **< 250 ms** (lazy provider imports do their job).
 
 These are part of CI. Regressions fail the build.
 
@@ -552,7 +552,7 @@ These are part of CI. Regressions fail the build.
 ### 10.1 The primary API — `Agent`
 
 ```python
-from any_agent_sdk import Agent, UserMessage, tool
+from mantis_agent import Agent, UserMessage, tool
 
 @tool
 async def search_web(query: str) -> str: ...
@@ -573,7 +573,7 @@ messages = await agent.run([UserMessage(content="What is Spawn Labs?")])
 For users porting from Claude Agent SDK without rewriting:
 
 ```python
-from any_agent_sdk import query
+from mantis_agent import query
 
 async for msg in query(prompt="...", options={"model": "qwen2.5-72b-instruct", "tools": [...]}):
     print(msg)
@@ -595,7 +595,7 @@ forked = fork_session(session.id, store=...)
 Identical to upstream — accept `@tool` decorated functions or a list of `Tool` objects:
 
 ```python
-from any_agent_sdk.mcp import create_sdk_server
+from mantis_agent.mcp import create_sdk_server
 server = create_sdk_server(name="my-tools", tools=[search_web, get_weather])
 ```
 
@@ -652,8 +652,8 @@ Already shipped: types, events, http, anthropic adapter (**will be deleted in M0
 ### M5 — Compaction + skills + polish (week 7)
 - `compact.py` with SimpleCompactor.
 - `skills.py` with prefetch + search.
-- CLI (`any-agent`).
-- Docs site at `any-agent-sdk.dev`.
+- CLI (`mantis-agent`).
+- Docs site at `mantis-agent-sdk.dev`.
 - Benchmark suite published.
 
 ### M6 — GA polish (week 8)
@@ -666,14 +666,14 @@ Already shipped: types, events, http, anthropic adapter (**will be deleted in M0
 ## 12. Distribution + ecosystem
 
 ### 12.1 PyPI
-- `any-agent-sdk` — core
-- `any-agent-sdk[ollama]`, `[vllm]`, `[mcp]`, `[all]` — extras for optional deps
+- `mantis-agent-sdk` — core
+- `mantis-agent-sdk[ollama]`, `[vllm]`, `[mcp]`, `[all]` — extras for optional deps
 
 ### 12.2 npm equivalent
 Out of scope v1.0. Likely a future port driven by demand.
 
 ### 12.3 Examples repo
-`any-agent-sdk-examples` — separate repo with 10+ working agents (code, research, support, etc.) so people can copy-paste and edit.
+`mantis-agent-sdk-examples` — separate repo with 10+ working agents (code, research, support, etc.) so people can copy-paste and edit.
 
 ### 12.4 Compatibility shims
 - `claude-agent-sdk-shim` — provides `from claude_agent_sdk import query` that wraps ours.
@@ -689,7 +689,7 @@ Publish a public benchmark of (model × backend) tool-use pass rates measured ag
 | # | Decision | Recommendation | Status |
 |---|---|---|---|
 | 1 | License | Apache-2.0 | locked |
-| 2 | Repo home | `teddyoweh/any-agent-sdk` | locked |
+| 2 | Repo home | `teddyoweh/mantis-agent-sdk` | locked |
 | 3 | Telemetry | Opt-in, clearly disclosed | pending |
 | 4 | Drop Anthropic adapter? | YES — out of scope per §1.3 | pending (this plan recommends it) |
 | 5 | Drop OpenAI/Gemini/Bedrock from v1 plan? | YES — out of scope | pending |
@@ -734,7 +734,7 @@ Publish a public benchmark of (model × backend) tool-use pass rates measured ag
 
 We are done when this sentence is true:
 
-> A new user can `pip install any-agent-sdk[ollama]`, `ollama pull qwen2.5:72b`, and run a 10-line script that does a 5-turn agent task with two tools — and it Just Works on the first try.
+> A new user can `pip install mantis-agent-sdk[ollama]`, `ollama pull qwen2.5:72b`, and run a 10-line script that does a 5-turn agent task with two tools — and it Just Works on the first try.
 
 Then we add Together, Fireworks, vLLM, llama.cpp until that sentence holds across the entire model + backend matrix.
 

@@ -1,4 +1,4 @@
-# any-agent-sdk — v0 plan
+# mantis-agent-sdk — v0 plan
 
 **One line.** A drop-in, open-source analog to the Claude Agent SDK that runs against Anthropic, OpenAI, Gemini, Bedrock, and local models, with full MCP + sub-agent support — and is faster and lighter than the upstream SDK because we're not bound to backward compat.
 
@@ -9,7 +9,7 @@
 | Deployment | Hosted **and** local from day one | Can't ship a "toy" — regulated users need local, casual users want hosted. The local path forces clean provider abstraction anyway. |
 | Model families | Anthropic, OpenAI, Gemini, Bedrock/Vertex, local (Ollama/vLLM/llama.cpp) | These five cover ~98% of real usage. Cohere/Mistral/Groq drop in via OpenAI-compatible API for free. |
 | Feature set | Full parity: MCP, sub-agents, streaming, tool use, thinking, prompt caching, batch, files | A subset SDK is dead on arrival. Users who can't drop-in won't migrate. |
-| API surface | Mirror `anthropic.AsyncAnthropic` + `claude_agent_sdk` entry points | Drop-in means literally `from any_agent_sdk import AsyncAgent as AsyncAnthropic`. |
+| API surface | Mirror `anthropic.AsyncAnthropic` + `claude_agent_sdk` entry points | Drop-in means literally `from mantis_agent import AsyncAgent as AsyncAnthropic`. |
 
 ## Forks still open (need a decision before M1)
 
@@ -51,13 +51,13 @@ These are non-negotiable. If a contributor PRs code that breaks one, we revert:
 4. **Zero-copy text deltas.** Text deltas pass through as `str` slices, not concatenated into a growing buffer until the user asks for the full message.
 5. **No reflection in the hot path.** No `getattr` games, no dynamic dispatch via dicts of strings. Use match statements on tagged unions.
 6. **anyio for async primitives.** Works on asyncio and trio. No `asyncio.*` imports in core; only in the adapter that calls into asyncio-only deps (boto3 in a threadpool).
-7. **Lazy imports for providers.** Importing the Anthropic adapter doesn't load `boto3`. Importing `any_agent_sdk` doesn't load any provider — they register lazily via entry points.
+7. **Lazy imports for providers.** Importing the Anthropic adapter doesn't load `boto3`. Importing `mantis_agent` doesn't load any provider — they register lazily via entry points.
 8. **No global state.** Every long-lived object (HTTP client, MCP connection pool, session store) hangs off the `Agent` instance or is passed explicitly.
 
 ## Module map
 
 ```
-any_agent_sdk/
+mantis_agent/
   __init__.py            # public API surface
   types.py               # universal Message, ContentBlock, Usage — msgspec
   events.py              # StreamEvent variants (tagged union)
@@ -77,7 +77,7 @@ any_agent_sdk/
     client.py            # MCP client (stdio + HTTP transports)
     server.py            # spawn + manage MCP servers as sub-agents' tool sources
   subagent.py            # sub-agent orchestration
-  cli.py                 # `any-agent` CLI
+  cli.py                 # `mantis-agent` CLI
 ```
 
 ## Milestones

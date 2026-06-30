@@ -55,7 +55,7 @@ class Tool:
 You can construct one manually if you don't want the decorator:
 
 ```python
-from any_agent_sdk import Tool
+from mantis_agent import Tool
 
 my_tool = Tool(
     name="lookup_user",
@@ -76,7 +76,7 @@ directly — pass tools via `options.tools` instead — but it's useful if
 you're composing dynamic tool sets:
 
 ```python
-from any_agent_sdk import ToolRegistry
+from mantis_agent import ToolRegistry
 
 reg = ToolRegistry()
 reg.add(get_weather)
@@ -98,7 +98,7 @@ Backed by Exa. Reads `EXA_API_KEY` from env if `api_key` isn't passed.
 Returns top-N URLs with titles and snippets.
 
 ```python
-from any_agent_sdk import WebSearch
+from mantis_agent import WebSearch
 
 options = {"tools": [WebSearch(num_results=10)]}
 ```
@@ -114,7 +114,7 @@ Fetches a URL and converts to clean markdown. Truncates at
 `max_chars` to fit in context.
 
 ```python
-from any_agent_sdk import WebFetch
+from mantis_agent import WebFetch
 
 options = {"tools": [WebFetch()]}
 ```
@@ -124,7 +124,7 @@ options = {"tools": [WebFetch()]}
 If you prefer functions over classes:
 
 ```python
-from any_agent_sdk import web_fetch, web_search
+from mantis_agent import web_fetch, web_search
 
 options = {"tools": [web_search, web_fetch]}
 ```
@@ -134,7 +134,7 @@ These are pre-instantiated default versions of the classes above.
 ## Tool errors
 
 ```python
-from any_agent_sdk import ToolExecutionError
+from mantis_agent import ToolExecutionError
 
 @tool
 async def query_db(sql: str) -> str:

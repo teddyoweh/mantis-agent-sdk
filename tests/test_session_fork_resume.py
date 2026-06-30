@@ -22,7 +22,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     AssistantMessage,
     Checkpoint,
     InMemorySessionStore,
@@ -68,7 +68,7 @@ def _both_stores() -> list:
         return InMemorySessionStore()
 
     def _mk_sqlite() -> SqliteSessionStore:
-        td = tempfile.mkdtemp(prefix="anyagent_sess_")
+        td = tempfile.mkdtemp(prefix="mantis_agent_sess_")
         return SqliteSessionStore(str(Path(td) / "s.db"))
 
     return [

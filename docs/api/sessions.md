@@ -94,7 +94,7 @@ class SessionStore(Protocol):
 Non-persistent. Useful for tests.
 
 ```python
-from any_agent_sdk import InMemorySessionStore
+from mantis_agent import InMemorySessionStore
 store = InMemorySessionStore()
 ```
 
@@ -103,8 +103,8 @@ store = InMemorySessionStore()
 Single-file SQLite.
 
 ```python
-from any_agent_sdk import SqliteSessionStore
-store = SqliteSessionStore("~/.any-agent/sessions.db")
+from mantis_agent import SqliteSessionStore
+store = SqliteSessionStore("~/.mantis-agent/sessions.db")
 ```
 
 Schema:
@@ -119,7 +119,7 @@ Schema:
 ## `SessionNotFoundError`
 
 ```python
-from any_agent_sdk import SessionNotFoundError
+from mantis_agent import SessionNotFoundError
 
 try:
     s = await store.load("does-not-exist")
@@ -132,18 +132,18 @@ except SessionNotFoundError as e:
 The on-disk format used by the file-backed default store.
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     JsonlTranscript,
     read_transcript,
     iter_transcripts,
 )
 
 # Single file
-transcript = read_transcript("~/.any-agent/sessions/abc.jsonl")
+transcript = read_transcript("~/.mantis-agent/sessions/abc.jsonl")
 print(len(transcript.messages))
 
 # Walk all transcripts
-for path, t in iter_transcripts("~/.any-agent/sessions"):
+for path, t in iter_transcripts("~/.mantis-agent/sessions"):
     print(path, len(t.messages))
 ```
 

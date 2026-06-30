@@ -1,6 +1,6 @@
 """Verify the version contract.
 
-`any_agent_sdk.__version__` is the SemVer label users see. It must:
+`mantis_agent.__version__` is the SemVer label users see. It must:
   * be a non-empty string,
   * match the version declared in ``pyproject.toml``,
   * parse as semver (MAJOR.MINOR.PATCH with optional pre-release/build),
@@ -16,7 +16,7 @@ import tomllib
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 
-import any_agent_sdk
+import mantis_agent
 
 
 # Strict SemVer 2.0.0 regex, lifted from https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
@@ -36,43 +36,43 @@ def _pyproject_version() -> str:
 
 
 def test_version_is_non_empty_string() -> None:
-    assert isinstance(any_agent_sdk.__version__, str)
-    assert any_agent_sdk.__version__.strip() == any_agent_sdk.__version__
-    assert any_agent_sdk.__version__ != ""
+    assert isinstance(mantis_agent.__version__, str)
+    assert mantis_agent.__version__.strip() == mantis_agent.__version__
+    assert mantis_agent.__version__ != ""
 
 
 def test_version_matches_pyproject() -> None:
     """The shipped version must match the build manifest."""
-    assert any_agent_sdk.__version__ == _pyproject_version(), (
-        f"any_agent_sdk.__version__ ({any_agent_sdk.__version__!r}) drifted from "
+    assert mantis_agent.__version__ == _pyproject_version(), (
+        f"mantis_agent.__version__ ({mantis_agent.__version__!r}) drifted from "
         f"pyproject.toml ({_pyproject_version()!r}). Update both together."
     )
 
 
 def test_version_matches_installed_metadata() -> None:
     """importlib.metadata is the source of truth at runtime."""
-    assert importlib_metadata.version("any-agent-sdk") == any_agent_sdk.__version__
+    assert importlib_metadata.version("mantis-agent-sdk") == mantis_agent.__version__
 
 
 def test_version_is_valid_semver() -> None:
-    assert SEMVER_RE.match(any_agent_sdk.__version__), (
-        f"{any_agent_sdk.__version__!r} is not valid SemVer 2.0.0"
+    assert SEMVER_RE.match(mantis_agent.__version__), (
+        f"{mantis_agent.__version__!r} is not valid SemVer 2.0.0"
     )
 
 
 def test_version_is_at_least_1_0_0() -> None:
     """We don't accidentally downgrade past 1.0."""
-    m = SEMVER_RE.match(any_agent_sdk.__version__)
+    m = SEMVER_RE.match(mantis_agent.__version__)
     assert m is not None
     major = int(m.group("major"))
     assert major >= 1, (
-        f"Version {any_agent_sdk.__version__!r} dropped back below 1.x. "
+        f"Version {mantis_agent.__version__!r} dropped back below 1.x. "
         f"1.0.0 was the stable cut; only forward MAJOR bumps are allowed."
     )
 
 
 def test_version_is_exported_in_all() -> None:
-    assert "__version__" in any_agent_sdk.__all__
+    assert "__version__" in mantis_agent.__all__
 
 
 def test_version_detector_has_fallback() -> None:
@@ -83,7 +83,7 @@ def test_version_detector_has_fallback() -> None:
     something invalid, the wheel will silently lie about its version. Catch
     that here by parsing the literal source.
     """
-    src = Path(any_agent_sdk.__file__).read_text()
+    src = Path(mantis_agent.__file__).read_text()
     m = re.search(r'return\s+"([^"]+)"\s*\#.*?defensive|return\s+"([^"]+)"', src)
     # Find the fallback literal — it's the one inside _detect_version()'s except.
     fallback_match = re.search(

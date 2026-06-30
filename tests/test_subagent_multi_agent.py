@@ -25,7 +25,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     AssistantMessage,
     SubAgentSpec,
@@ -39,7 +39,7 @@ from any_agent_sdk import (
     as_subagent_tool,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -49,8 +49,8 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.subagent import _extract_final_text
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.subagent import _extract_final_text
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +568,7 @@ def test_multi_agent_orchestration_parent_delegates_to_subagent():
 
 
 def test_multi_agent_research_example_runs_in_mock_mode():
-    """Run ``python -m any_agent_sdk.examples.multi_agent_research`` in
+    """Run ``python -m mantis_agent.examples.multi_agent_research`` in
     mock mode as a subprocess. Verifies the example's wiring stays
     runnable end-to-end without touching the network.
 
@@ -578,16 +578,16 @@ def test_multi_agent_research_example_runs_in_mock_mode():
 
     repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env["ANY_AGENT_MOCK"] = "1"
+    env["MANTIS_AGENT_MOCK"] = "1"
     # Don't let the example try to read or write user memory in CI.
-    env.setdefault("ANY_AGENT_HOME", str(repo_root / ".pytest_anyagent_home"))
-    Path(env["ANY_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
+    env.setdefault("MANTIS_AGENT_HOME", str(repo_root / ".pytest_mantis_agent_home"))
+    Path(env["MANTIS_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "any_agent_sdk.examples.multi_agent_research",
+            "mantis_agent.examples.multi_agent_research",
         ],
         cwd=str(repo_root),
         env=env,
@@ -618,7 +618,7 @@ def test_multi_agent_research_example_runs_in_mock_mode():
 
 def test_public_exports_present():
     """Sub-agent helpers should be importable from the top-level package."""
-    import any_agent_sdk as pkg
+    import mantis_agent as pkg
 
     for name in (
         "SubAgentSpec",

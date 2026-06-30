@@ -5,8 +5,8 @@ Not a pytest run — examples take 10-60s each on CPU inference and we
 don't want them blocking CI. Run manually::
 
     ollama pull deepseek-r1:1.5b
-    ANY_AGENT_MODEL=deepseek-r1:1.5b \\
-    ANY_AGENT_BASE_URL=http://localhost:11434 \\
+    MANTIS_AGENT_MODEL=deepseek-r1:1.5b \\
+    MANTIS_AGENT_BASE_URL=http://localhost:11434 \\
     python tests/run_verbatim_examples.py
 
 Exit code is non-zero if any example crashes (NOT if the model gives a
@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES_DIR = REPO_ROOT / "any_agent_sdk" / "examples"
+EXAMPLES_DIR = REPO_ROOT / "mantis_agent" / "examples"
 
 
 # Each entry: (filename, max_seconds, [args]). Args are typically empty
@@ -42,8 +42,8 @@ def run(name: str, deadline_s: int) -> tuple[str, str]:
 
     path = EXAMPLES_DIR / name
     env = dict(os.environ)
-    env.setdefault("ANY_AGENT_MODEL", "deepseek-r1:1.5b")
-    env.setdefault("ANY_AGENT_BASE_URL", "http://localhost:11434")
+    env.setdefault("MANTIS_AGENT_MODEL", "deepseek-r1:1.5b")
+    env.setdefault("MANTIS_AGENT_BASE_URL", "http://localhost:11434")
     # The subprocess starts fresh — make sure it can import the in-tree
     # package without ``pip install -e .`` being a prereq.
     existing_path = env.get("PYTHONPATH", "")
@@ -80,8 +80,8 @@ def run(name: str, deadline_s: int) -> tuple[str, str]:
 def main() -> int:
     print(
         f"Running {len(EXAMPLES_TO_RUN)} verbatim Claude SDK examples "
-        f"against model={os.environ.get('ANY_AGENT_MODEL', 'deepseek-r1:1.5b')}, "
-        f"backend={os.environ.get('ANY_AGENT_BASE_URL', 'http://localhost:11434')}\n"
+        f"against model={os.environ.get('MANTIS_AGENT_MODEL', 'deepseek-r1:1.5b')}, "
+        f"backend={os.environ.get('MANTIS_AGENT_BASE_URL', 'http://localhost:11434')}\n"
     )
 
     rows: list[tuple[str, str, str]] = []

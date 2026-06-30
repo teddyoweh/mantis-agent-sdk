@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import anyio
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     PermissionResultAllow,
     PermissionResultDeny,
@@ -22,7 +22,7 @@ from any_agent_sdk import (
     Usage,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -32,8 +32,8 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.permissions import Allow, PermissionContext
-from any_agent_sdk.providers.mock import MockProvider
+from mantis_agent.permissions import Allow, PermissionContext
+from mantis_agent.providers.mock import MockProvider
 
 
 def _tool_call_then_text(call_input: str, final_text: str) -> tuple[list, list]:

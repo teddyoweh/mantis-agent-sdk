@@ -1,6 +1,6 @@
 # Budget and limits
 
-`any-agent-sdk` tracks token usage and dollar cost across every turn of
+`mantis-agent-sdk` tracks token usage and dollar cost across every turn of
 every session. You can cap either, and every `ResultMessage` carries the
 final accounting.
 
@@ -11,7 +11,7 @@ the cap, the runtime raises `BudgetExceededError` *before* dispatching
 it.
 
 ```python
-from any_agent_sdk import BudgetExceededError, query
+from mantis_agent import BudgetExceededError, query
 
 try:
     async for msg in query(
@@ -60,7 +60,7 @@ contributed to the same session.
 
 ## Pricing table
 
-The pricing table lives in `any_agent_sdk/budget.py` as a `dict[str,
+The pricing table lives in `mantis_agent/budget.py` as a `dict[str,
 tuple[float, float]]` of `(input_per_million, output_per_million)`. The
 runtime looks up the model by name and applies the rates.
 
@@ -72,7 +72,7 @@ local ones).
 ### Adding / overriding a model
 
 ```python
-from any_agent_sdk.budget import register_pricing
+from mantis_agent.budget import register_pricing
 
 register_pricing("my-org/my-finetune", input=1.50, output=3.00)
 ```
@@ -89,7 +89,7 @@ options = {
 ## Cost from outside the session
 
 ```python
-from any_agent_sdk.budget import estimate_cost
+from mantis_agent.budget import estimate_cost
 
 cost = estimate_cost(
     model="gpt-4o-mini",

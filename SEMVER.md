@@ -1,24 +1,24 @@
 # Versioning Policy
 
-`any-agent-sdk` follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
+`mantis-agent-sdk` follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 from 1.0.0 onward.
 
 ## What is the "public API"
 
-The public API is **exactly the set of names in `any_agent_sdk.__all__`**.
+The public API is **exactly the set of names in `mantis_agent.__all__`**.
 
 ```python
-import any_agent_sdk
-print(any_agent_sdk.__all__)
+import mantis_agent
+print(mantis_agent.__all__)
 ```
 
 That list is locked by the test in `tests/test_public_api_surface.py`. Adding
 or removing entries requires updating the snapshot fixture, which makes the
 change explicit in code review.
 
-Anything else — including names imported at the top of `any_agent_sdk/__init__.py`
-but not listed in `__all__`, every submodule (`any_agent_sdk.providers.*`,
-`any_agent_sdk.streaming.*`, `any_agent_sdk.mcp.*`, etc.), every private
+Anything else — including names imported at the top of `mantis_agent/__init__.py`
+but not listed in `__all__`, every submodule (`mantis_agent.providers.*`,
+`mantis_agent.streaming.*`, `mantis_agent.mcp.*`, etc.), every private
 attribute on a public class — is **implementation detail**. It may move,
 rename, or disappear in any minor release. If you reach into it, pin a
 specific version.
@@ -69,9 +69,9 @@ over that period and is locked at 1.0.0. The pre-1.0 changelog is in
 
 ## Submodule layout — not part of the API
 
-Even though Python lets you `from any_agent_sdk.streaming.executor import StreamingToolExecutor`,
+Even though Python lets you `from mantis_agent.streaming.executor import StreamingToolExecutor`,
 **no submodule path is covered by SemVer**. The only stable import paths
-are `from any_agent_sdk import X` where `X` is in `__all__`. If a symbol
+are `from mantis_agent import X` where `X` is in `__all__`. If a symbol
 needs to be public, file an issue requesting that it be added to `__all__`.
 
 ## Verifying the surface
@@ -79,9 +79,9 @@ needs to be public, file an issue requesting that it be added to `__all__`.
 You can check the surface programmatically:
 
 ```python
-import any_agent_sdk
-expected = set(any_agent_sdk.__all__)
-actual = {name for name in dir(any_agent_sdk) if not name.startswith("_")}
+import mantis_agent
+expected = set(mantis_agent.__all__)
+actual = {name for name in dir(mantis_agent) if not name.startswith("_")}
 # `actual - expected` is the set of names you should NOT rely on.
 ```
 

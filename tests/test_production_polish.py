@@ -9,14 +9,14 @@ import anyio
 import httpx
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     MemoryEntry,
     save_memory_entry,
     update_memory_index,
 )
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.retry import RetryTransport, _parse_retry_after
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.retry import RetryTransport, _parse_retry_after
 
 
 # ---------------------------------------------------------------------------
@@ -25,21 +25,21 @@ from any_agent_sdk.retry import RetryTransport, _parse_retry_after
 
 
 @pytest.fixture
-def tmp_anyagent_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.setenv("ANYAGENT_HOME", str(tmp_path))
+def tmp_mantis_agent_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
     return tmp_path
 
 
 def test_agent_injects_memory_as_system_reminder_user_message(
-    tmp_anyagent_home: Path,
+    tmp_mantis_agent_home: Path,
 ) -> None:
     """When include_memory=True (default), MEMORY.md is wrapped in a
     ``<system-reminder>`` and injected as a synthetic isMeta user message
     at the head of the conversation when ``run()`` is invoked. The system
     prompt itself is left untouched — Claude SDK parity."""
 
-    from any_agent_sdk import UserMessage
-    from any_agent_sdk.events import (
+    from mantis_agent import UserMessage
+    from mantis_agent.events import (
         ContentBlockDelta,
         ContentBlockStart,
         ContentBlockStop,
@@ -48,7 +48,7 @@ def test_agent_injects_memory_as_system_reminder_user_message(
         MessageStop,
         TextDelta,
     )
-    from any_agent_sdk import TextBlock, Usage
+    from mantis_agent import TextBlock, Usage
 
     save_memory_entry(
         MemoryEntry(
@@ -99,12 +99,12 @@ def test_agent_injects_memory_as_system_reminder_user_message(
 
 
 def test_agent_include_memory_false_skips_injection(
-    tmp_anyagent_home: Path,
+    tmp_mantis_agent_home: Path,
 ) -> None:
     """Opt out via include_memory=False; no synthetic message is injected."""
 
-    from any_agent_sdk import UserMessage
-    from any_agent_sdk.events import (
+    from mantis_agent import UserMessage
+    from mantis_agent.events import (
         ContentBlockDelta,
         ContentBlockStart,
         ContentBlockStop,
@@ -113,7 +113,7 @@ def test_agent_include_memory_false_skips_injection(
         MessageStop,
         TextDelta,
     )
-    from any_agent_sdk import TextBlock, Usage
+    from mantis_agent import TextBlock, Usage
 
     save_memory_entry(
         MemoryEntry(slug="x", name="X", description="x", type="project", body="x")
@@ -146,11 +146,11 @@ def test_agent_include_memory_false_skips_injection(
         anyio.run(agent.aclose)
 
 
-def test_memory_missing_is_silent_noop(tmp_anyagent_home: Path) -> None:
+def test_memory_missing_is_silent_noop(tmp_mantis_agent_home: Path) -> None:
     """No MEMORY.md → no injection; system prompt unchanged; no crash."""
 
-    from any_agent_sdk import UserMessage
-    from any_agent_sdk.events import (
+    from mantis_agent import UserMessage
+    from mantis_agent.events import (
         ContentBlockDelta,
         ContentBlockStart,
         ContentBlockStop,
@@ -159,7 +159,7 @@ def test_memory_missing_is_silent_noop(tmp_anyagent_home: Path) -> None:
         MessageStop,
         TextDelta,
     )
-    from any_agent_sdk import TextBlock
+    from mantis_agent import TextBlock
 
     events = [
         MessageStart(message_id="m1", model="m"),
@@ -278,7 +278,7 @@ def test_retry_on_connect_error() -> None:
 def test_make_client_uses_retry_by_default() -> None:
     """Smoke test: make_client wires RetryTransport into the AsyncClient."""
 
-    from any_agent_sdk.http import make_client
+    from mantis_agent.http import make_client
 
     client = make_client(base_url="http://x.example/", retries=True)
     try:
@@ -295,7 +295,7 @@ def test_make_client_uses_retry_by_default() -> None:
 def test_make_client_can_disable_retries() -> None:
     """retries=False reverts to plain httpx transport."""
 
-    from any_agent_sdk.http import make_client
+    from mantis_agent.http import make_client
 
     client = make_client(base_url="http://x.example/", retries=False)
     try:

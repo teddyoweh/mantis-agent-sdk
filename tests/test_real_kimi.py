@@ -20,7 +20,7 @@ import os
 import anyio
 import pytest
 
-from any_agent_sdk import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
+from mantis_agent import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
 
 
 pytestmark = pytest.mark.skipif(
@@ -30,8 +30,8 @@ pytestmark = pytest.mark.skipif(
 
 
 # Moonshot's API uses these model identifiers.
-MODEL = os.environ.get("ANY_AGENT_KIMI_MODEL", "moonshot-v1-8k")
-BASE_URL = os.environ.get("ANY_AGENT_KIMI_BASE_URL", "https://api.moonshot.ai/v1")
+MODEL = os.environ.get("MANTIS_AGENT_KIMI_MODEL", "moonshot-v1-8k")
+BASE_URL = os.environ.get("MANTIS_AGENT_KIMI_BASE_URL", "https://api.moonshot.ai/v1")
 
 
 @tool

@@ -1,6 +1,6 @@
 # Models and backends
 
-`any-agent-sdk` ships seven backends. You almost never pick one by name —
+`mantis-agent-sdk` ships seven backends. You almost never pick one by name —
 the SDK auto-routes from the model string.
 
 ## Backends at a glance
@@ -8,33 +8,33 @@ the SDK auto-routes from the model string.
 | Backend | Use when | Routes from |
 |---|---|---|
 | `ollama` | You're running Ollama locally (or remote). | Model names with a tag form: `llama3.2:3b`, `qwen2.5:7b`, `deepseek-r1:1.5b`. |
-| `openai_compat` | Hosted OpenAI-compatible endpoints: vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras. | `ANY_AGENT_BASE_URL` set; or org-prefixed names like `Qwen/Qwen2.5-72B-Instruct`. |
+| `openai_compat` | Hosted OpenAI-compatible endpoints: vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras. | `MANTIS_AGENT_BASE_URL` set; or org-prefixed names like `Qwen/Qwen2.5-72B-Instruct`. |
 | `openai` | OpenAI proper. | `gpt-4*`, `gpt-3.5*`, `o1*`, `o3*`, `o4*`. |
 | `gemini` | Google Gemini via the OpenAI-compat endpoint. | `gemini-*`. |
 | `llamacpp` | Local llama.cpp `llama-server`. | `--backend llamacpp` or `base_url=http://localhost:8080/v1`. |
 | `tgi` | HuggingFace text-generation-inference. | `--backend tgi`. |
 | `modal` | Modal serverless GPUs. | `--backend modal` with a `MODAL_*` env. |
 | `anthropic_passthrough` | Parity testing against real Claude. | `claude-*` model names (only when `ANTHROPIC_API_KEY` is set). |
-| `mock` | Tests / smoke runs. | `ANY_AGENT_MOCK=1` env. |
+| `mock` | Tests / smoke runs. | `MANTIS_AGENT_MOCK=1` env. |
 
 ## Auto-routing rules
 
 The `routing` module maps model names to backends in priority order:
 
-1. Explicit `backend=` or `ANY_AGENT_BACKEND` env wins.
-2. `ANY_AGENT_MOCK=1` → `mock`.
+1. Explicit `backend=` or `MANTIS_AGENT_BACKEND` env wins.
+2. `MANTIS_AGENT_MOCK=1` → `mock`.
 3. Ollama tag form (`name:tag`) → `ollama`.
 4. `gpt-*` / `o[134]*` → `openai`.
 5. `gemini-*` → `gemini`.
 6. `claude-*` with `ANTHROPIC_API_KEY` → `anthropic_passthrough`.
 7. Org-prefixed (`Qwen/...`, `meta-llama/...`) → `openai_compat`
-   (needs `ANY_AGENT_BASE_URL`).
+   (needs `MANTIS_AGENT_BASE_URL`).
 8. Otherwise → error with a hint about which env vars to set.
 
 If you're unsure what a name will route to:
 
 ```python
-from any_agent_sdk.routing import resolve_backend
+from mantis_agent.routing import resolve_backend
 print(resolve_backend("qwen2.5:7b"))         # → 'ollama'
 print(resolve_backend("gpt-4o-mini"))        # → 'openai'
 print(resolve_backend("Qwen/Qwen2.5-72B"))   # → 'openai_compat'
@@ -51,8 +51,8 @@ options = {
 }
 ```
 
-Or set `ANY_AGENT_BACKEND=openai_compat`, `ANY_AGENT_BASE_URL=…`,
-`ANY_AGENT_API_KEY=…` and skip the explicit fields.
+Or set `MANTIS_AGENT_BACKEND=openai_compat`, `MANTIS_AGENT_BASE_URL=…`,
+`MANTIS_AGENT_API_KEY=…` and skip the explicit fields.
 
 ## Capabilities
 
@@ -60,7 +60,7 @@ Every model also carries a `ModelCapability` row that tells the runtime
 *how* to drive tool use. The capability table currently covers 30+ models:
 
 ```python
-from any_agent_sdk import lookup_model, resolve_tool_use_path
+from mantis_agent import lookup_model, resolve_tool_use_path
 
 cap = lookup_model("deepseek-r1:1.5b")
 print(cap.tool_use_path)   # ToolUsePath.XML_PROMPT_ENGINEERED
@@ -92,21 +92,21 @@ options = {
 ### Ollama
 
 - Auto-discovered on `http://localhost:11434` unless overridden by
-  `ANY_AGENT_BASE_URL`.
+  `MANTIS_AGENT_BASE_URL`.
 - Native tool use supported for Llama 3.1+ and Qwen 2.5+.
 - `setup-local` writes a startup-on-first-run launcher for the Ollama
   daemon — see [Local setup](../getting-started/local-setup.md).
 
 ### OpenAI-compat (vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras)
 
-- Set `ANY_AGENT_BASE_URL` and `ANY_AGENT_API_KEY`.
+- Set `MANTIS_AGENT_BASE_URL` and `MANTIS_AGENT_API_KEY`.
 - Tool use goes via native `tools[]`.
 - Some providers (Cerebras, Groq) have stricter context windows; the
   capability table tracks these.
 
 ### llama.cpp
 
-- Use `--jinja` to enable native tool-use templates. `any-agent-sdk` does
+- Use `--jinja` to enable native tool-use templates. `mantis-agent-sdk` does
   this for you when starting via `setup-local-llamacpp`.
 - Without `--jinja`, falls back to `GRAMMAR_CONSTRAINED_JSON`.
 
@@ -119,5 +119,5 @@ options = {
 ### Anthropic passthrough
 
 - **Only for parity testing**. Pins to the real Anthropic API so you can
-  compare any-agent-sdk's behaviour against the source.
+  compare mantis-agent-sdk's behaviour against the source.
 - Not part of the 1.0 public surface — don't build production code on it.

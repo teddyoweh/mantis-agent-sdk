@@ -16,14 +16,14 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
-from any_agent_sdk.capabilities import (
+from mantis_agent import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
+from mantis_agent.capabilities import (
     HOSTED_PROFILES,
     hosted_profile_from_url,
     lookup_model,
     resolve_tool_use_path,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -33,8 +33,8 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.types import Usage
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.types import Usage
 
 
 # ---------------------------------------------------------------------------

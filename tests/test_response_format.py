@@ -23,17 +23,17 @@ from typing import Any
 import httpx
 import pytest
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     ClaudeAgentOptions,
     ResponseFormatError,
     normalize_response_format,
     translate_response_format,
 )
-from any_agent_sdk.providers.mock import MockProvider
-from any_agent_sdk.providers.ollama import OllamaProvider
-from any_agent_sdk.providers.openai_compat import OpenAICompatProvider
-from any_agent_sdk.types import UserMessage
+from mantis_agent.providers.mock import MockProvider
+from mantis_agent.providers.ollama import OllamaProvider
+from mantis_agent.providers.openai_compat import OpenAICompatProvider
+from mantis_agent.types import UserMessage
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +359,7 @@ class TestAgentWiring:
         ``parameters={"grammar":...}``; the user may have set
         ``parameters={"seed": 42}`` — both should survive."""
 
-        from any_agent_sdk import response_format as rf_mod
+        from mantis_agent import response_format as rf_mod
 
         # Use the TGI translation directly to exercise the parameters path
         # without spinning up a TGI provider.
@@ -416,7 +416,7 @@ class TestClaudeAgentOptionsWiring:
         loop. Without it the value would end up on ``Agent.extra`` and
         never reach the translator."""
 
-        from any_agent_sdk.query import _agent_from_options
+        from mantis_agent.query import _agent_from_options
 
         # Inject a mock provider via the ``provider`` opt so the agent
         # doesn't try to dial a real backend.
@@ -616,7 +616,7 @@ class TestOllamaWire:
 class TestPublicAPI:
 
     def test_exports_are_importable(self) -> None:
-        import any_agent_sdk as a
+        import mantis_agent as a
 
         assert hasattr(a, "ResponseFormatError")
         assert hasattr(a, "normalize_response_format")
@@ -624,7 +624,7 @@ class TestPublicAPI:
         assert a.ResponseFormatError.__name__ == "ResponseFormatError"
 
     def test_exports_listed_in___all__(self) -> None:
-        from any_agent_sdk import __all__
+        from mantis_agent import __all__
 
         for n in (
             "ResponseFormatError",

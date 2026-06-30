@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import msgspec
 
-from any_agent_sdk import (
+from mantis_agent import (
     APIAssistantMessage,
     APIUserMessage,
     ModelUsage,

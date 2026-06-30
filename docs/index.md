@@ -1,8 +1,8 @@
-# any-agent-sdk
+# mantis-agent-sdk
 
 **Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents.**
 
-`any-agent-sdk` is the [Claude Agent SDK](https://docs.anthropic.com/) API
+`mantis-agent-sdk` is the [Claude Agent SDK](https://docs.anthropic.com/) API
 surface, reimplemented on top of any model you can call from Python: Ollama,
 vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras, llama.cpp, TGI,
 OpenAI, Gemini — and the Anthropic API too (via the `anthropic_passthrough`
@@ -12,7 +12,7 @@ If you have working Claude SDK code, you almost always change two lines:
 
 ```python
 # from claude_agent_sdk import query, ClaudeAgentOptions
-from any_agent_sdk import query, ClaudeAgentOptions
+from mantis_agent import query, ClaudeAgentOptions
 ```
 
 The yielded message shapes match. `ClaudeAgentOptions`, `Plugin`,
@@ -68,15 +68,15 @@ The yielded message shapes match. `ClaudeAgentOptions`, `Plugin`,
 ## Install
 
 ```bash
-pip install any-agent-sdk
+pip install mantis-agent-sdk
 ```
 
 That's all you need for hosted backends (Ollama, OpenAI-compat, OpenAI,
 Anthropic). For local CPU-friendly models:
 
 ```bash
-pip install any-agent-sdk
-any-agent setup-local
+pip install mantis-agent-sdk
+mantis-agent setup-local
 ```
 
 This installs Ollama, pulls a small CPU-friendly model
@@ -89,7 +89,7 @@ Windows are supported.
 
 ```python
 import asyncio
-from any_agent_sdk import query, tool
+from mantis_agent import query, tool
 
 
 @tool
@@ -137,5 +137,5 @@ asyncio.run(main())
 
 - Python 3.11+
 - Apache-2.0 licensed
-- See the [Roadmap](https://github.com/teddyoweh/any-agent-sdk#roadmap) on
+- See the [Roadmap](https://github.com/teddyoweh/mantis-agent-sdk#roadmap) on
   GitHub for current 1.0 prerequisites

@@ -1,13 +1,13 @@
 # Local setup
 
-If you don't have GPU access, `any-agent setup-local` is the fastest path to
+If you don't have GPU access, `mantis-agent setup-local` is the fastest path to
 a working agent. It runs CPU-friendly models locally so you can develop,
 test, and run examples without an API key.
 
-## `any-agent setup-local` (Ollama)
+## `mantis-agent setup-local` (Ollama)
 
 ```bash
-any-agent setup-local
+mantis-agent setup-local
 ```
 
 What this does, in order:
@@ -28,7 +28,7 @@ What this does, in order:
 ### Picking a model
 
 ```bash
-any-agent setup-local --list
+mantis-agent setup-local --list
 ```
 
 prints the catalog. Each entry shows the model tag, RAM footprint, and a
@@ -42,7 +42,7 @@ short note about strengths. The catalog covers:
 
 ```python
 import asyncio
-from any_agent_sdk import query
+from mantis_agent import query
 
 async def main():
     async for msg in query(
@@ -56,33 +56,33 @@ asyncio.run(main())
 
 If that prints assistant + result messages, the install is working.
 
-## `any-agent setup-local-llamacpp` (llama.cpp)
+## `mantis-agent setup-local-llamacpp` (llama.cpp)
 
 If you prefer GGUF + llama.cpp over Ollama:
 
 ```bash
-any-agent setup-local-llamacpp
+mantis-agent setup-local-llamacpp
 ```
 
 This:
 
-1. Clones llama.cpp into `~/.any-agent/llama.cpp/`.
+1. Clones llama.cpp into `~/.mantis-agent/llama.cpp/`.
 2. Builds it from source (`make` / `cmake`).
-3. Downloads a default GGUF model into `~/.any-agent/models/`.
+3. Downloads a default GGUF model into `~/.mantis-agent/models/`.
 4. Starts `llama-server` on `localhost:8080`.
 5. Smoke-tests via the OpenAI-compatible endpoint.
 
-After that, `any-agent-sdk` auto-routes any `--backend llamacpp` or
+After that, `mantis-agent-sdk` auto-routes any `--backend llamacpp` or
 `base_url=http://localhost:8080/v1` request through the
 [OpenAI-compat provider](../guides/models-and-backends.md).
 
 ## Where state lives
 
-`any-agent-sdk` writes nothing to your project. Everything goes under
-`~/.any-agent/`:
+`mantis-agent-sdk` writes nothing to your project. Everything goes under
+`~/.mantis-agent/`:
 
 ```
-~/.any-agent/
+~/.mantis-agent/
 ├── settings.json       merged settings (see Configuration)
 ├── memory/             persistent memory entries (see Memory guide)
 ├── sessions/           JSONL transcripts
@@ -90,4 +90,4 @@ After that, `any-agent-sdk` auto-routes any `--backend llamacpp` or
 └── llama.cpp/          llama.cpp build tree (if you used it)
 ```
 
-You can override the root with `ANY_AGENT_HOME=/path`.
+You can override the root with `MANTIS_AGENT_HOME=/path`.

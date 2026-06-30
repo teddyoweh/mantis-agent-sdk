@@ -3,7 +3,7 @@
 The example has two run modes:
 
   * **Real Fireworks** — guarded by ``$FIREWORKS_API_KEY``.
-  * **Offline mock** — guarded by ``ANY_AGENT_MOCK=1``; uses a scripted
+  * **Offline mock** — guarded by ``MANTIS_AGENT_MOCK=1``; uses a scripted
     :class:`MockProvider` to exercise the tool-call → tool-result →
     final-answer path with zero network.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 import anyio
 import pytest
 
-from any_agent_sdk.examples import fireworks_hosted as example
+from mantis_agent.examples import fireworks_hosted as example
 
 
 # ---------------------------------------------------------------------------
@@ -77,13 +77,13 @@ def test_mock_provider_yields_two_turns_in_order():
     text answer → stop. If the order ever flips, the example deadlocks
     (parent expects a tool result before any text). Lock the contract."""
 
-    from any_agent_sdk.events import (
+    from mantis_agent.events import (
         ContentBlockStart,
         ContentBlockStop,
         MessageStart,
         MessageStop,
     )
-    from any_agent_sdk.types import TextBlock, ToolUseBlock
+    from mantis_agent.types import TextBlock, ToolUseBlock
 
     provider = example._build_mock_provider()
 
@@ -156,8 +156,8 @@ def test_main_mock_mode_exercises_tool_path(capsys, monkeypatch, tmp_path):
     re-check externally so a regression in the print path also fails.
     """
 
-    monkeypatch.setenv("ANY_AGENT_MOCK", "1")
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.setenv("MANTIS_AGENT_MOCK", "1")
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
     # Defensive: make sure a stray real key doesn't shift behavior.
     monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
 
@@ -174,16 +174,16 @@ def test_main_live_mode_without_api_key_raises_systemexit(monkeypatch, tmp_path)
     — not silently call the API and 401, and not crash with a KeyError.
     """
 
-    monkeypatch.delenv("ANY_AGENT_MOCK", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_MOCK", raising=False)
     monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
-    monkeypatch.setenv("ANY_AGENT_HOME", str(tmp_path / "anyagent_home"))
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "mantis_agent_home"))
 
     with pytest.raises(SystemExit) as excinfo:
         anyio.run(example.main)
 
     msg = str(excinfo.value)
     assert "FIREWORKS_API_KEY" in msg
-    assert "ANY_AGENT_MOCK=1" in msg
+    assert "MANTIS_AGENT_MOCK=1" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_example_module_exposes_expected_top_level_names():
 
 
 def test_example_runs_in_mock_mode_via_subprocess(tmp_path):
-    """Run ``python -m any_agent_sdk.examples.fireworks_hosted`` in mock
+    """Run ``python -m mantis_agent.examples.fireworks_hosted`` in mock
     mode as a subprocess. Catches regressions where in-process tests
     pass but the example's ``if __name__ == '__main__'`` path is broken
     (e.g. asyncio.run + nested loop interactions, sys.exit codes, etc.).
@@ -215,16 +215,16 @@ def test_example_runs_in_mock_mode_via_subprocess(tmp_path):
 
     repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env["ANY_AGENT_MOCK"] = "1"
-    env["ANY_AGENT_HOME"] = str(tmp_path / "anyagent_home")
+    env["MANTIS_AGENT_MOCK"] = "1"
+    env["MANTIS_AGENT_HOME"] = str(tmp_path / "mantis_agent_home")
     env.pop("FIREWORKS_API_KEY", None)
-    Path(env["ANY_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
+    Path(env["MANTIS_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "any_agent_sdk.examples.fireworks_hosted",
+            "mantis_agent.examples.fireworks_hosted",
         ],
         cwd=str(repo_root),
         env=env,
@@ -256,16 +256,16 @@ def test_example_subprocess_without_api_key_exits_nonzero(tmp_path):
 
     repo_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env.pop("ANY_AGENT_MOCK", None)
+    env.pop("MANTIS_AGENT_MOCK", None)
     env.pop("FIREWORKS_API_KEY", None)
-    env["ANY_AGENT_HOME"] = str(tmp_path / "anyagent_home")
-    Path(env["ANY_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
+    env["MANTIS_AGENT_HOME"] = str(tmp_path / "mantis_agent_home")
+    Path(env["MANTIS_AGENT_HOME"]).mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
-            "any_agent_sdk.examples.fireworks_hosted",
+            "mantis_agent.examples.fireworks_hosted",
         ],
         cwd=str(repo_root),
         env=env,
@@ -279,4 +279,4 @@ def test_example_subprocess_without_api_key_exits_nonzero(tmp_path):
     )
     combined = result.stdout + result.stderr
     assert "FIREWORKS_API_KEY" in combined
-    assert "ANY_AGENT_MOCK=1" in combined
+    assert "MANTIS_AGENT_MOCK=1" in combined

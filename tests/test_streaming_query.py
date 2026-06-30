@@ -1,6 +1,6 @@
 """Streaming-mode rewrite of the TS-SDK-shape ``query()``.
 
-The dict-options branch in ``any_agent_sdk.query.query`` used to buffer
+The dict-options branch in ``mantis_agent.query.query`` used to buffer
 every Message via ``await agent.run(...)`` and *then* translate them to
 SDK shapes. That defeated the whole point of mid-stream tool dispatch —
 consumers couldn't see the first ``SDKAssistantMessage`` until the
@@ -36,15 +36,15 @@ from __future__ import annotations
 import anyio
 import pytest
 
-mock_module = pytest.importorskip("any_agent_sdk.providers.mock")
+mock_module = pytest.importorskip("mantis_agent.providers.mock")
 
-from any_agent_sdk import (  # noqa: E402
+from mantis_agent import (  # noqa: E402
     TextBlock,
     ToolUseBlock,
     Usage,
     tool,
 )
-from any_agent_sdk.events import (  # noqa: E402
+from mantis_agent.events import (  # noqa: E402
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -54,8 +54,8 @@ from any_agent_sdk.events import (  # noqa: E402
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.providers.mock import MockProvider  # noqa: E402
-from any_agent_sdk.query import (  # noqa: E402
+from mantis_agent.providers.mock import MockProvider  # noqa: E402
+from mantis_agent.query import (  # noqa: E402
     SDKAssistantMessage,
     SDKResultMessage,
     SDKSystemMessage,

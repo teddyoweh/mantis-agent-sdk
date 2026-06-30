@@ -1,6 +1,6 @@
 """Lock the 1.0 public API surface.
 
-The set of names in ``any_agent_sdk.__all__`` is the SemVer-covered
+The set of names in ``mantis_agent.__all__`` is the SemVer-covered
 public API per ``SEMVER.md``. This test compares it against the
 snapshot in ``tests/public_api_surface.txt``.
 
@@ -17,14 +17,14 @@ Other invariants enforced:
   * every name in __all__ resolves to an attribute on the package,
   * no name in __all__ is a bare ``_underscore`` name,
   * __all__ contains no duplicates,
-  * every public name is also reachable as ``from any_agent_sdk import X``.
+  * every public name is also reachable as ``from mantis_agent import X``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import any_agent_sdk
+import mantis_agent
 
 SURFACE_FILE = Path(__file__).parent / "public_api_surface.txt"
 
@@ -43,7 +43,7 @@ def test_snapshot_file_exists() -> None:
 
 def test_all_matches_snapshot() -> None:
     snapshot = _load_snapshot()
-    live = set(any_agent_sdk.__all__)
+    live = set(mantis_agent.__all__)
     added = sorted(live - snapshot)
     removed = sorted(snapshot - live)
     msg_parts: list[str] = []
@@ -65,16 +65,16 @@ def test_all_matches_snapshot() -> None:
 
 def test_all_entries_are_attributes() -> None:
     """Every name we promise must actually be importable."""
-    missing = [name for name in any_agent_sdk.__all__ if not hasattr(any_agent_sdk, name)]
+    missing = [name for name in mantis_agent.__all__ if not hasattr(mantis_agent, name)]
     assert not missing, (
-        f"Names in __all__ that are not attributes of any_agent_sdk: {missing}"
+        f"Names in __all__ that are not attributes of mantis_agent: {missing}"
     )
 
 
 def test_all_has_no_duplicates() -> None:
     seen: set[str] = set()
     dupes: list[str] = []
-    for name in any_agent_sdk.__all__:
+    for name in mantis_agent.__all__:
         if name in seen:
             dupes.append(name)
         seen.add(name)
@@ -83,18 +83,18 @@ def test_all_has_no_duplicates() -> None:
 
 def test_all_has_no_private_names() -> None:
     """``_underscore`` names shouldn't appear in __all__ — they're conventionally private."""
-    private = [n for n in any_agent_sdk.__all__ if n.startswith("_") and n != "__version__"]
+    private = [n for n in mantis_agent.__all__ if n.startswith("_") and n != "__version__"]
     assert not private, (
         f"__all__ should not contain private (_underscore) names: {private}"
     )
 
 
 def test_all_is_importable_via_star() -> None:
-    """``from any_agent_sdk import X`` works for every name in __all__."""
+    """``from mantis_agent import X`` works for every name in __all__."""
     failures: list[tuple[str, str]] = []
-    for name in any_agent_sdk.__all__:
+    for name in mantis_agent.__all__:
         try:
-            obj = getattr(any_agent_sdk, name)
+            obj = getattr(mantis_agent, name)
             assert obj is not None or name == "__version__"  # __version__ is str, fine
         except Exception as exc:  # pragma: no cover - guarded above
             failures.append((name, repr(exc)))
@@ -110,7 +110,7 @@ def test_snapshot_is_alphabetized() -> None:
     ]
     assert raw == sorted(raw), (
         "tests/public_api_surface.txt is not alphabetized. Regenerate with:\n"
-        '  python -c "import any_agent_sdk; '
-        "print('\\n'.join(sorted(any_agent_sdk.__all__)))"
+        '  python -c "import mantis_agent; '
+        "print('\\n'.join(sorted(mantis_agent.__all__)))"
         '" > tests/public_api_surface.txt'
     )

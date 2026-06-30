@@ -41,8 +41,8 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from any_agent_sdk import tool
-from any_agent_sdk.mcp import (
+from mantis_agent import tool
+from mantis_agent.mcp import (
     ElicitationRequest,
     ElicitationResult,
     MCPClient,
@@ -52,7 +52,7 @@ from any_agent_sdk.mcp import (
     SamplingResult,
     create_sdk_server,
 )
-from any_agent_sdk.mcp.server import SdkServer
+from mantis_agent.mcp.server import SdkServer
 
 
 pytestmark = pytest.mark.anyio

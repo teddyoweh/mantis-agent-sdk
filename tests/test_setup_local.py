@@ -1,4 +1,4 @@
-"""``any-agent setup-local`` — CPU-friendly model catalog + install helper.
+"""``mantis-agent setup-local`` — CPU-friendly model catalog + install helper.
 
 These tests cover the pure / mockable bits: the catalog shape, the
 default recommendation, environment detection, and that the CLI
@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 import pytest
 
-from any_agent_sdk import cli
-from any_agent_sdk import setup_local as setup_local_mod
-from any_agent_sdk.setup_local import (
+from mantis_agent import cli
+from mantis_agent import setup_local as setup_local_mod
+from mantis_agent.setup_local import (
     CPU_FRIENDLY_MODELS,
     DEFAULT_RECOMMENDATION,
     LocalModel,
@@ -97,7 +97,7 @@ def test_is_ollama_running_returns_false_for_unreachable_host() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI plumbing — `any-agent setup-local --list`
+# CLI plumbing — `mantis-agent setup-local --list`
 # ---------------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ def test_setup_local_command_registered() -> None:
 
 
 def test_setup_local_list_prints_catalog(capsys: pytest.CaptureFixture[str]) -> None:
-    """`any-agent setup-local --list` should print every model tag."""
+    """`mantis-agent setup-local --list` should print every model tag."""
 
     print_model_table()
     out = capsys.readouterr().out
@@ -141,9 +141,9 @@ def test_start_ollama_server_short_circuits_when_already_running() -> None:
     """If the daemon already answers, we must not spawn a second one."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=True
+        "mantis_agent.setup_local.is_ollama_running", return_value=True
     ) as running, patch(
-        "any_agent_sdk.setup_local.subprocess.Popen"
+        "mantis_agent.setup_local.subprocess.Popen"
     ) as popen:
         ok, log_path = start_ollama_server()
     assert ok is True
@@ -156,11 +156,11 @@ def test_start_ollama_server_returns_false_when_not_installed() -> None:
     """No ollama on PATH → can't start it. Don't try."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=False
+        "mantis_agent.setup_local.is_ollama_running", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=False
+        "mantis_agent.setup_local.is_ollama_installed", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.subprocess.Popen"
+        "mantis_agent.setup_local.subprocess.Popen"
     ) as popen:
         ok, log_path = start_ollama_server()
     assert ok is False
@@ -178,13 +178,13 @@ def test_start_ollama_server_spawns_and_polls_until_ready() -> None:
         return next(probes)
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=True
+        "mantis_agent.setup_local.is_ollama_installed", return_value=True
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_running", side_effect=fake_running
+        "mantis_agent.setup_local.is_ollama_running", side_effect=fake_running
     ), patch(
-        "any_agent_sdk.setup_local.subprocess.Popen"
+        "mantis_agent.setup_local.subprocess.Popen"
     ) as popen, patch(
-        "any_agent_sdk.setup_local.time.sleep"  # don't actually sleep in tests
+        "mantis_agent.setup_local.time.sleep"  # don't actually sleep in tests
     ):
         ok, log_path = start_ollama_server(timeout_s=5.0)
 
@@ -192,7 +192,7 @@ def test_start_ollama_server_spawns_and_polls_until_ready() -> None:
     assert log_path is not None
     assert popen.call_count == 1
     # We MUST detach the daemon — otherwise it dies when the user's
-    # `any-agent setup-local` process exits.
+    # `mantis-agent setup-local` process exits.
     _, kwargs = popen.call_args
     if "start_new_session" in kwargs:
         assert kwargs["start_new_session"] is True
@@ -205,13 +205,13 @@ def test_start_ollama_server_times_out_cleanly() -> None:
     """If the daemon never answers, return False — don't hang forever."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=True
+        "mantis_agent.setup_local.is_ollama_installed", return_value=True
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=False
+        "mantis_agent.setup_local.is_ollama_running", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.subprocess.Popen"
+        "mantis_agent.setup_local.subprocess.Popen"
     ), patch(
-        "any_agent_sdk.setup_local.time.sleep"
+        "mantis_agent.setup_local.time.sleep"
     ):
         ok, log_path = start_ollama_server(timeout_s=0.1)
 
@@ -224,16 +224,16 @@ def test_run_setup_local_auto_starts_server_by_default() -> None:
     `ollama serve` ourselves when it's installed but not running."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=True
+        "mantis_agent.setup_local.is_ollama_installed", return_value=True
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=False
+        "mantis_agent.setup_local.is_ollama_running", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.start_ollama_server",
+        "mantis_agent.setup_local.start_ollama_server",
         return_value=(True, "/tmp/ollama.log"),
     ) as starter, patch(
-        "any_agent_sdk.setup_local.pull_model", return_value=0
+        "mantis_agent.setup_local.pull_model", return_value=0
     ), patch(
-        "any_agent_sdk.setup_local.smoke_test", return_value=True
+        "mantis_agent.setup_local.smoke_test", return_value=True
     ):
         rc = run_setup_local(skip_smoke_test=True)
 
@@ -248,11 +248,11 @@ def test_run_setup_local_can_opt_out_of_auto_start(
     'go run ollama serve' and exit 1."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=True
+        "mantis_agent.setup_local.is_ollama_installed", return_value=True
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=False
+        "mantis_agent.setup_local.is_ollama_running", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.start_ollama_server"
+        "mantis_agent.setup_local.start_ollama_server"
     ) as starter:
         rc = run_setup_local(auto_start_server=False)
 
@@ -269,11 +269,11 @@ def test_run_setup_local_reports_when_auto_start_fails(
     actually debug — don't just say 'failed'."""
 
     with patch(
-        "any_agent_sdk.setup_local.is_ollama_installed", return_value=True
+        "mantis_agent.setup_local.is_ollama_installed", return_value=True
     ), patch(
-        "any_agent_sdk.setup_local.is_ollama_running", return_value=False
+        "mantis_agent.setup_local.is_ollama_running", return_value=False
     ), patch(
-        "any_agent_sdk.setup_local.start_ollama_server",
+        "mantis_agent.setup_local.start_ollama_server",
         return_value=(False, "/tmp/ollama-fail.log"),
     ):
         rc = run_setup_local()

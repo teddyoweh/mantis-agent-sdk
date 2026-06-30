@@ -102,7 +102,7 @@ def test_test_workflow_exists_and_matrixes_python() -> None:
 def test_pyproject_has_release_metadata() -> None:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
     proj = data["project"]
-    assert proj["name"] == "any-agent-sdk"
+    assert proj["name"] == "mantis-agent-sdk"
     assert proj["version"].startswith("1."), (
         f"pyproject.toml version {proj['version']!r} should be 1.x for the stable line."
     )
@@ -124,19 +124,19 @@ def test_pyproject_has_release_metadata() -> None:
 
 
 def test_hatchling_packages_only_the_sdk() -> None:
-    """The wheel should ship any_agent_sdk and nothing else (no tests, no docs)."""
+    """The wheel should ship mantis_agent and nothing else (no tests, no docs)."""
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
     wheel_pkgs = data.get("tool", {}).get("hatch", {}).get("build", {}).get(
         "targets", {}
     ).get("wheel", {}).get("packages")
-    assert wheel_pkgs == ["any_agent_sdk"], (
-        f"Wheel packages should be ['any_agent_sdk'], got {wheel_pkgs!r}"
+    assert wheel_pkgs == ["mantis_agent"], (
+        f"Wheel packages should be ['mantis_agent'], got {wheel_pkgs!r}"
     )
 
 
 @pytest.mark.parametrize(
     "label",
-    ["any_agent_sdk", "tests", "docs", "README.md", "LICENSE", "CHANGELOG.md", "SEMVER.md"],
+    ["mantis_agent", "tests", "docs", "README.md", "LICENSE", "CHANGELOG.md", "SEMVER.md"],
 )
 def test_sdist_includes_critical_paths(label: str) -> None:
     """The sdist must carry tests + docs + policy files so source-installs are auditable."""

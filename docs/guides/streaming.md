@@ -24,7 +24,7 @@ message. It does not stream individual tokens — for that, use
 ## `Agent.run_iter()` — stream events
 
 ```python
-from any_agent_sdk import Agent
+from mantis_agent import Agent
 
 agent = Agent(model="qwen2.5:7b", tools=[get_weather])
 async for event in agent.run_iter("What's the weather in Lagos?"):
@@ -74,7 +74,7 @@ This matters in two cases:
 
 ```python
 import asyncio
-from any_agent_sdk import Agent
+from mantis_agent import Agent
 
 agent = Agent(model="qwen2.5:7b", tools=[slow_tool])
 task = asyncio.create_task(agent.run("..."))
@@ -95,7 +95,7 @@ The cancelled tool call surfaces in the transcript as a tool result with
 ## `ClaudeSDKClient` — multi-turn streaming
 
 ```python
-from any_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from mantis_agent import ClaudeSDKClient, ClaudeAgentOptions
 
 options = ClaudeAgentOptions(model="qwen2.5:7b", tools=[get_weather])
 async with ClaudeSDKClient(options) as client:
@@ -107,7 +107,7 @@ async with ClaudeSDKClient(options) as client:
 
 The session persists across `query()` calls — the second turn sees the
 full transcript from the first. State is written to
-`~/.any-agent/sessions/{session_id}.jsonl` between calls.
+`~/.mantis-agent/sessions/{session_id}.jsonl` between calls.
 
 ## Stderr callback
 

@@ -8,7 +8,7 @@ Hooks instance.
 
 from __future__ import annotations
 
-from any_agent_sdk import ClaudeAgentOptions, Plugin, tool
+from mantis_agent import ClaudeAgentOptions, Plugin, tool
 
 
 @tool
@@ -115,7 +115,7 @@ def test_plugin_hooks_merge_into_combined_hooks() -> None:
     """A plugin's hooks dict joins the user's hooks dict, with user hooks
     winning on per-event collision."""
 
-    from any_agent_sdk import HookMatcher
+    from mantis_agent import HookMatcher
 
     async def plugin_pre(*_a, **_kw):
         return {}

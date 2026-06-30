@@ -7,7 +7,7 @@ fork them, resume them from arbitrary checkpoints, and prune them.
 ## Where transcripts live
 
 ```
-~/.any-agent/sessions/{session_id}.jsonl
+~/.mantis-agent/sessions/{session_id}.jsonl
 ```
 
 Each line is one `Message`. The format is stable across versions — older
@@ -39,9 +39,9 @@ authority needed).
 ## The `Session` class
 
 ```python
-from any_agent_sdk import Session, SqliteSessionStore
+from mantis_agent import Session, SqliteSessionStore
 
-store = SqliteSessionStore("~/.any-agent/sessions.db")
+store = SqliteSessionStore("~/.mantis-agent/sessions.db")
 session = Session.load(store, "user-42/thread-abc")
 
 print(session.info.created_at)
@@ -66,7 +66,7 @@ session.add_checkpoint("before-experiment")
 Inspect them:
 
 ```python
-from any_agent_sdk import make_checkpoints, Checkpoint
+from mantis_agent import make_checkpoints, Checkpoint
 
 cps: list[Checkpoint] = make_checkpoints(session.messages)
 for cp in cps:
@@ -78,7 +78,7 @@ for cp in cps:
 Branch off a session at any checkpoint:
 
 ```python
-from any_agent_sdk import fork_session
+from mantis_agent import fork_session
 
 forked = fork_session(
     source=session,
@@ -101,7 +101,7 @@ Use forks to:
 Restart a session from a specific checkpoint:
 
 ```python
-from any_agent_sdk import resume_session
+from mantis_agent import resume_session
 
 resumed = resume_session(
     session_id="user-42/thread-abc",
@@ -128,7 +128,7 @@ The `SessionStore` protocol is small (5 methods); implement your own if
 you want Redis, S3, Postgres, etc.
 
 ```python
-from any_agent_sdk import SessionStore
+from mantis_agent import SessionStore
 
 class MyStore(SessionStore):
     async def load(self, session_id): ...
@@ -141,9 +141,9 @@ class MyStore(SessionStore):
 ## Iterate over all transcripts
 
 ```python
-from any_agent_sdk import iter_transcripts
+from mantis_agent import iter_transcripts
 
-for path, transcript in iter_transcripts("~/.any-agent/sessions"):
+for path, transcript in iter_transcripts("~/.mantis-agent/sessions"):
     print(path, len(transcript.messages))
 ```
 

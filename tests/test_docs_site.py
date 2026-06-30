@@ -192,7 +192,7 @@ def test_every_md_under_docs_is_reachable_from_nav() -> None:
 
 @pytest.mark.skipif(
     shutil.which("mkdocs") is None,
-    reason="mkdocs not installed — install with `pip install any-agent-sdk[docs]`",
+    reason="mkdocs not installed — install with `pip install mantis-agent-sdk[docs]`",
 )
 def test_mkdocs_build_clean(tmp_path) -> None:
     """``mkdocs build --strict`` exits 0 and produces an index.html."""

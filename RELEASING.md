@@ -1,4 +1,4 @@
-# Releasing `any-agent-sdk`
+# Releasing `mantis-agent-sdk`
 
 This file is the maintainer-facing runbook. End users don't need it.
 
@@ -12,7 +12,7 @@ This file is the maintainer-facing runbook. End users don't need it.
 3. A GitHub Release is drafted with the matching CHANGELOG section.
 
 The version in `pyproject.toml` is the single source of truth.
-`any_agent_sdk.__version__` reads it back via `importlib.metadata`.
+`mantis_agent.__version__` reads it back via `importlib.metadata`.
 
 ## Cutting a release
 
@@ -43,15 +43,15 @@ git push origin main --follow-tags
 
 Pushing the `v$NEXT` tag triggers the publish workflow. Watch the
 **Actions** tab until it goes green; the package will appear on
-[PyPI](https://pypi.org/project/any-agent-sdk/) within a minute or two.
+[PyPI](https://pypi.org/project/mantis-agent-sdk/) within a minute or two.
 
 ## PyPI trusted publisher (one-time setup)
 
-On https://pypi.org/manage/project/any-agent-sdk/settings/publishing/, add
+On https://pypi.org/manage/project/mantis-agent-sdk/settings/publishing/, add
 a trusted publisher with:
 
 - Owner: `teddyoweh`
-- Repository name: `any-agent-sdk`
+- Repository name: `mantis-agent-sdk`
 - Workflow name: `release.yml`
 - Environment name: `pypi`
 
@@ -71,7 +71,7 @@ The workflow detects the pre-release suffix (`rc`, `a`, `b`, `dev`) and
 publishes to TestPyPI instead of PyPI. Install from there to sanity-check:
 
 ```bash
-pip install --index-url https://test.pypi.org/simple/ any-agent-sdk==1.0.0rc1
+pip install --index-url https://test.pypi.org/simple/ mantis-agent-sdk==1.0.0rc1
 ```
 
 ## Yanking a bad release
@@ -91,7 +91,7 @@ Then immediately cut a PATCH release with the fix.
 
 ## What the surface freeze means for releases
 
-`tests/test_public_api_surface.py` enforces that `any_agent_sdk.__all__`
+`tests/test_public_api_surface.py` enforces that `mantis_agent.__all__`
 matches `tests/public_api_surface.txt`. If you intend to add or remove
 a public name:
 

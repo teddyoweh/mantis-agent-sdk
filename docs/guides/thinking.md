@@ -2,7 +2,7 @@
 
 Models that reason out loud — DeepSeek-R1, QwQ, Marco-o1, R1-distills, and
 the OpenAI reasoning family — emit "thinking" content separately from the
-final answer. `any-agent-sdk` normalises both forms into a single
+final answer. `mantis-agent-sdk` normalises both forms into a single
 `ThinkingBlock` you can render or hide.
 
 ## Two formats, one block
@@ -62,7 +62,7 @@ The default is `True` (surface everything).
 ## Capability check
 
 ```python
-from any_agent_sdk import lookup_model
+from mantis_agent import lookup_model
 
 cap = lookup_model("deepseek-r1:1.5b")
 print(cap.supports_thinking)        # True

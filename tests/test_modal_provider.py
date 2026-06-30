@@ -37,23 +37,23 @@ from typing import Any
 import httpx
 import pytest
 
-from any_agent_sdk.capabilities import HOSTED_PROFILES
-from any_agent_sdk.events import (
+from mantis_agent.capabilities import HOSTED_PROFILES
+from mantis_agent.events import (
     ContentBlockDelta,
     MessageStart,
     MessageStop,
     StreamEvent,
     TextDelta,
 )
-from any_agent_sdk.providers import detect_provider, resolve
-from any_agent_sdk.providers.modal_provider import (
+from mantis_agent.providers import detect_provider, resolve
+from mantis_agent.providers.modal_provider import (
     MODAL_HOST_SUFFIX,
     ModalProvider,
     ModalProviderError,
     build_modal_url,
     parse_modal_model_spec,
 )
-from any_agent_sdk.types import UserMessage
+from mantis_agent.types import UserMessage
 
 
 pytestmark = pytest.mark.anyio

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import anyio
 
-from any_agent_sdk import (
+from mantis_agent import (
     Agent,
     ClaudeAgentOptions,
     PermissionResultDeny,
@@ -23,7 +23,7 @@ from any_agent_sdk import (
     query,
     tool,
 )
-from any_agent_sdk.events import (
+from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
@@ -33,9 +33,9 @@ from any_agent_sdk.events import (
     MessageStop,
     TextDelta,
 )
-from any_agent_sdk.permissions import Deny, PermissionContext
-from any_agent_sdk.providers.base import register
-from any_agent_sdk.providers.mock import MockProvider
+from mantis_agent.permissions import Deny, PermissionContext
+from mantis_agent.providers.base import register
+from mantis_agent.providers.mock import MockProvider
 
 
 @tool

@@ -1,11 +1,11 @@
 [project]
-name = "any-agent-sdk"
+name = "mantis-agent-sdk"
 version = "1.0.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "any-agent-sdk authors" }]
+authors = [{ name = "mantis-agent-sdk authors" }]
 keywords = ["agent", "llm", "claude", "ollama", "mcp", "tool-use", "streaming"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -26,17 +26,17 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/teddyoweh/any-agent-sdk"
-Repository = "https://github.com/teddyoweh/any-agent-sdk"
-Issues = "https://github.com/teddyoweh/any-agent-sdk/issues"
-Changelog = "https://github.com/teddyoweh/any-agent-sdk/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/teddyoweh/mantis-agent-sdk"
+Repository = "https://github.com/teddyoweh/mantis-agent-sdk"
+Issues = "https://github.com/teddyoweh/mantis-agent-sdk/issues"
+Changelog = "https://github.com/teddyoweh/mantis-agent-sdk/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 anthropic = []  # uses httpx directly, no SDK dep
 openai = []
 gemini = []
 bedrock = ["boto3>=1.34"]
-all = ["any-agent-sdk[bedrock]"]
+all = ["mantis-agent-sdk[bedrock]"]
 dev = [
     "pytest>=8",
     "pytest-anyio>=0.0",
@@ -52,18 +52,18 @@ docs = [
 ]
 
 [project.scripts]
-any-agent = "any_agent_sdk.cli:main"
+mantis-agent = "mantis_agent.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["any_agent_sdk"]
+packages = ["mantis_agent"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/any_agent_sdk",
+    "/mantis_agent",
     "/tests",
     "/docs",
     "/README.md",

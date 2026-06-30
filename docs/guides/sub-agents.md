@@ -15,7 +15,7 @@ Two flavours.
 ### `SubAgentSpec` — declarative
 
 ```python
-from any_agent_sdk import SubAgentSpec, as_subagent_tool
+from mantis_agent import SubAgentSpec, as_subagent_tool
 
 researcher = SubAgentSpec(
     name="researcher",
@@ -34,7 +34,7 @@ researcher_tool = as_subagent_tool(researcher)
 If you already have an `Agent` instance you want to expose:
 
 ```python
-from any_agent_sdk import Agent, as_subagent_tool
+from mantis_agent import Agent, as_subagent_tool
 
 researcher = Agent(
     model="qwen2.5:7b",
@@ -69,7 +69,7 @@ isolation and returns its final assistant text.
 
 Sub-agents have their own:
 
-- Transcript (separate JSONL file under `~/.any-agent/sessions/`)
+- Transcript (separate JSONL file under `~/.mantis-agent/sessions/`)
 - System prompt
 - Tool registry
 - Permission policy
@@ -81,7 +81,7 @@ transcript). Use this when the sub-agent should *append* to the
 parent's context, not branch off.
 
 ```python
-from any_agent_sdk import IsolationMode
+from mantis_agent import IsolationMode
 
 researcher_tool = as_subagent_tool(
     researcher,
@@ -155,5 +155,5 @@ Three common shapes:
 3. **Fan-out.** Parent emits N sub-agent calls in parallel to compare
    outputs, then picks the best.
 
-See `any_agent_sdk/examples/multi_agent_research.py` for a worked
+See `mantis_agent/examples/multi_agent_research.py` for a worked
 example of all three.

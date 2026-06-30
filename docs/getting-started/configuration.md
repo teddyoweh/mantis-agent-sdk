@@ -14,25 +14,25 @@ lowest:
 
 | Variable | Effect |
 |---|---|
-| `ANY_AGENT_HOME` | Override `~/.any-agent/` root. |
-| `ANY_AGENT_MODEL` | Default model name if `options.model` is unset. |
-| `ANY_AGENT_BACKEND` | Force a backend (`ollama`, `openai_compat`, `openai`, `anthropic_passthrough`, `gemini`, `mock`, …). Skip auto-routing. |
-| `ANY_AGENT_BASE_URL` | Base URL for HTTP backends. Most useful with OpenAI-compat (vLLM, Together, Fireworks, …). |
-| `ANY_AGENT_API_KEY` | API key for HTTP backends. |
+| `MANTIS_AGENT_HOME` | Override `~/.mantis-agent/` root. |
+| `MANTIS_AGENT_MODEL` | Default model name if `options.model` is unset. |
+| `MANTIS_AGENT_BACKEND` | Force a backend (`ollama`, `openai_compat`, `openai`, `anthropic_passthrough`, `gemini`, `mock`, …). Skip auto-routing. |
+| `MANTIS_AGENT_BASE_URL` | Base URL for HTTP backends. Most useful with OpenAI-compat (vLLM, Together, Fireworks, …). |
+| `MANTIS_AGENT_API_KEY` | API key for HTTP backends. |
 | `OPENAI_API_KEY` | Used by the `openai` backend. |
 | `ANTHROPIC_API_KEY` | Used by `anthropic_passthrough` and built-in tools (`WebFetch`). |
 | `EXA_API_KEY` | Used by `WebSearch` / `WebFetch` for live web results. |
-| `ANY_AGENT_MOCK` | Set to `1` to force the mock provider — useful in CI without API keys. |
+| `MANTIS_AGENT_MOCK` | Set to `1` to force the mock provider — useful in CI without API keys. |
 
 ## Setting sources
 
 ```python
-from any_agent_sdk import ClaudeAgentOptions
+from mantis_agent import ClaudeAgentOptions
 
 options = ClaudeAgentOptions(
     setting_sources=[
-        "~/.any-agent/settings.json",
-        "./.any-agent/project.json",
+        "~/.mantis-agent/settings.json",
+        "./.mantis-agent/project.json",
     ],
 )
 ```
@@ -45,10 +45,10 @@ The schema is the same as the constructor arguments — `model`, `tools`,
 `system_prompt`, `max_turns`, `max_tokens`, `temperature`, `permissions`,
 etc. See [ClaudeAgentOptions](../api/options.md) for the full list.
 
-## `~/.any-agent/settings.json` (default user source)
+## `~/.mantis-agent/settings.json` (default user source)
 
 If you don't pass `setting_sources=`, the SDK loads
-`~/.any-agent/settings.json` as a single default source. Edit it to set
+`~/.mantis-agent/settings.json` as a single default source. Edit it to set
 your model and backend once and forget about it:
 
 ```json
@@ -65,31 +65,31 @@ your model and backend once and forget about it:
 ## Programmatic loading
 
 ```python
-from any_agent_sdk import (
+from mantis_agent import (
     apply_settings_to_options,
     load_setting_source,
     save_setting_source,
 )
 
-s = load_setting_source("~/.any-agent/settings.json")
+s = load_setting_source("~/.mantis-agent/settings.json")
 # mutate
 s["model"] = "qwen2.5:7b"
-save_setting_source("~/.any-agent/settings.json", s)
+save_setting_source("~/.mantis-agent/settings.json", s)
 ```
 
 Or merge several sources into a fresh `ClaudeAgentOptions`:
 
 ```python
-from any_agent_sdk import load_settings, ClaudeAgentOptions
+from mantis_agent import load_settings, ClaudeAgentOptions
 
-merged = load_settings(["~/.any-agent/settings.json", "./.any-agent.json"])
+merged = load_settings(["~/.mantis-agent/settings.json", "./.mantis-agent.json"])
 options = ClaudeAgentOptions(**merged)
 ```
 
 ## Where state lives
 
 ```
-~/.any-agent/
+~/.mantis-agent/
 ├── settings.json           merged user settings
 ├── memory/                 persistent memory entries + INDEX.md
 │   ├── INDEX.md
@@ -102,10 +102,10 @@ options = ClaudeAgentOptions(**merged)
 The exact paths come from the `paths` module:
 
 ```python
-from any_agent_sdk import (
-    get_anyagent_dir, get_memory_dir, get_memory_index,
+from mantis_agent import (
+    get_mantis_agent_dir, get_memory_dir, get_memory_index,
     get_sessions_dir, get_session_path,
 )
 ```
 
-All paths honour `ANY_AGENT_HOME` if it's set.
+All paths honour `MANTIS_AGENT_HOME` if it's set.
