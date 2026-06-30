@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.6] — 2026-06-30
+
+### Added
+
+- **Animated "thinking" status line** while the model works: a pulsing star,
+  a random whimsical gerund, and a live elapsed timer — e.g.
+  `✻ Undulating… (34s)` — rendered on a transient row that clears itself the
+  instant output arrives. The input has no border/separator lines around it.
+
 ## [1.1.5] — 2026-06-30
 
 ### Changed

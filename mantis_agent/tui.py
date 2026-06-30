@@ -610,7 +610,7 @@ class MantisTUI:
             style = "ansired" if block.is_error else "ansibrightblack"
             self.console.print(f"[{style}]{indented}[/]", markup=False if block.is_error else True)
             if block.is_error:
-                self.console.print(f"[ansired]  ↑ error[/]")
+                self.console.print("[ansired]  ↑ error[/]")
 
     @staticmethod
     def _fmt_args(args: dict[str, Any]) -> str:
@@ -702,11 +702,11 @@ class MantisTUI:
         c.print("  [ansibrightblack]pull any with [white]ollama pull <name>[/][/]")
 
         # 2. Self-host
-        c.print(f"\n[bold]Self-host[/] [ansibrightblack]— your own GPU[/]")
+        c.print("\n[bold]Self-host[/] [ansibrightblack]— your own GPU[/]")
         c.print(f"  [ansibrightblack]{catalog.SELF_HOST_NOTE}[/]")
 
         # 3. Hosted APIs
-        c.print(f"\n[bold]Hosted APIs[/] [ansibrightblack]— full models, need a key[/]")
+        c.print("\n[bold]Hosted APIs[/] [ansibrightblack]— full models, need a key[/]")
         for prov in catalog.CATALOG:
             on = catalog.is_enabled(prov)
             dot = "[ansigreen]●[/]" if on else "[ansibrightblack]○[/]"
