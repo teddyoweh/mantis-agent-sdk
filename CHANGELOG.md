@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.5.0] — 2026-06-30
+
+### Changed
+
+- **`pip install mantis-agent-sdk` now ships the terminal out of the box** — no
+  `[cli]` extra needed. `prompt_toolkit` and `rich` moved into core
+  dependencies (both lazy-imported, so the stdlib-only `mantis-agent`
+  diagnostics CLI keeps its snappy cold start). `[cli]` is kept as a no-op for
+  back-compat.
+
 ## [1.4.1] — 2026-06-30
 
 ### Changed

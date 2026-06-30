@@ -12,9 +12,9 @@ Unlike ``mantis-agent`` (the stdlib-only diagnostics CLI), this module is a
 * ``prompt_toolkit`` — the input line (placeholder, key bindings, completion)
 * ``rich`` — the banner, the mascot colors, and streamed Markdown-ish output
 
-Those live behind the ``[cli]`` extra so the core SDK stays lean::
+These ship as core dependencies, so ``pip install mantis-agent-sdk`` gives you a working terminal out of the box::
 
-    pip install 'mantis-agent-sdk[cli]'
+    pip install mantis-agent-sdk
 
 The whole REPL runs inside a single asyncio event loop (via ``anyio``) so the
 provider's HTTP client and the prompt session share one loop: input is read
@@ -68,6 +68,9 @@ EXAMPLE_PROMPTS = [
 SLASH_COMMANDS = {
     "/models": "browse & pick a model (local · API · self-host)",
     "/model": "switch / pick a model",
+    "/resume": "resume a past conversation",
+    "/branch": "fork this conversation into a new session",
+    "/rewind": "rewind the conversation to an earlier message",
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
@@ -251,7 +254,7 @@ _MD_PATCHED = False
 def _compact_markdown(text: str) -> Any:
     """Build a tight rich ``Markdown``: code blocks with no surrounding padding
     or grey box, so replies don't get the big vertical margins rich adds by
-    default. Patches ``Markdown.elements`` once (lazily — rich is a [cli] dep)."""
+    default. Patches ``Markdown.elements`` once (lazily, so importing the library stays cheap)."""
     global _MD_PATCHED
     from rich.markdown import CodeBlock, Markdown  # noqa: PLC0415
     from rich.syntax import Syntax  # noqa: PLC0415
@@ -275,7 +278,7 @@ def _compact_markdown(text: str) -> Any:
 def _missing_deps_message() -> str:
     return (
         "The `mantis` terminal needs the optional CLI dependencies.\n\n"
-        "    pip install 'mantis-agent-sdk[cli]'\n\n"
+        "    pip install mantis-agent-sdk\n\n"
         "(or: pip install prompt_toolkit rich)\n\n"
         "For a no-frills REPL with zero extra deps, use:  mantis-agent chat --model <m>"
     )
@@ -476,6 +479,8 @@ class MantisTUI:
         self.pending_attachments: list[tuple[str, Any]] = []
         # True while the current assistant turn's text is being streamed live.
         self._turn_streamed = False
+        # The on-disk transcript for /resume + /branch (created in run()).
+        self.transcript: Any = None
 
         from rich.console import Console  # noqa: PLC0415
         from rich.theme import Theme  # noqa: PLC0415
@@ -1024,6 +1029,7 @@ class MantisTUI:
                 if not hugging:
                     self.console.print()  # space above the next thinking spinner
                 thinking.start()
+            self._persist_messages(base)  # append this turn to the on-disk transcript
         except KeyboardInterrupt:
             del self.messages[base:]
             await thinking.stop()
@@ -1035,6 +1041,128 @@ class MantisTUI:
         finally:
             self.agent.on_event = None
             await thinking.stop()
+
+    def _persist_messages(self, base: int) -> None:
+        """Append every message added this turn to the session transcript (the
+        parent_uuid tree that /resume + /branch read back). Best-effort: a disk
+        hiccup must never break the chat."""
+        if self.transcript is None:
+            return
+        from .types import AssistantMessage, TextBlock, UserMessage  # noqa: PLC0415
+
+        try:
+            for m in self.messages[base:]:
+                if isinstance(m, UserMessage) and not getattr(m, "isMeta", False):
+                    self.transcript.append_message("user", m.content)
+                    if base == len(self.messages) - len(self.messages[base:]):
+                        # record the first user prompt for the resume picker
+                        text = m.content if isinstance(m.content, str) else next(
+                            (b.text for b in m.content if isinstance(b, TextBlock)), "")
+                        if text:
+                            self.transcript.record_last_prompt(text[:200])
+                elif isinstance(m, AssistantMessage):
+                    self.transcript.append_message("assistant", list(m.content))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- session commands: /resume /branch /rewind --------------------------
+
+    async def _cmd_resume(self, arg: str) -> None:
+        """List past sessions (or load one by number/id). ``/resume`` shows the
+        picker; ``/resume <n>`` or ``/resume <id>`` loads it."""
+        from .session_tree import (  # noqa: PLC0415
+            SessionTranscript,
+            list_sessions,
+            load_for_resume,
+        )
+
+        sessions = [s for s in list_sessions()
+                    if not (self.transcript and s.session_id == self.transcript.session_id)]
+        if not sessions:
+            self.console.print("[ansibrightblack]no past conversations to resume[/]")
+            return
+        if not arg:
+            self.console.print("\n[bold]Resume a conversation[/]")
+            for i, s in enumerate(sessions[:20], 1):
+                title = s.title or s.first_prompt or "(untitled)"
+                self.console.print(
+                    f"  [white]{i:2}[/] {title[:60]}  "
+                    f"[ansibrightblack]· {s.message_count} msgs[/]"
+                )
+            self.console.print("[ansibrightblack]→ /resume <number> to load[/]\n")
+            return
+        target = None
+        if arg.isdigit() and 1 <= int(arg) <= len(sessions):
+            target = sessions[int(arg) - 1]
+        else:
+            target = next((s for s in sessions if s.session_id.startswith(arg)), None)
+        if target is None:
+            self.console.print(f"[ansired]no session matching {arg!r}[/]")
+            return
+        self.messages = load_for_resume(target.session_id)
+        self.transcript = SessionTranscript(target.session_id)
+        self.console.print(
+            f"[ansibrightblack]resumed[/] [white]{target.title or target.first_prompt or target.session_id[:8]}[/]"
+            f" [ansibrightblack]({len(self.messages)} messages)[/]"
+        )
+
+    def _cmd_branch(self) -> None:
+        """Fork the current conversation into a new session (the original stays
+        resumable). Continues live in the new branch."""
+        from .session_tree import SessionTranscript, branch_session  # noqa: PLC0415
+
+        if self.transcript is None or not self.messages:
+            self.console.print("[ansibrightblack]nothing to branch yet[/]")
+            return
+        try:
+            fork_id = branch_session(self.transcript.session_id)
+        except ValueError as e:
+            self.console.print(f"[ansired]{e}[/]")
+            return
+        original = self.transcript.session_id
+        self.transcript = SessionTranscript(fork_id)
+        self.console.print(
+            f"[ansibrightblack]branched → new session[/] [white]{fork_id[:8]}[/]"
+            f"  [ansibrightblack](resume the original with[/] [white]/resume {original[:8]}[/][ansibrightblack])[/]"
+        )
+
+    def _cmd_rewind(self, arg: str) -> None:
+        """Rewind the conversation to an earlier user message. ``/rewind`` lists
+        them; ``/rewind <n>`` truncates to that point."""
+        from .types import TextBlock, UserMessage  # noqa: PLC0415
+
+        user_turns = [
+            (i, m) for i, m in enumerate(self.messages)
+            if isinstance(m, UserMessage) and not getattr(m, "isMeta", False)
+            and isinstance(m.content, (str, list))
+        ]
+        # keep only real prompts (string content or has a TextBlock)
+        prompts = []
+        for i, m in user_turns:
+            if isinstance(m.content, str):
+                prompts.append((i, m.content))
+            else:
+                t = next((b.text for b in m.content if isinstance(b, TextBlock)), "")
+                if t:
+                    prompts.append((i, t))
+        if not prompts:
+            self.console.print("[ansibrightblack]nothing to rewind to[/]")
+            return
+        if not arg or not arg.isdigit():
+            self.console.print("\n[bold]Rewind to[/]")
+            for n, (_, text) in enumerate(prompts, 1):
+                self.console.print(f"  [white]{n:2}[/] {text[:60]}")
+            self.console.print("[ansibrightblack]→ /rewind <number>[/]\n")
+            return
+        n = int(arg)
+        if not (1 <= n <= len(prompts)):
+            self.console.print(f"[ansired]pick 1–{len(prompts)}[/]")
+            return
+        idx, _ = prompts[n - 1]
+        self.messages = self.messages[:idx]
+        self.console.print(
+            f"[ansibrightblack]rewound to message {n} ({len(self.messages)} kept)[/]"
+        )
 
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> bool:
         """Render an assistant message; return True if it emitted a tool call
@@ -1328,6 +1456,15 @@ class MantisTUI:
             return True
         if cmd == "/cwd":
             self.console.print(f"[ansibrightblack]{Path.cwd()}[/]")
+            return True
+        if cmd == "/resume":
+            await self._cmd_resume(arg)
+            return True
+        if cmd == "/branch":
+            self._cmd_branch()
+            return True
+        if cmd == "/rewind":
+            self._cmd_rewind(arg)
             return True
         if cmd == "/models":
             await self._select_model()
@@ -1826,6 +1963,9 @@ class MantisTUI:
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()
+        if self.transcript is None:
+            from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
+            self.transcript = SessionTranscript(new_session_id())
         self._kick_prewarm()
 
         from prompt_toolkit.formatted_text import HTML  # noqa: PLC0415

@@ -1,6 +1,6 @@
 [project]
 name = "mantis-agent-sdk"
-version = "1.4.1"
+version = "1.5.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,11 @@ dependencies = [
     "msgspec>=0.18.6",
     "httpx[http2]>=0.27",
     "anyio>=4.4",
+    # The `mantis` terminal ships out of the box: `pip install mantis-agent-sdk`
+    # gives you a working TUI, no extras. Both are lazy-imported, so the
+    # stdlib-only `mantis-agent` diagnostics CLI keeps its snappy cold start.
+    "prompt_toolkit>=3.0",
+    "rich>=13.0",
 ]
 
 [project.urls]
@@ -36,8 +41,8 @@ anthropic = []  # uses httpx directly, no SDK dep
 openai = []
 gemini = []
 bedrock = ["boto3>=1.34"]
-cli = ["prompt_toolkit>=3.0", "rich>=13.0"]  # the `mantis` interactive terminal
-all = ["mantis-agent-sdk[bedrock,cli]"]
+cli = []  # kept for back-compat: the terminal deps are now core, so this is a no-op
+all = ["mantis-agent-sdk[bedrock]"]
 dev = [
     "pytest>=8",
     "pytest-anyio>=0.0",

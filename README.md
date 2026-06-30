@@ -18,16 +18,18 @@ There are **two ways to use it**: the [`mantis` terminal](#the-mantis-terminal) 
 
 ## The `mantis` terminal
 
-A full-screen, Claude-Code-style agent terminal for **local and hosted models** — run it in any directory and chat with an agent that can read, write, edit, grep, and run shell commands on your machine.
+`mantis` is a coding agent that lives in your terminal. Point it at any directory and it reads, writes, edits, greps, and runs shell commands to actually get work done — Claude Code's feel, driving the open model *you* choose: a local Ollama, your own vLLM box, or a hosted endpoint.
 
 ```bash
-pip install 'mantis-agent-sdk[cli]'   # the [cli] extra adds the rich terminal
-mantis                                 # launch the agent terminal
+pip install mantis-agent-sdk   # the terminal is included — no extras, nothing else to set up
+mantis                         # then just talk to it
 ```
+
+> Want it isolated and on your PATH everywhere? `uv tool install mantis-agent-sdk` or `pipx install mantis-agent-sdk`.
 
 ```
             ▄▀▄▀
-           ▄█▀                Mantis Code v1.3.0
+           ▄█▀                Mantis Code v1.5.0
         ▄██▀▀█▀               qwen2.5-7b-instruct  ·  Ollama (local)
     ▄█ ▄███▀▀                 ~/Documents/code/your-project
  ▄▄██▀▀██▀▀▀▀▀
@@ -36,41 +38,38 @@ mantis                                 # launch the agent terminal
 
 › build me a fastapi todo app
 
-⚒ Write app/main.py
-  └ wrote 612 bytes (28 lines) to app/main.py
-       1 + from fastapi import FastAPI
-       2 + app = FastAPI()
+⚒ Edit app/main.py  +12 -0
+   1  + from fastapi import FastAPI
+   2  + app = FastAPI()
+   3  + todos: list[str] = []
        …
 
 ● Done — run it with `uvicorn app.main:app --reload`.
 ```
 
-**What you get:**
+It's built to feel like the real thing. The **input stays pinned to the bottom and never disappears** — even mid-response — while the conversation scrolls above it. Replies render as **Markdown** with syntax-highlighted code. When the agent touches a file you get a **real diff**: line-numbered, syntax-highlighted, on Claude Code's exact green/red — not a wall of text. Tool calls read like `⚒ Edit app/main.py` with their result tucked underneath, and a `✻ Undulating… (3s)` spinner ticks while it thinks.
 
-- **Input pinned to the bottom, always visible** — even while the agent is working. The conversation scrolls above it (full-screen mode). Set `MANTIS_CLASSIC=1` for a plain scrolling REPL.
-- **Markdown replies** — syntax-highlighted code blocks, lists, tables, inline code.
-- **Real edit diffs** — `edit_file`/`write_file` render as line-numbered green/red diffs.
-- **Friendly tool calls** — `⚒ Read foo.py`, `⚒ Run <cmd>`, `⚒ Edit foo.py` with the result hugged underneath.
-- **Animated thinking spinner** with a live timer (`✻ Undulating… (3s)`).
-- **Clipboard paste (Ctrl+V)** — paste a copied image or file path straight into the prompt as an attachment.
-- **Slash commands** — `/model <id>` to switch models live, `/models` to browse the local + hosted + self-host catalog, `/clear`, `/cwd`, `/help`, `/exit`.
-- **Keys** — Enter sends · Esc/Ctrl+C interrupts a running reply (Ctrl+C also quits when idle) · Ctrl+D quits · shift+tab cycles permission mode.
+A few things worth knowing:
 
-**Configuration** (same env vars the library uses):
+- **Switch models mid-conversation** — `/model qwen2.5:7b`, or `/models` to browse everything you can run locally, self-host, or reach over an API.
+- **Paste images and files** — `Ctrl+V` drops a copied screenshot or file path straight into the prompt.
+- **Stay in control** — `Esc`/`Ctrl+C` interrupts a running reply, `Ctrl+D` quits, `shift+tab` cycles the permission mode. Prefer a plain scrolling REPL? `MANTIS_CLASSIC=1`.
 
-| Env var | Meaning |
+It reads configuration from the same env vars as the library:
+
+| Env var | What it does |
 | --- | --- |
-| `MANTIS_AGENT_MODEL` | default model slug (else `qwen2.5-7b-instruct`) |
-| `MANTIS_AGENT_BASE_URL` | default backend (else Ollama at `localhost:11434`) |
-| `MANTIS_AGENT_API_KEY` | API key for hosted backends |
-| `MANTIS_CLASSIC=1` | force the classic scrolling REPL instead of full-screen |
+| `MANTIS_AGENT_MODEL` | default model (else `qwen2.5-7b-instruct`) |
+| `MANTIS_AGENT_BASE_URL` | default backend (else local Ollama) |
+| `MANTIS_AGENT_API_KEY` | key for hosted providers |
+| `MANTIS_CLASSIC=1` | plain scrolling REPL instead of full-screen |
 
 ```bash
-mantis --model qwen2.5:7b                       # pick a model
+mantis --model qwen2.5:7b
 MANTIS_AGENT_BASE_URL=https://gpu-box:8000/v1 mantis --model my-model   # your own server
 ```
 
-> There's also a tiny stdlib-only diagnostics CLI, `mantis-agent` (`probe`, `list-models`, `run`, `chat`, `setup-local`), with no extra dependencies — handy for smoke-testing a backend.
+Want to poke at a backend without the full UI? `mantis-agent` is a zero-dependency diagnostics CLI — `mantis-agent probe`, `list-models`, `run`, `chat`, `setup-local`.
 
 ---
 
