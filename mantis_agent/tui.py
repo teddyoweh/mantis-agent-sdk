@@ -88,7 +88,7 @@ THINKING_WORDS = [
     "Pontificating", "Sublimating", "Swooping", "Whisking", "Zigzagging",
 ]
 # ANSI 256-color so it renders the same in Terminal.app (no truecolor needed).
-_SPIN_COL = "\033[38;5;173m"  # warm coral, like the reference
+_SPIN_COL = "\033[38;5;113m"  # mantis green (matches the mascot)
 _DIM_COL = "\033[38;5;240m"  # dim grey for the timer
 _RESET = "\033[0m"
 _CLEAR_LINE = "\r\033[K"  # carriage return + clear-to-end-of-line

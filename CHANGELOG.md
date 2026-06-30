@@ -56,6 +56,12 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.8] — 2026-06-30
+
+### Changed
+
+- **Thinking spinner is now mantis green** (was coral) to match the mascot.
+
 ## [1.1.7] — 2026-06-30
 
 ### Changed
