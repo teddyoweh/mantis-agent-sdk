@@ -56,6 +56,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.2.0] — 2026-06-30
+
+### Added
+
+- **Full-screen mode — the input is pinned to the bottom and always visible,
+  even while the agent is working.** `mantis` now runs as a `prompt_toolkit`
+  app whose bottom region (rule · input · rule · footer) stays fixed while the
+  conversation scrolls above it (the Claude Code layout). The thinking spinner
+  lives in the footer; Esc / Ctrl+C interrupts a running reply, Ctrl+D quits.
+  All existing rich rendering (banner, markdown, diffs, tool calls) is reused.
+  Set `MANTIS_CLASSIC=1` to force the classic scrolling REPL; full-screen also
+  auto-falls-back to it if it can't start.
+
 ## [1.1.28] — 2026-06-30
 
 ### Changed

@@ -1626,6 +1626,24 @@ def main(argv: list[str] | None = None) -> int:
         temperature=args.temperature,
         max_turns=args.max_turns,
     )
+
+    # Full-screen mode (input pinned to the bottom, always visible) is the
+    # default; MANTIS_CLASSIC=1 forces the classic scrolling REPL. If full-screen
+    # fails for any reason, fall back to classic so mantis is never broken.
+    classic = os.environ.get("MANTIS_CLASSIC") == "1"
+    if not classic:
+        try:
+            from .tui_fullscreen import run_fullscreen  # noqa: PLC0415
+
+            return anyio.run(run_fullscreen, tui)
+        except KeyboardInterrupt:
+            return 130
+        except Exception as e:  # noqa: BLE001
+            print(
+                f"[mantis] full-screen mode failed ({e!r}); falling back to the "
+                f"classic REPL. Set MANTIS_CLASSIC=1 to skip full-screen.",
+                file=sys.stderr,
+            )
     try:
         return anyio.run(tui.run)
     except KeyboardInterrupt:
