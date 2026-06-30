@@ -100,6 +100,23 @@ _NONCHAT_MARKERS = (
 def _is_chat_model(model_id: str) -> bool:
     return not any(m in model_id.lower() for m in _NONCHAT_MARKERS)
 
+
+# Open-weight model families — the only ones you can actually self-host (run the
+# published weights on your own GPU). Everything else (gpt-5.x, gpt-4o, o3/o4,
+# gemini, claude, qwen-max/plus, glm-4-plus/air/flash, moonshot-v1) is
+# proprietary: the provider's API is the only way to run it.
+_OPEN_WEIGHT_MARKERS = (
+    "gpt-oss", "llama", "qwen2", "qwen3", "qwen-2", "qwen-3", "qwq",
+    "deepseek", "glm-4.5", "glm-4.6", "glm-4.7", "glm4", "zai-glm",
+    "kimi-k2", "kimi-k1", "mistral", "mixtral", "magistral", "gemma",
+    "phi-", "phi3", "phi4", "olmo", "yi-", "internlm", "command-r",
+    "falcon", "smollm", "granite", "nemotron",
+)
+
+
+def _is_open_weight(model_id: str) -> bool:
+    return any(m in model_id.lower() for m in _OPEN_WEIGHT_MARKERS)
+
 # The "thinking" status line shown while the model works: a pulsing star, a
 # whimsical gerund, and a live elapsed timer — e.g. ``✻ Undulating… (34s)``.
 SPINNER_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]  # a pulse
@@ -943,7 +960,7 @@ class MantisTUI:
 
         for prov in catalog.CATALOG:
             on = catalog.is_enabled(prov)
-            extra = "  · enabled" if on else "  · enter → API key or self-host"
+            extra = "  · enabled" if on else "  · disabled — enter to set up"
             rows.append({"kind": "header", "text": f"  {prov.label}{extra}"})
             # Curated flagship models first (clean + current); then append any
             # extra *chat* models the live endpoint reports, junk filtered out.
@@ -978,7 +995,8 @@ class MantisTUI:
 
     async def _activate(self, model: str, prov: Any) -> None:
         """Run ``model``: local immediately; hosted-enabled via API; otherwise
-        offer the run-mode choice (provider API key OR self-host)."""
+        set it up. Proprietary models go straight to the provider key;
+        open-weight models also offer self-host."""
         from . import catalog  # noqa: PLC0415
 
         if prov is None:
@@ -989,35 +1007,25 @@ class MantisTUI:
                               f" [ansibrightblack]via {prov.label}[/]")
             return
 
-        mode = await self._pick(
-            f"run {model} — how?",
-            [
-                {"kind": "header", "text": f"  {prov.label} · {model}"},
-                {"kind": "item", "label": f"{prov.label} API",
-                 "value": "api", "hint": f"paste {prov.api_key_env} · pay {prov.label}"},
-                {"kind": "item", "label": "Self-host",
-                 "value": "selfhost", "hint": "your own server (vLLM / llama.cpp / TGI)"},
-                {"kind": "item", "label": "Cancel", "value": "cancel"},
-            ],
-        )
-        if not mode or mode["value"] == "cancel":
-            self.console.print("[ansibrightblack](cancelled)[/]")
-            return
-
-        if mode["value"] == "api":
-            key = await self._prompt_secret(
-                f"paste {prov.label} API key ({prov.api_key_env})", "key › ")
-            if not key:
+        mode = "api"
+        if _is_open_weight(model):
+            choice = await self._pick(
+                f"run {model} — how?",
+                [
+                    {"kind": "header", "text": f"  {model}  ·  open-weight"},
+                    {"kind": "item", "label": f"{prov.label} API", "value": "api",
+                     "hint": f"paste {prov.api_key_env} · {prov.label} runs it"},
+                    {"kind": "item", "label": "Self-host", "value": "selfhost",
+                     "hint": "run the open weights on your own server (vLLM/llama.cpp/TGI)"},
+                    {"kind": "item", "label": "Cancel", "value": "cancel"},
+                ],
+            )
+            if not choice or choice["value"] == "cancel":
                 self.console.print("[ansibrightblack](cancelled)[/]")
                 return
-            catalog.set_key(prov.id, key)
-            self.console.print(
-                f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
-                "[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]")
-            self.__dict__.get("_live_models", {}).pop(prov.id, None)
-            await self._apply(model, prov.base_url, key,
-                              f" [ansibrightblack]via {prov.label}[/]")
-        else:
+            mode = choice["value"]
+
+        if mode == "selfhost":
             url = await self._prompt_text(
                 f"self-host URL serving {model}", "url › ", "http://localhost:8000/v1")
             if not url or not url.startswith(("http://", "https://")):
@@ -1025,6 +1033,21 @@ class MantisTUI:
                 return
             await self._apply(model, url, self.api_key or "sk-noauth",
                               " [ansibrightblack]· self-hosted[/]")
+            return
+
+        # API path — proprietary models always land here; open-weight if chosen.
+        key = await self._prompt_secret(
+            f"paste {prov.label} API key ({prov.api_key_env})", "key › ")
+        if not key:
+            self.console.print("[ansibrightblack](cancelled)[/]")
+            return
+        catalog.set_key(prov.id, key)
+        self.__dict__.get("_live_models", {}).pop(prov.id, None)
+        self.console.print(
+            f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
+            "[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]")
+        await self._apply(model, prov.base_url, key,
+                          f" [ansibrightblack]via {prov.label}[/]")
 
     async def _apply(self, model: str, backend: str, api_key: str | None, where: str) -> None:
         """Point the live agent at (model, backend, key) and rebuild it."""
@@ -1109,23 +1132,20 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
-        import shutil  # noqa: PLC0415
-
         self._resolve_model()  # so the banner + first turn use a model that exists
         # Full reset BEFORE drawing: clear the screen AND scrollback and home the
         # cursor, so the banner starts at the very top with nothing above it (the
-        # shell prompt that launched us included). Then pad with the *measured*
-        # banner height so the input lands exactly at the bottom row — banner on
-        # top, input on the bottom, nothing clipped, at any terminal size.
+        # shell prompt that launched us included). The input sits right beneath
+        # the banner and the conversation flows downward from there. We do NOT
+        # pad the prompt to the terminal floor: that buries the first message in
+        # a wall of blank lines when output scrolls. (True always-bottom input
+        # needs a full-screen app — see the REPL notes.)
         try:
             sys.stdout.write("\033[2J\033[3J\033[H")
             sys.stdout.flush()
         except Exception:  # noqa: BLE001 - non-tty / dumb terminal
             pass
-        banner_h = print_banner(self.console, self.model, self.backend)
-        rows = shutil.get_terminal_size((80, 24)).lines
-        for _ in range(max(0, rows - banner_h - 2)):  # 2 = input line + footer
-            self.console.print()
+        print_banner(self.console, self.model, self.backend)
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()

@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.13] — 2026-06-30
+
+### Fixed
+
+- **Your messages no longer vanish after sending.** The launch bottom-padding
+  pushed the prompt below a wall of blank lines, so the first message scrolled
+  up into that emptiness and looked gone. Removed the padding: the banner sits
+  at the top, the input right beneath it, and the conversation flows downward
+  with every message visible.
+
 ## [1.1.12] — 2026-06-30
 
 ### Changed
