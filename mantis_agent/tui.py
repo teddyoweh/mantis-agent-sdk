@@ -84,6 +84,22 @@ MODES = [
     ("bypass permissions on", "⏵⏵ ", "ansired"),
 ]
 
+# Substrings that mark a /v1/models entry as NOT a chat model — embeddings,
+# audio, image, moderation, legacy base-completion engines. Used to keep the
+# live model list clean (OpenAI's endpoint returns ~50 of these).
+_NONCHAT_MARKERS = (
+    "embed", "tts", "whisper", "audio", "speech", "transcrib", "dall", "-image",
+    "moderation", "rerank", "guard", "similar", "-search", "realtime", "sora",
+    "clip", "-edit", "ada-", "babbage", "curie", "davinci", "ocr", "-voice",
+    "video", "stable-diffusion", "flux",
+    # legacy / date-stamped OpenAI engines (so modern flagships survive the cap)
+    "gpt-3.5", "gpt-4-0", "gpt-4-1", "-0613", "-0314", "-0301", "-1106", "-0125", "-16k",
+)
+
+
+def _is_chat_model(model_id: str) -> bool:
+    return not any(m in model_id.lower() for m in _NONCHAT_MARKERS)
+
 # The "thinking" status line shown while the model works: a pulsing star, a
 # whimsical gerund, and a live elapsed timer — e.g. ``✻ Undulating… (34s)``.
 SPINNER_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]  # a pulse
@@ -631,6 +647,7 @@ class MantisTUI:
         base = len(self.messages)
         self.messages.append(UserMessage(content=text))
 
+        self.console.print()  # breathing room above the loading spinner
         thinking = _Thinking()
         thinking.start()
         try:
@@ -667,6 +684,7 @@ class MantisTUI:
                     # so it looks right in Terminal.app (no truecolor needed).
                     self.console.print(Markdown(block.text.strip(), code_theme="ansi_dark"))
             elif isinstance(block, ToolUseBlock):
+                self.console.print()  # breathing room above the tool call
                 self.console.print(
                     f"[{LEG}]⚒[/] [white]{block.name}[/]"
                     f"[ansibrightblack]({self._fmt_args(block.input)})[/]"
@@ -927,8 +945,16 @@ class MantisTUI:
             on = catalog.is_enabled(prov)
             extra = "  · enabled" if on else "  · enter → API key or self-host"
             rows.append({"kind": "header", "text": f"  {prov.label}{extra}"})
-            live = self._provider_live_models(prov) if on else None
-            models = (live[:14] if live else list(prov.models))
+            # Curated flagship models first (clean + current); then append any
+            # extra *chat* models the live endpoint reports, junk filtered out.
+            models = list(prov.models)
+            if on:
+                live = self._provider_live_models(prov)
+                if live:
+                    for m in live:
+                        if _is_chat_model(m) and m not in models:
+                            models.append(m)
+            models = models[:12]
             for m in models:
                 rows.append({"kind": "item", "label": m, "enabled": on,
                              "value": {"model": m, "provider": prov},

@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.12] — 2026-06-30
+
+### Changed
+
+- **Breathing room above tool calls and the loading spinner.** Tool-call lines
+  (`⚒ grep(...)`) and the thinking spinner now get a blank line above them
+  instead of being cramped against the previous output.
+
 ## [1.1.11] — 2026-06-30
 
 ### Fixed
