@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.15] — 2026-06-30
+
+### Changed
+
+- **Blank line between a reply and the next prompt** so turns don't jam together.
+- **`/clear` now blanks the screen** (clears scrollback) and redraws the banner —
+  a clean fresh start — instead of just printing "(history cleared)".
+
 ## [1.1.14] — 2026-06-30
 
 ### Changed

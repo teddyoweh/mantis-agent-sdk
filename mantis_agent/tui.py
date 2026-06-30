@@ -83,14 +83,16 @@ SLASH_COMMANDS = {
 # shown as the target after the verb.
 TOOL_VERBS = {
     "bash": ("Run", ("command",)),
-    "read": ("Read", ("path", "file_path")),
-    "write": ("Write", ("path", "file_path")),
-    "edit": ("Edit", ("path", "file_path")),
+    "read_file": ("Read", ("path", "file_path")),
+    "write_file": ("Write", ("path", "file_path")),
+    "edit_file": ("Edit", ("path", "file_path")),
+    "multi_edit": ("Edit", ("path", "file_path")),
     "ls": ("List", ("path",)),
     "glob": ("Find", ("pattern", "path")),
     "grep": ("Search", ("pattern", "query")),
     "web_search": ("Search web", ("query",)),
     "web_fetch": ("Fetch", ("url",)),
+    "todo_write": ("Plan", ()),
 }
 
 # Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
@@ -409,6 +411,10 @@ class MantisTUI:
         self.mode_idx = 0
         self.messages: list[Any] = []
         self.agent: Any = None
+        # Live todo list, mutated in place by the bound ``todo_write`` tool and
+        # re-rendered by the TUI whenever the agent updates it.
+        self.todos: list[dict] = []
+        self._todos_shown: list[dict] = []
 
         from rich.console import Console  # noqa: PLC0415
 
@@ -418,7 +424,9 @@ class MantisTUI:
 
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
-        from .builtin_tools import CODING_TOOLS  # noqa: PLC0415
+        from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
+        from .builtin_tools.todo import make_todo_write  # noqa: PLC0415
+        from .permissions import PermissionContext  # noqa: PLC0415
         from .providers.base import detect_provider, resolve  # noqa: PLC0415
         from .tools import ToolRegistry  # noqa: PLC0415
 
@@ -435,21 +443,50 @@ class MantisTUI:
             provider = factory()
 
         # The whole point of `mantis` (vs. the bare `chat` REPL): give the model
-        # a real tool belt — shell + filesystem — so it can actually *do* things
-        # instead of describing them. Without these the agent loop has nothing to
-        # call and every turn collapses to a single chat completion.
+        # a real tool belt — shell + filesystem + web — so it can actually *do*
+        # things instead of describing them. Without these the agent loop has
+        # nothing to call and every turn collapses to a single chat completion.
         registry = ToolRegistry()
         registry.add(*CODING_TOOLS)
+        registry.add(web_search, web_fetch)
+        registry.add(make_todo_write(self.todos))
 
+        # Wire the shift+tab footer modes to the real permission system so they
+        # actually gate execution (Claude-Code parity), not just decorate the
+        # footer. The callback reads ``self.mode_idx`` live, so toggling the mode
+        # changes behavior on the very next tool call.
         return Agent(
             model=self.model,
             provider=provider,
             system=self.system or self._default_system(),
             tools=registry,
+            permissions=PermissionContext(mode="default", can_use_tool=self._permit),
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             max_steps=self.max_turns,
         )
+
+    async def _permit(self, tool: Any, tool_input: dict, ctx: Any) -> Any:
+        """Permission decision keyed off the live shift+tab footer mode.
+
+        * ``bypass permissions on`` — allow everything.
+        * ``plan mode on`` — read-only tools only; mutating tools (bash, write,
+          edit) are denied so the model researches/plans without touching the
+          machine, exactly like Claude Code's plan mode.
+        * ``default`` / ``accept edits on`` — allow (no mid-stream prompt UI yet;
+          interactive per-tool confirmation is a later parity step).
+        """
+        from .permissions import Allow, Deny  # noqa: PLC0415
+
+        mode = MODES[self.mode_idx][0]
+        if mode == "plan mode on" and not getattr(tool, "is_read_only", False):
+            return Deny(
+                reason=(
+                    f"plan mode is on — `{tool.name}` is blocked. Don't modify "
+                    f"anything; instead describe the plan. (shift+tab to switch mode)"
+                )
+            )
+        return Allow()
 
     def _default_system(self) -> str:
         """The agent system prompt — what makes the model behave like a coding
@@ -783,6 +820,28 @@ class MantisTUI:
             if len(lines) > 12:
                 self.console.print(_T(f"    … (+{len(lines) - 12} more lines)", style="ansibrightblack"))
 
+        # If the agent just updated its todos via ``todo_write``, draw the
+        # checklist so the user can watch multi-step progress (Claude-Code style).
+        if self.todos and self.todos != self._todos_shown:
+            self._render_todos()
+            self._todos_shown = [dict(t) for t in self.todos]
+
+    def _render_todos(self) -> None:
+        from rich.text import Text as _T  # noqa: PLC0415
+
+        glyph = {"completed": ("✔", "ansigreen"),
+                 "in_progress": ("▶", BODY),
+                 "pending": ("○", "ansibrightblack")}
+        self.console.print()
+        for t in self.todos:
+            mark, colour = glyph.get(t.get("status", "pending"), ("○", "ansibrightblack"))
+            active = t.get("status") == "in_progress"
+            label = t.get("activeForm" if active else "content", t.get("content", ""))
+            row = _T()
+            row.append(f"  {mark} ", style=colour)
+            row.append(label, style=(f"bold {BODY}" if active else colour))
+            self.console.print(row)
+
     @staticmethod
     def _tool_label(name: str, args: dict[str, Any]) -> tuple[str, str]:
         """Map a tool call to a friendly (verb, target) — e.g. ("Read", "foo.py")."""
@@ -822,8 +881,15 @@ class MantisTUI:
             )
             return True
         if cmd == "/clear":
+            # Blank the screen (and scrollback) and redraw the banner — a clean
+            # fresh start, like relaunching mantis.
             self.messages = []
-            self.console.print("[ansibrightblack](history cleared)[/]")
+            try:
+                sys.stdout.write("\033[2J\033[3J\033[H")
+                sys.stdout.flush()
+            except Exception:  # noqa: BLE001
+                pass
+            print_banner(self.console, self.model, self.backend)
             return True
         if cmd == "/cwd":
             self.console.print(f"[ansibrightblack]{Path.cwd()}[/]")
@@ -1232,6 +1298,7 @@ class MantisTUI:
                     # _run_turn already rewinds self.messages on interrupt/error,
                     # so history stays coherent without extra cleanup here.
                     await self._run_turn(line)
+                    self.console.print()  # gap between the reply and the next prompt
                 except KeyboardInterrupt:
                     continue
                 except Exception as e:  # noqa: BLE001

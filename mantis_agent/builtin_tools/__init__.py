@@ -17,6 +17,7 @@ from .fs import (
     glob,
     grep,
     ls,
+    multi_edit,
     read_file,
     write_file,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "glob",
     "grep",
     "ls",
+    "multi_edit",
     "read_file",
     "web_fetch",
     "web_search",

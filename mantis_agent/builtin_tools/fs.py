@@ -191,6 +191,48 @@ async def edit_file(
     return f"edited {p} ({count} replacement{'s' if count != 1 else ''})"
 
 
+@tool(is_read_only=False, is_concurrency_safe=False)
+async def multi_edit(path: str, edits: list[dict]) -> str:
+    """Apply several edits to one file in a single atomic pass. Edits run in
+    order, each against the result of the previous one; if ANY edit fails to
+    match, NONE are written (all-or-nothing), so the file never ends up
+    half-edited.
+
+    Args:
+        path: File to edit.
+        edits: A list of ``{"old_string": ..., "new_string": ..., "replace_all"?: bool}``
+            objects, applied top to bottom.
+    """
+
+    if not isinstance(edits, list) or not edits:
+        raise ValueError("edits must be a non-empty list of edit objects")
+
+    p = Path(path).expanduser()
+    if not p.exists():
+        raise FileNotFoundError(f"no such file: {path}")
+
+    text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+    applied = 0
+    for i, e in enumerate(edits):
+        if not isinstance(e, dict) or "old_string" not in e or "new_string" not in e:
+            raise ValueError(f"edit #{i + 1} must have old_string and new_string")
+        old, new = e["old_string"], e["new_string"]
+        replace_all = bool(e.get("replace_all", False))
+        count = text.count(old)
+        if count == 0:
+            raise ValueError(f"edit #{i + 1}: old_string not found in {path}")
+        if count > 1 and not replace_all:
+            raise ValueError(
+                f"edit #{i + 1}: old_string not unique ({count} matches) — add "
+                f"context or set replace_all"
+            )
+        text = text.replace(old, new)
+        applied += 1
+
+    await anyio.to_thread.run_sync(lambda: p.write_text(text, "utf-8"))
+    return f"applied {applied} edit{'s' if applied != 1 else ''} to {p}"
+
+
 # ---------------------------------------------------------------------------
 # Listing / searching
 # ---------------------------------------------------------------------------
@@ -327,6 +369,7 @@ CODING_TOOLS: tuple[Tool, ...] = (
     read_file,
     write_file,
     edit_file,
+    multi_edit,
     ls,
     glob,
     grep,
@@ -338,6 +381,7 @@ __all__ = [
     "read_file",
     "write_file",
     "edit_file",
+    "multi_edit",
     "ls",
     "glob",
     "grep",
