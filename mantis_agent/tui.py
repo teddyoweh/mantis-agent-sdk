@@ -283,7 +283,13 @@ def _short_cwd() -> str:
 
 
 def print_banner(console: Any, model: str, backend: str) -> int:
-    """Print the banner; return the number of terminal lines it occupied."""
+    """Print the banner; return the number of terminal lines it actually occupied.
+
+    The height is *measured* (not estimated) via ``render_lines`` at the current
+    width, so wrapping on narrow terminals can't throw off the caller's
+    bottom-padding math and clip the mascot.
+    """
+    from rich.console import Group  # noqa: PLC0415
     from rich.table import Table  # noqa: PLC0415
     from rich.text import Text  # noqa: PLC0415
 
@@ -314,16 +320,20 @@ def print_banner(console: Any, model: str, backend: str) -> int:
     for i in range(len(mascot)):
         grid.add_row(mascot[i], info[i])
 
-    console.print()
-    console.print(grid)
-    console.print()
-    console.print(
-        Text(' tip: type a request and press Enter · /help for commands · /exit to quit',
-             style="ansibrightblack")
+    tip = Text(
+        " tip: type a request and press Enter · /help for commands · /exit to quit",
+        style="ansibrightblack",
     )
+    body = Group(grid, Text(""), tip)
+
+    # Measure the real rendered height at this width (handles wrapping).
+    opts = console.options.update(height=None)
+    height = len(console.render_lines(body, opts, pad=False))
+
     console.print()
-    # blank + grid + blank + tip + blank
-    return len(mascot) + 4
+    console.print(body)
+    console.print()
+    return height + 2  # the two blank lines we print around the body
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +422,10 @@ class MantisTUI:
             "result. Never answer from memory or guess.\n"
             "- Only after a tool runs do you write prose, and keep it to a short "
             "summary of what the output means. Let the tool output speak.\n"
+            "- STOP when you have the answer. Once a tool has given you the "
+            "information, write the final answer with NO further tool calls. Never "
+            "repeat a tool call you already made — if a result wasn't what you "
+            "expected, change the arguments; do not run the same thing again.\n"
             "- Only the user's machine matters — never enumerate other operating "
             "systems, generic instructions, or hypotheticals.\n\n"
             "Example — user: 'find services on port 3000'. WRONG: explaining lsof "
@@ -452,19 +466,40 @@ class MantisTUI:
             return [], False
 
     def _pick_model(self, model: str, available: list[str]) -> str:
-        """Choose the closest installed model to ``model``."""
+        """Choose the best installed model to stand in for ``model``.
+
+        ``mantis`` is an *agent* — it lives or dies on tool calling, so the pick
+        is biased hard toward models that support native function-calling (via
+        :func:`capabilities.lookup_model`), then toward the requested family,
+        coder/instruct tunes, and larger parameter counts. This stops a bare
+        ``mantis`` from silently downgrading to a tiny non-agentic model just
+        because it shares a name prefix.
+        """
         if model in available:
             return model
-        base = model.split(":")[0]
-        # Prefer same base (e.g. "qwen2.5-7b-instruct" → "qwen2.5:7b"), then
-        # any instruct-tuned chat model, then just the first installed one.
-        for cand in available:
-            if cand.split(":")[0] == base:
-                return cand
-        for cand in available:
-            if any(k in cand.lower() for k in ("instruct", "chat", "qwen", "llama")):
-                return cand
-        return available[0]
+
+        import re  # noqa: PLC0415
+
+        from .capabilities import lookup_model  # noqa: PLC0415
+
+        base = model.split(":")[0].lower()
+
+        def size_b(name: str) -> float:
+            m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", name.lower())
+            return float(m.group(1)) if m else 0.0
+
+        def score(name: str) -> float:
+            s = 0.0
+            if lookup_model(name).supports_native_tools:
+                s += 100  # the thing that actually matters for an agent
+            if name.split(":")[0].lower() == base:
+                s += 20
+            if any(k in name.lower() for k in ("coder", "instruct", "chat")):
+                s += 5
+            s += min(size_b(name), 72) / 10.0  # nudge toward bigger, capped
+            return s
+
+        return max(available, key=score)
 
     def _resolve_model(self) -> None:
         """Point ``self.model`` at something that actually exists, or explain how
@@ -554,6 +589,10 @@ class MantisTUI:
             bottom_toolbar=bottom_toolbar,
             style=style,
             multiline=False,
+            # Keep the prompt area exactly 2 rows (input + footer) so the
+            # bottom-padding math stays exact; the completion menu pops up
+            # over the padded space above instead of reserving rows.
+            reserve_space_for_menu=0,
         )
 
     def _toolbar_fg(self) -> str:
@@ -1044,18 +1083,23 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
+        import shutil  # noqa: PLC0415
+
         self._resolve_model()  # so the banner + first turn use a model that exists
-        # Clear to a fresh screen, print the banner at the top, and let the
-        # input sit right beneath it. We deliberately do NOT pad down to the
-        # bottom of the terminal: padding overflows on tall/narrow windows (the
-        # banner text wraps, the math under-counts) and scrolls the mascot off
-        # the top, leaving a huge void with a stranded prompt. Banner-then-input
-        # is robust at every size; the conversation fills downward from there.
+        # Full reset BEFORE drawing: clear the screen AND scrollback and home the
+        # cursor, so the banner starts at the very top with nothing above it (the
+        # shell prompt that launched us included). Then pad with the *measured*
+        # banner height so the input lands exactly at the bottom row — banner on
+        # top, input on the bottom, nothing clipped, at any terminal size.
         try:
-            self.console.clear()
+            sys.stdout.write("\033[2J\033[3J\033[H")
+            sys.stdout.flush()
         except Exception:  # noqa: BLE001 - non-tty / dumb terminal
             pass
-        print_banner(self.console, self.model, self.backend)
+        banner_h = print_banner(self.console, self.model, self.backend)
+        rows = shutil.get_terminal_size((80, 24)).lines
+        for _ in range(max(0, rows - banner_h - 2)):  # 2 = input line + footer
+            self.console.print()
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()

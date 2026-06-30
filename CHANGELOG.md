@@ -56,6 +56,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.11] — 2026-06-30
+
+### Fixed
+
+- **Mascot no longer clipped, and the input is back at the bottom.** The banner
+  height is now *measured* at the real terminal width (handling wrapping on
+  narrow windows) instead of estimated, and `mantis` clears the screen +
+  scrollback before drawing — so the banner sits fully at the top and the
+  input is padded to the bottom row at any size. Fixes the case where a narrow
+  window scrolled the mascot's head/antennae off the top.
+
 ## [1.1.10] — 2026-06-30
 
 ### Changed
