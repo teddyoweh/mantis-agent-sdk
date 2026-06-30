@@ -760,7 +760,7 @@ class MantisTUI:
 
             label, symbol, color = MODES[self.mode_idx]
             if self.mode_idx == 0:
-                left = "  ? for shortcuts"
+                left = ""  # default mode: no footer hint
             else:
                 left = f"  {symbol}{label} (shift+tab to cycle)"
             right = f"{self.model} "
@@ -782,6 +782,9 @@ class MantisTUI:
         style = Style.from_dict({
             "prompt": BODY,
             "placeholder": "ansibrightblack",
+            # Toolbar with no reverse/white background — just plain text on the
+            # terminal's own background.
+            "bottom-toolbar": "noreverse bg:default",
             "completion-menu": "bg:#11160c",
             "completion-menu.completion": "bg:#11160c #93a081",
             "completion-menu.completion.current": "bg:#26340f #c6e79a bold",

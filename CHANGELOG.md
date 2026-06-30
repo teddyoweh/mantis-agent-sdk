@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.27] — 2026-06-30
+
+### Changed
+
+- **Removed the "? for shortcuts" footer hint** (default mode shows no footer
+  text), and dropped the toolbar's reverse/white background so the footer is
+  plain text on the terminal background.
+
 ## [1.1.26] — 2026-06-30
 
 ### Fixed
