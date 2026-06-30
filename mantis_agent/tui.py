@@ -1328,8 +1328,23 @@ class MantisTUI:
         self.console.print(
             f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
             "[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]")
+        await self._validate_and_report(prov)
         await self._apply(model, prov.base_url, key,
                           f" [ansibrightblack]via {prov.label}[/]")
+
+    async def _validate_and_report(self, prov: Any) -> None:
+        """Check a freshly-saved key off-thread and report pass/fail inline."""
+        import anyio  # noqa: PLC0415
+
+        from . import catalog  # noqa: PLC0415
+
+        ok, detail = await anyio.to_thread.run_sync(catalog.validate_provider, prov)
+        if ok:
+            self.console.print(f"  [ansigreen]✓[/] [ansibrightblack]{prov.label}: {detail}[/]")
+        else:
+            self.console.print(
+                f"  [ansiyellow]![/] [ansibrightblack]{prov.label}: {detail} — "
+                f"saved anyway; re-key with [white]/enable {prov.id}[/][/]")
 
     async def _apply(self, model: str, backend: str, api_key: str | None, where: str) -> None:
         """Point the live agent at (model, backend, key) and rebuild it."""
@@ -1395,6 +1410,7 @@ class MantisTUI:
             f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
             f"[ansibrightblack](saved, chmod 600)[/]  "
             f"[ansibrightblack]try [white]/model {prov.models[0]}[/][/]")
+        await self._validate_and_report(prov)
 
     async def _cmd_connect(self, arg: str) -> None:
         """Self-host: /connect <url> [model]."""
