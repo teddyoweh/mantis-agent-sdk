@@ -188,6 +188,34 @@ def _unified_diff(old: str, new: str, path: str, max_lines: int = 80) -> str:
     return "\n".join(lines)
 
 
+def _diff_stat(old: str, new: str) -> tuple[int, int]:
+    """``(additions, removals)`` between two texts — the line counts Claude Code
+    shows as 'Added N lines / Removed M lines'."""
+    import difflib  # noqa: PLC0415
+
+    adds = removes = 0
+    for ln in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0):
+        if ln.startswith("+") and not ln.startswith("+++"):
+            adds += 1
+        elif ln.startswith("-") and not ln.startswith("---"):
+            removes += 1
+    return adds, removes
+
+
+def _edit_summary(verb: str, path: str, old: str, new: str) -> str:
+    """A Claude-Code-style one-liner + diff: ``Updated foo.py · +3 -1`` then the
+    unified diff so the UI can show exactly what changed."""
+    adds, removes = _diff_stat(old, new)
+    stat = []
+    if adds:
+        stat.append(f"+{adds}")
+    if removes:
+        stat.append(f"-{removes}")
+    head = f"{verb} {path}" + (f" · {' '.join(stat)}" if stat else "")
+    diff = _unified_diff(old, new, path)
+    return f"{head}\n{diff}" if diff else head
+
+
 @tool(is_read_only=True)
 async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) -> str:
     """Read a text file and return it with 1-based line numbers (``cat -n`` style).
@@ -242,10 +270,7 @@ async def write_file(path: str, content: str) -> str:
         p.write_text(content, "utf-8")
 
     await anyio.to_thread.run_sync(_write)
-    n = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-    summary = f"wrote {len(content)} bytes ({n} lines) to {p}"
-    diff = _unified_diff(old, content, str(p))
-    return f"{summary}\n{diff}" if diff else summary
+    return _edit_summary("Wrote" if not old else "Updated", str(p), old, content)
 
 
 @tool(is_read_only=False, is_concurrency_safe=False)
@@ -278,9 +303,7 @@ async def edit_file(
         )
     updated = text.replace(old_string, new_string)
     await anyio.to_thread.run_sync(lambda: p.write_text(updated, "utf-8"))
-    summary = f"edited {p} ({count} replacement{'s' if count != 1 else ''})"
-    diff = _unified_diff(text, updated, str(p))
-    return f"{summary}\n{diff}" if diff else summary
+    return _edit_summary("Updated", str(p), text, updated)
 
 
 @tool(is_read_only=False, is_concurrency_safe=False)
@@ -323,9 +346,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         applied += 1
 
     await anyio.to_thread.run_sync(lambda: p.write_text(text, "utf-8"))
-    summary = f"applied {applied} edit{'s' if applied != 1 else ''} to {p}"
-    diff = _unified_diff(original, text, str(p))
-    return f"{summary}\n{diff}" if diff else summary
+    return _edit_summary("Updated", str(p), original, text)
 
 
 # ---------------------------------------------------------------------------

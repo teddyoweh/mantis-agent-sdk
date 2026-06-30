@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.4.0] — 2026-06-30
+
+### Changed
+
+- **Syntax-highlighted diffs (sexier than the line-numbered blocks).** Diff rows
+  now render the code with full syntax highlighting *on top of* the full-width
+  green/red background — `def` keywords, identifiers, types, strings all
+  colored inside the added/removed rows (language detected from the file
+  extension). Plus a Claude-Code-style `<file>  +N -M` summary line.
+
 ## [1.3.3] — 2026-06-30
 
 ### Changed

@@ -95,6 +95,25 @@ TOOL_VERBS = {
     "todo_write": ("Plan", ()),
 }
 
+# File extension → pygments lexer name, for syntax-highlighting diff bodies.
+_EXT_LANG = {
+    ".py": "python", ".pyi": "python", ".js": "javascript", ".mjs": "javascript",
+    ".ts": "typescript", ".tsx": "tsx", ".jsx": "jsx", ".json": "json",
+    ".md": "markdown", ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".rs": "rust", ".go": "go", ".java": "java", ".kt": "kotlin", ".c": "c",
+    ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp", ".rb": "ruby",
+    ".php": "php", ".html": "html", ".css": "css", ".scss": "scss",
+    ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", ".sql": "sql",
+    ".swift": "swift", ".lua": "lua", ".r": "r", ".ex": "elixir", ".exs": "elixir",
+}
+
+
+def _lang_from_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    return _EXT_LANG.get(Path(path).suffix.lower())
+
+
 # Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
 # edit) DO execute against the real machine; the footer is still cosmetic for now
 # (no per-tool gating wired up yet) but it matches the Claude Code UX.
@@ -755,6 +774,14 @@ class MantisTUI:
             else:
                 event.app.exit(exception=EOFError, style="class:aborting")
 
+        @kb.add("c-o")
+        def _expand_transcript(event: Any) -> None:  # noqa: ANN401
+            """Ctrl+O: open the full conversation in the pager with every tool
+            output untruncated — Claude Code's `app:toggleTranscript`."""
+            from prompt_toolkit.application import run_in_terminal  # noqa: PLC0415
+
+            run_in_terminal(self._show_transcript)
+
         from prompt_toolkit.completion import Completer, Completion  # noqa: PLC0415
 
         installed_models, _ = self._available_models()
@@ -1059,41 +1086,151 @@ class MantisTUI:
             lines = body.strip().splitlines() or ["(no output)"]
             colour = "red" if block.is_error else "bright_black"
 
+            rest = lines[1:]
+            is_diff = any(ln.startswith("@@") for ln in rest)
+
             # First line hangs off a "└" branch; the rest is indented beneath it.
             head = _T()
             head.append("  └ ", style=LEG if not block.is_error else "red")
+            if is_diff:
+                # Claude-Code-style summary: "<file>  +N -M".
+                import re as _re  # noqa: PLC0415
+
+                added = sum(1 for ln in rest if ln.startswith("+"))
+                removed = sum(1 for ln in rest if ln.startswith("-"))
+                path = None
+                pm = _re.search(r"(?:to|edited|wrote.*?to|edits to)\s+(\S+)", lines[0]) \
+                    or _re.search(r"(\S+\.\w+)", lines[0])
+                path = pm.group(1) if pm else lines[0]
+                head.append(str(path), style="white")
+                head.append("  +", style="bright_black")
+                head.append(str(added), style="green")
+                head.append(" -", style="bright_black")
+                head.append(str(removed), style="red")
+                self.console.print(head)
+                self._render_diff(rest, path=str(path))
+                continue
+
             head.append(lines[0][:200], style=colour)
             self.console.print(head)
-
-            rest = lines[1:]
-            # edit_file / write_file append a unified diff after the summary —
-            # render it as a line-numbered green/red diff block.
-            if any(ln.startswith("@@") for ln in rest):
-                self._render_diff(rest)
-                continue
             for ln in rest[:12]:
                 self.console.print(_T("    " + ln[:200], style=colour))
             if len(rest) > 12:
-                self.console.print(_T(f"    … (+{len(rest) - 12} more lines)", style="bright_black"))
+                hint = _T(f"    … +{len(rest) - 12} more lines ", style="bright_black")
+                hint.append("(ctrl+o to expand)", style="bright_black")
+                self.console.print(hint)
 
-    def _render_diff(self, diff_lines: list[str]) -> None:
-        """Render a unified diff like Claude Code: a line-number gutter and
-        FULL-WIDTH green/red background rows for additions/deletions, dim
-        context lines. Additions show new-file line numbers, deletions show
-        old-file numbers (parsed from the ``@@ -a,b +c,d @@`` hunk header)."""
+    def _show_transcript(self) -> None:
+        """Ctrl+O expand view: the whole conversation through the system pager
+        with every tool output shown in FULL (no 12-line truncation)."""
+        from rich.markup import escape as _esc  # noqa: PLC0415
+        from rich.text import Text as _T  # noqa: PLC0415
+
+        from .types import (  # noqa: PLC0415
+            AssistantMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        if not self.messages:
+            self.console.print("[bright_black](no conversation yet)[/]")
+            return
+        with self.console.pager(styles=True):
+            self.console.print("[bold]Transcript[/]  [bright_black](q to close)[/]\n")
+            for m in self.messages:
+                if isinstance(m, UserMessage):
+                    if getattr(m, "isMeta", False):
+                        continue
+                    if isinstance(m.content, str):
+                        self.console.print(f"[bright_black]›[/] {_esc(m.content)}")
+                    else:
+                        for b in m.content:
+                            if isinstance(b, ToolResultBlock):
+                                body = b.content if isinstance(b.content, str) else str(b.content)
+                                style = "red" if b.is_error else "bright_black"
+                                for ln in body.rstrip().splitlines() or ["(no output)"]:
+                                    self.console.print(_T("  " + ln, style=style))
+                            elif isinstance(b, TextBlock):
+                                self.console.print(f"[bright_black]›[/] {_esc(b.text)}")
+                elif isinstance(m, AssistantMessage):
+                    for b in m.content:
+                        if isinstance(b, TextBlock) and b.text.strip():
+                            self.console.print(f"[{BODY}]●[/] {_esc(b.text.strip())}")
+                        elif isinstance(b, ToolUseBlock):
+                            verb, target = self._tool_label(b.name, b.input or {})
+                            self.console.print(
+                                f"[{LEG}]⚒[/] [bold white]{verb}[/] "
+                                f"[bright_black]{_esc(target)}[/]"
+                            )
+                self.console.print()
+
+    def _hl_code(self, code: str, lang: str | None) -> Any:
+        """Syntax-highlight one line of code → a rich ``Text`` with foreground-only
+        token styles (backgrounds stripped, so a diff row's bg shows through).
+        Falls back to plain text if no language or highlighting fails."""
+        from rich.text import Text as _T  # noqa: PLC0415
+
+        if not lang or not code.strip():
+            return _T(code)
+        try:
+            from rich.style import Style  # noqa: PLC0415
+            from rich.syntax import Syntax  # noqa: PLC0415
+            from rich.text import Span  # noqa: PLC0415
+
+            syn = self._syntax_cache.get(lang)
+            if syn is None:
+                syn = Syntax("", lang, theme="ansi_dark")
+                self._syntax_cache[lang] = syn
+            t = syn.highlight(code)
+            t.rstrip()  # drop the trailing newline highlight() adds
+
+            def _fg_only(style: Any) -> Any:
+                s = Style.parse(style) if isinstance(style, str) else style
+                return Style(color=s.color, bold=s.bold, italic=s.italic,
+                             dim=s.dim, underline=s.underline)
+
+            t.style = None
+            t.spans = [Span(sp.start, sp.end, _fg_only(sp.style)) for sp in t.spans]
+            return t
+        except Exception:  # noqa: BLE001
+            return _T(code)
+
+    def _render_diff(self, diff_lines: list[str], path: str | None = None) -> None:
+        """Render a unified diff like Claude Code — and a touch cleaner:
+        FULL-WIDTH green/red background rows with **syntax-highlighted code**,
+        a marker + right-aligned line-number gutter, and dim context lines.
+        Additions show new-file line numbers, deletions show old-file numbers."""
         import re  # noqa: PLC0415
 
         from rich.text import Text as _T  # noqa: PLC0415
 
-        # Pale fg on a dark bg; truecolor terminals render these as-is, 256-color
-        # terminals (Terminal.app) downconvert to the nearest dark green/red.
-        ADD = "#cfe9b0 on #16320f"   # additions
-        DEL = "#f0adb6 on #361317"   # deletions
+        if not hasattr(self, "_syntax_cache"):
+            self._syntax_cache: dict[str, Any] = {}
+        lang = _lang_from_path(path)
+
+        ADD_BG, DEL_BG = "#16320f", "#3a1418"   # dark green / dark red row fill
+        ADD_FG, DEL_FG = "#cfe9b0", "#f0adb6"   # fallback fg when not highlighted
         width = max(40, self.console.width)
         indent = 2
-        avail = width - indent
-
+        # gutter width: line number (>=4) + 2 spaces + marker + space
         old_ln = new_ln = 0
+
+        def _row(num: int, marker: str, code: str, bg: str, fg: str) -> None:
+            gutter = f"{num:>4}  {marker} "
+            avail = max(4, width - indent - len(gutter))
+            code = code[:avail]
+            row = _T(" " * indent)
+            row.append(gutter, style=f"{fg} on {bg}")
+            ct = self._hl_code(code, lang)
+            ct.stylize(f"on {bg}")  # layer the row background over the syntax fg
+            row.append_text(ct)
+            filled = indent + len(gutter) + len(ct)
+            if filled < width:
+                row.append(" " * (width - filled), style=f"on {bg}")  # fill to edge
+            self.console.print(row)
+
         for ln in diff_lines:
             if ln.startswith("@@"):
                 m = re.match(r"@@ -(\d+)\D.*\+(\d+)", ln) or re.match(r"@@ -(\d+) \+(\d+)", ln)
@@ -1101,12 +1238,10 @@ class MantisTUI:
                     old_ln, new_ln = int(m.group(1)), int(m.group(2))
                 continue
             if ln.startswith("+"):
-                body = f"{new_ln:>4}  + {ln[1:]}"
-                self.console.print(_T(" " * indent).append(body[:avail].ljust(avail), style=ADD))
+                _row(new_ln, "+", ln[1:], ADD_BG, ADD_FG)
                 new_ln += 1
             elif ln.startswith("-"):
-                body = f"{old_ln:>4}  - {ln[1:]}"
-                self.console.print(_T(" " * indent).append(body[:avail].ljust(avail), style=DEL))
+                _row(old_ln, "-", ln[1:], DEL_BG, DEL_FG)
                 old_ln += 1
             else:  # context line (leading space) — dim, no background block
                 code = ln[1:] if ln.startswith(" ") else ln

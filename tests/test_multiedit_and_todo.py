@@ -20,7 +20,7 @@ def test_multi_edit_applies_in_order(tmp_path) -> None:
             {"old_string": "gamma", "new_string": "G"},
         ],
     )
-    assert "applied 2 edits" in out
+    assert "Updated" in out and "+" in out  # Claude-style "Updated … · +N -M"
     assert f.read_text() == "A beta G"
 
 
