@@ -1004,38 +1004,72 @@ class MantisTUI:
     # -- generic arrow-key picker (inline, self-erasing) ---------------------
 
     async def _pick(self, title: str, items: list[dict], start_index: int = 0) -> dict | None:
-        """Inline picker. ``items`` are header rows ({"kind":"header","text"}) or
-        selectable rows ({"kind":"item","label","value","hint"?,"enabled"?}).
-        Returns the chosen item dict, or None on Esc. Non-full-screen +
-        erase_when_done so it cleanly disappears and the chat continues."""
+        """Inline picker with **type-to-filter**. ``items`` are header rows
+        ({"kind":"header","text"}) or selectable rows
+        ({"kind":"item","label","value","hint"?,"enabled"?}). Arrow/Ctrl-N/P
+        move, typing narrows by label substring (headers with no match hide),
+        Backspace/Ctrl-U edit the filter, Enter picks, Esc cancels. Returns the
+        chosen item dict or None. Non-full-screen + erase_when_done."""
         from prompt_toolkit.application import Application  # noqa: PLC0415
         from prompt_toolkit.data_structures import Point  # noqa: PLC0415
         from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
+        from prompt_toolkit.keys import Keys  # noqa: PLC0415
         from prompt_toolkit.layout import HSplit, Layout, Window  # noqa: PLC0415
         from prompt_toolkit.layout.controls import FormattedTextControl  # noqa: PLC0415
         from prompt_toolkit.layout.dimension import D  # noqa: PLC0415
         from prompt_toolkit.styles import Style  # noqa: PLC0415
 
-        selectable = [i for i, it in enumerate(items) if it.get("kind") == "item"]
-        if not selectable:
+        if not any(it.get("kind") == "item" for it in items):
             self.console.print("[ansibrightblack]nothing to pick[/]")
             return None
-        st = {"sel": max(0, min(start_index, len(selectable) - 1))}
+        st = {"sel": max(0, start_index), "filter": ""}
+
+        def build() -> tuple[list, list]:
+            """(rows, sel_rows) for the current filter. rows = [(item, is_item)];
+            headers are kept only when ≥1 item under them survives the filter."""
+            f = st["filter"].lower()
+            rows: list = []
+            pending: dict | None = None
+            buf: list = []
+
+            def flush() -> None:
+                matches = [it for it in buf if not f or f in it["label"].lower()]
+                if matches:
+                    if pending is not None:
+                        rows.append((pending, False))
+                    rows.extend((it, True) for it in matches)
+
+            for it in items:
+                if it.get("kind") == "item":
+                    buf.append(it)
+                else:
+                    flush()
+                    pending, buf = it, []
+            flush()
+            sel_rows = [i for i, (_it, is_item) in enumerate(rows) if is_item]
+            return rows, sel_rows
+
+        def cur_state() -> tuple[list, list, int]:
+            rows, sel_rows = build()
+            if not sel_rows:
+                return rows, sel_rows, -1
+            st["sel"] = max(0, min(st["sel"], len(sel_rows) - 1))
+            return rows, sel_rows, sel_rows[st["sel"]]
 
         def frags() -> list:
-            cur = selectable[st["sel"]]
+            rows, sel_rows, cur_row = cur_state()
             out: list = []
-            for i, it in enumerate(items):
-                if it.get("kind") != "item":
+            if not sel_rows:
+                return [("class:hint", "  no matches — backspace to widen\n")]
+            for idx, (it, is_item) in enumerate(rows):
+                if not is_item:
                     out.append(("class:hdr", it["text"] + "\n"))
                     continue
-                ptr = "❯ " if i == cur else "  "
-                line = f"{ptr}{it['label']}"
-                hint = it.get("hint", "")
-                cls = "class:cur" if i == cur else ("class:on" if it.get("enabled", True) else "class:off")
-                out.append((cls, line))
-                if hint:
-                    out.append(("class:hint", f"   {hint}"))
+                ptr = "❯ " if idx == cur_row else "  "
+                cls = "class:cur" if idx == cur_row else ("class:on" if it.get("enabled", True) else "class:off")
+                out.append((cls, f"{ptr}{it['label']}"))
+                if it.get("hint"):
+                    out.append(("class:hint", f"   {it['hint']}"))
                 out.append(("", "\n"))
             return out
 
@@ -1044,31 +1078,60 @@ class MantisTUI:
         @kb.add("up")
         @kb.add("c-p")
         def _u(_e: Any) -> None:
-            st["sel"] = (st["sel"] - 1) % len(selectable)
+            _, sel_rows = build()
+            if sel_rows:
+                st["sel"] = (st["sel"] - 1) % len(sel_rows)
 
         @kb.add("down")
         @kb.add("c-n")
         def _d(_e: Any) -> None:
-            st["sel"] = (st["sel"] + 1) % len(selectable)
+            _, sel_rows = build()
+            if sel_rows:
+                st["sel"] = (st["sel"] + 1) % len(sel_rows)
 
         @kb.add("enter")
         def _ok(e: Any) -> None:
-            e.app.exit(result=items[selectable[st["sel"]]])
+            rows, sel_rows, cur_row = cur_state()
+            if sel_rows:
+                e.app.exit(result=rows[cur_row][0])
 
         @kb.add("escape")
         @kb.add("c-c")
-        @kb.add("q")
         def _no(e: Any) -> None:
             e.app.exit(result=None)
 
+        @kb.add("backspace")
+        def _bs(_e: Any) -> None:
+            st["filter"] = st["filter"][:-1]
+            st["sel"] = 0
+
+        @kb.add("c-u")
+        @kb.add("c-w")
+        def _clr(_e: Any) -> None:
+            st["filter"] = ""
+            st["sel"] = 0
+
+        @kb.add(Keys.Any)
+        def _type(e: Any) -> None:
+            ch = e.data
+            if ch and len(ch) == 1 and ch.isprintable():
+                st["filter"] += ch
+                st["sel"] = 0
+
         control = FormattedTextControl(
             frags, focusable=True, show_cursor=False,
-            get_cursor_position=lambda: Point(0, selectable[st["sel"]]),
+            get_cursor_position=lambda: Point(0, max(0, cur_state()[2])),
         )
-        head = Window(FormattedTextControl(lambda: [("class:title", title + "\n")]), height=1)
+
+        def title_text() -> list:
+            f = st["filter"]
+            return [("class:title", title),
+                    ("class:filter", f"   ❯ {f}▏" if f else "")]
+
+        head = Window(FormattedTextControl(title_text), height=1)
         body = Window(control, height=D(max=20), wrap_lines=False)
         style = Style.from_dict({
-            "title": "#888888", "hdr": f"{BODY} bold",
+            "title": "#888888", "filter": "#c6e79a bold", "hdr": f"{BODY} bold",
             "cur": f"#0b1605 bg:{BODY} bold", "on": "#ffffff",
             "off": "#777777", "hint": "#777777",
         })
