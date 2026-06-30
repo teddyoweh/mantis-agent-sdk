@@ -56,6 +56,12 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.28] — 2026-06-30
+
+### Changed
+
+- **Input frame uses a solid rule** (`─`) again instead of the dashed `┄`.
+
 ## [1.1.27] — 2026-06-30
 
 ### Changed

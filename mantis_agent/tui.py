@@ -768,7 +768,7 @@ class MantisTUI:
             # A dim rule on the first line frames the input from below (the run
             # loop prints a matching rule above it), Claude-Code style.
             width = shutil.get_terminal_size((80, 24)).columns
-            rule = "┄" * width
+            rule = "─" * width
             return HTML(
                 f'<style fg="ansibrightblack">{rule}</style>\n'
                 f'<style fg="{self._toolbar_fg()}">{left}</style>'
@@ -1543,7 +1543,7 @@ class MantisTUI:
                     # all inside prompt_toolkit's render. erase_when_done wipes
                     # the whole frame on submit, then we echo a clean "› message"
                     # — so past turns keep no rules, only the current input does.
-                    rule = "┄" * self.console.width
+                    rule = "─" * self.console.width
                     message = HTML(
                         f"<ansibrightblack>{rule}</ansibrightblack>\n"
                         f"<ansibrightblack>›</ansibrightblack> "
