@@ -1080,27 +1080,37 @@ class MantisTUI:
 
     # -- model catalog & selection ------------------------------------------
 
-    def _provider_live_models(self, prov: Any) -> list[str] | None:
-        """Live ``/v1/models`` for an enabled provider (cached, best-effort)."""
-        from . import catalog  # noqa: PLC0415
-        import httpx  # noqa: PLC0415
+    def _kick_prewarm(self) -> None:
+        """Fire-and-forget refresh of enabled providers' live model lists, so the
+        selector (which only reads the on-disk cache) opens instantly."""
+        import asyncio  # noqa: PLC0415
 
-        cache = self.__dict__.setdefault("_live_models", {})
-        if prov.id in cache:
-            return cache[prov.id]
-        key = catalog.api_key_for(prov)
-        out: list[str] | None = None
         try:
-            with httpx.Client(timeout=2.5) as c:
-                r = c.get(f"{prov.base_url.rstrip('/')}/models",
-                          headers={"Authorization": f"Bearer {key}"} if key else {})
-                r.raise_for_status()
-                ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
-                out = ids or None
-        except Exception:  # noqa: BLE001
-            out = None
-        cache[prov.id] = out
-        return out
+            asyncio.ensure_future(self._prewarm_live_models())
+        except RuntimeError:
+            pass  # no running loop (e.g. unit test) — fine
+
+    async def _prewarm_live_models(self) -> None:
+        """Refresh stale/missing live model lists off the event loop (catalog
+        does the HTTP + disk-persist with a 24h TTL)."""
+        import anyio  # noqa: PLC0415
+
+        from . import catalog  # noqa: PLC0415
+
+        targets = [p for p in catalog.CATALOG
+                   if catalog.is_enabled(p) and catalog.cached_live_models(p.id) is None]
+        if not targets:
+            return
+
+        async def _go(prov: Any) -> None:
+            try:
+                await anyio.to_thread.run_sync(catalog.refresh_live_models, prov)
+            except Exception:  # noqa: BLE001
+                pass
+
+        async with anyio.create_task_group() as tg:
+            for prov in targets:
+                tg.start_soon(_go, prov)
 
     def _catalog_rows(self) -> list[dict]:
         """Picker rows: local Ollama first, then every hosted provider. Enabled
@@ -1128,7 +1138,7 @@ class MantisTUI:
             # extra *chat* models the live endpoint reports, junk filtered out.
             models = list(prov.models)
             if on:
-                live = self._provider_live_models(prov)
+                live = catalog.cached_live_models(prov.id)
                 if live:
                     for m in live:
                         if _is_chat_model(m) and m not in models:
@@ -1204,7 +1214,7 @@ class MantisTUI:
             self.console.print("[ansibrightblack](cancelled)[/]")
             return
         catalog.set_key(prov.id, key)
-        self.__dict__.get("_live_models", {}).pop(prov.id, None)
+        self._kick_prewarm()
         self.console.print(
             f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
             "[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]")
@@ -1254,7 +1264,7 @@ class MantisTUI:
 
         if cmd == "/disable":
             if catalog.clear_key(prov.id):
-                self.__dict__.get("_live_models", {}).pop(prov.id, None)
+                self._kick_prewarm()
                 self.console.print(f"[ansibrightblack]forgot saved key for {prov.label}[/]")
             else:
                 self.console.print(f"[ansibrightblack]no saved key for {prov.label}[/]")
@@ -1266,7 +1276,7 @@ class MantisTUI:
             self.console.print("[ansibrightblack](cancelled)[/]")
             return
         catalog.set_key(prov.id, key)
-        self.__dict__.get("_live_models", {}).pop(prov.id, None)
+        self._kick_prewarm()
         self.console.print(
             f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
             f"[ansibrightblack](saved, chmod 600)[/]  "
@@ -1311,6 +1321,7 @@ class MantisTUI:
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()
+        self._kick_prewarm()
 
         try:
             while True:
