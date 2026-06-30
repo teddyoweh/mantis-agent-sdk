@@ -322,6 +322,33 @@ def store_live_models(provider_id: str, models: list[str]) -> None:
         pass
 
 
+def validate_provider(provider: Provider, *, timeout: float = 4.0) -> tuple[bool, str]:
+    """Check that a provider's key + endpoint actually work, by hitting
+    ``/v1/models``. Returns ``(ok, detail)`` — e.g. ``(True, "42 models")`` or
+    ``(False, "invalid API key")`` — so a freshly-entered key surfaces a clear
+    pass/fail immediately instead of silently failing on the first chat turn."""
+    import httpx  # noqa: PLC0415
+
+    key = api_key_for(provider)
+    if not key:
+        return False, "no API key set"
+    try:
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(f"{provider.base_url.rstrip('/')}/models",
+                      headers={"Authorization": f"Bearer {key}"})
+    except Exception:  # noqa: BLE001
+        return False, "can't reach endpoint"
+    if r.status_code in (401, 403):
+        return False, "invalid API key"
+    if r.status_code >= 400:
+        return False, f"HTTP {r.status_code}"
+    try:
+        n = len(r.json().get("data", []))
+    except Exception:  # noqa: BLE001
+        n = 0
+    return True, (f"{n} models available" if n else "key accepted")
+
+
 def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str] | None:
     """Fetch a provider's live /v1/models and persist it. Best-effort: returns
     the ids (and caches them) on success, ``None`` on any failure. Intended to
@@ -363,4 +390,5 @@ __all__ = [
     "cached_live_models",
     "store_live_models",
     "refresh_live_models",
+    "validate_provider",
 ]
