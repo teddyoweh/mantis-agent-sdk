@@ -184,6 +184,12 @@ class Agent:
     temperature: float | None = None
     max_steps: int = 20
     max_turns: int | None = None  # alias for max_steps
+    # Anti-runaway: if the model makes the *same* tool call (same name + input)
+    # this many times in one run, further repeats are short-circuited with a
+    # nudge instead of executed — so a stuck model can't burn the whole
+    # ``max_steps`` budget (and minutes of wall-clock) re-running an identical
+    # failing command. 0 disables the guard.
+    max_repeated_tool_calls: int = 3
     extra: dict[str, Any] | None = None
 
     # Capability + safety surface (M0.1 / M2)
@@ -232,6 +238,9 @@ class Agent:
     # SDK's ``SDKPermissionDenial`` shape. ``query()`` reads this after
     # ``run()`` returns and populates ``SDKResultMessage.permission_denials``.
     _permission_denials: list = field(default_factory=list, init=False)
+    # Per-run count of identical (name, input) tool calls — drives the
+    # ``max_repeated_tool_calls`` anti-runaway guard. Reset at run start.
+    _run_call_sigs: dict = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         # Normalize tools input — accept list[Tool] or pre-built ToolRegistry.
@@ -539,6 +548,7 @@ class Agent:
             "cost_usd": 0.0,
             "turns": 0,
         }
+        self._run_call_sigs = {}  # reset anti-runaway counters for this run
         run_error: BaseException | None = None
 
         def _close_run_span(error: BaseException | None = None) -> None:
@@ -911,6 +921,29 @@ class Agent:
         tool = registry.get(call.name)
         if tool is None:
             return call, None
+
+        # Anti-runaway: short-circuit the Nth+ identical call so a stuck model
+        # can't re-run the same failing command until it exhausts max_steps.
+        if self.max_repeated_tool_calls:
+            try:
+                sig = (call.name, msgspec.json.encode(call.input))
+            except Exception:  # noqa: BLE001 — unencodable input: skip the guard
+                sig = None
+            if sig is not None:
+                seen = self._run_call_sigs.get(sig, 0) + 1
+                self._run_call_sigs[sig] = seen
+                if seen > self.max_repeated_tool_calls:
+                    return call, ToolResultBlock(
+                        tool_use_id=call.id,
+                        content=(
+                            f"Stopping: this exact `{call.name}` call has already "
+                            f"run {self.max_repeated_tool_calls} times with the same "
+                            f"arguments and no new result. Do not repeat it — change "
+                            f"the arguments, try a different approach, or give your "
+                            f"final answer to the user now."
+                        ),
+                        is_error=True,
+                    )
 
         # PreToolUse hook.
         hr = await self._dispatcher.dispatch(

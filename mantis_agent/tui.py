@@ -216,6 +216,33 @@ class _Thinking:
         sys.stdout.flush()
 
 
+_MD_PATCHED = False
+
+
+def _compact_markdown(text: str) -> Any:
+    """Build a tight rich ``Markdown``: code blocks with no surrounding padding
+    or grey box, so replies don't get the big vertical margins rich adds by
+    default. Patches ``Markdown.elements`` once (lazily — rich is a [cli] dep)."""
+    global _MD_PATCHED
+    from rich.markdown import CodeBlock, Markdown  # noqa: PLC0415
+    from rich.syntax import Syntax  # noqa: PLC0415
+
+    if not _MD_PATCHED:
+        class _TightCodeBlock(CodeBlock):
+            def __rich_console__(self, console: Any, options: Any) -> Any:  # noqa: ANN401
+                code = str(self.text).rstrip()
+                yield Syntax(
+                    code, self.lexer_name, theme=self.theme,
+                    background_color="default", word_wrap=True, padding=0,
+                )
+
+        Markdown.elements["fence"] = _TightCodeBlock
+        Markdown.elements["code_block"] = _TightCodeBlock
+        _MD_PATCHED = True
+
+    return Markdown(text, code_theme="ansi_dark")
+
+
 def _missing_deps_message() -> str:
     return (
         "The `mantis` terminal needs the optional CLI dependencies.\n\n"
@@ -762,6 +789,7 @@ class MantisTUI:
                     self._render_assistant(msg, ToolUseBlock)
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     self._render_tool_results(msg, ToolResultBlock)
+                self.console.print()  # space above the next thinking spinner
                 thinking.start()
         except KeyboardInterrupt:
             del self.messages[base:]
@@ -775,8 +803,6 @@ class MantisTUI:
             await thinking.stop()
 
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> None:
-        from rich.markdown import Markdown  # noqa: PLC0415
-
         from .types import TextBlock  # noqa: PLC0415
 
         for block in msg.content:
@@ -784,10 +810,9 @@ class MantisTUI:
                 if block.text.strip():
                     self.console.print()
                     self.console.print(f"[{BODY}]●[/] ", end="")
-                    # Render the assistant's markdown (code fences, bold, lists,
-                    # tables). `ansi_dark` keeps code highlighting to ANSI colors
-                    # so it looks right in Terminal.app (no truecolor needed).
-                    self.console.print(Markdown(block.text.strip(), code_theme="ansi_dark"))
+                    # Tight markdown: code fences, bold, lists, tables — without
+                    # the big vertical margins rich adds around code by default.
+                    self.console.print(_compact_markdown(block.text.strip()))
             elif isinstance(block, ToolUseBlock):
                 from rich.text import Text as _T  # noqa: PLC0415
 
@@ -1298,7 +1323,6 @@ class MantisTUI:
                     # _run_turn already rewinds self.messages on interrupt/error,
                     # so history stays coherent without extra cleanup here.
                     await self._run_turn(line)
-                    self.console.print()  # gap between the reply and the next prompt
                 except KeyboardInterrupt:
                     continue
                 except Exception as e:  # noqa: BLE001

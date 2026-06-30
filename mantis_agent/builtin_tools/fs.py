@@ -39,6 +39,26 @@ def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     return f"{head}\n… [truncated {len(text) - limit} chars]"
 
 
+def _not_found_hint(old_string: str, text: str, path: str) -> str:
+    """An *actionable* edit-miss error. A model that gets only 'not found' tends
+    to retry blindly; pointing it at the likely cause (stale/auto-formatted text,
+    whitespace) and the nearest real line lets it self-correct in one step."""
+    import difflib
+
+    probe = next((ln.strip() for ln in old_string.splitlines() if ln.strip()), "")
+    hint = (
+        f"old_string not found in {path}. The file's text differs from what you "
+        f"expected (whitespace, or it changed). Read the file again to copy the "
+        f"exact current text before editing."
+    )
+    if probe:
+        lines = text.splitlines()
+        near = difflib.get_close_matches(probe, [ln.strip() for ln in lines], n=1, cutoff=0.6)
+        if near:
+            hint += f" Closest line in the file is: {near[0]!r}"
+    return hint
+
+
 def _coerce_int(value: object, *, default: int, lo: int | None = None,
                 hi: int | None = None) -> int:
     """Best-effort int from whatever a model passed (``"2000"``, ``0``, ``None``,
@@ -180,7 +200,7 @@ async def edit_file(
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
     count = text.count(old_string)
     if count == 0:
-        raise ValueError(f"old_string not found in {path}")
+        raise ValueError(_not_found_hint(old_string, text, path))
     if count > 1 and not replace_all:
         raise ValueError(
             f"old_string is not unique in {path} ({count} matches) — add more "
@@ -220,7 +240,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         replace_all = bool(e.get("replace_all", False))
         count = text.count(old)
         if count == 0:
-            raise ValueError(f"edit #{i + 1}: old_string not found in {path}")
+            raise ValueError(f"edit #{i + 1}: " + _not_found_hint(old, text, path))
         if count > 1 and not replace_all:
             raise ValueError(
                 f"edit #{i + 1}: old_string not unique ({count} matches) — add "

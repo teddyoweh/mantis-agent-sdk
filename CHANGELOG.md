@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.16] — 2026-06-30
+
+### Changed
+
+- **Tighter Markdown rendering.** Code blocks no longer carry rich's large
+  vertical padding / grey box — replies are compact (one blank line around
+  code instead of three).
+- **Spinner spacing.** The thinking spinner now gets a blank line above it
+  after tool results too (not just at turn start), so it isn't cramped.
+
 ## [1.1.15] — 2026-06-30
 
 ### Changed
