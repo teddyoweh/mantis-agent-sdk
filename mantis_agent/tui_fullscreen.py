@@ -96,15 +96,22 @@ async def run_fullscreen(tui: Any) -> int:
     async def _print(fn: Any) -> None:
         await run_in_terminal(fn)
 
-    def _echo(t: str) -> None:
-        tui.console.print()
-        tui.console.print(f"[ansibrightblack]›[/] {_esc(t)}")
+    # Spacing model: every block prints a TRAILING blank line (so the separation
+    # is part of the block's own run_in_terminal call and can't be dropped),
+    # EXCEPT a tool call — which prints none, so its result hugs it directly.
 
-    def _render_assistant_block(m: Any) -> None:
-        # One blank line above each assistant block (text or tool call); tool
-        # results hug their call (rendered with no leading blank).
+    def _echo(t: str) -> None:
+        tui.console.print(f"[ansibrightblack]›[/] {_esc(t)}")
         tui.console.print()
-        tui._render_assistant(m, ToolUseBlock)
+
+    def _assist(m: Any) -> None:
+        had_tool_call = tui._render_assistant(m, ToolUseBlock)
+        if not had_tool_call:  # text block → blank below; tool call → hug result
+            tui.console.print()
+
+    def _result(m: Any) -> None:
+        tui._render_tool_results(m, ToolResultBlock)
+        tui.console.print()
 
     async def _handle(text: str) -> None:
         await _print(lambda: _echo(text))
@@ -121,9 +128,9 @@ async def run_fullscreen(tui: Any) -> int:
         try:
             async for msg in tui.agent.run_iter(tui.messages):
                 if isinstance(msg, AssistantMessage):
-                    await _print(lambda m=msg: _render_assistant_block(m))
+                    await _print(lambda m=msg: _assist(m))
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
-                    await _print(lambda m=msg: tui._render_tool_results(m, ToolResultBlock))
+                    await _print(lambda m=msg: _result(m))
         except asyncio.CancelledError:
             del tui.messages[base:]
             await _print(lambda: tui.console.print("[ansibrightblack](interrupted)[/]"))
@@ -166,7 +173,7 @@ async def run_fullscreen(tui: Any) -> int:
                 "\n[bold]commands[/]  [white]/model[/] <id> · [white]/clear[/] · "
                 "[white]/cwd[/] · [white]/exit[/]\n"
                 "[ansibrightblack]shift+tab cycles mode · esc/Ctrl+C interrupts a "
-                "running reply · Ctrl+D quits[/]\n"))
+                "running reply (Ctrl+C also quits when idle) · Ctrl+D quits[/]\n"))
             return True
         return False  # unknown → treat as a normal prompt
 
@@ -179,12 +186,20 @@ async def run_fullscreen(tui: Any) -> int:
         if text:
             event.app.create_background_task(_handle(text))
 
+    @kb.add("c-c")
+    def _(event: Any) -> None:
+        # Interrupt a running reply; if idle, quit (the usual terminal Ctrl+C).
+        task = state.get("task")
+        if state["working"] and task is not None:
+            task.cancel()
+        else:
+            event.app.exit(result=0)
+
     @kb.add("c-d")
     def _(event: Any) -> None:
         if not state["working"]:
             event.app.exit(result=0)
 
-    @kb.add("c-c")
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
         task = state.get("task")

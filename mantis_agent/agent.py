@@ -383,6 +383,16 @@ class Agent:
             except Exception:  # noqa: BLE001 — disk I/O can fail in containers
                 _log.debug("memory load skipped (I/O error)", exc_info=True)
 
+            # MANTIS.md instruction-memory hierarchy (managed → user → project →
+            # local, with @imports). The mantis analogue of CLAUDE.md.
+            try:
+                from .project_memory import render_memory_prompt
+                md = render_memory_prompt().strip()
+                if md:
+                    ctx["mantis_md"] = md
+            except Exception:  # noqa: BLE001
+                _log.debug("MANTIS.md load skipped (I/O error)", exc_info=True)
+
         # User-supplied extras flow through ``extra={"user_context": {...}}``.
         if isinstance(self.extra, dict):
             extra_ctx = self.extra.get("user_context")

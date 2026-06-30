@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.2.2] — 2026-06-30
+
+### Fixed
+
+- **Blank line between your message and the reply** in full-screen mode. Switched
+  to a trailing-blank spacing model (each block emits its own separator; tool
+  calls emit none so their result hugs) so the gap is reliable.
+- **Ctrl+C now quits when idle** (and still interrupts a running reply).
+
 ## [1.2.1] — 2026-06-30
 
 ### Fixed
