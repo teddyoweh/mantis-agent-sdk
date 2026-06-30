@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.25] — 2026-06-30
+
+### Fixed
+
+- **Bottom rule now hugs the input, and the Enter flicker is gone.** Dropped
+  `reserve_space_for_menu` from 8 to 0: it had inserted 8 blank rows between the
+  input and the bottom rule/footer (rule floated far below the input), and that
+  large reserved region repainted on submit (the ~1s flicker). Now both dashed
+  rules sit directly above and below the input.
+
 ## [1.1.24] — 2026-06-30
 
 ### Changed

@@ -802,10 +802,12 @@ class MantisTUI:
             # footer) on submit; the run loop then echoes a clean "› message"
             # so only the live input is ever framed, never past turns.
             erase_when_done=True,
-            # Keep the prompt area exactly 2 rows (input + footer) so the
-            # bottom-padding math stays exact; the completion menu pops up
-            # over the padded space above instead of reserving rows.
-            reserve_space_for_menu=8,
+            # No reserved menu rows: that put 8 blank lines between the input and
+            # the bottom rule/footer (so the rule wasn't hugging the input) and
+            # the big reserved area repainted on submit (the flicker). With 0 the
+            # bottom rule sits directly under the input and the completion menu
+            # pops up over the content above instead.
+            reserve_space_for_menu=0,
         )
 
     def _toolbar_fg(self) -> str:
