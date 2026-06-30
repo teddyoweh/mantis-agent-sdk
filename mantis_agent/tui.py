@@ -48,8 +48,8 @@ DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL", "http://localhost:1143
 BODY = "#7cb342"  # mantis green
 EYE_BG = "#0e1f08"  # near-black compound eye
 ACCENT = "#9c6b3f"  # the reddish-brown antennae
-LEG = "#558b2f"  # darker green legs (read apart from the body)
-PALE = "#c5e1a5"  # pale highlight ridge + the inner face of the folded forearm
+LEG = "#6b9e35"  # green legs (a touch darker so they read apart from the body)
+PALE = "#cddc9a"  # the pale inner face of the folded forearm
 
 # The same example-prompt pool Claude Code samples for its placeholder.
 EXAMPLE_PROMPTS = [
@@ -101,7 +101,7 @@ def _mascot_lines(Text: Any) -> list[Any]:
     """
     BODYV, EYEV, ANTV, LEGV, PALEV = 1, 2, 3, 4, 5
     palette = {BODYV: BODY, EYEV: EYE_BG, ANTV: ACCENT, LEGV: LEG, PALEV: PALE}
-    W, H = 24, 14
+    W, H = 22, 16
     grid = [[0] * W for _ in range(H)]
 
     def pt(x: float, y: float, v: int = BODYV) -> None:
@@ -140,35 +140,29 @@ def _mascot_lines(Text: Any) -> list[Any]:
                 for y in range(int(round(yc - th / 2)), int(round(yc + th / 2))):
                     pt(x, y)
 
-    def filltri(p0: tuple, p1: tuple, p2: tuple, v: int = BODYV) -> None:
-        ys = [p[1] for p in (p0, p1, p2)]
-        for y in range(min(ys), max(ys) + 1):
-            xi = []
-            for (ax, ay), (bx, by) in ((p0, p1), (p1, p2), (p2, p0)):
-                if ay <= y < by or by <= y < ay:
-                    xi.append(ax + (bx - ax) * (y - ay) / (by - ay))
-            if len(xi) >= 2:
-                for x in range(int(round(min(xi))), int(round(max(xi))) + 1):
-                    pt(x, y, v)
+    band([(2, 12, 2), (5, 11, 2), (8, 10, 3)])  # slim abdomen, low to the left
+    line(8, 11, 14, 4, BODYV, 3)  # prothorax rearing up STEEPLY (not horizontal)
 
-    band([(2, 11, 2), (5, 10, 3), (9, 9, 4), (13, 8, 4)])  # abdomen → thorax
-    for x, y in ((4, 9), (6, 8), (8, 8), (10, 7), (12, 7)):  # pale top-edge ridge
-        pt(x, y, PALEV)
+    # Small triangular head + compound eye at the top of the reared neck.
+    line(14, 4, 18, 3, BODYV, 1)
+    line(18, 3, 15, 6, BODYV, 1)
+    line(14, 4, 15, 6, BODYV, 1)
+    pt(15, 4, BODYV)
+    pt(16, 5, BODYV)
+    pt(16, 4, EYEV)
 
-    line(12, 9, 16, 4, BODYV, 3)  # prothorax reared up to the right
-    filltri((16, 1), (21, 2), (18, 5))  # triangular head
-    pt(18, 2, EYEV)
-    pt(19, 2, EYEV)  # compound eye
+    line(17, 3, 20, 0, ANTV)  # long antennae swept up-right
+    line(16, 3, 18, 0, ANTV)
 
-    line(20, 2, 23, 0, ANTV)  # long antennae swept up-right
-    line(19, 2, 22, 0, ANTV)
+    # The signature: bold raptorial forelegs folded in the "praying" pose,
+    # held out in front — femur up to the head, pale forearm folded back.
+    line(11, 10, 17, 5, BODYV, 2)
+    line(17, 5, 12, 9, PALEV, 2)
+    line(12, 9, 14, 10, BODYV, 1)  # the grasping tip
 
-    line(14, 8, 18, 5, BODYV, 1)  # raptorial upper arm
-    line(18, 5, 15, 8, PALEV, 2)  # forearm folded back — the "praying" scythe
-
-    for hx, kx, ky, fx, fy in ((7, 4, 12, 2, 13), (10, 9, 12, 10, 13), (12, 14, 12, 16, 13)):
-        line(hx, 9, kx, ky, LEGV)  # femur to the knee
-        line(kx, ky, fx, fy, LEGV)  # tibia to the foot
+    for hx, kx, ky, fx, fy in ((7, 4, 14, 2, 15), (9, 8, 14, 7, 15), (10, 12, 14, 13, 15)):
+        line(hx, 10, kx, ky, LEGV)  # thin femur to the knee
+        line(kx, ky, fx, fy, LEGV)  # thin tibia to the foot
 
     rows: list[Any] = []
     for r in range(0, H, 2):

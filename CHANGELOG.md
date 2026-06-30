@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.4] — 2026-06-30
+
+### Changed
+
+- **Mascot reworked so it reads as a mantis, not a lizard.** The body now
+  rears up steeply (instead of lying horizontal) and the raptorial forelegs
+  are drawn bold and folded in front — the posture + arms are what
+  distinguish a praying mantis from a generic green creature. Slimmer
+  abdomen and thin legs.
+
 ## [1.1.3] — 2026-06-30
 
 ### Fixed
