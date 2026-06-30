@@ -68,6 +68,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   it prints an actionable hint (`ollama serve` / `ollama pull <model>`). The
   per-turn "model not found" error now also suggests the exact pull command.
 
+## [1.1.3] — 2026-06-30
+
+### Changed
+
+- **Mascot redrawn to match a real praying mantis.** Reared-up alert stance,
+  facing right: abdomen low-left, prothorax rearing up to a triangular head
+  with a compound eye and long antennae, raptorial forelegs folded in the
+  "praying" pose, standing on bent legs. Smaller footprint (7 rows), with a
+  pale highlight ridge and a paler folded forearm for depth.
+
 ## [1.1.2] — 2026-06-30
 
 ### Changed

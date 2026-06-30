@@ -44,10 +44,12 @@ from . import __version__
 DEFAULT_MODEL = os.environ.get("MANTIS_AGENT_MODEL", "qwen2.5-7b-instruct")
 DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL", "http://localhost:11434")
 
-# Mascot palette — a green praying mantis, side profile.
-BODY = "#8bc34a"  # mantis green
-EYE_BG = "#0c1a05"  # near-black eye
-ACCENT = "#c0ca33"  # antennae (a warmer lime so they catch the eye)
+# Mascot palette — a green praying mantis reared up in profile, facing right.
+BODY = "#7cb342"  # mantis green
+EYE_BG = "#0e1f08"  # near-black compound eye
+ACCENT = "#9c6b3f"  # the reddish-brown antennae
+LEG = "#558b2f"  # darker green legs (read apart from the body)
+PALE = "#c5e1a5"  # pale highlight ridge + the inner face of the folded forearm
 
 # The same example-prompt pool Claude Code samples for its placeholder.
 EXAMPLE_PROMPTS = [
@@ -86,19 +88,20 @@ def _missing_deps_message() -> str:
 
 
 def _mascot_lines(Text: Any) -> list[Any]:
-    """Render a side-profile praying mantis as rich ``Text`` rows.
+    """Render a praying mantis reared up in profile (facing right) as Text rows.
 
-    Drawn as a small pixel *bitmap* (body=green, eye=dark, antennae=lime) and
-    rasterized with half-block glyphs (``▀``/``▄``/``█``) so each character cell
-    packs two vertical pixels — doubling the vertical resolution and letting a
-    single cell carry two colors (``▀`` with ``fg on bg``). That smoothness is
-    what makes the silhouette read as an insect rather than ASCII art: a
-    triangular head with a compound eye, swept antennae, the raptorial forelegs
-    folded in the signature "praying" pose, an arched body, and three legs.
+    Drawn as a small pixel *bitmap* and rasterized with half-block glyphs
+    (``▀``/``▄``/``█``) so each character cell packs two vertical pixels —
+    doubling the vertical resolution and letting one cell carry two colors
+    (``▀`` painted ``fg on bg``). That smoothness is what lets it read as a real
+    insect rather than ASCII art. Pose mirrors the classic alert stance: the
+    abdomen lies low to the left, the prothorax rears up to the right into a
+    triangular head with a compound eye and long swept antennae, the raptorial
+    forelegs fold in front in the "praying" pose, and it stands on bent legs.
     """
-    BODYV, EYEV, ANTV = 1, 2, 3
-    palette = {BODYV: BODY, EYEV: EYE_BG, ANTV: ACCENT}
-    W, H = 28, 18
+    BODYV, EYEV, ANTV, LEGV, PALEV = 1, 2, 3, 4, 5
+    palette = {BODYV: BODY, EYEV: EYE_BG, ANTV: ACCENT, LEGV: LEG, PALEV: PALE}
+    W, H = 24, 14
     grid = [[0] * W for _ in range(H)]
 
     def pt(x: float, y: float, v: int = BODYV) -> None:
@@ -124,6 +127,19 @@ def _mascot_lines(Text: Any) -> list[Any]:
                 err += dx
                 y += sy
 
+    def band(ctl: list[tuple]) -> None:
+        """Thick tapering body stroke through (x, center-y, thickness) points."""
+        for i in range(len(ctl) - 1):
+            x0, y0, t0 = ctl[i]
+            x1, y1, t1 = ctl[i + 1]
+            lo, hi = (x1, x0) if x1 < x0 else (x0, x1)
+            for x in range(lo, hi + 1):
+                f = (x - x0) / (x1 - x0) if x1 != x0 else 0
+                yc = y0 + (y1 - y0) * f
+                th = t0 + (t1 - t0) * f
+                for y in range(int(round(yc - th / 2)), int(round(yc + th / 2))):
+                    pt(x, y)
+
     def filltri(p0: tuple, p1: tuple, p2: tuple, v: int = BODYV) -> None:
         ys = [p[1] for p in (p0, p1, p2)]
         for y in range(min(ys), max(ys) + 1):
@@ -135,34 +151,24 @@ def _mascot_lines(Text: Any) -> list[Any]:
                 for x in range(int(round(min(xi))), int(round(max(xi))) + 1):
                     pt(x, y, v)
 
-    # Arched body: control points (x, center-y, thickness), spans filled solid.
-    ctl = [(8, 9, 4), (12, 8, 4), (17, 8, 4), (21, 7, 4), (25, 6, 2)]
-    for i in range(len(ctl) - 1):
-        x0, y0, t0 = ctl[i]
-        x1, y1, t1 = ctl[i + 1]
-        for x in range(x0, x1 + 1):
-            f = (x - x0) / (x1 - x0) if x1 != x0 else 0
-            yc = y0 + (y1 - y0) * f
-            th = t0 + (t1 - t0) * f
-            for y in range(int(round(yc - th / 2)), int(round(yc + th / 2))):
-                pt(x, y)
-    line(24, 5, 27, 3, BODYV, 2)  # abdomen tail curling up
+    band([(2, 11, 2), (5, 10, 3), (9, 9, 4), (13, 8, 4)])  # abdomen → thorax
+    for x, y in ((4, 9), (6, 8), (8, 8), (10, 7), (12, 7)):  # pale top-edge ridge
+        pt(x, y, PALEV)
 
-    # Triangular head fused at the front, with a dark compound eye.
-    filltri((3, 6), (9, 4), (9, 9))
-    for ey in (5, 6):
-        for ex in (5, 6):
-            pt(ex, ey, EYEV)
+    line(12, 9, 16, 4, BODYV, 3)  # prothorax reared up to the right
+    filltri((16, 1), (21, 2), (18, 5))  # triangular head
+    pt(18, 2, EYEV)
+    pt(19, 2, EYEV)  # compound eye
 
-    line(8, 4, 15, 0, ANTV)  # antennae swept up & back
-    line(8, 4, 11, 0, ANTV)
+    line(20, 2, 23, 0, ANTV)  # long antennae swept up-right
+    line(19, 2, 22, 0, ANTV)
 
-    line(8, 9, 2, 5, BODYV, 2)  # raptorial femur (up-forward)
-    line(3, 5, 7, 8, BODYV, 2)  # forearm folded back — the "praying" scythe
+    line(14, 8, 18, 5, BODYV, 1)  # raptorial upper arm
+    line(18, 5, 15, 8, PALEV, 2)  # forearm folded back — the "praying" scythe
 
-    for hx, kx, ky, fx, fy in ((12, 10, 13, 8, 17), (16, 16, 13, 19, 17), (20, 22, 13, 25, 17)):
-        line(hx, 10, kx, ky)  # femur down to the knee
-        line(kx, ky, fx, fy)  # tibia out to the foot
+    for hx, kx, ky, fx, fy in ((7, 4, 12, 2, 13), (10, 9, 12, 10, 13), (12, 14, 12, 16, 13)):
+        line(hx, 9, kx, ky, LEGV)  # femur to the knee
+        line(kx, ky, fx, fy, LEGV)  # tibia to the foot
 
     rows: list[Any] = []
     for r in range(0, H, 2):
