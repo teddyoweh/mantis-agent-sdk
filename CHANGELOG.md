@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.19] — 2026-06-30
+
+### Fixed
+
+- **Hotfix:** 1.1.18's wheel was built mid-edit and shipped `builtin_tools/fs.py`
+  without its `import re`, so the package failed to import. Rebuilt with the
+  import in place.
+
 ## [1.1.18] — 2026-06-30
 
 ### Fixed

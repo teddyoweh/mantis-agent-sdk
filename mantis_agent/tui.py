@@ -1288,12 +1288,15 @@ class MantisTUI:
 
     async def _apply(self, model: str, backend: str, api_key: str | None, where: str) -> None:
         """Point the live agent at (model, backend, key) and rebuild it."""
+        from . import catalog  # noqa: PLC0415
+
         self.model = model
         self.backend = backend
         self.api_key = api_key
         if self.agent is not None:
             await self.agent.aclose()
         self.agent = self._build_agent()
+        catalog.set_last_model(model, backend)  # reopen here next launch
         self.console.print(f"[ansibrightblack]model →[/] [white]{model}[/]{where}")
 
     async def _prompt_secret(self, msg: str, prompt: str) -> str:

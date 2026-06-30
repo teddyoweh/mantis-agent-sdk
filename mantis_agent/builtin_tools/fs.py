@@ -19,6 +19,7 @@ so a runaway ``find /`` or a huge log can't blow up the context window.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import anyio
@@ -97,16 +98,30 @@ async def bash(command: str, timeout: int = 120) -> str:
     # window so e.g. ``timeout: 0`` doesn't either fire instantly or hang.
     timeout = _coerce_int(timeout, default=120, lo=1, hi=600)
 
+    # Non-interactive environment: models love to reach for ``nano``/``vim`` or
+    # commands that page (``git log``, ``less``) — those launch full-screen UIs
+    # that hang on the closed stdin or vomit terminal-control codes into the
+    # result. ``TERM=dumb`` + neutered pager/editor envs make them behave like a
+    # script would. (Closed stdin via ``input=b""`` already kills most prompts.)
+    env = dict(os.environ)
+    env.update(
+        TERM="dumb", PAGER="cat", GIT_PAGER="cat", EDITOR="true", VISUAL="true",
+        GIT_TERMINAL_PROMPT="0", DEBIAN_FRONTEND="noninteractive",
+    )
+
     try:
         with anyio.fail_after(timeout):
             result = await anyio.run_process(
-                ["bash", "-lc", command], check=False, input=b""
+                ["bash", "-lc", command], check=False, input=b"", env=env
             )
     except TimeoutError:
-        raise TimeoutError(f"command timed out after {timeout}s: {command}") from None
+        raise TimeoutError(
+            f"command timed out after {timeout}s (is it interactive or waiting "
+            f"on input?): {command}"
+        ) from None
 
-    out = result.stdout.decode("utf-8", "replace")
-    err = result.stderr.decode("utf-8", "replace")
+    out = _strip_terminal_controls(result.stdout.decode("utf-8", "replace"))
+    err = _strip_terminal_controls(result.stderr.decode("utf-8", "replace"))
     parts = []
     if out:
         parts.append(out)
@@ -116,6 +131,25 @@ async def bash(command: str, timeout: int = 120) -> str:
     if result.returncode != 0:
         body = f"{body}\n[exit code: {result.returncode}]".lstrip()
     return _truncate(body) or f"(no output, exit code {result.returncode})"
+
+
+# ANSI/terminal control: CSI sequences, OSC strings, and the alt-screen /
+# cursor escapes that full-screen programs (nano, vim, top) emit. Stripped from
+# bash output so a stray interactive program can't pollute the model's context.
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]"      # CSI ... final byte
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL/ST
+    r"|\x1b[()][AB0-2]"               # charset selection
+    r"|\x1b[=>NOc]"                   # misc single-char escapes
+)
+
+
+def _strip_terminal_controls(text: str) -> str:
+    if "\x1b" not in text and "\r" not in text:
+        return text
+    text = _ANSI_RE.sub("", text)
+    # Collapse carriage returns (progress bars) to keep only the final state.
+    return "\n".join(seg.split("\r")[-1] for seg in text.split("\n"))
 
 
 # ---------------------------------------------------------------------------
