@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.1] — 2026-06-30
+
+### Changed
+
+- **`mantis` banner mascot is now a praying mantis.** Replaced the reused
+  placeholder sprite with a purpose-drawn 5-row pixel praying mantis
+  (antennae, triangular head, two compound eyes, folded raptorial forelegs).
+
 ## [1.1.0] — 2026-06-30
 
 ### Added

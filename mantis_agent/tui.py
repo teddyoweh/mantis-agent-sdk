@@ -44,10 +44,11 @@ from . import __version__
 DEFAULT_MODEL = os.environ.get("MANTIS_AGENT_MODEL", "qwen2.5-7b-instruct")
 DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL", "http://localhost:11434")
 
-# Mascot palette. Claude Code's "Clawd" sprite is salmon; Mantis wears green.
+# Mascot palette — a green praying mantis.
 BODY = "#8bc34a"  # mantis green
-FACE_BG = "#33691e"  # darker green for the eye band
-ACCENT = "#9ccc65"
+FACE_BG = "#2e5e16"  # darker green: the head's shaded interior
+EYE_BG = "#13270a"  # near-black band the eyes sit on
+ACCENT = "#aed581"  # antennae + the two big compound eyes
 
 # The same example-prompt pool Claude Code samples for its placeholder.
 EXAMPLE_PROMPTS = [
@@ -86,26 +87,38 @@ def _missing_deps_message() -> str:
 
 
 def _mascot_lines(Text: Any) -> list[Any]:
-    """Build the 3-row pixel mascot as rich ``Text`` rows.
+    """Build the praying-mantis pixel mascot as rich ``Text`` rows.
 
-    Faithful to Claude Code's ``Clawd`` sprite geometry (9 cols wide): an eye
-    band drawn with a background fill, a solid body row, and little feet.
+    Five rows, 9 columns, centered: antennae, a triangular head shaded with a
+    background fill, two big compound eyes flanking a dark face band, the head
+    narrowing to a chin, and the raptorial forelegs folded in the signature
+    "praying" pose around a slim body.
     """
     body = f"{BODY}"
-    band = f"{BODY} on {FACE_BG}"
+    head = f"{BODY} on {FACE_BG}"
+    face = f"{EYE_BG} on {BODY}"
 
-    row1 = Text()
-    row1.append(" ▐", style=body)
-    row1.append("▛███▜", style=band)
-    row1.append("▌", style=body)
+    r0 = Text("  ╲   ╱  ", style=ACCENT)
 
-    row2 = Text()
-    row2.append("▝▜", style=body)
-    row2.append("█████", style=band)
-    row2.append("▛▘", style=body)
+    r1 = Text()
+    r1.append("  ▟", style=body)
+    r1.append("███", style=head)
+    r1.append("▙  ", style=body)
 
-    row3 = Text("  ▘▘ ▝▝  ", style=body)
-    return [row1, row2, row3]
+    r2 = Text()
+    r2.append(" ◉", style=ACCENT)
+    r2.append("█", style=body)
+    r2.append("▀█▀", style=face)
+    r2.append("█", style=body)
+    r2.append("◉ ", style=ACCENT)
+
+    r3 = Text()
+    r3.append("  ▜", style=body)
+    r3.append("███", style=head)
+    r3.append("▛  ", style=body)
+
+    r4 = Text("  ╱▐█▌╲  ", style=body)
+    return [r0, r1, r2, r3, r4]
 
 
 def _short_cwd() -> str:
@@ -136,13 +149,15 @@ def print_banner(console: Any, model: str, backend: str) -> None:
 
     cwd = Text(_short_cwd(), style="ansibrightblack")
 
-    info = [title, sub, cwd]
+    # Pad the 3 info lines with blanks so they sit vertically centered against
+    # the 5-row mascot.
+    blank = Text("")
+    info = [blank, title, sub, cwd, blank]
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="left")
     grid.add_column(justify="left")
-    # Pad the shorter column so the three info lines sit beside the 3-row mascot.
-    for i in range(3):
+    for i in range(len(mascot)):
         grid.add_row(mascot[i], info[i])
 
     console.print()
