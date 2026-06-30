@@ -96,8 +96,18 @@ async def run_fullscreen(tui: Any) -> int:
     async def _print(fn: Any) -> None:
         await run_in_terminal(fn)
 
+    def _echo(t: str) -> None:
+        tui.console.print()
+        tui.console.print(f"[ansibrightblack]›[/] {_esc(t)}")
+
+    def _render_assistant_block(m: Any) -> None:
+        # One blank line above each assistant block (text or tool call); tool
+        # results hug their call (rendered with no leading blank).
+        tui.console.print()
+        tui._render_assistant(m, ToolUseBlock)
+
     async def _handle(text: str) -> None:
-        await _print(lambda: tui.console.print(f"\n[ansibrightblack]›[/] {_esc(text)}"))
+        await _print(lambda: _echo(text))
 
         if text.startswith("/") and await _slash(text):
             get_app().invalidate()
@@ -111,7 +121,7 @@ async def run_fullscreen(tui: Any) -> int:
         try:
             async for msg in tui.agent.run_iter(tui.messages):
                 if isinstance(msg, AssistantMessage):
-                    await _print(lambda m=msg: tui._render_assistant(m, ToolUseBlock))
+                    await _print(lambda m=msg: _render_assistant_block(m))
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     await _print(lambda m=msg: tui._render_tool_results(m, ToolResultBlock))
         except asyncio.CancelledError:

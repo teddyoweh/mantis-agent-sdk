@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.2.1] — 2026-06-30
+
+### Fixed
+
+- **Consistent spacing in full-screen mode.** One blank line between blocks
+  (user message, assistant text, tool call) with tool results hugging their
+  call — fixing assistant text that was cramped right under a tool result and
+  the doubled gap before the next prompt.
+
 ## [1.2.0] — 2026-06-30
 
 ### Added
