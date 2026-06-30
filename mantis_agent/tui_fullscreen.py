@@ -68,8 +68,27 @@ async def run_fullscreen(tui: Any) -> int:
 
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
-        "slash_sel": 0,
+        "slash_sel": 0, "pending_perm": None,
     }
+
+    # Interactive permission asker: render an in-pane Allow/Deny prompt and
+    # bridge the (serial) tool-dispatch coroutine to a keypress via a Future.
+    # The agent's permission layer calls this whenever a decision lands on Ask.
+    async def _ask_permission(tool: Any, tool_input: dict, prompt_text: str) -> str:
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        state["pending_perm"] = {"future": fut, "prompt": prompt_text, "sel": 0}
+        get_app().invalidate()
+        try:
+            return await fut  # yields to the loop; the app keeps redrawing
+        except asyncio.CancelledError:
+            return "deny"
+        finally:
+            state["pending_perm"] = None
+            get_app().invalidate()
+
+    if tui.agent is not None and tui.agent.permissions is not None:
+        tui.agent.permissions.asker = _ask_permission
+
     input_buffer = Buffer(multiline=False)
 
     # Reset the slash-menu selection whenever the line stops being a slash cmd.
@@ -125,6 +144,26 @@ async def run_fullscreen(tui: Any) -> int:
         left = "" if tui.mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
         col = _MODE_ANSI.get(color, "90")
         return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}")
+
+    _PERM_OPTS = ["allow once", "allow for session", "deny"]
+    _PERM_OPTS_VALUES = ["allow_once", "allow_session", "deny"]
+
+    def perm_ft() -> Any:
+        p = state.get("pending_perm")
+        if not p:
+            return ANSI("")
+        sel = p["sel"] % 3
+        head = f"{_GREEN}Allow?{_RESET} {_DIM}{p['prompt']}{_RESET}"
+        row = "   ".join(
+            (f"\033[30;48;5;113m {i + 1} {o} \033[0m" if i == sel
+             else f"{_DIM}{i + 1} {o}{_RESET}")
+            for i, o in enumerate(_PERM_OPTS)
+        )
+        return ANSI(head + "\n" + row + f"   {_GREY}(y/s/n · enter){_RESET}")
+
+    def _perm_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        return Dimension.exact(2) if state.get("pending_perm") else Dimension.exact(0)
 
     async def _print(fn: Any) -> None:
         await run_in_terminal(fn)
@@ -194,12 +233,42 @@ async def run_fullscreen(tui: Any) -> int:
             from pathlib import Path  # noqa: PLC0415
             await _print(lambda: tui.console.print(f"[ansibrightblack]{Path.cwd()}[/]"))
             return True
-        if cmd == "/model":
+        if cmd in ("/model", "/models"):
+            available, reachable = tui._available_models()
             if arg:
-                tui.model = arg
-                await _print(lambda: tui.console.print(f"[ansibrightblack](model → {arg})[/]"))
+                # Pick by list number or by id.
+                if arg.isdigit() and available and 1 <= int(arg) <= len(available):
+                    picked = available[int(arg) - 1]
+                else:
+                    picked = arg
+                tui.model = picked
+                # REBUILD the agent so the new model actually takes effect — just
+                # setting tui.model did nothing before (the live agent kept the
+                # old model). Persist it as the last-used model too.
+                tui.agent = tui._build_agent()
+                try:
+                    from . import catalog  # noqa: PLC0415
+                    catalog.set_last_model(picked)
+                except Exception:  # noqa: BLE001
+                    pass
+
+                def _ok(p: str = picked) -> None:
+                    tui.console.print(f"[ansibrightblack](model → [white]{p}[/])[/]")
+                await _print(_ok)
             else:
-                await _print(lambda: tui.console.print(f"[ansibrightblack]model: {tui.model}[/]"))
+                def _list() -> None:
+                    tui.console.print(f"\n[bold]Models[/] [ansibrightblack]· {tui.backend}[/]")
+                    if not available:
+                        tui.console.print(
+                            "  [ansibrightblack](none found — switch with[/] "
+                            "[white]/model <id>[/][ansibrightblack])[/]")
+                    for i, m in enumerate(available[:30], 1):
+                        mark = "  [white]← current[/]" if m == tui.model else ""
+                        tui.console.print(f"  [white]{i:2}[/] {m}{mark}")
+                    tui.console.print(
+                        "[ansibrightblack]→ [white]/model <number>[/] or "
+                        "[white]/model <id>[/][/]\n")
+                await _print(_list)
             return True
         if cmd == "/help":
             await _print(lambda: tui.console.print(
@@ -215,6 +284,38 @@ async def run_fullscreen(tui: Any) -> int:
     from prompt_toolkit.filters import Condition  # noqa: PLC0415
 
     _menu_open = Condition(lambda: bool(_slash_matches()))
+    _perm_open = Condition(lambda: state.get("pending_perm") is not None)
+
+    def _resolve_perm(choice: str) -> None:
+        p = state.get("pending_perm")
+        if p and not p["future"].done():
+            p["future"].set_result(choice)
+
+    @kb.add("1", filter=_perm_open)
+    @kb.add("y", filter=_perm_open)
+    def _(event: Any) -> None:
+        _resolve_perm("allow_once")
+
+    @kb.add("2", filter=_perm_open)
+    @kb.add("s", filter=_perm_open)
+    def _(event: Any) -> None:
+        _resolve_perm("allow_session")
+
+    @kb.add("3", filter=_perm_open)
+    @kb.add("n", filter=_perm_open)
+    @kb.add("d", filter=_perm_open)
+    def _(event: Any) -> None:
+        _resolve_perm("deny")
+
+    @kb.add("up", filter=_perm_open)
+    def _(event: Any) -> None:
+        state["pending_perm"]["sel"] -= 1
+        event.app.invalidate()
+
+    @kb.add("down", filter=_perm_open)
+    def _(event: Any) -> None:
+        state["pending_perm"]["sel"] += 1
+        event.app.invalidate()
 
     @kb.add("down", filter=_menu_open)
     def _(event: Any) -> None:
@@ -236,6 +337,10 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("enter")
     def _(event: Any) -> None:
+        # A permission prompt steals Enter: submit the highlighted choice.
+        if state.get("pending_perm") is not None:
+            _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
+            return
         # When the menu is open and the line isn't yet the exact command, Enter
         # fills the highlighted command (one more Enter submits it).
         m = _slash_matches()
@@ -268,6 +373,10 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
+        # Esc during a permission prompt = deny (don't run the tool).
+        if state.get("pending_perm") is not None:
+            _resolve_perm("deny")
+            return
         task = state.get("task")
         if state["working"] and task is not None:
             task.cancel()
@@ -286,6 +395,8 @@ async def run_fullscreen(tui: Any) -> int:
             # The slash-command menu lives here — its height collapses to 0 when
             # the line isn't a slash command, so the footer normally hugs the rule.
             Window(FormattedTextControl(menu_ft), height=_menu_height),
+            # Interactive permission prompt — height 0 unless an Ask is pending.
+            Window(FormattedTextControl(perm_ft), height=_perm_height),
             Window(FormattedTextControl(footer_ft), height=1),
         ]),
         focused_element=input_window,

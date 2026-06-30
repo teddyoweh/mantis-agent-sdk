@@ -56,6 +56,26 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.8.0] — 2026-06-30
+
+### Added
+
+- **Interactive permission prompts — the terminal no longer runs bash/write/edit
+  unconfirmed** (parity roadmap T0.2). `default` mode now *asks* before every
+  mutating tool (Allow once / Allow for session / Deny), rendered as an in-pane
+  prompt in the full-screen app (resolved by a keypress, no nested prompt).
+  `accept edits on` auto-approves file edits but still asks for bash; `plan mode`
+  still denies mutations; `bypass` and read-only tools never prompt. A bash
+  danger classifier annotates the prompt (`rm -rf`, `curl|sh`, `sudo`, …).
+  `settings.json` `permissions.allow/deny/ask` rules are now loaded and enforced.
+
+### Changed
+
+- `check_permission` resolves `Ask` through a new `PermissionContext.asker`
+  callback with per-`(tool, input)` "allow for session" memory; `PermissionMode`
+  gains `acceptEdits`. Library/headless callers without an asker keep the old
+  non-blocking behavior, so nothing hangs. New `classify_bash_command`.
+
 ## [1.7.0] — 2026-06-30
 
 ### Added

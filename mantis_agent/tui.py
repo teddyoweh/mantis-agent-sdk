@@ -540,7 +540,12 @@ class MantisTUI:
             provider=provider,
             system=self.system or self._default_system(),
             tools=registry,
-            permissions=PermissionContext(mode="default", can_use_tool=self._permit),
+            permissions=PermissionContext(
+                mode="default",
+                can_use_tool=self._permit,
+                asker=self._ask_permission,
+                rules=self._load_permission_rules(),
+            ),
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             max_steps=self.max_turns,
@@ -550,23 +555,93 @@ class MantisTUI:
         """Permission decision keyed off the live shift+tab footer mode.
 
         * ``bypass permissions on`` — allow everything.
-        * ``plan mode on`` — read-only tools only; mutating tools (bash, write,
-          edit) are denied so the model researches/plans without touching the
-          machine, exactly like Claude Code's plan mode.
-        * ``default`` / ``accept edits on`` — allow (no mid-stream prompt UI yet;
-          interactive per-tool confirmation is a later parity step).
+        * read-only tools — always allowed (reads never prompt).
+        * ``plan mode on`` — mutating tools denied so the model researches/plans
+          without touching the machine (Claude Code's plan mode).
+        * ``accept edits on`` — auto-allow file edits; still ask for bash/other.
+        * ``default`` — ask the human for every mutating tool.
+
+        Any ``Ask`` returned here is resolved by ``check_permission`` through
+        the context's ``asker`` (the interactive prompt). Reaching ``_permit``
+        already means the call wasn't session-allowed or rule-covered.
         """
-        from .permissions import Allow, Deny  # noqa: PLC0415
+        from .permissions import (  # noqa: PLC0415
+            Allow,
+            Ask,
+            Deny,
+            _format_prompt,
+            _is_edit_tool,
+        )
 
         mode = MODES[self.mode_idx][0]
-        if mode == "plan mode on" and not getattr(tool, "is_read_only", False):
+        if mode == "bypass permissions on":
+            return Allow()
+        if getattr(tool, "is_read_only", False):
+            return Allow()
+        if mode == "plan mode on":
             return Deny(
                 reason=(
                     f"plan mode is on — `{tool.name}` is blocked. Don't modify "
                     f"anything; instead describe the plan. (shift+tab to switch mode)"
                 )
             )
-        return Allow()
+        if mode == "accept edits on" and _is_edit_tool(tool):
+            return Allow()
+        return Ask(prompt=_format_prompt(tool, tool_input))
+
+    async def _ask_permission(self, tool: Any, tool_input: dict, prompt: str) -> str:
+        """Base interactive asker for the classic REPL. The full-screen app
+        replaces this with an in-pane prompt (see tui_fullscreen). Returns
+        ``allow_once`` / ``allow_session`` / ``deny``. Denies when there's no
+        TTY (headless / piped) so an unattended run never auto-runs bash."""
+        import sys  # noqa: PLC0415
+
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return "deny"
+        try:
+            self.console.print(
+                f"[ansiyellow]?[/] allow [bold]{prompt}[/]  "
+                f"[ansibrightblack][y]es once · [s]ession · [n]o[/]"
+            )
+            ans = input("  > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return "deny"
+        if ans in ("s", "session"):
+            return "allow_session"
+        if ans in ("y", "yes", ""):
+            return "allow_once"
+        return "deny"
+
+    def _load_permission_rules(self) -> Any:
+        """Build a PermissionRuleSet from settings.json ``permissions`` rules
+        (Claude-style ``Bash(rm -rf*)`` / ``Read(...)`` entries). None if no
+        rules are configured."""
+        import re  # noqa: PLC0415
+
+        from .permissions import PermissionRule, PermissionRuleSet  # noqa: PLC0415
+
+        try:
+            from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+            loaded = load_settings(SETTING_SOURCES) or {}
+        except Exception:  # noqa: BLE001 — missing/broken settings: no rules
+            return None
+        perms = (loaded.get("permissions") if isinstance(loaded, dict) else None) or {}
+
+        def parse(entry: str, action: str) -> Any:
+            m = re.fullmatch(r"\s*([A-Za-z0-9_]+)\s*\((.*)\)\s*", entry)
+            if m:
+                tool_name, inner = m.group(1), m.group(2)
+                return PermissionRule(pattern=f"*{inner}*", action=action, tool_name=tool_name)
+            return PermissionRule(pattern="*", action=action, tool_name=entry.strip())
+
+        rs = PermissionRuleSet()
+        for e in perms.get("deny") or []:
+            rs.deny.append(parse(e, "deny"))
+        for e in perms.get("allow") or []:
+            rs.allow.append(parse(e, "allow"))
+        for e in perms.get("ask") or []:
+            rs.ask.append(parse(e, "ask"))
+        return rs if (rs.allow or rs.deny or rs.ask) else None
 
     def _default_system(self) -> str:
         """The agent system prompt — what makes the model behave like a coding

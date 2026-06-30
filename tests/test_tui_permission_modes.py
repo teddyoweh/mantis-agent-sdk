@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import anyio
 
-from mantis_agent.permissions import Allow, Deny
+from mantis_agent.permissions import Allow, Ask, Deny
 from mantis_agent.tui import MODES, MantisTUI
 
 
@@ -52,10 +52,19 @@ def test_plan_mode_allows_read_only_tools() -> None:
     assert isinstance(_decide(tui, "plan mode on", _FakeTool("grep", True)), Allow)
 
 
-def test_default_mode_allows_everything() -> None:
+def test_default_mode_asks_for_mutating_allows_readonly() -> None:
+    # T0.2: default mode no longer silently allows mutating tools — it asks.
     tui = _tui()
-    assert isinstance(_decide(tui, "default", _FakeTool("bash", False)), Allow)
-    assert isinstance(_decide(tui, "default", _FakeTool("write_file", False)), Allow)
+    assert isinstance(_decide(tui, "default", _FakeTool("bash", False)), Ask)
+    assert isinstance(_decide(tui, "default", _FakeTool("write_file", False)), Ask)
+    assert isinstance(_decide(tui, "default", _FakeTool("read_file", True)), Allow)
+
+
+def test_accept_edits_allows_edits_asks_bash() -> None:
+    tui = _tui()
+    assert isinstance(_decide(tui, "accept edits on", _FakeTool("write_file", False)), Allow)
+    assert isinstance(_decide(tui, "accept edits on", _FakeTool("edit_file", False)), Allow)
+    assert isinstance(_decide(tui, "accept edits on", _FakeTool("bash", False)), Ask)
 
 
 def test_bypass_mode_allows_everything() -> None:

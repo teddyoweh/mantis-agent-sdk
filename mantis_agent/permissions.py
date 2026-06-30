@@ -3,22 +3,28 @@
 Permissions gate every tool call. The model is intentionally identical to
 upstream so integrators can lift their existing config files across:
 
-* **Modes**: ``default | auto | bypass``.
+* **Modes**: ``default | acceptEdits | auto | bypass``.
 * **Rules**: separate ``allow``/``deny``/``ask`` lists matched against
   ``(tool_name, input)``. ``deny`` always wins.
 * **Callback**: ``canUseTool(tool, input, ctx) -> Allow | Deny | Ask`` is
-  the user-extensible fallback when no rule matches.
+  the user-extensible policy fallback when no rule matches.
+* **Asker**: ``asker(tool, input, prompt) -> allow_once|allow_session|deny``
+  resolves any ``Ask`` interactively. With no asker wired (library / headless),
+  ``Ask`` falls back to a non-blocking default so nothing hangs.
 
-Decision precedence on each call::
+Decision precedence on each call (``check_permission``)::
 
     bypass mode                       -> Allow
-    auto mode + tool.is_read_only     -> Allow
+    (tool, input) in session_allows   -> Allow
     any deny rule matches             -> Deny
     any allow rule matches            -> Allow
-    any ask rule matches              -> Ask
-    can_use_tool callback set         -> delegate
-    no callback, mode=default         -> Allow
-    no callback, mode=auto, ro=False  -> Ask
+    any ask rule matches              -> Ask*
+    acceptEdits mode + edit tool      -> Allow
+    can_use_tool callback set         -> delegate (may return Ask*)
+    no callback + read-only tool      -> Allow
+    no callback + mutating tool       -> Ask*
+
+    *Ask is then resolved via the asker (or the non-blocking fallback).
 """
 
 from __future__ import annotations
@@ -33,7 +39,14 @@ import msgspec
 
 from .tools import Tool
 
-PermissionMode = Literal["default", "auto", "bypass"]
+PermissionMode = Literal["default", "acceptEdits", "auto", "bypass"]
+
+# The interactive "asker": the human-in-the-loop hook. When a decision lands on
+# Ask and an asker is wired, the resolver awaits it and honors the answer.
+# Separate from ``can_use_tool`` on purpose — that's programmatic *policy*; this
+# is "ask the person at the terminal". Returns one of three literals.
+AskResult = Literal["allow_once", "allow_session", "deny"]
+AskerFn = Callable[[Tool, dict[str, Any], str], Awaitable[AskResult]]
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +197,15 @@ class PermissionContext:
     mode: PermissionMode = "default"
     rules: PermissionRuleSet | None = None
     can_use_tool: CanUseToolFn | None = None
+    # Interactive human-in-the-loop hook. When a decision resolves to Ask and
+    # this is set, the resolver awaits it (Allow once / Allow for session /
+    # Deny). ``None`` means no interactive surface (library / headless use):
+    # an Ask falls back to the historical non-blocking default so nothing hangs.
+    asker: AskerFn | None = None
+    # Tools the user chose "allow for session" for, keyed by
+    # ``(tool_name, input-projection)`` so an *identical* later call is
+    # auto-allowed without re-prompting. Mutated only by the resolver.
+    session_allows: set[tuple[str, str]] = field(default_factory=set)
     # Free-form metadata passed to ``can_use_tool`` (session id, etc.).
     extra: dict[str, Any] = field(default_factory=dict)
     # AbortSignal-like event shared with the agent loop. Fires when the
@@ -216,6 +238,71 @@ def _is_read_only(tool: Tool) -> bool:
     return any(name.startswith(p) for p in _READ_ONLY_PREFIXES)
 
 
+_EDIT_TOOL_NAMES = {
+    "write_file", "edit_file", "multi_edit", "notebook_edit", "write", "edit",
+    "create_file", "apply_patch",
+}
+
+
+def _is_edit_tool(tool: Tool) -> bool:
+    """A file-editing tool — what ``acceptEdits`` auto-approves (vs. bash and
+    other mutations, which still prompt)."""
+    flag = getattr(tool, "is_file_edit", None)
+    if isinstance(flag, bool):
+        return flag
+    n = tool.name.lower()
+    return n in _EDIT_TOOL_NAMES or n.startswith("write_") or n.startswith("edit_")
+
+
+def _session_key(tool: Tool, input: dict[str, Any]) -> tuple[str, str]:
+    return (tool.name, _project_input(input))
+
+
+# ---------------------------------------------------------------------------
+# Bash danger classifier — annotates the Ask prompt for shell commands. A
+# pragmatic subset of Claude's bashSecurity chain: enough to flag the obvious
+# foot-guns so the human sees *why* they're being asked.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class BashRisk:
+    is_dangerous: bool
+    reason: str = ""
+
+
+_DANGEROUS_BASH: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\brm\s+-[a-z]*[rf]"), "recursive/forced delete"),
+    (re.compile(r":\(\)\s*\{.*\};\s*:"), "fork bomb"),
+    (re.compile(r"\bmkfs\b|\bdd\s+if="), "raw disk write"),
+    (re.compile(r">\s*/dev/(sd|nvme|disk)"), "writes to a block device"),
+    (re.compile(r"\bchmod\s+-R\s+0?777\b"), "world-writable recursive chmod"),
+    (re.compile(r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh"), "pipe-to-shell from network"),
+    (re.compile(r"\bsudo\b"), "privilege escalation"),
+    (re.compile(r">\s*/etc/"), "overwrites a system config"),
+]
+
+
+def classify_bash_command(command: str) -> BashRisk:
+    """Flag obviously-dangerous shell commands so the Ask prompt can warn."""
+    for pat, why in _DANGEROUS_BASH:
+        if pat.search(command or ""):
+            return BashRisk(True, why)
+    return BashRisk(False)
+
+
+def _format_prompt(tool: Tool, input: dict[str, Any]) -> str:
+    """Human-readable one-liner for the Ask prompt."""
+    if tool.name == "bash":
+        cmd = str(input.get("command", "")).strip()
+        risk = classify_bash_command(cmd)
+        short = cmd if len(cmd) <= 80 else cmd[:77] + "…"
+        warn = f"  ⚠ {risk.reason}" if risk.is_dangerous else ""
+        return f"bash: {short}{warn}"
+    summary = ", ".join(f"{k}={v!r}" for k, v in list((input or {}).items())[:2])
+    return f"{tool.name}({summary})"
+
+
 # ---------------------------------------------------------------------------
 # Resolver
 # ---------------------------------------------------------------------------
@@ -226,17 +313,34 @@ async def check_permission(
     input: dict[str, Any],
     ctx: PermissionContext,
 ) -> PermissionDecision:
-    """Apply the full decision pipeline. Returns one of Allow/Deny/Ask.
+    """Apply the full decision pipeline. Returns Allow or Deny.
 
-    See module docstring for precedence rules.
+    Computes a provisional decision (rules → mode → ``can_use_tool``); any Ask
+    is then resolved through ``ctx.asker`` (the interactive surface). When no
+    asker is wired, Ask falls back to the historical non-blocking default so
+    library / headless callers never hang.
     """
+
+    decision = await _decide(tool, input, ctx)
+    if isinstance(decision, Ask):
+        decision = await _resolve_ask(tool, input, ctx, decision)
+    return decision
+
+
+async def _decide(
+    tool: Tool, input: dict[str, Any], ctx: PermissionContext
+) -> PermissionDecision:
+    """The provisional decision, before interactive resolution."""
 
     if ctx.mode == "bypass":
         return Allow()
 
-    if ctx.mode == "auto" and _is_read_only(tool):
+    # "Allow for session" — an identical (tool, input) the user already
+    # approved this run. Checked before everything else so it never re-prompts.
+    if _session_key(tool, input) in ctx.session_allows:
         return Allow()
 
+    # Declarative rules: deny > allow > ask. Deny always wins.
     if ctx.rules is not None:
         hit = ctx.rules.match(tool.name, input)
         if hit is not None:
@@ -244,14 +348,14 @@ async def check_permission(
                 return Deny(reason=f"denied by rule {hit.pattern!r}")
             if hit.action == "allow":
                 return Allow()
-            # ask
-            return Ask(prompt=f"rule {hit.pattern!r} requires confirmation")
+            return Ask(prompt=_format_prompt(tool, input))
 
+    # acceptEdits auto-approves file edits (but not bash / other mutations).
+    if ctx.mode == "acceptEdits" and _is_edit_tool(tool):
+        return Allow()
+
+    # Imperative policy hook. It may itself return Ask, which we then resolve.
     if ctx.can_use_tool is not None:
-        # Build a Claude-SDK-shaped ToolPermissionContext for the
-        # callback. The user's can_use_tool wants ``.signal``,
-        # ``.session_id``, and ``.suggestions`` — wrap our internal
-        # PermissionContext.extra (a free-form dict) accordingly.
         from .claude_compat import ToolPermissionContext  # local to avoid cycle
 
         tpc = ToolPermissionContext(
@@ -261,20 +365,43 @@ async def check_permission(
         )
         return await ctx.can_use_tool(tool, input, tpc)
 
-    # No callback — use the mode default.
-    if ctx.mode == "auto":
-        # auto with a non-read-only tool and no callback: prompt the user.
-        return Ask(prompt=f"tool {tool.name!r} not read-only; confirm?")
+    # No callback — decide by mode. Reads never prompt; mutations ask.
+    if _is_read_only(tool):
+        return Allow()
+    if ctx.mode in ("default", "acceptEdits", "auto"):
+        return Ask(prompt=_format_prompt(tool, input))
+    return Allow()
 
-    # default mode: permissive when nothing else has spoken.
+
+async def _resolve_ask(
+    tool: Tool, input: dict[str, Any], ctx: PermissionContext, ask: Ask
+) -> PermissionDecision:
+    """Turn an Ask into Allow/Deny via the interactive asker, or a safe
+    non-blocking fallback when none is wired."""
+
+    if ctx.asker is None:
+        # No interactive surface. Preserve historical behavior: ``auto`` mode
+        # kept surfacing Ask (the loop treats it permissively); everything
+        # else was permissive too. Either way, don't block.
+        return ask if ctx.mode == "auto" else Allow()
+
+    result = await ctx.asker(tool, input, ask.prompt)
+    if result == "deny":
+        return Deny(reason="denied by user")
+    if result == "allow_session":
+        ctx.session_allows.add(_session_key(tool, input))
     return Allow()
 
 
 __all__ = [
     "Allow",
     "Ask",
+    "AskResult",
+    "AskerFn",
+    "BashRisk",
     "CanUseToolFn",
     "Deny",
+    "classify_bash_command",
     "PermissionContext",
     "PermissionDecision",
     "PermissionMode",
