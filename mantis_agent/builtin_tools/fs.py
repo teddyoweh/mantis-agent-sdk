@@ -39,6 +39,22 @@ def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     return f"{head}\n… [truncated {len(text) - limit} chars]"
 
 
+def _coerce_int(value: object, *, default: int, lo: int | None = None,
+                hi: int | None = None) -> int:
+    """Best-effort int from whatever a model passed (``"2000"``, ``0``, ``None``,
+    floats), clamped to ``[lo, hi]``. Tools take numbers as strings constantly on
+    the native tool-calling path, so coerce instead of letting them TypeError."""
+    try:
+        n = int(float(value))  # handles "2000", "2000.0", 2000, 2000.0
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and n < lo:
+        return default if value in (0, "0", None) else lo
+    if hi is not None and n > hi:
+        return hi
+    return n
+
+
 # ---------------------------------------------------------------------------
 # Shell
 # ---------------------------------------------------------------------------
@@ -56,6 +72,10 @@ async def bash(command: str, timeout: int = 120) -> str:
         timeout: Hard timeout in seconds (default 120). The command is killed
             if it exceeds this.
     """
+
+    # Models pass loose values — strings, 0, absurd numbers. Clamp to a sane
+    # window so e.g. ``timeout: 0`` doesn't either fire instantly or hang.
+    timeout = _coerce_int(timeout, default=120, lo=1, hi=600)
 
     try:
         with anyio.fail_after(timeout):
@@ -92,6 +112,9 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
         offset: 1-based line number to start from (default 1).
         limit: Maximum number of lines to return (default 2000).
     """
+
+    offset = _coerce_int(offset, default=1, lo=1)
+    limit = _coerce_int(limit, default=_MAX_READ_LINES, lo=1, hi=50_000)
 
     p = Path(path).expanduser()
     if not p.exists():

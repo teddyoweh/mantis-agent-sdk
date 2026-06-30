@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.10] — 2026-06-30
+
+### Changed
+
+- **Slash-command menu restyled** to a dark panel with a description column
+  and a bright-green selected row — replacing prompt_toolkit's default
+  white-background menu. Each command (`/help`, `/model`, `/clear`, `/cwd`,
+  `/exit`, `/quit`) now shows a one-line description.
+
 ## [1.1.9] — 2026-06-30
 
 ### Fixed

@@ -513,7 +513,8 @@ class MantisTUI:
             event.app.invalidate()
 
         completer = WordCompleter(
-            ["/help", "/clear", "/model", "/cwd", "/exit", "/quit"],
+            list(SLASH_COMMANDS),
+            meta_dict=SLASH_COMMANDS,  # shows the description column
             sentence=True,
         )
 
@@ -530,9 +531,20 @@ class MantisTUI:
                 f'{pad}<style fg="ansibrightblack">{right}</style>'
             )
 
+        # Dark completion menu (no default white background): a near-black green
+        # panel, dim text, and a bright-green selected row — matching the rest
+        # of the mantis palette. Hex colors are downconverted to 256 on
+        # Terminal.app automatically.
         style = Style.from_dict({
             "prompt": BODY,
             "placeholder": "ansibrightblack",
+            "completion-menu": "bg:#11160c",
+            "completion-menu.completion": "bg:#11160c #93a081",
+            "completion-menu.completion.current": "bg:#26340f #c6e79a bold",
+            "completion-menu.meta.completion": "bg:#11160c #5f6b54",
+            "completion-menu.meta.completion.current": "bg:#26340f #aacb7d",
+            "scrollbar.background": "bg:#11160c",
+            "scrollbar.button": "bg:#3a4a26",
         })
 
         return PromptSession(

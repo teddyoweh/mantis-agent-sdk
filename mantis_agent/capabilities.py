@@ -386,6 +386,19 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         chat_template_id="llama3",
         family_specific_stops=("<|eot_id|>",),
     ),
+    # Llama 3.1 / 3.2 / 3.3 DO support native function-calling (Ollama serves
+    # tool_calls for them). The bare "llama3" default above is for 3.0 only;
+    # this entry catches the modern point releases — including Ollama tag forms
+    # like ``llama3.2:latest`` / ``llama3.1:8b`` that never match the hyphenated
+    # _TABLE keys and would otherwise fall through to the non-tool default.
+    "llama3.1": ModelCapability(
+        name="llama3.1-unknown",
+        family="llama3",
+        supports_native_tools=True,
+        context_window=131072,
+        chat_template_id="llama3",
+        family_specific_stops=("<|eot_id|>",),
+    ),
     "qwen2.5": ModelCapability(
         name="qwen2.5-unknown",
         family="qwen2.5",
@@ -441,6 +454,14 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
 
 # Heuristic: substrings to family
 _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
+    # Modern tool-capable Llamas first — these must win over the generic
+    # "llama3" hint below (substring order matters; "llama3.2" contains "llama3").
+    ("llama-3.1", "llama3.1"),
+    ("llama3.1", "llama3.1"),
+    ("llama-3.2", "llama3.1"),
+    ("llama3.2", "llama3.1"),
+    ("llama-3.3", "llama3.1"),
+    ("llama3.3", "llama3.1"),
     ("llama-3", "llama3"),
     ("llama3", "llama3"),
     ("hermes", "llama3"),
