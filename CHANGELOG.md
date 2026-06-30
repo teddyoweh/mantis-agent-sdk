@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.20] — 2026-06-30
+
+### Added
+
+- **Real diffs for edits.** `edit_file` and `write_file` now return a compact
+  unified diff, and the TUI renders it as a line-numbered green/red diff block
+  under the tool call (additions green, deletions red, context dim) — like
+  Claude Code's edit view.
+
 ## [1.1.19] — 2026-06-30
 
 ### Fixed

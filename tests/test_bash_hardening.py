@@ -33,3 +33,19 @@ def test_strip_terminal_controls_unit() -> None:
     assert _strip_terminal_controls("a\x1b]0;title\x07b") == "ab"
     assert _strip_terminal_controls("plain text") == "plain text"  # fast path
     assert _strip_terminal_controls("one\rtwo\rthree") == "three"
+
+
+def test_stdin_is_fed_to_command() -> None:
+    # A command that reads stdin gets exactly what the model passes.
+    out = anyio.run(bash.fn, 'read -p "Name: " n; echo "Hi $n"', 10, "Teddy\n")
+    assert out == "Hi Teddy"
+
+
+def test_stdin_closes_after_input_so_no_hang() -> None:
+    # `cat` with no stdin must hit EOF and exit fast, not block until timeout.
+    out = anyio.run(bash.fn, "cat", 8)
+    assert "exit code 0" in out or out.strip() == ""
+
+
+def test_bash_exposes_stdin_parameter() -> None:
+    assert "stdin" in bash.input_schema["properties"]

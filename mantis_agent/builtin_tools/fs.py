@@ -82,27 +82,39 @@ def _coerce_int(value: object, *, default: int, lo: int | None = None,
 
 
 @tool(is_read_only=False, is_concurrency_safe=False, timeout_s=120.0)
-async def bash(command: str, timeout: int = 120) -> str:
+async def bash(command: str, timeout: int = 120, stdin: str = "") -> str:
     """Run a shell command and return its combined stdout + stderr.
 
     Use this to inspect the system, run builds/tests, git, grep, find, etc.
     Runs through ``bash -lc`` in the current working directory.
 
+    The command runs NON-INTERACTIVELY (no terminal): there is no human to
+    answer prompts. If a command needs input, either pass it via ``stdin``, or
+    bake the answer into the command — pipe it (``echo y | rm -i x``), use a
+    here-doc, or use a non-interactive flag (``-y``, ``--yes``, ``--no-input``).
+    Never launch an interactive editor/pager (nano, vim, less, top); use the
+    file tools or append ``| cat`` instead.
+
     Args:
         command: The shell command line to execute.
         timeout: Hard timeout in seconds (default 120). The command is killed
-            if it exceeds this.
+            if it exceeds this — usually a sign it is waiting on input.
+        stdin: Text fed to the command's standard input. Use this for commands
+            that read from stdin (e.g. answering a prompt: ``stdin="yes\\n"``).
     """
 
     # Models pass loose values — strings, 0, absurd numbers. Clamp to a sane
     # window so e.g. ``timeout: 0`` doesn't either fire instantly or hang.
     timeout = _coerce_int(timeout, default=120, lo=1, hi=600)
+    # stdin is fed to the process, then closed — so a command that reads more
+    # than we provided gets EOF and exits rather than blocking forever.
+    stdin_bytes = (stdin if isinstance(stdin, str) else str(stdin)).encode("utf-8")
 
     # Non-interactive environment: models love to reach for ``nano``/``vim`` or
     # commands that page (``git log``, ``less``) — those launch full-screen UIs
     # that hang on the closed stdin or vomit terminal-control codes into the
     # result. ``TERM=dumb`` + neutered pager/editor envs make them behave like a
-    # script would. (Closed stdin via ``input=b""`` already kills most prompts.)
+    # script would.
     env = dict(os.environ)
     env.update(
         TERM="dumb", PAGER="cat", GIT_PAGER="cat", EDITOR="true", VISUAL="true",
@@ -112,12 +124,12 @@ async def bash(command: str, timeout: int = 120) -> str:
     try:
         with anyio.fail_after(timeout):
             result = await anyio.run_process(
-                ["bash", "-lc", command], check=False, input=b"", env=env
+                ["bash", "-lc", command], check=False, input=stdin_bytes, env=env
             )
     except TimeoutError:
         raise TimeoutError(
             f"command timed out after {timeout}s (is it interactive or waiting "
-            f"on input?): {command}"
+            f"on input? pass it via the stdin argument): {command}"
         ) from None
 
     out = _strip_terminal_controls(result.stdout.decode("utf-8", "replace"))
@@ -155,6 +167,25 @@ def _strip_terminal_controls(text: str) -> str:
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
+
+
+def _unified_diff(old: str, new: str, path: str, max_lines: int = 80) -> str:
+    """A compact unified diff (no ``---/+++`` header) between two texts, or ""
+    if identical. Returned by edit/write so the caller (and the TUI) can show
+    exactly what changed."""
+    import difflib  # noqa: PLC0415
+
+    lines = list(difflib.unified_diff(
+        old.splitlines(), new.splitlines(), lineterm="", n=3,
+    ))
+    # Drop difflib's "--- " / "+++ " file header (first two lines); keep @@ hunks.
+    if lines[:1] and lines[0].startswith("---"):
+        lines = lines[2:]
+    if not lines:
+        return ""
+    if len(lines) > max_lines:
+        lines = [*lines[:max_lines], f"… (+{len(lines) - max_lines} more diff lines)"]
+    return "\n".join(lines)
 
 
 @tool(is_read_only=True)
@@ -202,6 +233,9 @@ async def write_file(path: str, content: str) -> str:
     """
 
     p = Path(path).expanduser()
+    old = ""
+    if p.exists() and p.is_file():
+        old = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
 
     def _write() -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +243,9 @@ async def write_file(path: str, content: str) -> str:
 
     await anyio.to_thread.run_sync(_write)
     n = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-    return f"wrote {len(content)} bytes ({n} lines) to {p}"
+    summary = f"wrote {len(content)} bytes ({n} lines) to {p}"
+    diff = _unified_diff(old, content, str(p))
+    return f"{summary}\n{diff}" if diff else summary
 
 
 @tool(is_read_only=False, is_concurrency_safe=False)
@@ -242,7 +278,9 @@ async def edit_file(
         )
     updated = text.replace(old_string, new_string)
     await anyio.to_thread.run_sync(lambda: p.write_text(updated, "utf-8"))
-    return f"edited {p} ({count} replacement{'s' if count != 1 else ''})"
+    summary = f"edited {p} ({count} replacement{'s' if count != 1 else ''})"
+    diff = _unified_diff(text, updated, str(p))
+    return f"{summary}\n{diff}" if diff else summary
 
 
 @tool(is_read_only=False, is_concurrency_safe=False)

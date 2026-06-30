@@ -885,10 +885,43 @@ class MantisTUI:
             head.append("  └ ", style=LEG if not block.is_error else "ansired")
             head.append(lines[0][:200], style=colour)
             self.console.print(head)
-            for ln in lines[1:12]:
+
+            rest = lines[1:]
+            # edit_file / write_file append a unified diff after the summary —
+            # render it as a line-numbered green/red diff block.
+            if any(ln.startswith("@@") for ln in rest):
+                self._render_diff(rest)
+                continue
+            for ln in rest[:12]:
                 self.console.print(_T("    " + ln[:200], style=colour))
-            if len(lines) > 12:
-                self.console.print(_T(f"    … (+{len(lines) - 12} more lines)", style="ansibrightblack"))
+            if len(rest) > 12:
+                self.console.print(_T(f"    … (+{len(rest) - 12} more lines)", style="ansibrightblack"))
+
+    def _render_diff(self, diff_lines: list[str]) -> None:
+        """Render a unified diff with a line-number gutter and +/- colouring."""
+        import re  # noqa: PLC0415
+
+        from rich.text import Text as _T  # noqa: PLC0415
+
+        new_ln = 0
+        for ln in diff_lines:
+            if ln.startswith("@@"):
+                m = re.search(r"\+(\d+)", ln)
+                new_ln = int(m.group(1)) if m else new_ln
+                continue
+            t = _T("    ")  # indent under the "└" branch
+            if ln.startswith("+"):
+                t.append(f"{new_ln:>4} ", style="ansibrightblack")
+                t.append("+ " + ln[1:][:200], style="ansigreen")
+                new_ln += 1
+            elif ln.startswith("-"):
+                t.append("     ", style="ansibrightblack")  # deletions: no new-file line no.
+                t.append("- " + ln[1:][:200], style="ansired")
+            else:  # context line (leading space)
+                t.append(f"{new_ln:>4} ", style="ansibrightblack")
+                t.append("  " + (ln[1:] if ln.startswith(" ") else ln)[:200], style="ansibrightblack")
+                new_ln += 1
+            self.console.print(t)
 
         # If the agent just updated its todos via ``todo_write``, draw the
         # checklist so the user can watch multi-step progress (Claude-Code style).
