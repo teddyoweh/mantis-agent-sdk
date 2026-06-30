@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.18] — 2026-06-30
+
+### Fixed
+
+- **Doubled spacing between messages.** Both the render and the pre-spinner
+  step were emitting blank lines, so blocks were separated by two blank lines
+  (and bullets could orphan above code). Now the single pre-spinner blank is
+  the only separator and content lands on the spinner's cleared line — exactly
+  one blank line between blocks, call+result still hugged.
+
 ## [1.1.17] — 2026-06-30
 
 ### Changed

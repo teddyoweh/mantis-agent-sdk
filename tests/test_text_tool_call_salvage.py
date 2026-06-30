@@ -56,6 +56,32 @@ def test_salvage_strips_dollar_prompt() -> None:
     assert calls[0].input["command"] == "ls -la"
 
 
+def test_salvage_tool_call_tags_with_parameters() -> None:
+    reg = _registry()
+    calls = _salvage_text_tool_calls(
+        '<tool_call>{"name":"ls","parameters":{"path":"."}}</tool_call>', reg
+    )
+    assert [(c.name, c.input) for c in calls] == [("ls", {"path": "."})]
+
+
+def test_salvage_json_object_after_prose() -> None:
+    # Model narrates, then emits the call — the object must still be recovered.
+    reg = _registry()
+    calls = _salvage_text_tool_calls(
+        'Let me check.\n{"name":"grep","arguments":{"pattern":"def","path":"."}}', reg
+    )
+    assert [(c.name, c.input) for c in calls] == [
+        ("grep", {"pattern": "def", "path": "."})
+    ]
+
+
+def test_salvage_multiline_shell_fence() -> None:
+    reg = _registry()
+    calls = _salvage_text_tool_calls("```bash\ncd /tmp\nls -la\n```", reg)
+    assert calls[0].name == "bash"
+    assert calls[0].input["command"] == "cd /tmp\nls -la"
+
+
 def test_no_salvage_for_plain_prose() -> None:
     reg = _registry()
     assert _salvage_text_tool_calls("The current time is 10:30.", reg) == []

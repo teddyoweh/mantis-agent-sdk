@@ -198,6 +198,24 @@ def clear_key(provider_id: str) -> bool:
     return False
 
 
+def get_last_model() -> dict[str, Any] | None:
+    """The model used at the end of the last session, if recorded:
+    ``{"model": str, "backend": str | None}``. Lets ``mantis`` reopen on the
+    model you left off with instead of always reverting to the default."""
+    rec = _load_store().get("last")
+    if isinstance(rec, dict) and rec.get("model"):
+        return rec
+    return None
+
+
+def set_last_model(model: str, backend: str | None = None) -> None:
+    """Remember the active model + backend for next launch (no key is stored
+    here — hosted keys live under ``keys`` and are looked up by provider)."""
+    data = _load_store()
+    data["last"] = {"model": model, "backend": backend}
+    _save_store(data)
+
+
 def api_key_for(provider: Provider) -> str | None:
     """Key from the environment first, then the saved store."""
     if provider.api_key_env and os.environ.get(provider.api_key_env):

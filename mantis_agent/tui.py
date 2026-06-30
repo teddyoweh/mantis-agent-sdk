@@ -811,11 +811,14 @@ class MantisTUI:
         (so the caller can keep the call and its result visually hugged)."""
         from .types import TextBlock  # noqa: PLC0415
 
+        # No leading blank lines here: the single blank that separates blocks is
+        # emitted before the (transient) thinking spinner in the run loop, and
+        # the rendered content lands on the spinner's just-cleared line. Adding
+        # blanks here too would double the spacing.
         had_tool_call = False
         for block in msg.content:
             if isinstance(block, TextBlock):
                 if block.text.strip():
-                    self.console.print()
                     self.console.print(f"[{BODY}]●[/] ", end="")
                     # Tight markdown: code fences, bold, lists, tables — without
                     # the big vertical margins rich adds around code by default.
@@ -825,7 +828,6 @@ class MantisTUI:
 
                 had_tool_call = True
                 verb, target = self._tool_label(block.name, block.input or {})
-                self.console.print()  # breathing room above the tool call
                 line = _T()
                 line.append("⚒ ", style=LEG)
                 line.append(verb, style="bold white")
