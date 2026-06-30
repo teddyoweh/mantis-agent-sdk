@@ -36,10 +36,10 @@ class Pull:
 
 # Flagship open models that run comfortably on a laptop/desktop via Ollama.
 SUGGESTED_PULLS: tuple[Pull, ...] = (
-    Pull("qwen2.5:7b", "Qwen2.5 7B — strong all-rounder"),
+    Pull("gpt-oss:20b", "OpenAI gpt-oss 20B — open-weight (Apache-2.0)"),
+    Pull("qwen3:8b", "Qwen3 8B — strong all-rounder"),
     Pull("qwen2.5-coder:7b", "Qwen2.5-Coder 7B — code"),
-    Pull("deepseek-r1:7b", "DeepSeek-R1 7B — reasoning"),
-    Pull("deepseek-r1:14b", "DeepSeek-R1 14B — reasoning (bigger)"),
+    Pull("deepseek-r1:8b", "DeepSeek-R1 8B — reasoning"),
     Pull("llama3.2:3b", "Llama 3.2 3B — small & fast"),
     Pull("llama3.1:8b", "Llama 3.1 8B — general"),
     Pull("glm4:9b", "GLM-4 9B — Zhipu's open model"),
@@ -76,66 +76,71 @@ class Provider:
     note: str = ""  # signup hint
 
 
+# Model ids verified against provider docs, June 2026. Hosted endpoints are
+# OpenAI-compatible; when a provider is enabled the selector also fetches its
+# live /v1/models, so these flagship lists are a starting menu, not a ceiling.
 CATALOG: tuple[Provider, ...] = (
     Provider(
         "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
         ("deepseek-chat", "deepseek-reasoner"),
-        "platform.deepseek.com",
+        "platform.deepseek.com · chat=V3.2, reasoner=thinking",
     ),
     Provider(
         "moonshot", "Kimi (Moonshot)", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY",
-        ("kimi-k2-0711-preview", "moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k"),
-        "platform.moonshot.ai",
+        ("kimi-latest", "kimi-k2-0905-preview", "moonshot-v1-128k", "moonshot-v1-32k"),
+        "platform.moonshot.ai · K2.6",
     ),
     Provider(
         "glm", "GLM (Zhipu)", "https://api.z.ai/api/paas/v4", "ZHIPUAI_API_KEY",
-        ("glm-4.6", "glm-4-plus", "glm-4-air", "glm-4-flash"),
+        ("glm-4.7", "glm-4.6", "glm-4-plus", "glm-4-flash"),
         "z.ai",
     ),
     Provider(
         "qwen", "Qwen (DashScope)",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
-        ("qwen-max", "qwen-plus", "qwen2.5-72b-instruct", "qwen2.5-coder-32b-instruct"),
-        "dashscope-intl.aliyuncs.com",
+        ("qwen-max", "qwen-plus", "qwen3-235b-a22b", "qwen3-coder-plus"),
+        "dashscope-intl.aliyuncs.com · Qwen3",
     ),
     Provider(
         "groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
-        ("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "moonshotai/kimi-k2-instruct"),
-        "console.groq.com · very fast",
+        ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "moonshotai/kimi-k2-instruct-0905",
+         "qwen/qwen3-32b", "llama-3.3-70b-versatile"),
+        "console.groq.com · very fast · hosts gpt-oss",
     ),
     Provider(
         "openai", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY",
-        ("gpt-4o", "gpt-4o-mini", "o3", "o4-mini"),
-        "platform.openai.com",
+        ("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro"),
+        "platform.openai.com · GPT-5.4",
     ),
     Provider(
         "gemini", "Gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY",
-        ("gemini-2.0-flash", "gemini-1.5-pro"),
+        ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"),
         "aistudio.google.com",
     ),
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
-        ("z-ai/glm-4.6", "moonshotai/kimi-k2", "deepseek/deepseek-chat", "qwen/qwen-2.5-72b-instruct"),
+        ("openai/gpt-oss-120b", "z-ai/glm-4.7", "moonshotai/kimi-k2",
+         "deepseek/deepseek-chat", "qwen/qwen3-235b-a22b"),
         "openrouter.ai · one key, every model",
     ),
     Provider(
         "together", "Together", "https://api.together.xyz/v1", "TOGETHER_API_KEY",
-        ("deepseek-ai/DeepSeek-V3", "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-         "Qwen/Qwen2.5-72B-Instruct-Turbo"),
+        ("openai/gpt-oss-120b", "zai-org/GLM-4.7", "deepseek-ai/DeepSeek-V3",
+         "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
         "api.together.xyz",
     ),
     Provider(
         "fireworks", "Fireworks", "https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY",
-        ("accounts/fireworks/models/deepseek-v3",
-         "accounts/fireworks/models/llama-v3p3-70b-instruct",
-         "accounts/fireworks/models/qwen2p5-72b-instruct"),
+        ("accounts/fireworks/models/gpt-oss-120b",
+         "accounts/fireworks/models/deepseek-v3",
+         "accounts/fireworks/models/qwen3-235b-a22b"),
         "fireworks.ai",
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-        ("llama-3.3-70b", "qwen-3-32b"),
-        "cloud.cerebras.ai · very fast",
+        ("gpt-oss-120b", "zai-glm-4.7", "llama-3.3-70b", "gemma-4-31b"),
+        "cloud.cerebras.ai · very fast · hosts OpenAI gpt-oss",
     ),
 )
 

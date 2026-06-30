@@ -56,6 +56,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.9] — 2026-06-30
+
+### Fixed
+
+- **Banner no longer scrolls off the top into a huge empty void.** The old
+  bottom-padding overflowed on tall/narrow windows (wrapped banner text made
+  the line math under-count), pushing the mascot off-screen and stranding the
+  prompt at the bottom. `mantis` now clears to a fresh screen, prints the
+  banner at the top, and puts the input right beneath it — robust at any
+  terminal size.
+
 ## [1.1.8] — 2026-06-30
 
 ### Changed

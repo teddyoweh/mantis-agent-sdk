@@ -965,17 +965,18 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
-        import shutil  # noqa: PLC0415
-
         self._resolve_model()  # so the banner + first turn use a model that exists
-        banner_h = print_banner(self.console, self.model, self.backend)
-        # Push the first prompt to the bottom of the screen (Claude-Code style):
-        # banner stays up top, input sits at the bottom. Leave 2 rows for the
-        # input line + mode footer. After the first turn, output scrolls
-        # naturally and the prompt follows the conversation.
-        rows = shutil.get_terminal_size((80, 24)).lines
-        for _ in range(max(0, rows - banner_h - 2)):
-            self.console.print()
+        # Clear to a fresh screen, print the banner at the top, and let the
+        # input sit right beneath it. We deliberately do NOT pad down to the
+        # bottom of the terminal: padding overflows on tall/narrow windows (the
+        # banner text wraps, the math under-counts) and scrolls the mascot off
+        # the top, leaving a huge void with a stranded prompt. Banner-then-input
+        # is robust at every size; the conversation fills downward from there.
+        try:
+            self.console.clear()
+        except Exception:  # noqa: BLE001 - non-tty / dumb terminal
+            pass
+        print_banner(self.console, self.model, self.backend)
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()

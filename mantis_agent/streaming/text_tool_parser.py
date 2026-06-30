@@ -256,6 +256,95 @@ def _safe_flush_len(buf: str, open_tag: str, holdback: int) -> int:
     return n
 
 
+def _trim_to_object(s: str) -> str:
+    """Return the first brace-balanced ``{...}`` object in ``s``, dropping any
+    leading/trailing prose the model wrapped around it (e.g. ``{...} run it``).
+
+    Brace counting ignores braces inside JSON strings. If the string never
+    balances we return from the first ``{`` to the end and let the caller's
+    ``json.loads`` decide.
+    """
+    start = s.find("{")
+    if start < 0:
+        return s
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return s[start:]
+
+
+def _escape_stray_quotes(s: str) -> str:
+    """Escape double-quotes that appear *inside* a JSON string value but aren't a
+    real delimiter — the #1 way small models break tool-call JSON, e.g.
+    ``{"command":"grep "foo" x"}``. A real closing quote is followed (after
+    optional whitespace) by one of ``,:}]`` or end-of-input; anything else inside
+    a string is treated as a literal quote and escaped.
+    """
+    out: list[str] = []
+    in_str = False
+    esc = False
+    n = len(s)
+    for i, c in enumerate(s):
+        if not in_str:
+            out.append(c)
+            if c == '"':
+                in_str = True
+            continue
+        if esc:
+            out.append(c)
+            esc = False
+        elif c == "\\":
+            out.append(c)
+            esc = True
+        elif c == '"':
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j >= n or s[j] in ",:}]":
+                out.append(c)  # genuine closing quote
+                in_str = False
+            else:
+                out.append('\\"')  # literal quote inside the value
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _loads_lenient(payload: str) -> object | None:
+    """``json.loads`` with best-effort repair for the malformed JSON small local
+    models routinely emit. Returns the parsed object, or ``None`` if every
+    repair attempt still fails to produce a dict-or-list."""
+    for candidate in (
+        payload,
+        _trim_to_object(payload),
+        _escape_stray_quotes(payload),
+        _escape_stray_quotes(_trim_to_object(payload)),
+        _trim_to_object(_escape_stray_quotes(payload)),
+    ):
+        try:
+            return json.loads(candidate)
+        except (ValueError, json.JSONDecodeError):
+            continue
+    return None
+
+
 def _emit_tool_call(call_id: str, raw_json: str) -> Iterator[ParserEvent]:
     """Parse the JSON between ``<tool_call>`` and ``</tool_call>`` and emit
     Start + InputDelta + Stop. Malformed JSON emits a single Stop(error=True)."""
@@ -264,10 +353,9 @@ def _emit_tool_call(call_id: str, raw_json: str) -> Iterator[ParserEvent]:
         _LOG.warning("empty <tool_call> body")
         yield ToolCallStop(call_id=call_id, error=True)
         return
-    try:
-        parsed = json.loads(payload)
-    except (ValueError, json.JSONDecodeError) as e:
-        _LOG.warning("malformed <tool_call> JSON: %s; body=%r", e, payload[:200])
+    parsed = _loads_lenient(payload)
+    if parsed is None:
+        _LOG.warning("malformed <tool_call> JSON (unrepairable); body=%r", payload[:200])
         yield ToolCallStop(call_id=call_id, error=True)
         return
     if not isinstance(parsed, dict):
