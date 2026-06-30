@@ -56,6 +56,22 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.0] — 2026-06-30
+
+### Added
+
+- **`mantis` — an interactive, Claude-Code-style agent terminal.** Run
+  `mantis` in any directory for a banner (pixel mascot + version + model +
+  cwd), a bordered input with a rotating `Try "…"` placeholder, a mode
+  footer cycled with `shift+tab`, slash commands (`/help`, `/model`,
+  `/clear`, `/cwd`, `/exit`), and token-level streaming from any configured
+  backend. Configuration reads the standard `MANTIS_AGENT_MODEL`,
+  `MANTIS_AGENT_BASE_URL`, and `MANTIS_AGENT_API_KEY` env vars.
+  - New module `mantis_agent.tui` and a new `mantis` console entry point.
+  - New `[cli]` optional extra (`prompt_toolkit`, `rich`) keeps the core
+    SDK dependency-light; the stdlib-only `mantis-agent` CLI is unchanged.
+    Install with `pip install 'mantis-agent-sdk[cli]'`.
+
 ## [1.0.0] — 2026-05-17
 
 First stable release. The public API — the set of names in

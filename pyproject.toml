@@ -1,6 +1,6 @@
 [project]
 name = "mantis-agent-sdk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,7 +36,8 @@ anthropic = []  # uses httpx directly, no SDK dep
 openai = []
 gemini = []
 bedrock = ["boto3>=1.34"]
-all = ["mantis-agent-sdk[bedrock]"]
+cli = ["prompt_toolkit>=3.0", "rich>=13.0"]  # the `mantis` interactive terminal
+all = ["mantis-agent-sdk[bedrock,cli]"]
 dev = [
     "pytest>=8",
     "pytest-anyio>=0.0",
@@ -52,6 +53,7 @@ docs = [
 ]
 
 [project.scripts]
+mantis = "mantis_agent.tui:main"
 mantis-agent = "mantis_agent.cli:main"
 
 [build-system]
