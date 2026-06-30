@@ -154,15 +154,26 @@ class OllamaProvider(HTTPProviderMixin):
                 if isinstance(m.content, str):
                     out.append({"role": "user", "content": m.content})
                     continue
-                # Multi-block user message — may include tool_result blocks.
+                # Multi-block user message — may include tool_result + image
+                # blocks. Ollama's vision models read images from a per-message
+                # ``images: [base64,...]`` array (NOT inline in content), so we
+                # split image blocks out there and keep text in ``content``.
                 text_buf: list[str] = []
+                images: list[str] = []
                 for blk in m.content:
                     if isinstance(blk, TextBlock):
                         text_buf.append(blk.text)
+                    elif hasattr(blk, "source"):  # ImageBlock
+                        data = (blk.source or {}).get("data")
+                        if isinstance(data, str) and data:
+                            images.append(data)
                     else:
-                        # tool_result, image, etc. — collapse to a tagged string.
+                        # tool_result, etc. — collapse to a tagged string.
                         text_buf.append(_render_block_as_text(blk))
-                out.append({"role": "user", "content": "\n".join(text_buf)})
+                umsg: dict[str, Any] = {"role": "user", "content": "\n".join(text_buf)}
+                if images:
+                    umsg["images"] = images
+                out.append(umsg)
                 continue
             if isinstance(m, AssistantMessage):
                 texts: list[str] = []

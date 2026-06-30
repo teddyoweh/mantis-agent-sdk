@@ -442,6 +442,9 @@ class MantisTUI:
         # re-rendered by the TUI whenever the agent updates it.
         self.todos: list[dict] = []
         self._todos_shown: list[dict] = []
+        # Pending paste attachments (images/files) for the next message. Each is
+        # ``(placeholder, content_block)``; flushed into the user turn on submit.
+        self.pending_attachments: list[tuple[str, Any]] = []
 
         from rich.console import Console  # noqa: PLC0415
         from rich.theme import Theme  # noqa: PLC0415
@@ -716,6 +719,15 @@ class MantisTUI:
             self.mode_idx = (self.mode_idx + 1) % len(MODES)
             event.app.invalidate()
 
+        @kb.add("c-v")
+        def _paste_attachment(event: Any) -> None:  # noqa: ANN401
+            """Ctrl+V: pull an image (or copied file) off the system clipboard,
+            attach it to the next message, and drop a ``[Image #N]`` placeholder
+            into the line — Claude-Code-style multimodal paste."""
+            placeholder = self._capture_clipboard_attachment()
+            if placeholder:
+                event.app.current_buffer.insert_text(placeholder)
+
         from prompt_toolkit.completion import Completer, Completion  # noqa: PLC0415
 
         installed_models, _ = self._available_models()
@@ -823,6 +835,71 @@ class MantisTUI:
         prompt = random.choice(EXAMPLE_PROMPTS)
         return HTML(f'<style fg="ansibrightblack">Try "{escape(prompt)}"</style>')
 
+    # -- paste attachments (images / files) ---------------------------------
+
+    def _capture_clipboard_attachment(self) -> str | None:
+        """Grab an image (or copied file) off the clipboard into
+        ``pending_attachments``. Returns the ``[Image #N]`` / ``[File: x]``
+        placeholder to echo in the input, or ``None`` if the clipboard had no
+        attachable content."""
+        try:
+            from . import clipboard  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return None
+
+        block = None
+        label = "Image"
+        if clipboard.has_clipboard_image():
+            block = clipboard.grab_clipboard_image()
+        else:
+            path = clipboard.grab_clipboard_file_path()
+            if path:
+                try:
+                    blocks = clipboard.file_to_blocks(path)
+                    block = blocks[0] if blocks else None
+                    label = "Image" if clipboard.is_image_path(path) else "File"
+                except (OSError, ValueError):
+                    return None
+        if block is None:
+            return None
+        n = len(self.pending_attachments) + 1
+        placeholder = f"[{label} #{n}]"
+        self.pending_attachments.append((placeholder, block))
+        return placeholder
+
+    def _build_user_content(self, text: str) -> Any:
+        """Combine the typed text with any pending paste attachments into a
+        message body. Plain string when there are no attachments (keeps simple
+        turns simple); a content-block list when images/files are attached."""
+        from .types import TextBlock  # noqa: PLC0415
+
+        # A bare path the user dragged in (no Ctrl+V) — attach it inline too.
+        if not self.pending_attachments:
+            from . import clipboard  # noqa: PLC0415
+            p = clipboard.looks_like_path(text)
+            if p:
+                try:
+                    return clipboard.file_to_blocks(p)
+                except (OSError, ValueError):
+                    pass
+            return text
+
+        blocks: list[Any] = self._strip_placeholders_to_text(text)
+        blocks.extend(block for _, block in self.pending_attachments)
+        self.pending_attachments = []
+        return blocks or [TextBlock(text=text)]
+
+    def _strip_placeholders_to_text(self, text: str) -> list:
+        """Remove ``[Image #N]`` placeholders from the typed text and return it as
+        a (possibly empty) ``[TextBlock]`` list."""
+        from .types import TextBlock  # noqa: PLC0415
+
+        cleaned = text
+        for placeholder, _ in self.pending_attachments:
+            cleaned = cleaned.replace(placeholder, "")
+        cleaned = " ".join(cleaned.split()).strip()
+        return [TextBlock(text=cleaned)] if cleaned else []
+
     # -- running a single turn (the real agent loop) ------------------------
 
     async def _run_turn(self, text: str) -> None:
@@ -847,7 +924,7 @@ class MantisTUI:
         )
 
         base = len(self.messages)
-        self.messages.append(UserMessage(content=text))
+        self.messages.append(UserMessage(content=self._build_user_content(text)))
 
         self.console.print()  # breathing room above the loading spinner
         thinking = _Thinking()

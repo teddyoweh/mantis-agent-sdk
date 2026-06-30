@@ -56,6 +56,21 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.3.0] — 2026-06-30
+
+### Added
+
+- **Clipboard paste (Ctrl+V) in the terminal** — paste a copied image, or a
+  copied file path, straight into the prompt as an attachment. New
+  `mantis_agent.clipboard` module (macOS/Linux/Windows) with image + file
+  detection; wired into the TUI input.
+
+This release also bundles all the interactive-terminal work from 1.1.x–1.2.x:
+the `mantis` Claude-Code-style terminal — praying-mantis mascot, Markdown +
+syntax-highlighted code, line-numbered edit diffs, friendly tool-call headers,
+the animated thinking spinner, dark slash-command menu, and full-screen mode
+(input pinned to the bottom, always visible while the agent works).
+
 ## [1.2.2] — 2026-06-30
 
 ### Fixed
