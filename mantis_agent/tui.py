@@ -785,11 +785,15 @@ class MantisTUI:
         try:
             async for msg in self.agent.run_iter(self.messages):
                 await thinking.stop()
+                hugging = False
                 if isinstance(msg, AssistantMessage):
-                    self._render_assistant(msg, ToolUseBlock)
+                    # A tool call is immediately followed by its result; keep
+                    # them hugged (no blank/spinner gap between call and result).
+                    hugging = self._render_assistant(msg, ToolUseBlock)
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     self._render_tool_results(msg, ToolResultBlock)
-                self.console.print()  # space above the next thinking spinner
+                if not hugging:
+                    self.console.print()  # space above the next thinking spinner
                 thinking.start()
         except KeyboardInterrupt:
             del self.messages[base:]
@@ -802,9 +806,12 @@ class MantisTUI:
         finally:
             await thinking.stop()
 
-    def _render_assistant(self, msg: Any, ToolUseBlock: type) -> None:
+    def _render_assistant(self, msg: Any, ToolUseBlock: type) -> bool:
+        """Render an assistant message; return True if it emitted a tool call
+        (so the caller can keep the call and its result visually hugged)."""
         from .types import TextBlock  # noqa: PLC0415
 
+        had_tool_call = False
         for block in msg.content:
             if isinstance(block, TextBlock):
                 if block.text.strip():
@@ -816,6 +823,7 @@ class MantisTUI:
             elif isinstance(block, ToolUseBlock):
                 from rich.text import Text as _T  # noqa: PLC0415
 
+                had_tool_call = True
                 verb, target = self._tool_label(block.name, block.input or {})
                 self.console.print()  # breathing room above the tool call
                 line = _T()
@@ -824,6 +832,7 @@ class MantisTUI:
                 if target:
                     line.append(" " + target, style="ansibrightblack")
                 self.console.print(line)
+        return had_tool_call
 
     def _render_tool_results(self, msg: Any, ToolResultBlock: type) -> None:
         from rich.text import Text as _T  # noqa: PLC0415

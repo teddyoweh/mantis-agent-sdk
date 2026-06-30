@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.17] — 2026-06-30
+
+### Changed
+
+- **Tool call and its result are hugged together** (no blank/spinner gap
+  between `⚒ write foo.py` and its `└ …` result). Spacing is kept above the
+  call and below the result group.
+
 ## [1.1.16] — 2026-06-30
 
 ### Changed
