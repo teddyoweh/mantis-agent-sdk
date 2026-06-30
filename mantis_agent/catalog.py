@@ -1,47 +1,82 @@
-"""Model catalog — the curated list of providers/models the ``mantis`` terminal
-can talk to, plus the on/off ("enabled") state for each.
+"""Model catalog for the ``mantis`` terminal — three ways to run a model:
 
-A *provider* is a hosted (or local) OpenAI-compatible backend: a base URL, the
-environment variable that carries its API key, and a handful of flagship model
-ids. A provider is **enabled** when we can find its key — either in the
-environment or saved by the user via ``/enable`` — (local backends like Ollama
-are enabled whenever they're reachable). Disabled providers still show up in
-``/models`` so you can see the whole menu and turn one on.
+1. **Local (Ollama)** — open-weight models pulled onto your machine. Free, no
+   key. See :data:`SUGGESTED_PULLS`.
+2. **Self-host** — the *full* open weights on your own GPU server (vLLM /
+   llama.cpp / TGI). No vendor key; you point ``mantis`` at your URL.
+3. **Hosted API** — a provider runs the model for you. Needs an API key (that
+   key is your billing account for *their compute*, not a licence for the
+   model — the weights themselves are open). See :data:`CATALOG`.
 
-Saved keys live in ``~/.mantis-agent/models.json`` (chmod ``600``). They are
-stored in plaintext, same as a shell rc export — fine for a local dev tool, but
-prefer real environment variables on shared machines.
+A hosted provider is **enabled** once we can find its key — in the environment
+or saved by ``/enable`` to ``~/.mantis-agent/models.json`` (chmod ``600``).
+Disabled providers still appear in ``/models`` so the whole menu is visible.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .paths import get_mantis_agent_dir
 
 
+# ---------------------------------------------------------------------------
+# 1. Local (Ollama) — curated open-weight models you can pull for free
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Pull:
+    tag: str  # the `ollama pull <tag>` argument, e.g. "deepseek-r1:7b"
+    note: str  # one-line description
+
+
+# Flagship open models that run comfortably on a laptop/desktop via Ollama.
+SUGGESTED_PULLS: tuple[Pull, ...] = (
+    Pull("qwen2.5:7b", "Qwen2.5 7B — strong all-rounder"),
+    Pull("qwen2.5-coder:7b", "Qwen2.5-Coder 7B — code"),
+    Pull("deepseek-r1:7b", "DeepSeek-R1 7B — reasoning"),
+    Pull("deepseek-r1:14b", "DeepSeek-R1 14B — reasoning (bigger)"),
+    Pull("llama3.2:3b", "Llama 3.2 3B — small & fast"),
+    Pull("llama3.1:8b", "Llama 3.1 8B — general"),
+    Pull("glm4:9b", "GLM-4 9B — Zhipu's open model"),
+    Pull("gemma2:9b", "Gemma 2 9B — Google"),
+    Pull("mistral:7b", "Mistral 7B — general"),
+    Pull("phi4", "Phi-4 14B — Microsoft"),
+)
+
+
+# ---------------------------------------------------------------------------
+# 2. Self-host — the open weights on your own GPU, OpenAI-compatible
+# ---------------------------------------------------------------------------
+
+SELF_HOST_NOTE = (
+    "Run the full open weights yourself (vLLM / llama.cpp --server / TGI) and "
+    "connect with [white]/connect <url> [model][/] — e.g. "
+    "[white]/connect http://gpu-box:8000/v1 deepseek-ai/DeepSeek-V3[/]. "
+    "No vendor key; it's your hardware."
+)
+
+
+# ---------------------------------------------------------------------------
+# 3. Hosted APIs — provider runs it; needs a key (international endpoints)
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True, slots=True)
 class Provider:
     id: str  # short slug, e.g. "deepseek"
-    label: str  # display name, e.g. "DeepSeek"
-    base_url: str  # OpenAI-compat base URL ("" for local-dynamic)
-    api_key_env: str  # env var that holds the key ("" for keyless/local)
+    label: str  # display name
+    base_url: str  # OpenAI-compat base URL
+    api_key_env: str  # env var holding the key
     models: tuple[str, ...]  # a few flagship model ids
-    note: str = ""  # one-line hint (signup URL, etc.)
-    local: bool = False  # True → keyless, enabled when reachable
+    note: str = ""  # signup hint
 
 
-# Curated as of early 2026. Model ids are the strings each provider's
-# OpenAI-compatible endpoint expects. Keep this list tight and flagship-only;
-# `/models` is a menu, not an exhaustive index.
 CATALOG: tuple[Provider, ...] = (
-    Provider(
-        "ollama", "Ollama", "http://localhost:11434", "",
-        (), "local models — install with `ollama pull <name>`", local=True,
-    ),
     Provider(
         "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
         ("deepseek-chat", "deepseek-reasoner"),
@@ -53,20 +88,20 @@ CATALOG: tuple[Provider, ...] = (
         "platform.moonshot.ai",
     ),
     Provider(
-        "glm", "GLM (Zhipu)", "https://open.bigmodel.cn/api/paas/v4", "ZHIPUAI_API_KEY",
+        "glm", "GLM (Zhipu)", "https://api.z.ai/api/paas/v4", "ZHIPUAI_API_KEY",
         ("glm-4.6", "glm-4-plus", "glm-4-air", "glm-4-flash"),
-        "open.bigmodel.cn  ·  intl: api.z.ai",
+        "z.ai",
     ),
     Provider(
         "qwen", "Qwen (DashScope)",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
         ("qwen-max", "qwen-plus", "qwen2.5-72b-instruct", "qwen2.5-coder-32b-instruct"),
-        "dashscope.console.aliyun.com",
+        "dashscope-intl.aliyuncs.com",
     ),
     Provider(
         "groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
         ("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "moonshotai/kimi-k2-instruct"),
-        "console.groq.com  ·  very fast",
+        "console.groq.com · very fast",
     ),
     Provider(
         "openai", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY",
@@ -82,7 +117,7 @@ CATALOG: tuple[Provider, ...] = (
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
         ("z-ai/glm-4.6", "moonshotai/kimi-k2", "deepseek/deepseek-chat", "qwen/qwen-2.5-72b-instruct"),
-        "openrouter.ai  ·  one key, every model",
+        "openrouter.ai · one key, every model",
     ),
     Provider(
         "together", "Together", "https://api.together.xyz/v1", "TOGETHER_API_KEY",
@@ -100,7 +135,7 @@ CATALOG: tuple[Provider, ...] = (
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
         ("llama-3.3-70b", "qwen-3-32b"),
-        "cloud.cerebras.ai  ·  very fast",
+        "cloud.cerebras.ai · very fast",
     ),
 )
 
@@ -117,9 +152,8 @@ def _store_path() -> Any:
 
 
 def _load_store() -> dict[str, Any]:
-    p = _store_path()
     try:
-        return json.loads(p.read_text())
+        return json.loads(_store_path().read_text())
     except Exception:  # noqa: BLE001 — missing / corrupt → empty
         return {}
 
@@ -135,7 +169,6 @@ def _save_store(data: dict[str, Any]) -> None:
 
 
 def saved_key(provider_id: str) -> str | None:
-    """The user-saved key for a provider, if any."""
     return (_load_store().get("keys") or {}).get(provider_id)
 
 
@@ -150,7 +183,6 @@ def set_key(provider_id: str, key: str) -> None:
 
 
 def clear_key(provider_id: str) -> bool:
-    """Forget a saved key. Returns True if one was removed."""
     data = _load_store()
     keys = data.get("keys") or {}
     if provider_id in keys:
@@ -167,18 +199,13 @@ def api_key_for(provider: Provider) -> str | None:
     return saved_key(provider.id)
 
 
-def is_enabled(provider: Provider, *, ollama_reachable: bool = False) -> bool:
-    if provider.local:
-        return ollama_reachable
+def is_enabled(provider: Provider) -> bool:
     return bool(api_key_for(provider))
 
 
 def provider_for_model(model_id: str) -> Provider | None:
-    """Best-effort: which provider serves ``model_id``.
-
-    Exact membership first, then a prefix heuristic (e.g. ``z-ai/...`` →
-    OpenRouter, ``accounts/fireworks/...`` → Fireworks, ``glm-*`` → GLM).
-    """
+    """Best-effort: which hosted provider serves ``model_id`` (exact id, then a
+    prefix heuristic). Returns ``None`` for local/self-hosted/unknown ids."""
     for p in CATALOG:
         if model_id in p.models:
             return p
@@ -190,8 +217,10 @@ def provider_for_model(model_id: str) -> Provider | None:
         "glm-": "glm",
         "kimi-": "moonshot",
         "moonshot-": "moonshot",
-        "deepseek-": "deepseek",
-        "qwen-": "qwen",
+        "deepseek-chat": "deepseek",
+        "deepseek-reasoner": "deepseek",
+        "qwen-max": "qwen",
+        "qwen-plus": "qwen",
         "gpt-": "openai",
         "o1": "openai",
         "o3": "openai",
@@ -205,6 +234,9 @@ def provider_for_model(model_id: str) -> Provider | None:
 
 
 __all__ = [
+    "Pull",
+    "SUGGESTED_PULLS",
+    "SELF_HOST_NOTE",
     "Provider",
     "CATALOG",
     "BY_ID",

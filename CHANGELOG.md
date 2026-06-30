@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.5] — 2026-06-30
+
+### Changed
+
+- **Input is pinned to the bottom of the terminal on launch** (Claude-Code
+  style): the banner stays at the top and the prompt is pushed down to the
+  bottom row, instead of sitting right under the banner with a large empty
+  gap below. After the first turn, output scrolls naturally.
+
 ## [1.1.4] — 2026-06-30
 
 ### Changed

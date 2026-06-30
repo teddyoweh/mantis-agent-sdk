@@ -193,7 +193,8 @@ def _short_cwd() -> str:
         return str(cwd)
 
 
-def print_banner(console: Any, model: str, backend: str) -> None:
+def print_banner(console: Any, model: str, backend: str) -> int:
+    """Print the banner; return the number of terminal lines it occupied."""
     from rich.table import Table  # noqa: PLC0415
     from rich.text import Text  # noqa: PLC0415
 
@@ -232,6 +233,8 @@ def print_banner(console: Any, model: str, backend: str) -> None:
              style="ansibrightblack")
     )
     console.print()
+    # blank + grid + blank + tip + blank
+    return len(mascot) + 4
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +267,7 @@ class MantisTUI:
 
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
+        from .builtin_tools import CODING_TOOLS  # noqa: PLC0415
         from .providers.base import detect_provider, resolve  # noqa: PLC0415
         from .tools import ToolRegistry  # noqa: PLC0415
 
@@ -279,14 +283,45 @@ class MantisTUI:
         except TypeError:
             provider = factory()
 
+        # The whole point of `mantis` (vs. the bare `chat` REPL): give the model
+        # a real tool belt — shell + filesystem — so it can actually *do* things
+        # instead of describing them. Without these the agent loop has nothing to
+        # call and every turn collapses to a single chat completion.
+        registry = ToolRegistry()
+        registry.add(*CODING_TOOLS)
+
         return Agent(
             model=self.model,
             provider=provider,
-            system=self.system,
-            tools=ToolRegistry(),
+            system=self.system or self._default_system(),
+            tools=registry,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             max_steps=self.max_turns,
+        )
+
+    def _default_system(self) -> str:
+        """The agent system prompt — what makes the model behave like a coding
+        agent (use tools, act, stay terse) rather than a generic chat assistant."""
+        import platform  # noqa: PLC0415
+
+        return (
+            "You are Mantis, an interactive coding agent running in the user's "
+            "terminal. You have tools — bash, read_file, write_file, edit_file, "
+            "ls, glob, grep — and you USE them to act on the real machine instead "
+            "of just describing what to do.\n\n"
+            "Rules:\n"
+            "- When a request needs information from the system or files, call a "
+            "tool to get it. Do not guess and do not lecture the user with generic "
+            "instructions they could have Googled.\n"
+            "- 'find/show/list X' means run the command and report the actual "
+            "result. 'run it' means actually run the relevant command with bash.\n"
+            "- Prefer doing over explaining. Keep replies short; let tool output "
+            "speak for itself.\n"
+            "- Only the user's machine matters — don't enumerate other operating "
+            "systems or hypotheticals.\n\n"
+            f"Environment: {platform.system()} ({platform.machine()}), "
+            f"cwd = {Path.cwd()}."
         )
 
     # -- model resolution (so `mantis` "just works") -------------------------
@@ -491,8 +526,17 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
+        import shutil  # noqa: PLC0415
+
         self._resolve_model()  # so the banner + first turn use a model that exists
-        print_banner(self.console, self.model, self.backend)
+        banner_h = print_banner(self.console, self.model, self.backend)
+        # Push the first prompt to the bottom of the screen (Claude-Code style):
+        # banner stays up top, input sits at the bottom. Leave 2 rows for the
+        # input line + mode footer. After the first turn, output scrolls
+        # naturally and the prompt follows the conversation.
+        rows = shutil.get_terminal_size((80, 24)).lines
+        for _ in range(max(0, rows - banner_h - 2)):
+            self.console.print()
         session = self._build_session()
         self.agent = self._build_agent()
 

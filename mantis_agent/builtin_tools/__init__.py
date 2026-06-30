@@ -10,12 +10,30 @@ lazily on first call.
 
 from __future__ import annotations
 
+from .fs import (
+    CODING_TOOLS,
+    bash,
+    edit_file,
+    glob,
+    grep,
+    ls,
+    read_file,
+    write_file,
+)
 from .web import WebFetch, WebSearch, aclose_builtin_clients, web_fetch, web_search
 
 __all__ = [
+    "CODING_TOOLS",
     "WebFetch",
     "WebSearch",
     "aclose_builtin_clients",
+    "bash",
+    "edit_file",
+    "glob",
+    "grep",
+    "ls",
+    "read_file",
     "web_fetch",
     "web_search",
+    "write_file",
 ]
