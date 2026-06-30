@@ -21,9 +21,12 @@ That's the whole diff. Every canonical Claude SDK example runs verbatim — the 
 `mantis` is a coding agent that lives in your terminal. Point it at any directory and it reads, writes, edits, greps, and runs shell commands to actually get work done — Claude Code's feel, driving the open model *you* choose: a local Ollama, your own vLLM box, or a hosted endpoint.
 
 ```bash
-pip install mantis-agent-sdk   # the terminal is included — no extras, nothing else to set up
-mantis                         # then just talk to it
+pip install mantis-agent-sdk   # the terminal is included — no extras
+mantis setup                   # detects your machine, pulls the best local coding model
+mantis                         # start coding
 ```
+
+`mantis setup` reads your RAM/GPU and recommends a model that actually fits — the Qwen2.5-Coder family (the strongest open coding models) plus DeepSeek-R1 for step-by-step code reasoning. Take the recommendation, pick another from the list, or `mantis setup --auto` to skip the prompt. No GPU needed; it'll pick something snappy for your laptop.
 
 > Want it isolated and on your PATH everywhere? `uv tool install mantis-agent-sdk` or `pipx install mantis-agent-sdk`.
 

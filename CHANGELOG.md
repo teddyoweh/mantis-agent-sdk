@@ -56,6 +56,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.6.0] — 2026-06-30
+
+### Added
+
+- **`mantis setup` — a real first-run experience.** Detects your machine
+  (RAM / Apple Silicon / NVIDIA VRAM) and recommends the best *coding* model
+  that fits, from a curated coding-first catalog (Qwen2.5-Coder 0.5B→32B plus
+  DeepSeek-R1 for code reasoning). Pick from the list, take the ★ recommendation,
+  or `--auto`; it installs Ollama if missing, pulls the model, and sets it as
+  your default so `mantis` opens straight into a working agent.
+  `mantis setup --list` prints the catalog; `mantis setup --model <tag>` pulls
+  a specific one. (The older `mantis-agent setup-local` still works.)
+
 ## [1.5.1] — 2026-06-30
 
 ### Docs

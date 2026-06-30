@@ -2035,9 +2035,19 @@ class MantisTUI:
 def main(argv: list[str] | None = None) -> int:
     import argparse  # noqa: PLC0415
 
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # `mantis setup [...]` → the first-run wizard (detect machine, pick & pull a
+    # coding model, set it as default). Everything else launches the terminal.
+    if argv and argv[0] == "setup":
+        from .setup_wizard import run_setup  # noqa: PLC0415
+
+        return run_setup(argv[1:])
+
     p = argparse.ArgumentParser(
         prog="mantis",
-        description="Mantis — interactive agent terminal (Claude-Code-style TUI).",
+        description="Mantis — interactive agent terminal. Run `mantis setup` first to install a model.",
     )
     p.add_argument("--model", default=DEFAULT_MODEL, help="Model slug.")
     p.add_argument("--backend", default=DEFAULT_BACKEND, help="Backend base URL.")
