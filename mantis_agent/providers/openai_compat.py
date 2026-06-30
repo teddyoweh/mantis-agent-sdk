@@ -318,16 +318,24 @@ class OpenAICompatProvider(HTTPProviderMixin):
         for m in body_msgs:
             wire_messages.extend(_encode_message(m, path=path))
 
+        # OpenAI's GPT-5 / o-series reject the legacy ``max_tokens`` (they want
+        # ``max_completion_tokens``) and only accept the default temperature.
+        # Other OpenAI-compat backends (vLLM, Groq, Together, …) never serve
+        # these ids, so keying off the model name is safe and self-contained.
+        _bare = model.lower().rsplit("/", 1)[-1]
+        _new_openai = _bare.startswith(("gpt-5", "o1", "o3", "o4"))
+        token_field = "max_completion_tokens" if _new_openai else "max_tokens"
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": wire_messages,
-            "max_tokens": max_tokens,
+            token_field: max_tokens,
             "stream": True,
             # why: this is the OpenAI-compat way to get token counts from the
             # final SSE chunk. Without it, ``usage`` is silently dropped.
             "stream_options": {"include_usage": True},
         }
-        if temperature is not None:
+        if temperature is not None and not _new_openai:
             payload["temperature"] = temperature
 
         if path == "A" and tools:
