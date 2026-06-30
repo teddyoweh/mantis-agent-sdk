@@ -336,6 +336,8 @@ __all__ = [
     "api_key_for",
     "is_enabled",
     "provider_for_model",
+    "get_last_model",
+    "set_last_model",
     "LIVE_TTL_S",
     "cached_live_models",
     "store_live_models",
