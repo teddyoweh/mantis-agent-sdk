@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.3.1] — 2026-06-30
+
+### Docs
+
+- **README documents the `mantis` terminal** — install (`[cli]` extra), the
+  full-screen agent TUI, edit diffs, tool calls, clipboard paste, slash
+  commands, keys, and configuration env vars — alongside the existing library
+  (API) docs.
+
 ## [1.3.0] — 2026-06-30
 
 ### Added

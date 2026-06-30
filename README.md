@@ -12,6 +12,66 @@ from mantis_agent import query, ClaudeAgentOptions, tool
 
 That's it. Every canonical Claude SDK example runs verbatim. The wire format underneath is OpenAI-compat or Ollama; the surface above is Anthropic-shaped.
 
+There are **two ways to use it**: the [`mantis` terminal](#the-mantis-terminal) (a Claude-Code-style agent TUI you run in any directory) and the [Python library](#quick-start) (the rest of this README).
+
+---
+
+## The `mantis` terminal
+
+A full-screen, Claude-Code-style agent terminal for **local and hosted models** — run it in any directory and chat with an agent that can read, write, edit, grep, and run shell commands on your machine.
+
+```bash
+pip install 'mantis-agent-sdk[cli]'   # the [cli] extra adds the rich terminal
+mantis                                 # launch the agent terminal
+```
+
+```
+            ▄▀▄▀
+           ▄█▀                Mantis Code v1.3.0
+        ▄██▀▀█▀               qwen2.5-7b-instruct  ·  Ollama (local)
+    ▄█ ▄███▀▀                 ~/Documents/code/your-project
+ ▄▄██▀▀██▀▀▀▀▀
+ ▀▀ █  █▀ ▀▄
+ ▄▄▀  ▄▀   ▀▄
+
+› build me a fastapi todo app
+
+⚒ Write app/main.py
+  └ wrote 612 bytes (28 lines) to app/main.py
+       1 + from fastapi import FastAPI
+       2 + app = FastAPI()
+       …
+
+● Done — run it with `uvicorn app.main:app --reload`.
+```
+
+**What you get:**
+
+- **Input pinned to the bottom, always visible** — even while the agent is working. The conversation scrolls above it (full-screen mode). Set `MANTIS_CLASSIC=1` for a plain scrolling REPL.
+- **Markdown replies** — syntax-highlighted code blocks, lists, tables, inline code.
+- **Real edit diffs** — `edit_file`/`write_file` render as line-numbered green/red diffs.
+- **Friendly tool calls** — `⚒ Read foo.py`, `⚒ Run <cmd>`, `⚒ Edit foo.py` with the result hugged underneath.
+- **Animated thinking spinner** with a live timer (`✻ Undulating… (3s)`).
+- **Clipboard paste (Ctrl+V)** — paste a copied image or file path straight into the prompt as an attachment.
+- **Slash commands** — `/model <id>` to switch models live, `/models` to browse the local + hosted + self-host catalog, `/clear`, `/cwd`, `/help`, `/exit`.
+- **Keys** — Enter sends · Esc/Ctrl+C interrupts a running reply (Ctrl+C also quits when idle) · Ctrl+D quits · shift+tab cycles permission mode.
+
+**Configuration** (same env vars the library uses):
+
+| Env var | Meaning |
+| --- | --- |
+| `MANTIS_AGENT_MODEL` | default model slug (else `qwen2.5-7b-instruct`) |
+| `MANTIS_AGENT_BASE_URL` | default backend (else Ollama at `localhost:11434`) |
+| `MANTIS_AGENT_API_KEY` | API key for hosted backends |
+| `MANTIS_CLASSIC=1` | force the classic scrolling REPL instead of full-screen |
+
+```bash
+mantis --model qwen2.5:7b                       # pick a model
+MANTIS_AGENT_BASE_URL=https://gpu-box:8000/v1 mantis --model my-model   # your own server
+```
+
+> There's also a tiny stdlib-only diagnostics CLI, `mantis-agent` (`probe`, `list-models`, `run`, `chat`, `setup-local`), with no extra dependencies — handy for smoke-testing a backend.
+
 ---
 
 ## Quick start
