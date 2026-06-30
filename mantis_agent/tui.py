@@ -1514,7 +1514,16 @@ class MantisTUI:
             sys.stdout.flush()
         except Exception:  # noqa: BLE001 - non-tty / dumb terminal
             pass
-        print_banner(self.console, self.model, self.backend)
+        banner_h = print_banner(self.console, self.model, self.backend)
+        # Push the first input toward the bottom so its framing rules + footer
+        # hug it instead of the toolbar floating to the screen floor. Safe now
+        # that erase_when_done wipes the frame and we echo "› message" in place,
+        # so the first message scrolls naturally rather than getting buried.
+        import shutil  # noqa: PLC0415
+
+        rows = shutil.get_terminal_size((80, 24)).lines
+        for _ in range(max(0, rows - banner_h - 3)):  # 3 = top rule + input + footer-ish
+            self.console.print()
         session = self._build_session()
         self.session = session
         self.agent = self._build_agent()

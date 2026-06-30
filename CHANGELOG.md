@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.26] — 2026-06-30
+
+### Fixed
+
+- **Bottom rule hugs the input at launch.** The input is padded toward the
+  bottom of the screen so its framing rules + footer hug it, instead of the
+  toolbar floating to the screen floor with a gap. Safe with `erase_when_done`
+  (the frame is wiped and `› message` echoed in place, so the first message
+  scrolls naturally instead of being buried).
+
 ## [1.1.25] — 2026-06-30
 
 ### Fixed
