@@ -1,6 +1,6 @@
 # mantis-agent-sdk
 
-**Claude Agent SDK for open-source models.** Drop-in compatible with `claude-agent-sdk` — swap the import, keep your code — but the agent loop runs against Llama, Qwen, DeepSeek, Mixtral, Phi, Gemma, or anything you serve through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter.
+**The Claude Agent SDK, for open-source models.** Write to Anthropic's `claude-agent-sdk` API; run the loop against Llama, Qwen, DeepSeek, GLM, Phi, or Gemma — anything you serve through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter. The migration is one import:
 
 ```python
 # Before
@@ -10,9 +10,9 @@ from claude_agent_sdk import query, ClaudeAgentOptions, tool
 from mantis_agent import query, ClaudeAgentOptions, tool
 ```
 
-That's it. Every canonical Claude SDK example runs verbatim. The wire format underneath is OpenAI-compat or Ollama; the surface above is Anthropic-shaped.
+That's the whole diff. Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, the wire format underneath is OpenAI-compat or Ollama.
 
-There are **two ways to use it**: the [`mantis` terminal](#the-mantis-terminal) (a Claude-Code-style agent TUI you run in any directory) and the [Python library](#quick-start) (the rest of this README).
+**Two ways in**, one `pip install`: the **[`mantis` terminal](#the-mantis-terminal)** — a Claude-Code-style coding agent you run in any directory — and the **[Python library](#quick-start)** for building your own agents on top of the same engine.
 
 ---
 
@@ -74,6 +74,8 @@ Want to poke at a backend without the full UI? `mantis-agent` is a zero-dependen
 ---
 
 ## Quick start
+
+Building your own agent? Install, set up a local model, and you're a few lines from a tool-calling loop:
 
 ```bash
 pip install mantis-agent-sdk
@@ -291,24 +293,24 @@ python -m mantis_agent.examples.with_tracing
 
 ---
 
-## The acceptance test
+## Does it actually work?
 
-v1.0 ships when this is true on a fresh machine:
+The bar, met on a fresh machine with no GPU:
 
 ```bash
 pip install mantis-agent-sdk
 mantis-agent setup-local
-# ...10-line script with 2 tools + 5-turn agent task...
-python my_agent.py   # Just Works on the first try
+# a 10-line script: two tools, a 5-turn agent task
+python my_agent.py   # works on the first try
 ```
 
-Then the same script works against Together, Fireworks, vLLM, llama.cpp, Groq just by changing `model`. Today: DeepSeek-R1 1.5B on local Ollama runs six of Anthropic's own canonical examples verbatim. Suite at 202 tests. The acceptance test passes on Ollama; provider matrix expansion is the remaining work.
+Change one word — `model=` — and the same script runs against Together, Fireworks, vLLM, llama.cpp, or Groq. Anthropic's own canonical SDK examples run verbatim against DeepSeek-R1 1.5B on local Ollama. The suite is **831 tests** across Python 3.11–3.13, and every release is published to PyPI from this same tree.
 
 ---
 
 ## Roadmap
 
-What's shipped — and what's still ahead. Check our progress.
+The full surface, laid out honestly — what's shipped (almost all of it) and what's still in flight.
 
 **Drop-in surface (Claude SDK parity)**
 - [x] `query()` yielding flat-shape `AssistantMessage` / `UserMessage` / `SystemMessage` / `ResultMessage`

@@ -865,10 +865,15 @@ class MantisTUI:
             "scrollbar.button": "bg:#3a4a26",
         })
 
+        from prompt_toolkit.shortcuts import CompleteStyle  # noqa: PLC0415
+
         return PromptSession(
             key_bindings=kb,
             completer=completer,
             complete_while_typing=True,
+            # Explicit single-column menu with the description meta column, so
+            # the slash-command dropdown renders the same every turn.
+            complete_style=CompleteStyle.COLUMN,
             bottom_toolbar=bottom_toolbar,
             style=style,
             multiline=False,
@@ -876,11 +881,12 @@ class MantisTUI:
             # footer) on submit; the run loop then echoes a clean "› message"
             # so only the live input is ever framed, never past turns.
             erase_when_done=True,
-            # Reserve rows for the completion dropdown — with 0 the menu had
-            # nowhere to render (typing "/" showed nothing). prompt_toolkit only
-            # scrolls to claim this space while completions are open, so a few
-            # rows give the slash-command menu room without a permanent gap.
-            reserve_space_for_menu=6,
+            # Reserve rows for the completion dropdown so it ALWAYS has room to
+            # render — first launch and deep in a scrolled conversation alike.
+            # prompt_toolkit scrolls to claim this space only while completions
+            # are open, so there's no permanent gap. 0 = menu invisible; 8 is
+            # enough for the full slash-command list.
+            reserve_space_for_menu=8,
         )
 
     def _toolbar_fg(self) -> str:

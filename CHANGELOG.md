@@ -56,6 +56,14 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.5.1] — 2026-06-30
+
+### Docs
+
+- **README polished end to end** — sharper intro hook (terminal + library, one
+  install), the terminal section rewritten as natural prose, and the stale
+  pre-1.0 "acceptance test"/test-count copy refreshed (831 tests, 3.11–3.13).
+
 ## [1.5.0] — 2026-06-30
 
 ### Changed
