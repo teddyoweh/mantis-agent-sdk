@@ -22,7 +22,7 @@ import sys
 import time
 from typing import Any
 
-from .tui import MODES, SPINNER_FRAMES, THINKING_WORDS, print_banner
+from .tui import MODES, SLASH_COMMANDS, SPINNER_FRAMES, THINKING_WORDS, print_banner
 
 # ANSI 256/standard colors (work in Terminal.app — no truecolor needed).
 _GREEN = "\033[38;5;113m"
@@ -68,8 +68,41 @@ async def run_fullscreen(tui: Any) -> int:
 
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
+        "slash_sel": 0,
     }
     input_buffer = Buffer(multiline=False)
+
+    # Reset the slash-menu selection whenever the line stops being a slash cmd.
+    def _on_text(_buf: Any) -> None:
+        if not input_buffer.text.startswith("/"):
+            state["slash_sel"] = 0
+    input_buffer.on_text_changed += _on_text
+
+    # -- live slash-command menu (a real layout window, not a fragile float) --
+
+    def _slash_matches() -> list[tuple[str, str]]:
+        t = input_buffer.text
+        if not t.startswith("/") or " " in t:
+            return []
+        return [(c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
+
+    def menu_ft() -> Any:
+        matches = _slash_matches()
+        if not matches:
+            return ANSI("")
+        sel = state["slash_sel"] % len(matches)
+        rows = []
+        for i, (cmd, desc) in enumerate(matches[:8]):
+            if i == sel:
+                rows.append(f"\033[30;48;5;113m {cmd} \033[0m  {_DIM}{desc}{_RESET}")
+            else:
+                rows.append(f"  {_GREEN}{cmd}{_RESET}  {_DIM}{desc}{_RESET}")
+        return ANSI("\n".join(rows))
+
+    def _menu_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        n = min(len(_slash_matches()), 8)
+        return Dimension.exact(n) if n else Dimension.exact(0)
 
     def _width() -> int:
         return shutil.get_terminal_size((80, 24)).columns
@@ -179,8 +212,41 @@ async def run_fullscreen(tui: Any) -> int:
 
     kb = KeyBindings()
 
+    from prompt_toolkit.filters import Condition  # noqa: PLC0415
+
+    _menu_open = Condition(lambda: bool(_slash_matches()))
+
+    @kb.add("down", filter=_menu_open)
+    def _(event: Any) -> None:
+        state["slash_sel"] += 1
+        event.app.invalidate()
+
+    @kb.add("up", filter=_menu_open)
+    def _(event: Any) -> None:
+        state["slash_sel"] -= 1
+        event.app.invalidate()
+
+    @kb.add("tab", filter=_menu_open)
+    def _(event: Any) -> None:
+        m = _slash_matches()
+        if m:
+            input_buffer.text = m[state["slash_sel"] % len(m)][0] + " "
+            input_buffer.cursor_position = len(input_buffer.text)
+            state["slash_sel"] = 0
+
     @kb.add("enter")
     def _(event: Any) -> None:
+        # When the menu is open and the line isn't yet the exact command, Enter
+        # fills the highlighted command (one more Enter submits it).
+        m = _slash_matches()
+        if m:
+            cmd = m[state["slash_sel"] % len(m)][0]
+            if input_buffer.text != cmd:
+                input_buffer.text = cmd + " "
+                input_buffer.cursor_position = len(input_buffer.text)
+                state["slash_sel"] = 0
+                event.app.invalidate()
+                return
         text = input_buffer.text.strip()
         input_buffer.reset()
         if text:
@@ -217,6 +283,9 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(rule_ft), height=1),
             VSplit([Window(FormattedTextControl(prompt_ft), width=2), input_window], height=1),
             Window(FormattedTextControl(rule_ft), height=1),
+            # The slash-command menu lives here — its height collapses to 0 when
+            # the line isn't a slash command, so the footer normally hugs the rule.
+            Window(FormattedTextControl(menu_ft), height=_menu_height),
             Window(FormattedTextControl(footer_ft), height=1),
         ]),
         focused_element=input_window,

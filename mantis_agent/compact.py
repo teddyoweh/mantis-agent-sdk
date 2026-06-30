@@ -37,7 +37,6 @@ from .types import (
     AssistantMessage,
     ContentBlock,
     Message,
-    SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -108,6 +107,15 @@ def _estimate_tokens(text: str) -> int:
     """
 
     return len(text) // 4
+
+
+def _is_tool_result_message(msg: Message) -> bool:
+    """True if ``msg`` is a UserMessage carrying any ToolResultBlock — i.e. the
+    back-half of a tool round whose tool_use lives in a prior message."""
+    content = getattr(msg, "content", None)
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, ToolResultBlock) for b in content)
 
 
 def _message_token_estimate(msg: Message) -> int:
@@ -204,33 +212,48 @@ class SimpleCompactor:
         # Otherwise estimate from message contents.
         if ctx_window <= 0:
             return False
+        # The model's reported input_tokens is the prompt size BEFORE the last
+        # turn's output + the tool results we just appended, so on its own it
+        # undercounts the size of the NEXT prompt. Take the larger of the
+        # reported usage and our own estimate over the full current history so
+        # we trigger before the next call overflows, not after.
         reported = usage.input_tokens + usage.output_tokens if usage else 0
-        if reported > 0:
-            used = reported
-        else:
-            used = sum(_message_token_estimate(m) for m in messages)
+        estimate = sum(_message_token_estimate(m) for m in messages)
+        used = max(reported, estimate)
         return used >= self._threshold * ctx_window
 
     async def compact(self, messages: list[Message]) -> list[Message]:
-        """Summarize older messages into a CompactBoundaryMessage, keep the
-        last ``keep_recent_turns`` verbatim.
+        """Summarize older messages into a single replacement message, keeping
+        the last ``keep_recent_turns`` verbatim. Returns the input UNCHANGED if
+        there's nothing to compact, the summarizer fails, or it comes back
+        empty — so a bad summary can never destroy live context.
 
-        If there's nothing to compact (already short enough), returns the
-        input unchanged.
+        The replacement is a plain ``UserMessage`` (not a bespoke boundary
+        type) so it serializes through providers, ``query()``, and session
+        save/load exactly like any other message — no special-casing needed
+        downstream.
         """
 
         if not messages:
             return messages
 
-        # Identify a leading system message we want to preserve.
+        # Preserve a leading anchor outside the boundary: an explicit
+        # SystemMessage, or the synthetic ``isMeta`` user-context/memory head
+        # the agent pins at index 0. Rolling either into a summary would lose
+        # the persona / project memory and (for the isMeta head) confuse the
+        # "do we already have a context message?" check on the next run.
+        # Detect the head by ROLE, not isinstance: the public, SDK-shaped
+        # ``SystemMessage`` (from claude_compat, carrying a ``subtype``) is a
+        # *different class* from ``types.SystemMessage``, so an isinstance check
+        # silently misses real system messages. ``role == "system"`` catches
+        # both; ``isMeta`` catches the synthetic user-context head.
         head: list[Message] = []
         body_start = 0
-        if (
-            self._preserve_system
-            and messages
-            and isinstance(messages[0], SystemMessage)
+        first = messages[0]
+        if (self._preserve_system and getattr(first, "role", None) == "system") or getattr(
+            first, "isMeta", False
         ):
-            head = [messages[0]]
+            head = [first]
             body_start = 1
 
         body = messages[body_start:]
@@ -238,22 +261,38 @@ class SimpleCompactor:
             # Nothing meaningful to summarize.
             return messages
 
-        to_summarize = body[: -self._keep_recent]
-        recent = body[-self._keep_recent :]
+        # Tool-pair-aware split: choose keep-last-K, then slide the split
+        # FORWARD so ``recent`` never begins on a tool_result message — its
+        # matching tool_use would be in the summarized half, orphaning the
+        # tool_result and 400-ing the next provider call. Folding the orphan
+        # into the summary keeps every surviving tool_result paired.
+        split = len(body) - self._keep_recent
+        while split < len(body) and _is_tool_result_message(body[split]):
+            split += 1
+        if split <= 0 or split >= len(body):
+            # Degenerate (nothing to summarize, or the guard ate the whole
+            # keep-window): leave history untouched.
+            return messages
+
+        to_summarize = body[:split]
+        recent = body[split:]
 
         prompt = _build_summarization_prompt(to_summarize)
-        summary = await self._summarizer(prompt)
+        try:
+            summary = await self._summarizer(prompt)
+        except Exception:  # noqa: BLE001 — summarizer failed: keep full context
+            return messages
+        if not summary or not summary.strip():
+            return messages  # empty summary: never replace real turns with nothing
 
-        boundary = CompactBoundaryMessage(
-            summary=summary,
-            compacted_count=len(to_summarize),
+        summary_msg = UserMessage(
+            content=(
+                "[Earlier conversation compacted to save context. "
+                f"{len(to_summarize)} messages summarized below.]\n\n"
+                f"{summary.strip()}"
+            )
         )
-
-        out: list[Message] = []
-        out.extend(head)
-        out.append(boundary)  # type: ignore[arg-type]
-        out.extend(recent)
-        return out
+        return [*head, summary_msg, *recent]
 
 
 # ---------------------------------------------------------------------------

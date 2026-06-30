@@ -14,7 +14,7 @@ Effort key: **S** trivial/<1h · **M** half-day · **L** multi-day. Impact: 🔴
 
 ## 🔴 Tier 0 — Critical. A long session today either crashes or runs unsafe. Ship these first.
 
-### T0.1 — Wire auto-compaction into the turn loop · S · 🔴
+### T0.1 — Wire auto-compaction into the turn loop · S · 🔴 — ✅ SHIPPED (v1.7.0)
 - **Why:** `SimpleCompactor` (`compact.py`) implements `should_compact()`/`compact()` (0.85 threshold, keep-last-K) but **nothing calls it** → sessions grow until the provider 413s. Local models have 8–32k windows; this is the #1 killer.
 - **Where:** `agent.py` `run_iter`, top of the `for _ in range(max_steps)` loop. Model context window from `capabilities.py`.
 - **How:** before each model call, if `compactor.should_compact(messages, ctx_window)`: summarize older turns, replace `messages` in place, emit a `SDKCompactBoundaryMessage`. Reserve ~20k tokens for the summary; keep a buffer below the window. Add a 3-strike circuit breaker for irrecoverable overflow (Claude does this).

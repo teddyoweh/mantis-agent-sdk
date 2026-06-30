@@ -56,6 +56,26 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.7.0] — 2026-06-30
+
+### Added
+
+- **Auto-compaction is now wired into the agent loop** (parity roadmap T0.1).
+  When a conversation approaches the model's context window, `Agent` summarizes
+  older turns at a safe boundary and continues — so long sessions no longer grow
+  until the provider 413s. On by default (`auto_compact=True`); pass
+  `auto_compact=False` or a custom `compactor=` to override. The summary is a
+  plain `UserMessage` (serializes through providers/`query()`/sessions), the
+  split is tool-pair-aware (never orphans a `tool_use`), the summarizer call is
+  billed through the budget tracker, and a per-run cap guards against a
+  non-converging summary. Covered by `tests/test_compaction.py`.
+
+### Fixed
+
+- `SimpleCompactor` now detects a leading system message by `role` rather than
+  `isinstance`, so the SDK-shaped `SystemMessage` (from `claude_compat`) is
+  correctly preserved outside the compaction boundary.
+
 ## [1.6.0] — 2026-06-30
 
 ### Added

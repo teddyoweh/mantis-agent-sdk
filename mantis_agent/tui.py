@@ -481,6 +481,13 @@ class MantisTUI:
         self._turn_streamed = False
         # The on-disk transcript for /resume + /branch (created in run()).
         self.transcript: Any = None
+        # Selected row in the live slash-command menu (arrow-key navigable).
+        self._slash_sel = 0
+        # Direct reference to the prompt's input Buffer, set in _build_session.
+        # Reading ``self._input_buffer.text`` at toolbar-render time is the one
+        # reliable way to know what's typed (get_app() returns a dummy mid-render
+        # and on_text_changed can lag the repaint).
+        self._input_buffer: Any = None
 
         from rich.console import Console  # noqa: PLC0415
         from rich.theme import Theme  # noqa: PLC0415
@@ -787,6 +794,31 @@ class MantisTUI:
 
             run_in_terminal(self._show_transcript)
 
+        # Navigable slash-command menu. These fire ONLY while the menu is open
+        # (text is a slash command in progress) — otherwise the defaults (history,
+        # tab-complete, submit) apply untouched.
+        from prompt_toolkit.filters import Condition  # noqa: PLC0415
+
+        _slash_open = Condition(self._slash_menu_open)
+
+        @kb.add("down", filter=_slash_open)
+        def _slash_down(event: Any) -> None:  # noqa: ANN401
+            self._slash_sel += 1
+            event.app.invalidate()
+
+        @kb.add("up", filter=_slash_open)
+        def _slash_up(event: Any) -> None:  # noqa: ANN401
+            self._slash_sel -= 1
+            event.app.invalidate()
+
+        @kb.add("tab", filter=_slash_open)
+        def _slash_tab(event: Any) -> None:  # noqa: ANN401
+            self._slash_accept(event)
+
+        @kb.add("enter", filter=_slash_open)
+        def _slash_enter(event: Any) -> None:  # noqa: ANN401
+            self._slash_accept(event, submit_if_exact=True)
+
         from prompt_toolkit.completion import Completer, Completion  # noqa: PLC0415
 
         installed_models, _ = self._available_models()
@@ -798,11 +830,9 @@ class MantisTUI:
                 text = document.text_before_cursor
                 if not text.startswith("/"):
                     return
-                if " " not in text:  # completing the command itself
-                    for cmd, desc in SLASH_COMMANDS.items():
-                        if cmd.startswith(text):
-                            yield Completion(cmd, start_position=-len(text),
-                                             display=cmd, display_meta=desc)
+                if " " not in text:
+                    # Command names are shown in the reliable toolbar menu (see
+                    # _slash_menu_lines), not the float — don't double up here.
                     return
                 cmd, _, rest = text.partition(" ")
                 if cmd == "/model":  # suggest model ids
@@ -840,6 +870,15 @@ class MantisTUI:
             # loop prints a matching rule above it), Claude-Code style.
             width = shutil.get_terminal_size((80, 24)).columns
             rule = "─" * width
+
+            # Live slash-command menu — rendered HERE in the toolbar (which always
+            # paints reliably) rather than relying on prompt_toolkit's completion
+            # float, which fights the framed multi-line prompt. When the line is a
+            # slash command in progress, show the matching commands + descriptions.
+            menu = self._slash_menu_lines(rule)
+            if menu is not None:
+                return HTML(menu)
+
             return HTML(
                 f'<style fg="ansibrightblack">{rule}</style>\n'
                 f'<style fg="{self._toolbar_fg()}">{left}</style>'
@@ -867,12 +906,10 @@ class MantisTUI:
 
         from prompt_toolkit.shortcuts import CompleteStyle  # noqa: PLC0415
 
-        return PromptSession(
+        sess = PromptSession(
             key_bindings=kb,
             completer=completer,
             complete_while_typing=True,
-            # Explicit single-column menu with the description meta column, so
-            # the slash-command dropdown renders the same every turn.
             complete_style=CompleteStyle.COLUMN,
             bottom_toolbar=bottom_toolbar,
             style=style,
@@ -881,16 +918,76 @@ class MantisTUI:
             # footer) on submit; the run loop then echoes a clean "› message"
             # so only the live input is ever framed, never past turns.
             erase_when_done=True,
-            # Reserve rows for the completion dropdown so it ALWAYS has room to
-            # render — first launch and deep in a scrolled conversation alike.
-            # prompt_toolkit scrolls to claim this space only while completions
-            # are open, so there's no permanent gap. 0 = menu invisible; 8 is
-            # enough for the full slash-command list.
-            reserve_space_for_menu=8,
+            reserve_space_for_menu=6,
         )
+
+        # Hold a direct reference to the input buffer so the toolbar slash-menu
+        # can read exactly what's typed at render time, and reset the selection
+        # when the line stops being a slash command.
+        self._input_buffer = sess.default_buffer
+
+        def _on_change(buf: Any) -> None:
+            if not buf.text.startswith("/"):
+                self._slash_sel = 0
+
+        sess.default_buffer.on_text_changed += _on_change
+        return sess
 
     def _toolbar_fg(self) -> str:
         return MODES[self.mode_idx][2]
+
+    # -- live slash-command menu (rendered in the toolbar, navigable) --------
+
+    def _slash_current_matches(self) -> list[tuple[str, str]]:
+        """Commands matching the in-progress slash line, or [] if not applicable.
+        Reads the live input Buffer directly — the only reliable source mid-render."""
+        text = self._input_buffer.text if self._input_buffer is not None else ""
+        if not text.startswith("/") or " " in text:
+            return []
+        return [(c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(text)]
+
+    def _slash_menu_open(self) -> bool:
+        return bool(self._slash_current_matches())
+
+    def _slash_accept(self, event: Any, *, submit_if_exact: bool = False) -> None:
+        """Fill the selected command into the line. If it's already the exact
+        command and ``submit_if_exact`` (Enter), submit it."""
+        matches = self._slash_current_matches()
+        if not matches:
+            return
+        cmd = matches[self._slash_sel % len(matches)][0]
+        buf = event.app.current_buffer
+        if submit_if_exact and buf.text == cmd:
+            buf.validate_and_handle()
+            return
+        buf.text = cmd + " "
+        buf.cursor_position = len(buf.text)
+        self._slash_sel = 0
+
+    def _slash_menu_lines(self, rule: str) -> str | None:
+        """The toolbar HTML for the slash menu (rule + rows, selected row
+        highlighted), or ``None`` when no menu should show."""
+        from html import escape  # noqa: PLC0415
+
+        matches = self._slash_current_matches()
+        if not matches:
+            self._slash_sel = 0
+            return None
+        sel = self._slash_sel % len(matches)
+        rows = [f'<style fg="ansibrightblack">{rule}</style>']
+        for i, (cmd, desc) in enumerate(matches[:8]):
+            c, d = escape(cmd), escape(desc)
+            if i == sel:
+                rows.append(
+                    f'  <style fg="#0b1605" bg="{BODY}"> {c} </style>'
+                    f'  <style fg="ansibrightblack">{d}</style>'
+                )
+            else:
+                rows.append(
+                    f'  <style fg="{BODY}">{c}</style>'
+                    f'  <style fg="ansibrightblack">{d}</style>'
+                )
+        return "\n".join(rows)
 
     def _placeholder(self) -> Any:
         from prompt_toolkit.formatted_text import HTML  # noqa: PLC0415

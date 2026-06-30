@@ -66,6 +66,7 @@ from .permissions import (
     PermissionContext,
     check_permission,
 )
+from .compact import Compactor, SimpleCompactor
 from .providers.base import Provider, detect_provider, resolve
 from .streaming.executor import StreamingToolExecutor
 from .tools import ToolRegistry
@@ -222,6 +223,14 @@ class Agent:
     # tracer is shared with sub-agents so their spans nest under the parent
     # ``agent.run`` span.
     tracer: Tracer | None = None
+    # Auto-compaction. When ``auto_compact`` is True (default) and no explicit
+    # ``compactor`` is given, a default ``SimpleCompactor`` is built that uses
+    # THIS agent's model as the summarizer. Pass a ``compactor`` to override the
+    # strategy, or ``auto_compact=False`` to disable. Compaction runs at the top
+    # of each turn (a safe boundary) when the history approaches the model's
+    # context window, summarizing older turns so long sessions don't 413.
+    compactor: Compactor | None = None
+    auto_compact: bool = True
     # Parent span — set when this agent is being run as a sub-agent so its
     # ``agent.run`` span nests under the parent's ``tool.call`` span. Users
     # rarely set this directly; the sub-agent runner wires it.
@@ -231,6 +240,8 @@ class Agent:
     _dispatcher: HookDispatcher | None = field(default=None, init=False)
     _budget_tracker: BudgetTracker | None = field(default=None, init=False)
     _provider_hint: str | None = field(default=None, init=False)
+    # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
+    _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
     cancellation_signal: Any = field(default=None, init=False)
     # Permission denials accumulated across the run. Each entry is a
@@ -304,6 +315,13 @@ class Agent:
         # Provider hint for pricing lookups (e.g. "together", "fireworks").
         if self.backend_capability is not None:
             self._provider_hint = self.backend_capability.provider_hint or None
+
+        # Auto-compaction: use the supplied compactor, else build a default
+        # SimpleCompactor wired to this agent's own model as the summarizer.
+        if self.compactor is not None:
+            self._compactor = self.compactor
+        elif self.auto_compact:
+            self._compactor = SimpleCompactor(self._summarize)
 
         # AbortSignal-like cancellation event. Fires when ``Agent.cancel()``
         # is called. Surfaces on ``ToolPermissionContext.signal`` so
@@ -585,6 +603,14 @@ class Agent:
             if callable(close_fn):
                 close_fn(run_span)
 
+        # Auto-compaction bookkeeping: the most recent turn's reported usage
+        # (drives should_compact) and a per-run cap on how many times we
+        # summarize — the circuit breaker against a summary that itself stays
+        # over threshold and would otherwise re-compact every turn.
+        last_usage: Usage | None = None
+        compactions = 0
+        _MAX_COMPACTIONS = 5
+
         for _ in range(self.max_steps):
             # If the cancellation signal already fired BEFORE this turn
             # starts, bail without burning another model round-trip. The
@@ -598,6 +624,35 @@ class Agent:
                 )
                 _close_run_span()
                 return
+
+            # ----------------------------------------------------------------
+            # Auto-compaction — at the TOP of the turn (before the model call),
+            # the one safe boundary: the prior iteration ended by appending this
+            # turn's tool_result UserMessage, so every tool_use is matched and
+            # `messages` never ends on a dangling assistant tool_use.
+            # Summarizing older turns now keeps the NEXT model call inside the
+            # context window. ``messages[:]`` replaces in place so the caller's
+            # list reference sees the shrunk history too.
+            # ----------------------------------------------------------------
+            if (
+                self._compactor is not None
+                and compactions < _MAX_COMPACTIONS
+                and self._is_safe_compaction_point(messages)
+            ):
+                ctx_window = (
+                    self.model_capability.context_window
+                    if self.model_capability is not None
+                    else 0
+                )
+                if await self._compactor.should_compact(
+                    messages, last_usage or Usage(), ctx_window
+                ):
+                    before_len = len(messages)
+                    compacted = await self._compactor.compact(messages)
+                    if len(compacted) < before_len:
+                        messages[:] = compacted
+                        compactions += 1
+
             # Per-turn span — nests under agent.run when tracing is on.
             turn_span = maybe_start_span(
                 self.tracer,
@@ -749,6 +804,10 @@ class Agent:
                     close_fn = getattr(mirror, "_close", None)
                     if callable(close_fn):
                         close_fn(llm_span)
+
+                # Remember this turn's usage so the NEXT turn's compaction
+                # check sees the real prompt size, not a stale/empty estimate.
+                last_usage = assistant.usage
 
                 # Bump turn + cost AFTER the assistant message materializes.
                 # Tools may already be running — that's fine, we still
@@ -1122,6 +1181,57 @@ class Agent:
             return self.provider.stream(model_capability=self.model_capability, **kwargs)
         except TypeError:
             return self.provider.stream(**kwargs)
+
+    @staticmethod
+    def _is_safe_compaction_point(messages: list[Message]) -> bool:
+        """True when no tool_use is awaiting its tool_result. Compacting is only
+        safe when the conversation does NOT end on an AssistantMessage carrying
+        unmatched tool_use blocks — otherwise summarizing/dropping history
+        orphans a tool_use and the next provider call 400s."""
+        if not messages:
+            return False
+        last = messages[-1]
+        if isinstance(last, AssistantMessage):
+            return not any(isinstance(b, ToolUseBlock) for b in last.content)
+        return True
+
+    async def _summarize(self, prompt: str) -> str:
+        """One-shot, tools-less summarization call for the compactor.
+
+        Issues a bare provider stream (no ``tools[]`` so the summarizer can't be
+        coerced into a tool call, no ``response_format``), drains text + usage,
+        and bills the summary's tokens through the budget tracker (via
+        ``add_usage`` only — never ``check()``, so compaction can't raise
+        ``BudgetExceededError`` mid-summary). Returns "" on cancellation."""
+        sig = self.cancellation_signal
+        if sig is not None and sig.is_set():
+            return ""
+        assert self.provider is not None
+        asm = _AssistantAssembler()
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [UserMessage(content=prompt)],
+            "system": (
+                "You compress agent conversations faithfully and concisely. "
+                "Respond with the summary text only — never call a tool."
+            ),
+            "tools": None,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "extra": None,
+        }
+        try:
+            stream = self.provider.stream(model_capability=self.model_capability, **kwargs)
+        except TypeError:
+            stream = self.provider.stream(**kwargs)
+        async for ev in stream:
+            asm.feed(ev)
+        msg = asm.finalize()
+        if msg.usage is not None and self._budget_tracker is not None:
+            self._budget_tracker.add_usage(
+                msg.usage, self.model, backend_hint=self._provider_hint
+            )
+        return "".join(b.text for b in msg.content if isinstance(b, TextBlock))
 
 
 # ---------------------------------------------------------------------------
