@@ -64,6 +64,16 @@ EXAMPLE_PROMPTS = [
     "create a util logging.py that...",
 ]
 
+# Slash commands shown in the completion menu (command → one-line description).
+SLASH_COMMANDS = {
+    "/help": "show available commands",
+    "/model": "switch the model for the next turns",
+    "/clear": "clear the conversation history",
+    "/cwd": "show the working directory",
+    "/exit": "quit mantis",
+    "/quit": "quit mantis",
+}
+
 # Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
 # edit) DO execute against the real machine; the footer is still cosmetic for now
 # (no per-tool gating wired up yet) but it matches the Claude Code UX.
@@ -743,125 +753,227 @@ class MantisTUI:
 
     # -- interactive model selector -----------------------------------------
 
-    def _catalog_rows(self) -> list[dict]:
-        """Flat row list for the selector: non-selectable headers + selectable
-        model rows (local installed first, then every hosted provider)."""
-        from . import catalog  # noqa: PLC0415
+    # -- generic arrow-key picker (inline, self-erasing) ---------------------
 
-        installed, reachable = self._available_models()
-        rows: list[dict] = []
-
-        tag = "" if reachable else "  (not running)"
-        rows.append({"kind": "header", "text": f"  Ollama · local, free{tag}"})
-        if installed:
-            for m in installed:
-                rows.append({"kind": "model", "model": m, "provider": None,
-                             "enabled": True, "label": m})
-        else:
-            rows.append({"kind": "header", "text": "    (none pulled — ollama pull <name>)"})
-
-        for prov in catalog.CATALOG:
-            on = catalog.is_enabled(prov)
-            extra = "" if on else "  · disabled, enter to enable"
-            rows.append({"kind": "header", "text": f"  {prov.label}{extra}"})
-            for m in prov.models:
-                rows.append({"kind": "model", "model": m, "provider": prov,
-                             "enabled": on, "label": m})
-        return rows
-
-    async def _select_model(self) -> None:
-        """Full-screen arrow-key picker. Enter switches (prompting for an API
-        key first if the chosen model's provider is disabled); Esc cancels."""
+    async def _pick(self, title: str, items: list[dict], start_index: int = 0) -> dict | None:
+        """Inline picker. ``items`` are header rows ({"kind":"header","text"}) or
+        selectable rows ({"kind":"item","label","value","hint"?,"enabled"?}).
+        Returns the chosen item dict, or None on Esc. Non-full-screen +
+        erase_when_done so it cleanly disappears and the chat continues."""
         from prompt_toolkit.application import Application  # noqa: PLC0415
         from prompt_toolkit.data_structures import Point  # noqa: PLC0415
         from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
         from prompt_toolkit.layout import HSplit, Layout, Window  # noqa: PLC0415
         from prompt_toolkit.layout.controls import FormattedTextControl  # noqa: PLC0415
+        from prompt_toolkit.layout.dimension import D  # noqa: PLC0415
         from prompt_toolkit.styles import Style  # noqa: PLC0415
 
-        from . import catalog  # noqa: PLC0415
-
-        rows = self._catalog_rows()
-        selectable = [i for i, r in enumerate(rows) if r["kind"] == "model"]
+        selectable = [i for i, it in enumerate(items) if it.get("kind") == "item"]
         if not selectable:
-            self.console.print("[ansibrightblack]no models available[/]")
-            return
+            self.console.print("[ansibrightblack]nothing to pick[/]")
+            return None
+        st = {"sel": max(0, min(start_index, len(selectable) - 1))}
 
-        state = {"sel": 0}
-        for j, i in enumerate(selectable):  # start on the current model
-            if rows[i].get("model") == self.model:
-                state["sel"] = j
-                break
-
-        def fragments() -> list:
-            cur = selectable[state["sel"]]
+        def frags() -> list:
+            cur = selectable[st["sel"]]
             out: list = []
-            for i, r in enumerate(rows):
-                if r["kind"] != "model":
-                    out.append(("class:hdr", r["text"] + "\n"))
+            for i, it in enumerate(items):
+                if it.get("kind") != "item":
+                    out.append(("class:hdr", it["text"] + "\n"))
                     continue
-                pointer = "❯ " if i == cur else "  "
-                here = " ← current" if r["model"] == self.model else ""
-                cls = "class:cur" if i == cur else ("class:on" if r["enabled"] else "class:off")
-                out.append((cls, f"{pointer}{r['label']}{here}\n"))
+                ptr = "❯ " if i == cur else "  "
+                line = f"{ptr}{it['label']}"
+                hint = it.get("hint", "")
+                cls = "class:cur" if i == cur else ("class:on" if it.get("enabled", True) else "class:off")
+                out.append((cls, line))
+                if hint:
+                    out.append(("class:hint", f"   {hint}"))
+                out.append(("", "\n"))
             return out
 
         kb = KeyBindings()
 
         @kb.add("up")
         @kb.add("c-p")
-        @kb.add("k")
-        def _up(_e: Any) -> None:
-            state["sel"] = (state["sel"] - 1) % len(selectable)
+        def _u(_e: Any) -> None:
+            st["sel"] = (st["sel"] - 1) % len(selectable)
 
         @kb.add("down")
         @kb.add("c-n")
-        @kb.add("j")
-        def _down(_e: Any) -> None:
-            state["sel"] = (state["sel"] + 1) % len(selectable)
+        def _d(_e: Any) -> None:
+            st["sel"] = (st["sel"] + 1) % len(selectable)
 
         @kb.add("enter")
         def _ok(e: Any) -> None:
-            e.app.exit(result=rows[selectable[state["sel"]]])
+            e.app.exit(result=items[selectable[st["sel"]]])
 
         @kb.add("escape")
         @kb.add("c-c")
         @kb.add("q")
-        def _cancel(e: Any) -> None:
+        def _no(e: Any) -> None:
             e.app.exit(result=None)
 
         control = FormattedTextControl(
-            fragments, focusable=True, show_cursor=False,
-            get_cursor_position=lambda: Point(0, selectable[state["sel"]]),
+            frags, focusable=True, show_cursor=False,
+            get_cursor_position=lambda: Point(0, selectable[st["sel"]]),
         )
-        title = Window(
-            FormattedTextControl(
-                lambda: [("class:title",
-                          "  select a model   ↑↓ move · enter pick · esc cancel\n")]),
-            height=1,
-        )
+        head = Window(FormattedTextControl(lambda: [("class:title", title + "\n")]), height=1)
+        body = Window(control, height=D(max=20), wrap_lines=False)
         style = Style.from_dict({
-            "title": "#888888",
-            "hdr": f"{BODY} bold",
-            "cur": f"#0b1605 bg:{BODY} bold",
-            "on": "#ffffff",
-            "off": "#777777",
+            "title": "#888888", "hdr": f"{BODY} bold",
+            "cur": f"#0b1605 bg:{BODY} bold", "on": "#ffffff",
+            "off": "#777777", "hint": "#777777",
         })
         app: Any = Application(
-            layout=Layout(HSplit([title, Window(control, wrap_lines=False)])),
-            key_bindings=kb, style=style, full_screen=True, mouse_support=True,
+            layout=Layout(HSplit([head, body])), key_bindings=kb, style=style,
+            full_screen=False, erase_when_done=True, mouse_support=True,
         )
-        choice = await app.run_async()
+        return await app.run_async()
 
+    # -- model catalog & selection ------------------------------------------
+
+    def _provider_live_models(self, prov: Any) -> list[str] | None:
+        """Live ``/v1/models`` for an enabled provider (cached, best-effort)."""
+        from . import catalog  # noqa: PLC0415
+        import httpx  # noqa: PLC0415
+
+        cache = self.__dict__.setdefault("_live_models", {})
+        if prov.id in cache:
+            return cache[prov.id]
+        key = catalog.api_key_for(prov)
+        out: list[str] | None = None
+        try:
+            with httpx.Client(timeout=2.5) as c:
+                r = c.get(f"{prov.base_url.rstrip('/')}/models",
+                          headers={"Authorization": f"Bearer {key}"} if key else {})
+                r.raise_for_status()
+                ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+                out = ids or None
+        except Exception:  # noqa: BLE001
+            out = None
+        cache[prov.id] = out
+        return out
+
+    def _catalog_rows(self) -> list[dict]:
+        """Picker rows: local Ollama first, then every hosted provider. Enabled
+        providers show their live model list; disabled ones the curated menu."""
+        from . import catalog  # noqa: PLC0415
+
+        installed, reachable = self._available_models()
+        rows: list[dict] = []
+
+        tag = "" if reachable else "  (ollama not running)"
+        rows.append({"kind": "header", "text": f"  Ollama · local, free{tag}"})
+        if installed:
+            for m in installed:
+                rows.append({"kind": "item", "label": m, "enabled": True,
+                             "value": {"model": m, "provider": None},
+                             "hint": "← current" if m == self.model else ""})
+        else:
+            rows.append({"kind": "header", "text": "    (none pulled — ollama pull <name>)"})
+
+        for prov in catalog.CATALOG:
+            on = catalog.is_enabled(prov)
+            extra = "  · enabled" if on else "  · enter → API key or self-host"
+            rows.append({"kind": "header", "text": f"  {prov.label}{extra}"})
+            live = self._provider_live_models(prov) if on else None
+            models = (live[:14] if live else list(prov.models))
+            for m in models:
+                rows.append({"kind": "item", "label": m, "enabled": on,
+                             "value": {"model": m, "provider": prov},
+                             "hint": "← current" if m == self.model else ""})
+        return rows
+
+    async def _select_model(self) -> None:
+        rows = self._catalog_rows()
+        sel_models = [r for r in rows if r.get("kind") == "item"]
+        start = 0
+        for j, r in enumerate(sel_models):
+            if r["value"]["model"] == self.model:
+                start = j
+                break
+        choice = await self._pick(
+            "select a model   ↑↓ move · enter pick · esc cancel", rows, start)
         if not choice:
             self.console.print("[ansibrightblack](cancelled)[/]")
             return
-        prov = choice["provider"]
-        if prov is not None and not catalog.api_key_for(prov):
-            await self._cmd_enable("/enable", prov.id)
-            if not catalog.api_key_for(prov):  # enable cancelled
+        await self._activate(choice["value"]["model"], choice["value"]["provider"])
+
+    async def _activate(self, model: str, prov: Any) -> None:
+        """Run ``model``: local immediately; hosted-enabled via API; otherwise
+        offer the run-mode choice (provider API key OR self-host)."""
+        from . import catalog  # noqa: PLC0415
+
+        if prov is None:
+            await self._apply(model, DEFAULT_BACKEND, None, "")
+            return
+        if catalog.is_enabled(prov):
+            await self._apply(model, prov.base_url, catalog.api_key_for(prov),
+                              f" [ansibrightblack]via {prov.label}[/]")
+            return
+
+        mode = await self._pick(
+            f"run {model} — how?",
+            [
+                {"kind": "header", "text": f"  {prov.label} · {model}"},
+                {"kind": "item", "label": f"{prov.label} API",
+                 "value": "api", "hint": f"paste {prov.api_key_env} · pay {prov.label}"},
+                {"kind": "item", "label": "Self-host",
+                 "value": "selfhost", "hint": "your own server (vLLM / llama.cpp / TGI)"},
+                {"kind": "item", "label": "Cancel", "value": "cancel"},
+            ],
+        )
+        if not mode or mode["value"] == "cancel":
+            self.console.print("[ansibrightblack](cancelled)[/]")
+            return
+
+        if mode["value"] == "api":
+            key = await self._prompt_secret(
+                f"paste {prov.label} API key ({prov.api_key_env})", "key › ")
+            if not key:
+                self.console.print("[ansibrightblack](cancelled)[/]")
                 return
-        await self._switch_model(choice["model"])
+            catalog.set_key(prov.id, key)
+            self.console.print(
+                f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
+                "[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]")
+            self.__dict__.get("_live_models", {}).pop(prov.id, None)
+            await self._apply(model, prov.base_url, key,
+                              f" [ansibrightblack]via {prov.label}[/]")
+        else:
+            url = await self._prompt_text(
+                f"self-host URL serving {model}", "url › ", "http://localhost:8000/v1")
+            if not url or not url.startswith(("http://", "https://")):
+                self.console.print("[ansibrightblack](cancelled — need an http(s) url)[/]")
+                return
+            await self._apply(model, url, self.api_key or "sk-noauth",
+                              " [ansibrightblack]· self-hosted[/]")
+
+    async def _apply(self, model: str, backend: str, api_key: str | None, where: str) -> None:
+        """Point the live agent at (model, backend, key) and rebuild it."""
+        self.model = model
+        self.backend = backend
+        self.api_key = api_key
+        if self.agent is not None:
+            await self.agent.aclose()
+        self.agent = self._build_agent()
+        self.console.print(f"[ansibrightblack]model →[/] [white]{model}[/]{where}")
+
+    async def _prompt_secret(self, msg: str, prompt: str) -> str:
+        self.console.print(f"[ansibrightblack]{msg} — input hidden, Enter to cancel[/]")
+        try:
+            v = await self.session.prompt_async(prompt, is_password=True)
+        except (EOFError, KeyboardInterrupt):
+            v = ""
+        return (v or "").strip()
+
+    async def _prompt_text(self, msg: str, prompt: str, default: str = "") -> str:
+        self.console.print(f"[ansibrightblack]{msg} — Enter to accept default / cancel[/]")
+        try:
+            v = await self.session.prompt_async(prompt, default=default)
+        except (EOFError, KeyboardInterrupt):
+            v = ""
+        return (v or "").strip()
 
     async def _cmd_enable(self, cmd: str, arg: str) -> None:
         from . import catalog  # noqa: PLC0415
@@ -875,92 +987,47 @@ class MantisTUI:
             ids = ", ".join(p.id for p in catalog.CATALOG)
             self.console.print(
                 f"[ansired]unknown provider[/] [white]{pid or '<none>'}[/]  "
-                f"[ansibrightblack](try: {ids})[/]"
-            )
+                f"[ansibrightblack](try: {ids})[/]")
             return
 
         if cmd == "/disable":
             if catalog.clear_key(prov.id):
+                self.__dict__.get("_live_models", {}).pop(prov.id, None)
                 self.console.print(f"[ansibrightblack]forgot saved key for {prov.label}[/]")
             else:
                 self.console.print(f"[ansibrightblack]no saved key for {prov.label}[/]")
             return
 
-        key = inline_key
-        if not key:
-            self.console.print(
-                f"[ansibrightblack]paste your [white]{prov.label}[/] API key "
-                f"([white]{prov.api_key_env}[/]) — input hidden, Enter to cancel[/]"
-            )
-            try:
-                key = await self.session.prompt_async("key › ", is_password=True)
-            except (EOFError, KeyboardInterrupt):
-                key = ""
-        key = (key or "").strip()
+        key = inline_key or await self._prompt_secret(
+            f"paste {prov.label} API key ({prov.api_key_env})", "key › ")
         if not key:
             self.console.print("[ansibrightblack](cancelled)[/]")
             return
-
         catalog.set_key(prov.id, key)
+        self.__dict__.get("_live_models", {}).pop(prov.id, None)
         self.console.print(
             f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
-            f"[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]\n"
-            f"  [ansibrightblack]try:[/] [white]/model {prov.models[0]}[/]"
-        )
+            f"[ansibrightblack](saved, chmod 600)[/]  "
+            f"[ansibrightblack]try [white]/model {prov.models[0]}[/][/]")
 
     async def _cmd_connect(self, arg: str) -> None:
-        """Point at a self-hosted OpenAI-compatible server: /connect <url> [model]."""
+        """Self-host: /connect <url> [model]."""
         parts = arg.split()
-        if not parts:
+        if not parts or not parts[0].startswith(("http://", "https://")):
             self.console.print(
                 "[ansibrightblack]usage: [white]/connect <url> [model][/] — e.g. "
-                "[white]/connect http://gpu-box:8000/v1 deepseek-ai/DeepSeek-V3[/][/]"
-            )
+                "[white]/connect http://gpu-box:8000/v1 openai/gpt-oss-120b[/][/]")
             return
-        url = parts[0]
-        if not url.startswith(("http://", "https://")):
-            self.console.print("[ansired]url must start with http:// or https://[/]")
-            return
-        self.backend = url
-        self.api_key = self.api_key or "sk-noauth"  # most self-host servers ignore it
-        if len(parts) > 1:
-            self.model = parts[1]
-        if self.agent is not None:
-            await self.agent.aclose()
-        self.agent = self._build_agent()
-        self.console.print(
-            f"[ansigreen]✓[/] connected to [white]{url}[/] "
-            f"[ansibrightblack](model [white]{self.model}[/])[/]"
-        )
+        model = parts[1] if len(parts) > 1 else self.model
+        await self._apply(model, parts[0], self.api_key or "sk-noauth",
+                          " [ansibrightblack]· self-hosted[/]")
 
     async def _switch_model(self, model_id: str) -> None:
-        """Point the live agent at model_id, wiring backend + key from the
-        catalog when it belongs to a known hosted provider."""
+        """`/model <id>` — switch, auto-wiring backend + key from the catalog."""
         from . import catalog  # noqa: PLC0415
 
         prov = catalog.provider_for_model(model_id)
-        if prov:
-            key = catalog.api_key_for(prov)
-            if not key:
-                self.console.print(
-                    f"[ansiyellow]![/] [white]{prov.label}[/] is disabled — "
-                    f"run [white]/enable {prov.id}[/] first"
-                )
-                return
-            self.backend = prov.base_url
-            self.api_key = key
-        else:
-            # A local Ollama tag (or unknown) — route to the default local backend.
-            self.backend = DEFAULT_BACKEND
-            self.api_key = None
-
-        self.model = model_id
-        # Rebuild the agent so the switch takes effect on the next turn.
-        if self.agent is not None:
-            await self.agent.aclose()
-        self.agent = self._build_agent()
-        where = f" [ansibrightblack]via {prov.label}[/]" if prov else ""
-        self.console.print(f"[ansibrightblack]model →[/] [white]{model_id}[/]{where}")
+        await self._activate(model_id, prov)
 
     # -- main loop -----------------------------------------------------------
 
