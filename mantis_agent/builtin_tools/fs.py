@@ -304,6 +304,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         raise FileNotFoundError(f"no such file: {path}")
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+    original = text
     applied = 0
     for i, e in enumerate(edits):
         if not isinstance(e, dict) or "old_string" not in e or "new_string" not in e:
@@ -322,7 +323,9 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         applied += 1
 
     await anyio.to_thread.run_sync(lambda: p.write_text(text, "utf-8"))
-    return f"applied {applied} edit{'s' if applied != 1 else ''} to {p}"
+    summary = f"applied {applied} edit{'s' if applied != 1 else ''} to {p}"
+    diff = _unified_diff(original, text, str(p))
+    return f"{summary}\n{diff}" if diff else summary
 
 
 # ---------------------------------------------------------------------------

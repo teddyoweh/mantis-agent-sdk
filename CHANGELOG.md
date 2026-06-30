@@ -56,6 +56,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.3.2] — 2026-06-30
+
+### Fixed
+
+- **Diffs now render in color.** `Text(style="ansigreen"/"ansired"/…)` silently
+  produced white text (rich's `Text` doesn't accept the `ansi*` color names that
+  its markup parser does) — so edit diffs showed `+`/`-` with no green/red.
+  Converted all `Text` styles to valid rich names (`green`/`red`/`bright_black`).
+  Also: `multi_edit` now returns a unified diff like `edit_file`/`write_file`, so
+  multi-edit operations render colored diffs too.
+
 ## [1.3.1] — 2026-06-30
 
 ### Docs

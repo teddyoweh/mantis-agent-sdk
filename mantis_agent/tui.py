@@ -379,15 +379,15 @@ def print_banner(console: Any, model: str, backend: str) -> int:
     title = Text()
     title.append("Mantis", style=f"bold {BODY}")
     title.append(" Code ", style="bold white")
-    title.append(f"v{__version__}", style="ansibrightblack")
+    title.append(f"v{__version__}", style="bright_black")
 
     where = "Ollama (local)" if "localhost" in backend or "127.0.0.1" in backend else backend
     sub = Text()
     sub.append(model, style="white")
-    sub.append("  ·  ", style="ansibrightblack")
-    sub.append(where, style="ansibrightblack")
+    sub.append("  ·  ", style="bright_black")
+    sub.append(where, style="bright_black")
 
-    cwd = Text(_short_cwd(), style="ansibrightblack")
+    cwd = Text(_short_cwd(), style="bright_black")
 
     # Vertically center the 3 info lines against the (taller) mascot.
     blank = Text("")
@@ -403,7 +403,7 @@ def print_banner(console: Any, model: str, backend: str) -> int:
 
     tip = Text(
         " tip: type a request and press Enter · /help for commands · /exit to quit",
-        style="ansibrightblack",
+        style="bright_black",
     )
     body = Group(grid, Text(""), tip)
 
@@ -728,6 +728,21 @@ class MantisTUI:
             if placeholder:
                 event.app.current_buffer.insert_text(placeholder)
 
+        # Explicit exit bindings so Ctrl+C / Ctrl+D always quit the prompt (the
+        # run loop catches these and prints "bye"). Ctrl+C aborts even mid-edit;
+        # Ctrl+D exits on an empty line and deletes-forward otherwise.
+        @kb.add("c-c")
+        def _ctrl_c(event: Any) -> None:  # noqa: ANN401
+            event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+        @kb.add("c-d")
+        def _ctrl_d(event: Any) -> None:  # noqa: ANN401
+            buf = event.app.current_buffer
+            if buf.text:
+                buf.delete()
+            else:
+                event.app.exit(exception=EOFError, style="class:aborting")
+
         from prompt_toolkit.completion import Completer, Completion  # noqa: PLC0415
 
         installed_models, _ = self._available_models()
@@ -817,12 +832,11 @@ class MantisTUI:
             # footer) on submit; the run loop then echoes a clean "› message"
             # so only the live input is ever framed, never past turns.
             erase_when_done=True,
-            # No reserved menu rows: that put 8 blank lines between the input and
-            # the bottom rule/footer (so the rule wasn't hugging the input) and
-            # the big reserved area repainted on submit (the flicker). With 0 the
-            # bottom rule sits directly under the input and the completion menu
-            # pops up over the content above instead.
-            reserve_space_for_menu=0,
+            # Reserve rows for the completion dropdown — with 0 the menu had
+            # nowhere to render (typing "/" showed nothing). prompt_toolkit only
+            # scrolls to claim this space while completions are open, so a few
+            # rows give the slash-command menu room without a permanent gap.
+            reserve_space_for_menu=6,
         )
 
     def _toolbar_fg(self) -> str:
@@ -979,7 +993,7 @@ class MantisTUI:
                 line.append("⚒ ", style=LEG)
                 line.append(verb, style="bold white")
                 if target:
-                    line.append(" " + target, style="ansibrightblack")
+                    line.append(" " + target, style="bright_black")
                 self.console.print(line)
         return had_tool_call
 
@@ -1008,7 +1022,7 @@ class MantisTUI:
             for ln in rest[:12]:
                 self.console.print(_T("    " + ln[:200], style=colour))
             if len(rest) > 12:
-                self.console.print(_T(f"    … (+{len(rest) - 12} more lines)", style="ansibrightblack"))
+                self.console.print(_T(f"    … (+{len(rest) - 12} more lines)", style="bright_black"))
 
     def _render_diff(self, diff_lines: list[str]) -> None:
         """Render a unified diff with a line-number gutter and +/- colouring."""
@@ -1024,15 +1038,15 @@ class MantisTUI:
                 continue
             t = _T("    ")  # indent under the "└" branch
             if ln.startswith("+"):
-                t.append(f"{new_ln:>4} ", style="ansibrightblack")
-                t.append("+ " + ln[1:][:200], style="ansigreen")
+                t.append(f"{new_ln:>4} ", style="bright_black")
+                t.append("+ " + ln[1:][:200], style="green")
                 new_ln += 1
             elif ln.startswith("-"):
-                t.append("     ", style="ansibrightblack")  # deletions: no new-file line no.
-                t.append("- " + ln[1:][:200], style="ansired")
+                t.append("     ", style="bright_black")  # deletions: no new-file line no.
+                t.append("- " + ln[1:][:200], style="red")
             else:  # context line (leading space)
-                t.append(f"{new_ln:>4} ", style="ansibrightblack")
-                t.append("  " + (ln[1:] if ln.startswith(" ") else ln)[:200], style="ansibrightblack")
+                t.append(f"{new_ln:>4} ", style="bright_black")
+                t.append("  " + (ln[1:] if ln.startswith(" ") else ln)[:200], style="bright_black")
                 new_ln += 1
             self.console.print(t)
 

@@ -241,6 +241,9 @@ class Agent:
     # Per-run count of identical (name, input) tool calls — drives the
     # ``max_repeated_tool_calls`` anti-runaway guard. Reset at run start.
     _run_call_sigs: dict = field(default_factory=dict, init=False)
+    # Optional sink for raw stream events during ``run_iter`` (token deltas,
+    # block start/stop) so a UI can render text live. ``None`` = no overhead.
+    on_event: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         # Normalize tools input — accept list[Tool] or pre-built ToolRegistry.
@@ -652,6 +655,14 @@ class Agent:
                 )
                 async for ev in self._provider_stream(messages):
                     assembler.feed(ev)
+                    # Surface raw stream events (token deltas, block start/stop)
+                    # to an optional consumer so a UI can render text live as it
+                    # streams — run_iter itself only yields finalized messages.
+                    if self.on_event is not None:
+                        try:
+                            self.on_event(ev)
+                        except Exception:  # noqa: BLE001 — a UI callback must never break the loop
+                            _log.debug("on_event callback raised", exc_info=True)
                     if llm_first_token_ns is None and isinstance(
                         ev, ContentBlockDelta
                     ):
