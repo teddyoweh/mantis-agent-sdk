@@ -1,9 +1,10 @@
 """``mantis`` — the interactive terminal UI.
 
 This is the Claude-Code-style agent terminal: run ``mantis`` in any directory
-and you get a banner (pixel mascot + version + model + cwd), a bordered input
-box with a rotating ``Try "…"`` placeholder, a mode footer you can cycle with
-``shift+tab``, slash commands, and token-level streaming from a real model.
+and you get a banner (pixel mascot + version + model + cwd), an input line with
+a rotating ``Try "…"`` placeholder, a mode footer you can cycle with
+``shift+tab``, slash commands, an animated thinking spinner, and Markdown-
+rendered replies from a real model.
 
 Unlike ``mantis-agent`` (the stdlib-only diagnostics CLI), this module is a
 *rich* experience and depends on two third-party libraries:
@@ -386,18 +387,26 @@ class MantisTUI:
         return (
             "You are Mantis, an interactive coding agent running in the user's "
             "terminal. You have tools — bash, read_file, write_file, edit_file, "
-            "ls, glob, grep — and you USE them to act on the real machine instead "
-            "of just describing what to do.\n\n"
+            "ls, glob, grep — and you complete tasks by CALLING them, not by "
+            "describing what to do.\n\n"
+            "ACT IMMEDIATELY. On the very first message, if the task can be done "
+            "with a tool, call the tool right away. Do NOT explain the command "
+            "first, do NOT print a command in a code block, and do NOT wait for "
+            "the user to say 'run it' or to confirm — just run it and then report "
+            "the result. The user asking is the permission; they are watching the "
+            "output.\n\n"
             "Rules:\n"
-            "- When a request needs information from the system or files, call a "
-            "tool to get it. Do not guess and do not lecture the user with generic "
-            "instructions they could have Googled.\n"
-            "- 'find/show/list X' means run the command and report the actual "
-            "result. 'run it' means actually run the relevant command with bash.\n"
-            "- Prefer doing over explaining. Keep replies short; let tool output "
-            "speak for itself.\n"
-            "- Only the user's machine matters — don't enumerate other operating "
-            "systems or hypotheticals.\n\n"
+            "- Never tell the user to run a command themselves. Run it yourself "
+            "with bash and show them the actual output.\n"
+            "- 'find/show/list/check X' = call the tool now and report the real "
+            "result. Never answer from memory or guess.\n"
+            "- Only after a tool runs do you write prose, and keep it to a short "
+            "summary of what the output means. Let the tool output speak.\n"
+            "- Only the user's machine matters — never enumerate other operating "
+            "systems, generic instructions, or hypotheticals.\n\n"
+            "Example — user: 'find services on port 3000'. WRONG: explaining lsof "
+            "in a code block. RIGHT: immediately call bash with "
+            "`lsof -i :3000 -sTCP:LISTEN`, then summarize what's listening.\n\n"
             f"Environment: {platform.system()} ({platform.machine()}), "
             f"cwd = {Path.cwd()}."
         )
@@ -583,6 +592,8 @@ class MantisTUI:
             await thinking.stop()
 
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> None:
+        from rich.markdown import Markdown  # noqa: PLC0415
+
         from .types import TextBlock  # noqa: PLC0415
 
         for block in msg.content:
@@ -590,7 +601,10 @@ class MantisTUI:
                 if block.text.strip():
                     self.console.print()
                     self.console.print(f"[{BODY}]●[/] ", end="")
-                    self.console.print(block.text.strip(), markup=False, highlight=False)
+                    # Render the assistant's markdown (code fences, bold, lists,
+                    # tables). `ansi_dark` keeps code highlighting to ANSI colors
+                    # so it looks right in Terminal.app (no truecolor needed).
+                    self.console.print(Markdown(block.text.strip(), code_theme="ansi_dark"))
             elif isinstance(block, ToolUseBlock):
                 self.console.print(
                     f"[{LEG}]⚒[/] [white]{block.name}[/]"

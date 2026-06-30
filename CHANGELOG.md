@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.7] — 2026-06-30
+
+### Changed
+
+- **Assistant replies are rendered as Markdown** (code blocks with syntax
+  highlighting, bold/italics, lists, tables) instead of raw text — using an
+  ANSI colour theme so it looks right in Terminal.app. No more literal
+  ```` ``` ```` fences in the output.
+
 ## [1.1.6] — 2026-06-30
 
 ### Added
