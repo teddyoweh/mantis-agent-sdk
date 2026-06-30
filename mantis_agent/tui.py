@@ -44,11 +44,10 @@ from . import __version__
 DEFAULT_MODEL = os.environ.get("MANTIS_AGENT_MODEL", "qwen2.5-7b-instruct")
 DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL", "http://localhost:11434")
 
-# Mascot palette — a green praying mantis.
+# Mascot palette — a green praying mantis, side profile.
 BODY = "#8bc34a"  # mantis green
-FACE_BG = "#2e5e16"  # darker green: the head's shaded interior
-EYE_BG = "#13270a"  # near-black band the eyes sit on
-ACCENT = "#aed581"  # antennae + the two big compound eyes
+EYE_BG = "#0c1a05"  # near-black eye
+ACCENT = "#c0ca33"  # antennae (a warmer lime so they catch the eye)
 
 # The same example-prompt pool Claude Code samples for its placeholder.
 EXAMPLE_PROMPTS = [
@@ -87,38 +86,102 @@ def _missing_deps_message() -> str:
 
 
 def _mascot_lines(Text: Any) -> list[Any]:
-    """Build the praying-mantis pixel mascot as rich ``Text`` rows.
+    """Render a side-profile praying mantis as rich ``Text`` rows.
 
-    Five rows, 9 columns, centered: antennae, a triangular head shaded with a
-    background fill, two big compound eyes flanking a dark face band, the head
-    narrowing to a chin, and the raptorial forelegs folded in the signature
-    "praying" pose around a slim body.
+    Drawn as a small pixel *bitmap* (body=green, eye=dark, antennae=lime) and
+    rasterized with half-block glyphs (``▀``/``▄``/``█``) so each character cell
+    packs two vertical pixels — doubling the vertical resolution and letting a
+    single cell carry two colors (``▀`` with ``fg on bg``). That smoothness is
+    what makes the silhouette read as an insect rather than ASCII art: a
+    triangular head with a compound eye, swept antennae, the raptorial forelegs
+    folded in the signature "praying" pose, an arched body, and three legs.
     """
-    body = f"{BODY}"
-    head = f"{BODY} on {FACE_BG}"
-    face = f"{EYE_BG} on {BODY}"
+    BODYV, EYEV, ANTV = 1, 2, 3
+    palette = {BODYV: BODY, EYEV: EYE_BG, ANTV: ACCENT}
+    W, H = 28, 18
+    grid = [[0] * W for _ in range(H)]
 
-    r0 = Text("  ╲   ╱  ", style=ACCENT)
+    def pt(x: float, y: float, v: int = BODYV) -> None:
+        xi, yi = int(round(x)), int(round(y))
+        if v and 0 <= yi < H and 0 <= xi < W:
+            grid[yi][xi] = v
 
-    r1 = Text()
-    r1.append("  ▟", style=body)
-    r1.append("███", style=head)
-    r1.append("▙  ", style=body)
+    def line(x0: float, y0: float, x1: float, y1: float, v: int = BODYV, t: int = 1) -> None:
+        x0, y0, x1, y1 = (int(round(n)) for n in (x0, y0, x1, y1))
+        dx, dy = abs(x1 - x0), -abs(y1 - y0)
+        sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+        err, x, y = dx + dy, x0, y0
+        while True:
+            for o in range(t):
+                pt(x, y + o, v)
+            if x == x1 and y == y1:
+                break
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x += sx
+            if e2 <= dx:
+                err += dx
+                y += sy
 
-    r2 = Text()
-    r2.append(" ◉", style=ACCENT)
-    r2.append("█", style=body)
-    r2.append("▀█▀", style=face)
-    r2.append("█", style=body)
-    r2.append("◉ ", style=ACCENT)
+    def filltri(p0: tuple, p1: tuple, p2: tuple, v: int = BODYV) -> None:
+        ys = [p[1] for p in (p0, p1, p2)]
+        for y in range(min(ys), max(ys) + 1):
+            xi = []
+            for (ax, ay), (bx, by) in ((p0, p1), (p1, p2), (p2, p0)):
+                if ay <= y < by or by <= y < ay:
+                    xi.append(ax + (bx - ax) * (y - ay) / (by - ay))
+            if len(xi) >= 2:
+                for x in range(int(round(min(xi))), int(round(max(xi))) + 1):
+                    pt(x, y, v)
 
-    r3 = Text()
-    r3.append("  ▜", style=body)
-    r3.append("███", style=head)
-    r3.append("▛  ", style=body)
+    # Arched body: control points (x, center-y, thickness), spans filled solid.
+    ctl = [(8, 9, 4), (12, 8, 4), (17, 8, 4), (21, 7, 4), (25, 6, 2)]
+    for i in range(len(ctl) - 1):
+        x0, y0, t0 = ctl[i]
+        x1, y1, t1 = ctl[i + 1]
+        for x in range(x0, x1 + 1):
+            f = (x - x0) / (x1 - x0) if x1 != x0 else 0
+            yc = y0 + (y1 - y0) * f
+            th = t0 + (t1 - t0) * f
+            for y in range(int(round(yc - th / 2)), int(round(yc + th / 2))):
+                pt(x, y)
+    line(24, 5, 27, 3, BODYV, 2)  # abdomen tail curling up
 
-    r4 = Text("  ╱▐█▌╲  ", style=body)
-    return [r0, r1, r2, r3, r4]
+    # Triangular head fused at the front, with a dark compound eye.
+    filltri((3, 6), (9, 4), (9, 9))
+    for ey in (5, 6):
+        for ex in (5, 6):
+            pt(ex, ey, EYEV)
+
+    line(8, 4, 15, 0, ANTV)  # antennae swept up & back
+    line(8, 4, 11, 0, ANTV)
+
+    line(8, 9, 2, 5, BODYV, 2)  # raptorial femur (up-forward)
+    line(3, 5, 7, 8, BODYV, 2)  # forearm folded back — the "praying" scythe
+
+    for hx, kx, ky, fx, fy in ((12, 10, 13, 8, 17), (16, 16, 13, 19, 17), (20, 22, 13, 25, 17)):
+        line(hx, 10, kx, ky)  # femur down to the knee
+        line(kx, ky, fx, fy)  # tibia out to the foot
+
+    rows: list[Any] = []
+    for r in range(0, H, 2):
+        t = Text()
+        for x in range(W):
+            top = grid[r][x]
+            bot = grid[r + 1][x] if r + 1 < H else 0
+            if not top and not bot:
+                t.append(" ")
+            elif top and not bot:
+                t.append("▀", style=palette[top])
+            elif bot and not top:
+                t.append("▄", style=palette[bot])
+            elif top == bot:
+                t.append("█", style=palette[top])
+            else:
+                t.append("▀", style=f"{palette[top]} on {palette[bot]}")
+        rows.append(t)
+    return rows
 
 
 def _short_cwd() -> str:
@@ -149,10 +212,11 @@ def print_banner(console: Any, model: str, backend: str) -> None:
 
     cwd = Text(_short_cwd(), style="ansibrightblack")
 
-    # Pad the 3 info lines with blanks so they sit vertically centered against
-    # the 5-row mascot.
+    # Vertically center the 3 info lines against the (taller) mascot.
     blank = Text("")
-    info = [blank, title, sub, cwd, blank]
+    top_pad = max(0, (len(mascot) - 3) // 2)
+    info = [blank] * top_pad + [title, sub, cwd]
+    info += [blank] * (len(mascot) - len(info))
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="left")

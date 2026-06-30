@@ -56,6 +56,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.2] — 2026-06-30
+
+### Changed
+
+- **Redrew the `mantis` mascot as a side-profile praying mantis.** The
+  front-facing sprite read as a face; the new mascot is a pixel *bitmap*
+  rasterized with half-blocks (2× vertical resolution, two-color cells) —
+  triangular head with a compound eye, swept antennae, the raptorial
+  forelegs folded in the "praying" pose, an arched body, and three legs.
+
 ## [1.1.1] — 2026-06-30
 
 ### Changed
