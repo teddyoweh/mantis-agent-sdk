@@ -676,7 +676,7 @@ class MantisTUI:
             # Keep the prompt area exactly 2 rows (input + footer) so the
             # bottom-padding math stays exact; the completion menu pops up
             # over the padded space above instead of reserving rows.
-            reserve_space_for_menu=0,
+            reserve_space_for_menu=8,
         )
 
     def _toolbar_fg(self) -> str:
