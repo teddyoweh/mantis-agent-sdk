@@ -289,6 +289,81 @@ class MantisTUI:
             max_steps=self.max_turns,
         )
 
+    # -- model resolution (so `mantis` "just works") -------------------------
+
+    def _available_models(self) -> tuple[list[str], bool]:
+        """Probe the backend for installed models.
+
+        Returns ``(model_names, reachable)``. Ollama is asked via ``/api/tags``;
+        anything else via the OpenAI-compat ``/v1/models``. Short timeout so a
+        down/missing backend doesn't stall startup.
+        """
+        import httpx  # noqa: PLC0415
+
+        from .providers.base import detect_provider  # noqa: PLC0415
+
+        base = (self.backend or "").rstrip("/")
+        if not base.startswith(("http://", "https://")):
+            return [], False
+        kind = detect_provider(self.backend or self.model)
+        try:
+            with httpx.Client(timeout=2.5) as c:
+                if kind == "ollama":
+                    r = c.get(f"{base}/api/tags")
+                    r.raise_for_status()
+                    return [m.get("name", "") for m in r.json().get("models", [])], True
+                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+                r = c.get(f"{base.rstrip('/v1')}/v1/models", headers=headers)
+                r.raise_for_status()
+                return [m.get("id", "") for m in r.json().get("data", [])], True
+        except Exception:  # noqa: BLE001 — unreachable / non-2xx / bad JSON
+            return [], False
+
+    def _pick_model(self, model: str, available: list[str]) -> str:
+        """Choose the closest installed model to ``model``."""
+        if model in available:
+            return model
+        base = model.split(":")[0]
+        # Prefer same base (e.g. "qwen2.5-7b-instruct" → "qwen2.5:7b"), then
+        # any instruct-tuned chat model, then just the first installed one.
+        for cand in available:
+            if cand.split(":")[0] == base:
+                return cand
+        for cand in available:
+            if any(k in cand.lower() for k in ("instruct", "chat", "qwen", "llama")):
+                return cand
+        return available[0]
+
+    def _resolve_model(self) -> None:
+        """Point ``self.model`` at something that actually exists, or explain how
+        to get it. Called once at startup, before the banner is drawn."""
+        available, reachable = self._available_models()
+        if self.model in available:
+            return
+        if not reachable:
+            # Backend down or not an HTTP backend — leave the model as-is; the
+            # first turn will surface the real connection error. Hint for Ollama.
+            if "localhost" in (self.backend or "") or "127.0.0.1" in (self.backend or ""):
+                self.console.print(
+                    f"[ansiyellow]![/] [ansibrightblack]can't reach Ollama at "
+                    f"{self.backend} — is it running? ([white]ollama serve[/])[/]"
+                )
+            return
+        if not available:
+            self.console.print(
+                f"[ansiyellow]![/] [ansibrightblack]no models installed on "
+                f"{self.backend}. Pull one:[/] [white]ollama pull {self.model}[/]"
+            )
+            return
+        picked = self._pick_model(self.model, available)
+        if picked != self.model:
+            self.console.print(
+                f"[ansibrightblack]([white]{self.model}[/] not installed — using "
+                f"[white]{picked}[/]; override with [white]/model <name>[/] or "
+                f"[white]--model[/])[/]"
+            )
+            self.model = picked
+
     # -- prompt session ------------------------------------------------------
 
     def _build_session(self) -> Any:
@@ -416,6 +491,7 @@ class MantisTUI:
     # -- main loop -----------------------------------------------------------
 
     async def run(self) -> int:
+        self._resolve_model()  # so the banner + first turn use a model that exists
         print_banner(self.console, self.model, self.backend)
         session = self._build_session()
         self.agent = self._build_agent()
@@ -448,6 +524,18 @@ class MantisTUI:
                     continue
                 except Exception as e:  # noqa: BLE001
                     self.console.print(f"\n[ansired]error:[/] {e}")
+                    msg = str(e).lower()
+                    if "not found" in msg or "pull" in msg:
+                        self.console.print(
+                            f"[ansibrightblack]→ install it:[/] [white]ollama pull "
+                            f"{self.model}[/]  [ansibrightblack]or pick another with[/] "
+                            f"[white]/model <name>[/]"
+                        )
+                    # Drop the dangling user turn so a retry doesn't double it up.
+                    from .types import UserMessage  # noqa: PLC0415
+
+                    if self.messages and isinstance(self.messages[-1], UserMessage):
+                        self.messages.pop()
         finally:
             if self.agent is not None:
                 await self.agent.aclose()

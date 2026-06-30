@@ -56,6 +56,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.3] — 2026-06-30
+
+### Fixed
+
+- **`mantis` now auto-selects an installed model instead of dying on a missing
+  default.** On startup it probes the backend (Ollama `/api/tags`, else
+  OpenAI-compat `/v1/models`); if the configured model isn't installed it picks
+  the closest one that is (same base family → any chat model → first available)
+  and notes the swap. When nothing is installed or the backend is unreachable
+  it prints an actionable hint (`ollama serve` / `ollama pull <model>`). The
+  per-turn "model not found" error now also suggests the exact pull command.
+
 ## [1.1.2] — 2026-06-30
 
 ### Changed
