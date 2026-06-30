@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.21] — 2026-06-30
+
+### Fixed
+
+- **Removed the grey highlight box around inline `code`/filenames.** rich's
+  default markdown code style uses a reverse/background that read like a
+  stray text selection; inline code and code blocks now render as plain green
+  text.
+
 ## [1.1.20] — 2026-06-30
 
 ### Added

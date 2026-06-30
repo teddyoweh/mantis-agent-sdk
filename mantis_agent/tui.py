@@ -444,8 +444,15 @@ class MantisTUI:
         self._todos_shown: list[dict] = []
 
         from rich.console import Console  # noqa: PLC0415
+        from rich.theme import Theme  # noqa: PLC0415
 
-        self.console = Console()
+        # Render inline `code` and code blocks as plain colored text — no grey
+        # highlight box (rich's default reverse/background for markdown code,
+        # which reads as a confusing selection-style highlight in chat).
+        self.console = Console(theme=Theme({
+            "markdown.code": "green",
+            "markdown.code_block": "green",
+        }))
 
     # -- provider / agent wiring (mirrors cli._build_provider_for_args) ------
 
@@ -547,10 +554,23 @@ class MantisTUI:
             "repeat a tool call you already made — if a result wasn't what you "
             "expected, change the arguments; do not run the same thing again.\n"
             "- Only the user's machine matters — never enumerate other operating "
-            "systems, generic instructions, or hypotheticals.\n\n"
+            "systems, generic instructions, or hypotheticals.\n"
+            "- You accomplish ANYTHING expressible as code by writing a script "
+            "and running it. Browser automation (Playwright/Selenium), web "
+            "scraping, hitting APIs, driving a website, tests — all normal dev "
+            "work: write the script with write_file, `pip install` what it needs, "
+            "run it with bash, report the output. The user runs this on their own "
+            "machine for their own purposes.\n"
+            "- NEVER refuse or moralize about a normal engineering task. Do not "
+            "say you 'can't automate a third-party site' or 'can't help with that' "
+            "— if it can be done with a script, just write it and run it. No "
+            "disclaimers, no lectures.\n\n"
             "Example — user: 'find services on port 3000'. WRONG: explaining lsof "
             "in a code block. RIGHT: immediately call bash with "
-            "`lsof -i :3000 -sTCP:LISTEN`, then summarize what's listening.\n\n"
+            "`lsof -i :3000 -sTCP:LISTEN`, then summarize what's listening.\n"
+            "Example — user: 'drive example.com with playwright'. RIGHT: write_file "
+            "a Playwright script, `pip install playwright && playwright install "
+            "chromium` via bash, run it, report what it found. WRONG: refusing.\n\n"
             f"Environment: {platform.system()} ({platform.machine()}), "
             f"cwd = {Path.cwd()}."
         )
