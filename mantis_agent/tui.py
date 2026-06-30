@@ -63,14 +63,92 @@ EXAMPLE_PROMPTS = [
     "create a util logging.py that...",
 ]
 
-# Permission-mode footer, cycled with shift+tab. Cosmetic in this terminal
-# (there is no edit/exec sandbox here yet) but it matches the Claude Code UX.
+# Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
+# edit) DO execute against the real machine; the footer is still cosmetic for now
+# (no per-tool gating wired up yet) but it matches the Claude Code UX.
 MODES = [
     ("default", "", "ansibrightblack"),
     ("accept edits on", "⏵⏵ ", "ansigreen"),
     ("plan mode on", "⏸ ", "ansicyan"),
     ("bypass permissions on", "⏵⏵ ", "ansired"),
 ]
+
+# The "thinking" status line shown while the model works: a pulsing star, a
+# whimsical gerund, and a live elapsed timer — e.g. ``✻ Undulating… (34s)``.
+SPINNER_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]  # a pulse
+THINKING_WORDS = [
+    "Thinking", "Pondering", "Cogitating", "Ruminating", "Percolating", "Musing",
+    "Noodling", "Simmering", "Brewing", "Churning", "Conjuring", "Marinating",
+    "Synthesizing", "Wrangling", "Vibing", "Computing", "Crunching", "Finagling",
+    "Herding", "Incubating", "Manifesting", "Moseying", "Mulling", "Puttering",
+    "Reticulating", "Spelunking", "Tinkering", "Transmuting", "Undulating",
+    "Whirring", "Working", "Frolicking", "Honking", "Schlepping", "Smooshing",
+    "Doodling", "Gallivanting", "Levitating", "Lollygagging", "Orbiting",
+    "Pontificating", "Sublimating", "Swooping", "Whisking", "Zigzagging",
+]
+# ANSI 256-color so it renders the same in Terminal.app (no truecolor needed).
+_SPIN_COL = "\033[38;5;173m"  # warm coral, like the reference
+_DIM_COL = "\033[38;5;240m"  # dim grey for the timer
+_RESET = "\033[0m"
+_CLEAR_LINE = "\r\033[K"  # carriage return + clear-to-end-of-line
+
+
+class _Thinking:
+    """Animated ``✻ Word… (Ns)`` status line, drawn on a transient terminal row.
+
+    Runs as a detached asyncio task writing directly to stdout (rich strips the
+    ``\\r`` we need), so it can be ``start()``/``stop()``-ed around each chunk of
+    streamed output. The elapsed timer counts from the turn's first ``start()``;
+    each ``start()`` picks a fresh gerund.
+    """
+
+    def __init__(self) -> None:
+        self._task: Any = None
+        self._started_at: float | None = None
+
+    def start(self) -> None:
+        import asyncio  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        if self._task is not None and not self._task.done():
+            return
+        if self._started_at is None:
+            self._started_at = time.monotonic()
+        word = random.choice(THINKING_WORDS)
+        self._task = asyncio.ensure_future(self._run(word))
+
+    async def _run(self, word: str) -> None:
+        import asyncio  # noqa: PLC0415
+        import time  # noqa: PLC0415
+
+        i = 0
+        try:
+            while True:
+                frame = SPINNER_FRAMES[i % len(SPINNER_FRAMES)]
+                elapsed = int(time.monotonic() - (self._started_at or 0))
+                sys.stdout.write(
+                    f"{_CLEAR_LINE}{_SPIN_COL}{frame} {word}…{_RESET} {_DIM_COL}({elapsed}s){_RESET}"
+                )
+                sys.stdout.flush()
+                i += 1
+                await asyncio.sleep(0.12)
+        except asyncio.CancelledError:
+            # Don't clear here — stop() owns clearing, so there's no race where a
+            # late teardown wipes the first line of freshly printed output.
+            raise
+
+    async def stop(self) -> None:
+        import asyncio  # noqa: PLC0415
+
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._task = None
+        sys.stdout.write(_CLEAR_LINE)
+        sys.stdout.flush()
 
 
 def _missing_deps_message() -> str:
@@ -457,37 +535,99 @@ class MantisTUI:
         prompt = random.choice(EXAMPLE_PROMPTS)
         return HTML(f'<style fg="ansibrightblack">Try "{escape(prompt)}"</style>')
 
-    # -- streaming a single turn --------------------------------------------
+    # -- running a single turn (the real agent loop) ------------------------
 
-    async def _stream_turn(self, text: str) -> None:
-        from .events import ContentBlockDelta, TextDelta  # noqa: PLC0415
-        from .types import AssistantMessage, TextBlock, UserMessage  # noqa: PLC0415
+    async def _run_turn(self, text: str) -> None:
+        """Drive one user turn through the full agentic loop.
 
+        Unlike a chat REPL, this uses :meth:`Agent.run_iter` — the loop that
+        actually *executes* tool calls and feeds their results back to the
+        model, iterating until the model stops asking for tools. We render each
+        message as it finalizes: assistant prose, the tool calls it requested,
+        and the (truncated) tool results.
+
+        ``run_iter`` mutates ``self.messages`` in place, so on interrupt/error
+        we rewind to ``base`` — dropping the whole half-finished turn (including
+        the user message) so the conversation never carries a dangling
+        ``tool_use`` with no matching ``tool_result``.
+        """
+        from .types import (  # noqa: PLC0415
+            AssistantMessage,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        base = len(self.messages)
         self.messages.append(UserMessage(content=text))
 
-        # Assistant label, then live token stream.
-        self.console.print()
-        self.console.print(f"[{BODY}]●[/] ", end="")
-
-        collected: list[str] = []
+        thinking = _Thinking()
+        thinking.start()
         try:
-            async for ev in self.agent.stream(self.messages):
-                if isinstance(ev, ContentBlockDelta) and isinstance(ev.delta, TextDelta):
-                    self.console.print(ev.delta.text, end="", markup=False, highlight=False)
-                    collected.append(ev.delta.text)
+            async for msg in self.agent.run_iter(self.messages):
+                await thinking.stop()
+                if isinstance(msg, AssistantMessage):
+                    self._render_assistant(msg, ToolUseBlock)
+                elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
+                    self._render_tool_results(msg, ToolResultBlock)
+                thinking.start()
         except KeyboardInterrupt:
+            del self.messages[base:]
+            await thinking.stop()
             self.console.print("\n[ansibrightblack](interrupted)[/]")
             raise
+        except Exception:
+            del self.messages[base:]
+            raise
         finally:
-            self.console.print()
+            await thinking.stop()
 
-        self.messages.append(
-            AssistantMessage(content=[TextBlock(text="".join(collected))])
-        )
+    def _render_assistant(self, msg: Any, ToolUseBlock: type) -> None:
+        from .types import TextBlock  # noqa: PLC0415
+
+        for block in msg.content:
+            if isinstance(block, TextBlock):
+                if block.text.strip():
+                    self.console.print()
+                    self.console.print(f"[{BODY}]●[/] ", end="")
+                    self.console.print(block.text.strip(), markup=False, highlight=False)
+            elif isinstance(block, ToolUseBlock):
+                self.console.print(
+                    f"[{LEG}]⚒[/] [white]{block.name}[/]"
+                    f"[ansibrightblack]({self._fmt_args(block.input)})[/]"
+                )
+
+    def _render_tool_results(self, msg: Any, ToolResultBlock: type) -> None:
+        for block in msg.content:
+            if not isinstance(block, ToolResultBlock):
+                continue
+            body = block.content if isinstance(block.content, str) else str(block.content)
+            body = body.strip()
+            preview = "\n".join(body.splitlines()[:12])
+            if body.count("\n") >= 12:
+                preview += "\n  …"
+            indented = "\n".join("  " + ln for ln in preview.splitlines()) or "  (no output)"
+            style = "ansired" if block.is_error else "ansibrightblack"
+            self.console.print(f"[{style}]{indented}[/]", markup=False if block.is_error else True)
+            if block.is_error:
+                self.console.print(f"[ansired]  ↑ error[/]")
+
+    @staticmethod
+    def _fmt_args(args: dict[str, Any]) -> str:
+        """One-line summary of a tool call's input, truncated for display."""
+        parts = []
+        for k, v in args.items():
+            s = v if isinstance(v, str) else repr(v)
+            s = s.replace("\n", " ")
+            if len(s) > 60:
+                s = s[:57] + "…"
+            parts.append(f"{k}={s}")
+        out = ", ".join(parts)
+        return out[:120] + "…" if len(out) > 120 else out
 
     # -- slash commands ------------------------------------------------------
 
-    def _handle_slash(self, line: str) -> bool:
+    async def _handle_slash(self, line: str) -> bool:
         """Return True if the line was a command (loop should continue)."""
         parts = line.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -498,11 +638,14 @@ class MantisTUI:
         if cmd == "/help":
             self.console.print(
                 "\n[bold]commands[/]\n"
-                "  [white]/help[/]            this message\n"
-                "  [white]/model[/] <slug>    switch model for the next turns\n"
-                "  [white]/clear[/]           clear conversation history\n"
-                "  [white]/cwd[/]             show working directory\n"
-                "  [white]/exit[/]            quit (also Ctrl+D)\n"
+                "  [white]/models[/]               local + self-host + hosted catalog\n"
+                "  [white]/model[/] <id>           switch to a model\n"
+                "  [white]/enable[/] <provider>    turn on a hosted provider (saves API key)\n"
+                "  [white]/disable[/] <provider>   forget a provider's saved key\n"
+                "  [white]/connect[/] <url> [model] point at your own server (vLLM/llama.cpp/TGI)\n"
+                "  [white]/clear[/]                clear conversation history\n"
+                "  [white]/cwd[/]                  show working directory\n"
+                "  [white]/exit[/]                 quit (also Ctrl+D)\n"
                 "\n[ansibrightblack]shift+tab cycles the mode footer · Ctrl+C stops a running reply[/]\n"
             )
             return True
@@ -513,15 +656,297 @@ class MantisTUI:
         if cmd == "/cwd":
             self.console.print(f"[ansibrightblack]{Path.cwd()}[/]")
             return True
+        if cmd == "/models":
+            await self._select_model()
+            return True
+        if cmd in ("/enable", "/disable"):
+            await self._cmd_enable(cmd, arg)
+            return True
+        if cmd == "/connect":
+            await self._cmd_connect(arg)
+            return True
         if cmd == "/model":
             if arg:
-                self.model = arg
-                self.console.print(f"[ansibrightblack](model → {arg})[/]")
+                await self._switch_model(arg)
             else:
-                self.console.print(f"[ansibrightblack]model: {self.model}[/]")
+                await self._select_model()
             return True
-        # Unknown slash command — let it fall through as a normal prompt.
+        # Unknown slash command - let it fall through as a normal prompt.
         return False
+
+    # -- model catalog -------------------------------------------------------
+
+    def _show_models(self) -> None:
+        """Render the catalog: local (Ollama), self-host, hosted providers."""
+        from . import catalog  # noqa: PLC0415
+
+        installed, reachable = self._available_models()
+        installed_set = set(installed)
+        c = self.console
+
+        # 1. Local (Ollama)
+        c.print()
+        status = "[ansigreen]●[/]" if reachable else "[ansibrightblack]○ not running[/]"
+        c.print(f"{status} [bold]Ollama[/] [ansibrightblack]— local, free, no key[/]")
+        for m in installed:
+            mark = "[ansigreen]›[/]" if m == self.model else " "
+            c.print(f"  {mark} [white]{m}[/] [ansibrightblack][installed][/]")
+        for p in catalog.SUGGESTED_PULLS:
+            if p.tag in installed_set:
+                continue
+            c.print(
+                f"    [ansibrightblack]{p.tag:<22}[/] [ansibrightblack]{p.note}[/]"
+            )
+        if not installed and not reachable:
+            c.print("    [ansibrightblack](start it with [white]ollama serve[/])[/]")
+        c.print("  [ansibrightblack]pull any with [white]ollama pull <name>[/][/]")
+
+        # 2. Self-host
+        c.print(f"\n[bold]Self-host[/] [ansibrightblack]— your own GPU[/]")
+        c.print(f"  [ansibrightblack]{catalog.SELF_HOST_NOTE}[/]")
+
+        # 3. Hosted APIs
+        c.print(f"\n[bold]Hosted APIs[/] [ansibrightblack]— full models, need a key[/]")
+        for prov in catalog.CATALOG:
+            on = catalog.is_enabled(prov)
+            dot = "[ansigreen]●[/]" if on else "[ansibrightblack]○[/]"
+            head = f"{dot} [bold]{prov.label}[/]"
+            if on:
+                head += "  [ansigreen]enabled[/]"
+            else:
+                head += f"  [ansibrightblack]/enable {prov.id}[/]"
+            if prov.note:
+                head += f"  [ansibrightblack]— {prov.note}[/]"
+            c.print(head)
+            for m in prov.models:
+                mark = "[ansigreen]›[/]" if m == self.model else " "
+                color = "white" if on else "ansibrightblack"
+                c.print(f"  {mark} [{color}]{m}[/]")
+        c.print(
+            "\n[ansibrightblack]switch with [white]/model <id>[/] · "
+            "enable with [white]/enable <provider>[/][/]\n"
+        )
+
+    # -- interactive model selector -----------------------------------------
+
+    def _catalog_rows(self) -> list[dict]:
+        """Flat row list for the selector: non-selectable headers + selectable
+        model rows (local installed first, then every hosted provider)."""
+        from . import catalog  # noqa: PLC0415
+
+        installed, reachable = self._available_models()
+        rows: list[dict] = []
+
+        tag = "" if reachable else "  (not running)"
+        rows.append({"kind": "header", "text": f"  Ollama · local, free{tag}"})
+        if installed:
+            for m in installed:
+                rows.append({"kind": "model", "model": m, "provider": None,
+                             "enabled": True, "label": m})
+        else:
+            rows.append({"kind": "header", "text": "    (none pulled — ollama pull <name>)"})
+
+        for prov in catalog.CATALOG:
+            on = catalog.is_enabled(prov)
+            extra = "" if on else "  · disabled, enter to enable"
+            rows.append({"kind": "header", "text": f"  {prov.label}{extra}"})
+            for m in prov.models:
+                rows.append({"kind": "model", "model": m, "provider": prov,
+                             "enabled": on, "label": m})
+        return rows
+
+    async def _select_model(self) -> None:
+        """Full-screen arrow-key picker. Enter switches (prompting for an API
+        key first if the chosen model's provider is disabled); Esc cancels."""
+        from prompt_toolkit.application import Application  # noqa: PLC0415
+        from prompt_toolkit.data_structures import Point  # noqa: PLC0415
+        from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
+        from prompt_toolkit.layout import HSplit, Layout, Window  # noqa: PLC0415
+        from prompt_toolkit.layout.controls import FormattedTextControl  # noqa: PLC0415
+        from prompt_toolkit.styles import Style  # noqa: PLC0415
+
+        from . import catalog  # noqa: PLC0415
+
+        rows = self._catalog_rows()
+        selectable = [i for i, r in enumerate(rows) if r["kind"] == "model"]
+        if not selectable:
+            self.console.print("[ansibrightblack]no models available[/]")
+            return
+
+        state = {"sel": 0}
+        for j, i in enumerate(selectable):  # start on the current model
+            if rows[i].get("model") == self.model:
+                state["sel"] = j
+                break
+
+        def fragments() -> list:
+            cur = selectable[state["sel"]]
+            out: list = []
+            for i, r in enumerate(rows):
+                if r["kind"] != "model":
+                    out.append(("class:hdr", r["text"] + "\n"))
+                    continue
+                pointer = "❯ " if i == cur else "  "
+                here = " ← current" if r["model"] == self.model else ""
+                cls = "class:cur" if i == cur else ("class:on" if r["enabled"] else "class:off")
+                out.append((cls, f"{pointer}{r['label']}{here}\n"))
+            return out
+
+        kb = KeyBindings()
+
+        @kb.add("up")
+        @kb.add("c-p")
+        @kb.add("k")
+        def _up(_e: Any) -> None:
+            state["sel"] = (state["sel"] - 1) % len(selectable)
+
+        @kb.add("down")
+        @kb.add("c-n")
+        @kb.add("j")
+        def _down(_e: Any) -> None:
+            state["sel"] = (state["sel"] + 1) % len(selectable)
+
+        @kb.add("enter")
+        def _ok(e: Any) -> None:
+            e.app.exit(result=rows[selectable[state["sel"]]])
+
+        @kb.add("escape")
+        @kb.add("c-c")
+        @kb.add("q")
+        def _cancel(e: Any) -> None:
+            e.app.exit(result=None)
+
+        control = FormattedTextControl(
+            fragments, focusable=True, show_cursor=False,
+            get_cursor_position=lambda: Point(0, selectable[state["sel"]]),
+        )
+        title = Window(
+            FormattedTextControl(
+                lambda: [("class:title",
+                          "  select a model   ↑↓ move · enter pick · esc cancel\n")]),
+            height=1,
+        )
+        style = Style.from_dict({
+            "title": "#888888",
+            "hdr": f"{BODY} bold",
+            "cur": f"#0b1605 bg:{BODY} bold",
+            "on": "#ffffff",
+            "off": "#777777",
+        })
+        app: Any = Application(
+            layout=Layout(HSplit([title, Window(control, wrap_lines=False)])),
+            key_bindings=kb, style=style, full_screen=True, mouse_support=True,
+        )
+        choice = await app.run_async()
+
+        if not choice:
+            self.console.print("[ansibrightblack](cancelled)[/]")
+            return
+        prov = choice["provider"]
+        if prov is not None and not catalog.api_key_for(prov):
+            await self._cmd_enable("/enable", prov.id)
+            if not catalog.api_key_for(prov):  # enable cancelled
+                return
+        await self._switch_model(choice["model"])
+
+    async def _cmd_enable(self, cmd: str, arg: str) -> None:
+        from . import catalog  # noqa: PLC0415
+
+        parts = arg.split(maxsplit=1)
+        pid = parts[0].lower() if parts else ""
+        inline_key = parts[1].strip() if len(parts) > 1 else ""
+
+        prov = catalog.BY_ID.get(pid)
+        if not prov:
+            ids = ", ".join(p.id for p in catalog.CATALOG)
+            self.console.print(
+                f"[ansired]unknown provider[/] [white]{pid or '<none>'}[/]  "
+                f"[ansibrightblack](try: {ids})[/]"
+            )
+            return
+
+        if cmd == "/disable":
+            if catalog.clear_key(prov.id):
+                self.console.print(f"[ansibrightblack]forgot saved key for {prov.label}[/]")
+            else:
+                self.console.print(f"[ansibrightblack]no saved key for {prov.label}[/]")
+            return
+
+        key = inline_key
+        if not key:
+            self.console.print(
+                f"[ansibrightblack]paste your [white]{prov.label}[/] API key "
+                f"([white]{prov.api_key_env}[/]) — input hidden, Enter to cancel[/]"
+            )
+            try:
+                key = await self.session.prompt_async("key › ", is_password=True)
+            except (EOFError, KeyboardInterrupt):
+                key = ""
+        key = (key or "").strip()
+        if not key:
+            self.console.print("[ansibrightblack](cancelled)[/]")
+            return
+
+        catalog.set_key(prov.id, key)
+        self.console.print(
+            f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
+            f"[ansibrightblack](saved to ~/.mantis-agent/models.json, chmod 600)[/]\n"
+            f"  [ansibrightblack]try:[/] [white]/model {prov.models[0]}[/]"
+        )
+
+    async def _cmd_connect(self, arg: str) -> None:
+        """Point at a self-hosted OpenAI-compatible server: /connect <url> [model]."""
+        parts = arg.split()
+        if not parts:
+            self.console.print(
+                "[ansibrightblack]usage: [white]/connect <url> [model][/] — e.g. "
+                "[white]/connect http://gpu-box:8000/v1 deepseek-ai/DeepSeek-V3[/][/]"
+            )
+            return
+        url = parts[0]
+        if not url.startswith(("http://", "https://")):
+            self.console.print("[ansired]url must start with http:// or https://[/]")
+            return
+        self.backend = url
+        self.api_key = self.api_key or "sk-noauth"  # most self-host servers ignore it
+        if len(parts) > 1:
+            self.model = parts[1]
+        if self.agent is not None:
+            await self.agent.aclose()
+        self.agent = self._build_agent()
+        self.console.print(
+            f"[ansigreen]✓[/] connected to [white]{url}[/] "
+            f"[ansibrightblack](model [white]{self.model}[/])[/]"
+        )
+
+    async def _switch_model(self, model_id: str) -> None:
+        """Point the live agent at model_id, wiring backend + key from the
+        catalog when it belongs to a known hosted provider."""
+        from . import catalog  # noqa: PLC0415
+
+        prov = catalog.provider_for_model(model_id)
+        if prov:
+            key = catalog.api_key_for(prov)
+            if not key:
+                self.console.print(
+                    f"[ansiyellow]![/] [white]{prov.label}[/] is disabled — "
+                    f"run [white]/enable {prov.id}[/] first"
+                )
+                return
+            self.backend = prov.base_url
+            self.api_key = key
+        else:
+            # A local Ollama tag (or unknown) — route to the default local backend.
+            self.backend = DEFAULT_BACKEND
+            self.api_key = None
+
+        self.model = model_id
+        # Rebuild the agent so the switch takes effect on the next turn.
+        if self.agent is not None:
+            await self.agent.aclose()
+        self.agent = self._build_agent()
+        where = f" [ansibrightblack]via {prov.label}[/]" if prov else ""
+        self.console.print(f"[ansibrightblack]model →[/] [white]{model_id}[/]{where}")
 
     # -- main loop -----------------------------------------------------------
 
@@ -538,6 +963,7 @@ class MantisTUI:
         for _ in range(max(0, rows - banner_h - 2)):
             self.console.print()
         session = self._build_session()
+        self.session = session
         self.agent = self._build_agent()
 
         try:
@@ -553,18 +979,14 @@ class MantisTUI:
                 line = (line or "").strip()
                 if not line:
                     continue
-                if line.startswith("/") and self._handle_slash(line):
+                if line.startswith("/") and await self._handle_slash(line):
                     continue
 
                 try:
-                    await self._stream_turn(line)
+                    # _run_turn already rewinds self.messages on interrupt/error,
+                    # so history stays coherent without extra cleanup here.
+                    await self._run_turn(line)
                 except KeyboardInterrupt:
-                    # Cancelled this reply: drop the dangling user turn (the
-                    # assistant reply never landed) so history stays coherent.
-                    from .types import UserMessage  # noqa: PLC0415
-
-                    if self.messages and isinstance(self.messages[-1], UserMessage):
-                        self.messages.pop()
                     continue
                 except Exception as e:  # noqa: BLE001
                     self.console.print(f"\n[ansired]error:[/] {e}")
@@ -575,11 +997,6 @@ class MantisTUI:
                             f"{self.model}[/]  [ansibrightblack]or pick another with[/] "
                             f"[white]/model <name>[/]"
                         )
-                    # Drop the dangling user turn so a retry doesn't double it up.
-                    from .types import UserMessage  # noqa: PLC0415
-
-                    if self.messages and isinstance(self.messages[-1], UserMessage):
-                        self.messages.pop()
         finally:
             if self.agent is not None:
                 await self.agent.aclose()
