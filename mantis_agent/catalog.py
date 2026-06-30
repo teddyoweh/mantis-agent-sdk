@@ -216,6 +216,24 @@ def set_last_model(model: str, backend: str | None = None) -> None:
     _save_store(data)
 
 
+RECENT_MAX = 8
+
+
+def get_recent_models() -> list[str]:
+    """Most-recently-used model ids, newest first (for a 'Recent' shortcut)."""
+    rec = _load_store().get("recent")
+    return [m for m in rec if isinstance(m, str)] if isinstance(rec, list) else []
+
+
+def push_recent_model(model: str) -> None:
+    """Move ``model`` to the front of the MRU list (deduped, capped)."""
+    data = _load_store()
+    recent = [m for m in (data.get("recent") or []) if isinstance(m, str) and m != model]
+    recent.insert(0, model)
+    data["recent"] = recent[:RECENT_MAX]
+    _save_store(data)
+
+
 def api_key_for(provider: Provider) -> str | None:
     """Key from the environment first, then the saved store."""
     if provider.api_key_env and os.environ.get(provider.api_key_env):
@@ -338,6 +356,9 @@ __all__ = [
     "provider_for_model",
     "get_last_model",
     "set_last_model",
+    "get_recent_models",
+    "push_recent_model",
+    "RECENT_MAX",
     "LIVE_TTL_S",
     "cached_live_models",
     "store_live_models",

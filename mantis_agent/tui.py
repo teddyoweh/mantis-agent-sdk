@@ -1219,6 +1219,17 @@ class MantisTUI:
         installed, reachable = self._available_models()
         rows: list[dict] = []
 
+        # Recent — a shortcut to the models you've used lately (they also appear
+        # under their provider below; this just floats them to the top).
+        recent = catalog.get_recent_models()
+        if recent:
+            rows.append({"kind": "header", "text": "  Recent"})
+            for m in recent:
+                prov = catalog.provider_for_model(m)
+                hint = "← current" if m == self.model else (prov.label if prov else "local")
+                rows.append({"kind": "item", "label": m, "enabled": True,
+                             "value": {"model": m, "provider": prov}, "hint": hint})
+
         tag = "" if reachable else "  (ollama not running)"
         rows.append({"kind": "header", "text": f"  Ollama · local, free{tag}"})
         if installed:
@@ -1331,6 +1342,7 @@ class MantisTUI:
             await self.agent.aclose()
         self.agent = self._build_agent()
         catalog.set_last_model(model, backend)  # reopen here next launch
+        catalog.push_recent_model(model)  # float to the top of /models next time
         self.console.print(f"[ansibrightblack]model →[/] [white]{model}[/]{where}")
 
     async def _prompt_secret(self, msg: str, prompt: str) -> str:
