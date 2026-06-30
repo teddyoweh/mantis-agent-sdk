@@ -798,6 +798,10 @@ class MantisTUI:
             bottom_toolbar=bottom_toolbar,
             style=style,
             multiline=False,
+            # Erase the whole framed prompt (top rule + input + bottom rule +
+            # footer) on submit; the run loop then echoes a clean "› message"
+            # so only the live input is ever framed, never past turns.
+            erase_when_done=True,
             # Keep the prompt area exactly 2 rows (input + footer) so the
             # bottom-padding math stays exact; the completion menu pops up
             # over the padded space above instead of reserving rows.
@@ -1514,22 +1518,35 @@ class MantisTUI:
         self.agent = self._build_agent()
         self._kick_prewarm()
 
+        from prompt_toolkit.formatted_text import HTML  # noqa: PLC0415
+        from rich.markup import escape as _esc  # noqa: PLC0415
+
         try:
             while True:
                 try:
-                    # Rule above the input (the toolbar draws the matching rule
-                    # below it), framing the prompt Claude-Code style.
-                    self.console.print(f"[ansibrightblack]{'─' * self.console.width}[/]")
+                    # Frame ONLY the live input: a rule above it (in the prompt
+                    # message) and a rule below it (the toolbar's first line),
+                    # all inside prompt_toolkit's render. erase_when_done wipes
+                    # the whole frame on submit, then we echo a clean "› message"
+                    # — so past turns keep no rules, only the current input does.
+                    rule = "─" * self.console.width
+                    message = HTML(
+                        f"<ansibrightblack>{rule}</ansibrightblack>\n"
+                        f"<ansibrightblack>›</ansibrightblack> "
+                    )
                     line = await session.prompt_async(
-                        "› ", placeholder=self._placeholder()
+                        message, placeholder=self._placeholder()
                     )
                 except (EOFError, KeyboardInterrupt):
-                    self.console.print("\n[ansibrightblack]bye 👋[/]")
+                    self.console.print("[ansibrightblack]bye 👋[/]")
                     break
 
                 line = (line or "").strip()
                 if not line:
                     continue
+                # Echo the submitted line into the transcript (the framed input
+                # itself was erased).
+                self.console.print(f"[ansibrightblack]›[/] {_esc(line)}")
                 if line.startswith("/") and await self._handle_slash(line):
                     continue
 

@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.23] — 2026-06-30
+
+### Fixed
+
+- **Input rules now frame only the live input**, not every past message. The
+  framed prompt (top rule + input + bottom rule + footer) is erased on submit
+  (`erase_when_done`) and the submitted line is echoed as a clean `› message`,
+  so scrollback has no stray rules.
+
 ## [1.1.22] — 2026-06-30
 
 ### Changed

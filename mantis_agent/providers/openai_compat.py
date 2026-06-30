@@ -184,6 +184,10 @@ class OpenAICompatProvider(HTTPProviderMixin):
         model_capability: ModelCapability | None = None,
     ) -> None:
         url = base_url or DEFAULT_BASE_URL
+        # api_key semantics: a non-empty string is used verbatim; ``None`` means
+        # "discover a key from the env chain"; an empty string ``""`` means
+        # "explicitly NO auth — do not read the env" (used by providers like
+        # Modal that authenticate with their own headers).
         key = api_key
         if key is None:
             for var in _ENV_KEY_CHAIN:

@@ -275,10 +275,12 @@ class ModalProvider:
 
         self._inner = OpenAICompatProvider(
             base_url=url,
-            # Modal doesn't use a Bearer token — pass api_key=None so the
-            # env-key fallback chain doesn't accidentally attach an
-            # unrelated OPENAI_API_KEY to a Modal request.
-            api_key=None,
+            # Modal authenticates via Modal-Key/Modal-Secret headers, never a
+            # Bearer token. Pass api_key="" (NOT None) — empty string means
+            # "explicitly no auth", whereas None tells the inner provider to walk
+            # the OPENAI_API_KEY/TOGETHER_API_KEY/... env chain, which would
+            # otherwise leak an unrelated key as a Bearer header to Modal.
+            api_key="",
             default_headers=headers,
             backend_capability=chosen_cap,
             model_capability=model_capability,
