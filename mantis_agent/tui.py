@@ -215,6 +215,16 @@ class _Thinking:
         sys.stdout.write(_CLEAR_LINE)
         sys.stdout.flush()
 
+    def stop_sync(self) -> None:
+        """Cancel + clear the line without awaiting — callable from a sync
+        callback (e.g. the live token-stream sink). The cancelled task tears
+        itself down on the next loop tick."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        sys.stdout.write(_CLEAR_LINE)
+        sys.stdout.flush()
+
 
 _MD_PATCHED = False
 
@@ -445,6 +455,8 @@ class MantisTUI:
         # Pending paste attachments (images/files) for the next message. Each is
         # ``(placeholder, content_block)``; flushed into the user turn on submit.
         self.pending_attachments: list[tuple[str, Any]] = []
+        # True while the current assistant turn's text is being streamed live.
+        self._turn_streamed = False
 
         from rich.console import Console  # noqa: PLC0415
         from rich.theme import Theme  # noqa: PLC0415
@@ -937,12 +949,41 @@ class MantisTUI:
             UserMessage,
         )
 
+        from .events import (  # noqa: PLC0415
+            ContentBlockDelta,
+            MessageStart,
+            TextDelta,
+        )
+
         base = len(self.messages)
         self.messages.append(UserMessage(content=self._build_user_content(text)))
 
         self.console.print()  # breathing room above the loading spinner
         thinking = _Thinking()
         thinking.start()
+        self._turn_streamed = False
+
+        # Live token streaming: run_iter only yields whole messages, so we tap
+        # the raw stream events to print assistant text token-by-token as it
+        # generates. On the first token of a turn we kill the spinner and lay
+        # down the "●" bullet; ``_render_assistant`` then skips re-printing that
+        # text (it's already on screen) and renders only the tool calls.
+        live = {"active": False}
+
+        def _sink(ev: Any) -> None:
+            if isinstance(ev, MessageStart):
+                live["active"] = False
+            elif isinstance(ev, ContentBlockDelta) and isinstance(ev.delta, TextDelta):
+                if not live["active"]:
+                    thinking.stop_sync()
+                    self.console.print(f"[{BODY}]●[/] ", end="")
+                    live["active"] = True
+                    self._turn_streamed = True
+                self.console.print(
+                    ev.delta.text, end="", markup=False, highlight=False
+                )
+
+        self.agent.on_event = _sink
         try:
             async for msg in self.agent.run_iter(self.messages):
                 await thinking.stop()
@@ -965,12 +1006,21 @@ class MantisTUI:
             del self.messages[base:]
             raise
         finally:
+            self.agent.on_event = None
             await thinking.stop()
 
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> bool:
         """Render an assistant message; return True if it emitted a tool call
         (so the caller can keep the call and its result visually hugged)."""
         from .types import TextBlock  # noqa: PLC0415
+
+        # If this turn's text was streamed live (token-by-token), it's already on
+        # screen — just close the line and skip re-printing it; still render the
+        # tool calls below.
+        streamed = self._turn_streamed
+        self._turn_streamed = False
+        if streamed:
+            self.console.print()
 
         # No leading blank lines here: the single blank that separates blocks is
         # emitted before the (transient) thinking spinner in the run loop, and
@@ -979,6 +1029,8 @@ class MantisTUI:
         had_tool_call = False
         for block in msg.content:
             if isinstance(block, TextBlock):
+                if streamed:
+                    continue  # already shown live via the streaming sink
                 if block.text.strip():
                     self.console.print(f"[{BODY}]●[/] ", end="")
                     # Tight markdown: code fences, bold, lists, tables — without
@@ -1005,11 +1057,11 @@ class MantisTUI:
                 continue
             body = block.content if isinstance(block.content, str) else str(block.content)
             lines = body.strip().splitlines() or ["(no output)"]
-            colour = "ansired" if block.is_error else "ansibrightblack"
+            colour = "red" if block.is_error else "bright_black"
 
             # First line hangs off a "└" branch; the rest is indented beneath it.
             head = _T()
-            head.append("  └ ", style=LEG if not block.is_error else "ansired")
+            head.append("  └ ", style=LEG if not block.is_error else "red")
             head.append(lines[0][:200], style=colour)
             self.console.print(head)
 
@@ -1025,30 +1077,42 @@ class MantisTUI:
                 self.console.print(_T(f"    … (+{len(rest) - 12} more lines)", style="bright_black"))
 
     def _render_diff(self, diff_lines: list[str]) -> None:
-        """Render a unified diff with a line-number gutter and +/- colouring."""
+        """Render a unified diff like Claude Code: a line-number gutter and
+        FULL-WIDTH green/red background rows for additions/deletions, dim
+        context lines. Additions show new-file line numbers, deletions show
+        old-file numbers (parsed from the ``@@ -a,b +c,d @@`` hunk header)."""
         import re  # noqa: PLC0415
 
         from rich.text import Text as _T  # noqa: PLC0415
 
-        new_ln = 0
+        # Pale fg on a dark bg; truecolor terminals render these as-is, 256-color
+        # terminals (Terminal.app) downconvert to the nearest dark green/red.
+        ADD = "#cfe9b0 on #16320f"   # additions
+        DEL = "#f0adb6 on #361317"   # deletions
+        width = max(40, self.console.width)
+        indent = 2
+        avail = width - indent
+
+        old_ln = new_ln = 0
         for ln in diff_lines:
             if ln.startswith("@@"):
-                m = re.search(r"\+(\d+)", ln)
-                new_ln = int(m.group(1)) if m else new_ln
+                m = re.match(r"@@ -(\d+)\D.*\+(\d+)", ln) or re.match(r"@@ -(\d+) \+(\d+)", ln)
+                if m:
+                    old_ln, new_ln = int(m.group(1)), int(m.group(2))
                 continue
-            t = _T("    ")  # indent under the "└" branch
             if ln.startswith("+"):
-                t.append(f"{new_ln:>4} ", style="bright_black")
-                t.append("+ " + ln[1:][:200], style="green")
+                body = f"{new_ln:>4}  + {ln[1:]}"
+                self.console.print(_T(" " * indent).append(body[:avail].ljust(avail), style=ADD))
                 new_ln += 1
             elif ln.startswith("-"):
-                t.append("     ", style="bright_black")  # deletions: no new-file line no.
-                t.append("- " + ln[1:][:200], style="red")
-            else:  # context line (leading space)
-                t.append(f"{new_ln:>4} ", style="bright_black")
-                t.append("  " + (ln[1:] if ln.startswith(" ") else ln)[:200], style="bright_black")
+                body = f"{old_ln:>4}  - {ln[1:]}"
+                self.console.print(_T(" " * indent).append(body[:avail].ljust(avail), style=DEL))
+                old_ln += 1
+            else:  # context line (leading space) — dim, no background block
+                code = ln[1:] if ln.startswith(" ") else ln
+                self.console.print(_T(f"{' ' * indent}{new_ln:>4}    {code}"[:width], style="bright_black"))
+                old_ln += 1
                 new_ln += 1
-            self.console.print(t)
 
         # If the agent just updated its todos via ``todo_write``, draw the
         # checklist so the user can watch multi-step progress (Claude-Code style).
@@ -1059,12 +1123,12 @@ class MantisTUI:
     def _render_todos(self) -> None:
         from rich.text import Text as _T  # noqa: PLC0415
 
-        glyph = {"completed": ("✔", "ansigreen"),
+        glyph = {"completed": ("✔", "green"),
                  "in_progress": ("▶", BODY),
-                 "pending": ("○", "ansibrightblack")}
+                 "pending": ("○", "bright_black")}
         self.console.print()
         for t in self.todos:
-            mark, colour = glyph.get(t.get("status", "pending"), ("○", "ansibrightblack"))
+            mark, colour = glyph.get(t.get("status", "pending"), ("○", "bright_black"))
             active = t.get("status") == "in_progress"
             label = t.get("activeForm" if active else "content", t.get("content", ""))
             row = _T()

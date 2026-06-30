@@ -56,6 +56,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.3.3] — 2026-06-30
+
+### Changed
+
+- **Diffs now render like Claude Code** — full-width dark-green/dark-red
+  background rows for additions/deletions (not just colored text), with a
+  line-number gutter (additions show new-file numbers, deletions show
+  old-file numbers) and dim context lines.
+- Fixed remaining `Text` styles that used `ansi*` names (rendered white): the
+  tool-result branch, error lines, and the todo checklist now use valid rich
+  colors.
+
 ## [1.3.2] — 2026-06-30
 
 ### Fixed
