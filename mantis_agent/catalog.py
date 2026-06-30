@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -238,6 +239,72 @@ def provider_for_model(model_id: str) -> Provider | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Live-model cache (~/.mantis-agent/live_models.json)
+#
+# A provider's /v1/models is a network call (slow, sometimes 2.5s). Persisting
+# the result with a TTL lets the selector open *instantly* off the last cached
+# answer and refresh in the background — so it's both fast and current across
+# sessions, not just within one.
+# ---------------------------------------------------------------------------
+
+LIVE_TTL_S = 24 * 3600  # a day; model menus barely change
+
+
+def _live_path() -> Any:
+    return get_mantis_agent_dir() / "live_models.json"
+
+
+def _load_live() -> dict[str, Any]:
+    try:
+        return json.loads(_live_path().read_text())
+    except Exception:  # noqa: BLE001 — missing / corrupt → empty
+        return {}
+
+
+def cached_live_models(provider_id: str, *, ttl_s: float = LIVE_TTL_S) -> list[str] | None:
+    """The last fetched model list for a provider, if still fresh. Instant
+    (disk read, no network). ``None`` when absent or stale."""
+    rec = _load_live().get(provider_id)
+    if not isinstance(rec, dict):
+        return None
+    if time.time() - float(rec.get("ts", 0)) > ttl_s:
+        return None
+    models = rec.get("models")
+    return models if isinstance(models, list) else None
+
+
+def store_live_models(provider_id: str, models: list[str]) -> None:
+    data = _load_live()
+    data[provider_id] = {"models": models, "ts": time.time()}
+    p = _live_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
+def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str] | None:
+    """Fetch a provider's live /v1/models and persist it. Best-effort: returns
+    the ids (and caches them) on success, ``None`` on any failure. Intended to
+    run off the UI thread; pair with :func:`cached_live_models` for reads."""
+    import httpx  # noqa: PLC0415
+
+    key = api_key_for(provider)
+    try:
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(f"{provider.base_url.rstrip('/')}/models",
+                      headers={"Authorization": f"Bearer {key}"} if key else {})
+            r.raise_for_status()
+            ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+    except Exception:  # noqa: BLE001
+        return None
+    store_live_models(provider.id, ids)
+    return ids or None
+
+
 __all__ = [
     "Pull",
     "SUGGESTED_PULLS",
@@ -251,4 +318,8 @@ __all__ = [
     "api_key_for",
     "is_enabled",
     "provider_for_model",
+    "LIVE_TTL_S",
+    "cached_live_models",
+    "store_live_models",
+    "refresh_live_models",
 ]
