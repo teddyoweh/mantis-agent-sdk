@@ -182,13 +182,15 @@ class OllamaProvider(HTTPProviderMixin):
                     if isinstance(blk, TextBlock):
                         texts.append(blk.text)
                     elif isinstance(blk, ToolUseBlock):
+                        # Drop null argument values — a cut-off tool call can
+                        # carry ``content: null``, which Ollama rejects with
+                        # "expected a string, got null" and breaks the whole
+                        # next turn. Omitting the key lets the model re-supply it.
+                        args = {
+                            k: v for k, v in (blk.input or {}).items() if v is not None
+                        }
                         tool_calls.append(
-                            {
-                                "function": {
-                                    "name": blk.name,
-                                    "arguments": blk.input,
-                                }
-                            }
+                            {"function": {"name": blk.name, "arguments": args}}
                         )
                 msg: dict[str, Any] = {"role": "assistant", "content": "\n".join(texts)}
                 if tool_calls:

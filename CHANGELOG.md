@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.4.1] — 2026-06-30
+
+### Changed
+
+- **Diff colors now match Claude Code exactly** — bright green/red gutter
+  markers + line numbers (`rgb(105,219,124)` / `rgb(255,168,180)`, Claude's
+  `diffAdded`/`diffRemoved`) over the dark-blend row fill, with the dimmed
+  variants as the fallback fg.
+
 ## [1.4.0] — 2026-06-30
 
 ### Changed

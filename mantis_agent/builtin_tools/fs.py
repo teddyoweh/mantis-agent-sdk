@@ -260,6 +260,16 @@ async def write_file(path: str, content: str) -> str:
         content: Full file contents to write.
     """
 
+    # A truncated/cut-off tool call can arrive with content=None — fail with a
+    # clear, recoverable message instead of crashing on ``None.write_text``.
+    if content is None:
+        raise ValueError(
+            "content is required and must be a string. The previous write was "
+            "likely cut off — write the file again (smaller, or in pieces)."
+        )
+    if not isinstance(content, str):
+        content = str(content)
+
     p = Path(path).expanduser()
     old = ""
     if p.exists() and p.is_file():

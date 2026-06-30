@@ -1210,21 +1210,27 @@ class MantisTUI:
             self._syntax_cache: dict[str, Any] = {}
         lang = _lang_from_path(path)
 
-        ADD_BG, DEL_BG = "#16320f", "#3a1418"   # dark green / dark red row fill
-        ADD_FG, DEL_FG = "#cfe9b0", "#f0adb6"   # fallback fg when not highlighted
+        # Claude Code's exact diff palette (theme.ts): diffAdded rgb(105,219,124)
+        # and diffRemoved rgb(255,168,180) for the bright gutter marker/number;
+        # those colours blended dark over black for the row fill; the "dimmed"
+        # variants as the fallback code fg when a line isn't syntax-highlighted.
+        ADD_BG, DEL_BG = "#15331b", "#3a2226"    # row fill (dark green / dark red)
+        ADD_NUM, DEL_NUM = "#69db7c", "#ffa8b4"  # bright marker + line number
+        ADD_FG, DEL_FG = "#c7e1cb", "#fdd2d8"    # dimmed fallback code fg
         width = max(40, self.console.width)
         indent = 2
-        # gutter width: line number (>=4) + 2 spaces + marker + space
         old_ln = new_ln = 0
 
-        def _row(num: int, marker: str, code: str, bg: str, fg: str) -> None:
+        def _row(num: int, marker: str, code: str, bg: str, num_col: str, fg: str) -> None:
             gutter = f"{num:>4}  {marker} "
             avail = max(4, width - indent - len(gutter))
             code = code[:avail]
             row = _T(" " * indent)
-            row.append(gutter, style=f"{fg} on {bg}")
+            row.append(gutter, style=f"{num_col} on {bg}")
             ct = self._hl_code(code, lang)
-            ct.stylize(f"on {bg}")  # layer the row background over the syntax fg
+            if not ct.spans:           # not syntax-highlighted → use the dimmed fg
+                ct.stylize(fg)
+            ct.stylize(f"on {bg}")     # layer the row background over the fg
             row.append_text(ct)
             filled = indent + len(gutter) + len(ct)
             if filled < width:
@@ -1238,10 +1244,10 @@ class MantisTUI:
                     old_ln, new_ln = int(m.group(1)), int(m.group(2))
                 continue
             if ln.startswith("+"):
-                _row(new_ln, "+", ln[1:], ADD_BG, ADD_FG)
+                _row(new_ln, "+", ln[1:], ADD_BG, ADD_NUM, ADD_FG)
                 new_ln += 1
             elif ln.startswith("-"):
-                _row(old_ln, "-", ln[1:], DEL_BG, DEL_FG)
+                _row(old_ln, "-", ln[1:], DEL_BG, DEL_NUM, DEL_FG)
                 old_ln += 1
             else:  # context line (leading space) — dim, no background block
                 code = ln[1:] if ln.startswith(" ") else ln
@@ -1892,7 +1898,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--api-key", default=os.environ.get("MANTIS_AGENT_API_KEY"),
                    help="API key (else env MANTIS_AGENT_API_KEY).")
     p.add_argument("--system", default=None, help="System prompt.")
-    p.add_argument("--max-tokens", type=int, default=2048)
+    # Generous default: a 2048 cap truncates a single-tool-call file write
+    # mid-content (the JSON never closes → "unterminated tool_call" → null
+    # content → the model loops). 8192 lets it write a real file in one shot.
+    p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--max-turns", type=int, default=20)
     args = p.parse_args(argv)
