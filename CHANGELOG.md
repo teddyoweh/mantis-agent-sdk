@@ -56,6 +56,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.1.14] — 2026-06-30
+
+### Changed
+
+- **Tool calls render Claude-Code-style.** Instead of `⚒ read(path=...)` and a
+  raw output dump, tool calls now show a friendly verb + target
+  (`⚒ Read foo.py`, `⚒ Edit foo.py`, `⚒ Run date +%H:%M`, `⚒ Search "pat"`)
+  with the result hanging off a `└` branch and overflow capped.
+
 ## [1.1.13] — 2026-06-30
 
 ### Fixed

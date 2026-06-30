@@ -66,12 +66,31 @@ EXAMPLE_PROMPTS = [
 
 # Slash commands shown in the completion menu (command → one-line description).
 SLASH_COMMANDS = {
+    "/models": "browse & pick a model (local · API · self-host)",
+    "/model": "switch / pick a model",
+    "/enable": "turn on a hosted provider (saves its API key)",
+    "/disable": "forget a provider's saved key",
+    "/connect": "point at your own self-hosted server",
     "/help": "show available commands",
-    "/model": "switch the model for the next turns",
     "/clear": "clear the conversation history",
     "/cwd": "show the working directory",
     "/exit": "quit mantis",
     "/quit": "quit mantis",
+}
+
+# Friendly verbs for tool calls, Claude-Code-style (e.g. ``Read foo.py``). The
+# value is (verb, primary-arg-keys-in-priority-order) — the first present key is
+# shown as the target after the verb.
+TOOL_VERBS = {
+    "bash": ("Run", ("command",)),
+    "read": ("Read", ("path", "file_path")),
+    "write": ("Write", ("path", "file_path")),
+    "edit": ("Edit", ("path", "file_path")),
+    "ls": ("List", ("path",)),
+    "glob": ("Find", ("pattern", "path")),
+    "grep": ("Search", ("pattern", "query")),
+    "web_search": ("Search web", ("query",)),
+    "web_fetch": ("Fetch", ("url",)),
 }
 
 # Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
@@ -568,7 +587,6 @@ class MantisTUI:
 
     def _build_session(self) -> Any:
         from prompt_toolkit import PromptSession  # noqa: PLC0415
-        from prompt_toolkit.completion import WordCompleter  # noqa: PLC0415
         from prompt_toolkit.formatted_text import HTML  # noqa: PLC0415
         from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
         from prompt_toolkit.styles import Style  # noqa: PLC0415
@@ -580,11 +598,44 @@ class MantisTUI:
             self.mode_idx = (self.mode_idx + 1) % len(MODES)
             event.app.invalidate()
 
-        completer = WordCompleter(
-            list(SLASH_COMMANDS),
-            meta_dict=SLASH_COMMANDS,  # shows the description column
-            sentence=True,
-        )
+        from prompt_toolkit.completion import Completer, Completion  # noqa: PLC0415
+
+        installed_models, _ = self._available_models()
+
+        class _MantisCompleter(Completer):
+            def get_completions(inner, document, complete_event):  # noqa: N805
+                from . import catalog  # noqa: PLC0415
+
+                text = document.text_before_cursor
+                if not text.startswith("/"):
+                    return
+                if " " not in text:  # completing the command itself
+                    for cmd, desc in SLASH_COMMANDS.items():
+                        if cmd.startswith(text):
+                            yield Completion(cmd, start_position=-len(text),
+                                             display=cmd, display_meta=desc)
+                    return
+                cmd, _, rest = text.partition(" ")
+                if cmd == "/model":  # suggest model ids
+                    seen = set()
+                    for m in installed_models:
+                        if rest.lower() in m.lower():
+                            seen.add(m)
+                            yield Completion(m, start_position=-len(rest),
+                                             display=m, display_meta="ollama · local")
+                    for prov in catalog.CATALOG:
+                        for m in prov.models:
+                            if m not in seen and rest.lower() in m.lower():
+                                seen.add(m)
+                                yield Completion(m, start_position=-len(rest),
+                                                 display=m, display_meta=prov.label)
+                elif cmd in ("/enable", "/disable"):  # suggest provider ids
+                    for prov in catalog.CATALOG:
+                        if prov.id.startswith(rest.lower()):
+                            yield Completion(prov.id, start_position=-len(rest),
+                                             display=prov.id, display_meta=prov.label)
+
+        completer = _MantisCompleter()
 
         def bottom_toolbar() -> Any:
             label, symbol, color = MODES[self.mode_idx]
@@ -701,39 +752,50 @@ class MantisTUI:
                     # so it looks right in Terminal.app (no truecolor needed).
                     self.console.print(Markdown(block.text.strip(), code_theme="ansi_dark"))
             elif isinstance(block, ToolUseBlock):
+                from rich.text import Text as _T  # noqa: PLC0415
+
+                verb, target = self._tool_label(block.name, block.input or {})
                 self.console.print()  # breathing room above the tool call
-                self.console.print(
-                    f"[{LEG}]⚒[/] [white]{block.name}[/]"
-                    f"[ansibrightblack]({self._fmt_args(block.input)})[/]"
-                )
+                line = _T()
+                line.append("⚒ ", style=LEG)
+                line.append(verb, style="bold white")
+                if target:
+                    line.append(" " + target, style="ansibrightblack")
+                self.console.print(line)
 
     def _render_tool_results(self, msg: Any, ToolResultBlock: type) -> None:
+        from rich.text import Text as _T  # noqa: PLC0415
+
         for block in msg.content:
             if not isinstance(block, ToolResultBlock):
                 continue
             body = block.content if isinstance(block.content, str) else str(block.content)
-            body = body.strip()
-            preview = "\n".join(body.splitlines()[:12])
-            if body.count("\n") >= 12:
-                preview += "\n  …"
-            indented = "\n".join("  " + ln for ln in preview.splitlines()) or "  (no output)"
-            style = "ansired" if block.is_error else "ansibrightblack"
-            self.console.print(f"[{style}]{indented}[/]", markup=False if block.is_error else True)
-            if block.is_error:
-                self.console.print("[ansired]  ↑ error[/]")
+            lines = body.strip().splitlines() or ["(no output)"]
+            colour = "ansired" if block.is_error else "ansibrightblack"
+
+            # First line hangs off a "└" branch; the rest is indented beneath it.
+            head = _T()
+            head.append("  └ ", style=LEG if not block.is_error else "ansired")
+            head.append(lines[0][:200], style=colour)
+            self.console.print(head)
+            for ln in lines[1:12]:
+                self.console.print(_T("    " + ln[:200], style=colour))
+            if len(lines) > 12:
+                self.console.print(_T(f"    … (+{len(lines) - 12} more lines)", style="ansibrightblack"))
 
     @staticmethod
-    def _fmt_args(args: dict[str, Any]) -> str:
-        """One-line summary of a tool call's input, truncated for display."""
-        parts = []
-        for k, v in args.items():
-            s = v if isinstance(v, str) else repr(v)
-            s = s.replace("\n", " ")
-            if len(s) > 60:
-                s = s[:57] + "…"
-            parts.append(f"{k}={s}")
-        out = ", ".join(parts)
-        return out[:120] + "…" if len(out) > 120 else out
+    def _tool_label(name: str, args: dict[str, Any]) -> tuple[str, str]:
+        """Map a tool call to a friendly (verb, target) — e.g. ("Read", "foo.py")."""
+        verb, keys = TOOL_VERBS.get(name, (name, ("path", "command", "query", "pattern", "url")))
+        target = ""
+        for k in keys:
+            if args.get(k):
+                target = str(args[k])
+                break
+        target = " ".join(target.split())  # collapse whitespace/newlines
+        if len(target) > 64:
+            target = target[:63] + "…"
+        return verb, target
 
     # -- slash commands ------------------------------------------------------
 

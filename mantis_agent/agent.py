@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
@@ -84,6 +85,71 @@ from .types import (
 
 _log = logging.getLogger("mantis_agent.agent")
 _JSON_DECODER = msgspec.json.Decoder()
+
+
+# ---------------------------------------------------------------------------
+# Text tool-call salvage
+# ---------------------------------------------------------------------------
+#
+# Local OSS models (even 7B coder tunes) routinely "call" a tool by printing it
+# as TEXT instead of using the structured tool-call channel — either a JSON
+# object ``{"name": "bash", "arguments"/"parameters": {...}}`` or a shell code
+# fence `````bash\n<cmd>\n`````. Without recovery the turn has no
+# tool_use block, the agent loop treats it as a natural stop, and the model's
+# fabricated output is shown as the answer. We salvage these into real
+# ToolUseBlocks so the loop actually runs the command and feeds back the result.
+
+_SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
+_FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
+
+
+def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseBlock]:
+    """Recover tool calls a model emitted as prose. Returns ToolUseBlocks whose
+    ``name`` is a real registered tool (empty list if nothing salvageable)."""
+    from .streaming.text_tool_parser import _loads_lenient  # noqa: PLC0415
+
+    s = text.strip()
+    if not s:
+        return []
+    calls: list[ToolUseBlock] = []
+    n = 0
+
+    def _mk(name: str, args: dict) -> ToolUseBlock:
+        nonlocal n
+        n += 1
+        return ToolUseBlock(id=f"salvage_{n}_{abs(hash(name)) % 100000}", name=name, input=args)
+
+    # 1. JSON tool-call object(s), tolerant of the malformed JSON small models
+    #    emit. Accept both "arguments" (OpenAI/Anthropic) and "parameters" (the
+    #    shape llama3.x tends to print).
+    cleaned = s.replace("<tool_call>", " ").replace("</tool_call>", " ")
+    parsed = _loads_lenient(cleaned)
+    candidates = parsed if isinstance(parsed, list) else [parsed]
+    for obj in candidates:
+        if not isinstance(obj, dict):
+            continue
+        name = obj.get("name")
+        args = obj.get("arguments")
+        if args is None:
+            args = obj.get("parameters")
+        if isinstance(name, str) and registry.get(name) is not None and isinstance(args, dict):
+            calls.append(_mk(name, args))
+    if calls:
+        return calls
+
+    # 2. Shell code fences -> bash(command=...). Only explicit shell langs, so we
+    #    never mistake an output dump or a python snippet for a command to run.
+    if registry.get("bash") is not None:
+        for m in _FENCE_RE.finditer(s):
+            lang = m.group(1).lower()
+            body = m.group(2).strip()
+            if body and lang in _SHELL_FENCE_LANGS:
+                cmd = "\n".join(
+                    re.sub(r"^\s*\$\s?", "", ln) for ln in body.splitlines()
+                ).strip()
+                if cmd:
+                    calls.append(_mk("bash", {"command": cmd}))
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +649,39 @@ class Agent:
 
                 # Stream consumed. Finalize the assistant message.
                 assistant = assembler.finalize()
+
+                # Salvage tool calls the model emitted as TEXT (JSON object or a
+                # shell code fence) instead of via the structured channel — the
+                # dominant failure mode for local OSS models. Convert them to
+                # real tool_use blocks and dispatch through this same executor so
+                # the loop continues exactly as if they'd been native calls.
+                if self.tools and not any(
+                    isinstance(b, ToolUseBlock) for b in assistant.content
+                ):
+                    salvaged = _salvage_text_tool_calls(
+                        "".join(
+                            b.text for b in assistant.content
+                            if isinstance(b, TextBlock)
+                        ),
+                        registry,
+                    )
+                    if salvaged:
+                        assistant = AssistantMessage(
+                            content=list(salvaged),
+                            stop_reason=assistant.stop_reason,
+                            usage=assistant.usage,
+                        )
+                        for call in salvaged:
+                            approved, sc_result = await self._preflight_call(
+                                call, messages_snapshot
+                            )
+                            if sc_result is not None:
+                                short_circuit[call.id] = sc_result
+                                ordered_calls.append(call)
+                            else:
+                                ordered_calls.append(approved)
+                                executor.add_tool_call(approved)
+
                 messages.append(assistant)
 
                 # Close the llm.call span now that the provider stream is
