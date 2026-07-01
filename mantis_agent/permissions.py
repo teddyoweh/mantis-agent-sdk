@@ -291,6 +291,13 @@ def classify_bash_command(command: str) -> BashRisk:
     return BashRisk(False)
 
 
+def _is_dangerous_bash(tool: Tool, input: dict[str, Any]) -> bool:
+    """True for a shell tool call whose command trips the danger classifier."""
+    if tool.name != "bash":
+        return False
+    return classify_bash_command(str((input or {}).get("command", ""))).is_dangerous
+
+
 def _format_prompt(tool: Tool, input: dict[str, Any]) -> str:
     """Human-readable one-liner for the Ask prompt."""
     if tool.name == "bash":
@@ -340,15 +347,23 @@ async def _decide(
     if _session_key(tool, input) in ctx.session_allows:
         return Allow()
 
-    # Declarative rules: deny > allow > ask. Deny always wins.
-    if ctx.rules is not None:
-        hit = ctx.rules.match(tool.name, input)
-        if hit is not None:
-            if hit.action == "deny":
-                return Deny(reason=f"denied by rule {hit.pattern!r}")
-            if hit.action == "allow":
-                return Allow()
-            return Ask(prompt=_format_prompt(tool, input))
+    # Explicit deny rule always wins — evaluate it before anything else.
+    hit = ctx.rules.match(tool.name, input) if ctx.rules is not None else None
+    if hit is not None and hit.action == "deny":
+        return Deny(reason=f"denied by rule {hit.pattern!r}")
+
+    # A dangerous shell command can NEVER be auto-allowed by a broad allow rule,
+    # by acceptEdits, or by the mode default — it must be confirmed live (or
+    # denied when headless). Only an explicit deny rule (above) or bypass mode
+    # short-circuits it. This is the bypass-immune-style safety check.
+    if _is_dangerous_bash(tool, input):
+        return Ask(prompt=_format_prompt(tool, input))
+
+    # Declarative allow / ask rules.
+    if hit is not None:
+        if hit.action == "allow":
+            return Allow()
+        return Ask(prompt=_format_prompt(tool, input))
 
     # acceptEdits auto-approves file edits (but not bash / other mutations).
     if ctx.mode == "acceptEdits" and _is_edit_tool(tool):
@@ -380,9 +395,14 @@ async def _resolve_ask(
     non-blocking fallback when none is wired."""
 
     if ctx.asker is None:
-        # No interactive surface. Preserve historical behavior: ``auto`` mode
-        # kept surfacing Ask (the loop treats it permissively); everything
-        # else was permissive too. Either way, don't block.
+        # No interactive surface (library / headless). A dangerous shell
+        # command with nobody to approve it is DENIED — never auto-run.
+        if _is_dangerous_bash(tool, input):
+            return Deny(
+                reason="dangerous command blocked (no interactive approval available)"
+            )
+        # Otherwise preserve historical behavior: ``auto`` surfaced Ask (the
+        # loop treats it permissively); everything else was permissive too.
         return ask if ctx.mode == "auto" else Allow()
 
     result = await ctx.asker(tool, input, ask.prompt)

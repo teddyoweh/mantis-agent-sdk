@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.8.1] — 2026-06-30
+
+### Security
+
+- **Dangerous shell commands can no longer skip the permission prompt.** A bash
+  command flagged by the danger classifier (`rm -rf`, `curl|sh`, `sudo`, raw
+  disk writes, …) now always requires live confirmation — a broad `allow` rule,
+  `acceptEdits`, or the mode default can't auto-run it. With no interactive
+  approver (library / headless), such a command is denied rather than run. Only
+  an explicit `deny` rule or `bypass` mode overrides it.
+
 ## [1.8.0] — 2026-06-30
 
 ### Added
