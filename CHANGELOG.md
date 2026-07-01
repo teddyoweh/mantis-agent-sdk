@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.32.0] — 2026-06-30
+
+### Added
+
+- **`notebook_edit` tool** (parity roadmap T2). Edit a Jupyter notebook cell:
+  `replace` (default), `insert` (a new code/markdown cell before an index), or
+  `delete`, addressed by 0-based `cell_number`. Replacing a code cell clears its
+  now-stale outputs and execution count; writes nbformat-style JSON back. Pairs
+  with notebook reading (1.31.0) to complete notebook support.
+
 ## [1.31.0] — 2026-06-30
 
 ### Added

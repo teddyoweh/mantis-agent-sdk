@@ -286,6 +286,68 @@ def _nb_source(src: Any) -> str:
     return "".join(src) if isinstance(src, list) else str(src or "")
 
 
+@tool(name="notebook_edit", is_read_only=False)
+async def notebook_edit(
+    path: str,
+    new_source: str = "",
+    cell_number: int = 0,
+    edit_mode: str = "replace",
+    cell_type: str = "code",
+) -> str:
+    """Edit a Jupyter notebook (``.ipynb``) cell.
+
+    Args:
+        path: The notebook file.
+        new_source: The new cell source (ignored for delete).
+        cell_number: 0-based index of the cell to replace/delete, or the index
+            to insert BEFORE.
+        edit_mode: ``replace`` (default), ``insert``, or ``delete``.
+        cell_type: For insert — ``code`` (default) or ``markdown``.
+    """
+    import json  # noqa: PLC0415
+
+    p = Path(path).expanduser()
+    if not p.exists():
+        raise FileNotFoundError(f"no such file: {path}")
+    try:
+        nb = json.loads(await anyio.to_thread.run_sync(lambda: p.read_text("utf-8")))
+    except (ValueError, OSError) as e:
+        raise ValueError(f"not a readable notebook: {e}") from None
+    if not isinstance(nb, dict) or not isinstance(nb.get("cells"), list):
+        raise ValueError(f"{path} is not a valid .ipynb (no 'cells' array)")
+
+    cells: list = nb["cells"]
+    n = _coerce_int(cell_number, default=0, lo=0)
+    mode = edit_mode if edit_mode in ("replace", "insert", "delete") else "replace"
+    src_lines = (new_source or "").splitlines(keepends=True)
+
+    if mode == "delete":
+        if not (0 <= n < len(cells)):
+            raise ValueError(f"cell_number {n} out of range (0..{len(cells) - 1})")
+        cells.pop(n)
+        summary = f"deleted cell {n}"
+    elif mode == "insert":
+        ct = cell_type if cell_type in ("code", "markdown") else "code"
+        new_cell: dict[str, Any] = {"cell_type": ct, "metadata": {}, "source": src_lines}
+        if ct == "code":
+            new_cell["outputs"] = []
+            new_cell["execution_count"] = None
+        cells.insert(min(n, len(cells)), new_cell)
+        summary = f"inserted {ct} cell at {n}"
+    else:  # replace
+        if not (0 <= n < len(cells)):
+            raise ValueError(f"cell_number {n} out of range (0..{len(cells) - 1})")
+        cells[n]["source"] = src_lines
+        if cells[n].get("cell_type") == "code":
+            cells[n]["outputs"] = []          # source changed → stale outputs cleared
+            cells[n]["execution_count"] = None
+        summary = f"replaced cell {n}"
+
+    body = json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
+    await anyio.to_thread.run_sync(lambda: p.write_text(body, encoding="utf-8"))
+    return f"{summary} in {path} ({len(cells)} cells total)"
+
+
 def _notebook_output_text(out: dict) -> str:
     """Extract the text of one notebook output cell (stream / result / error)."""
     kind = out.get("output_type")
@@ -739,6 +801,7 @@ CODING_TOOLS: tuple[Tool, ...] = (
     write_file,
     edit_file,
     multi_edit,
+    notebook_edit,
     ls,
     glob,
     grep,
@@ -752,6 +815,7 @@ __all__ = [
     "write_file",
     "edit_file",
     "multi_edit",
+    "notebook_edit",
     "ls",
     "glob",
     "grep",
