@@ -74,6 +74,23 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.9.1] — 2026-06-30
+
+### Changed
+
+- **The `mantis` system prompt is rebuilt to Claude-Code quality.** It keeps
+  mantis's local-model tuning (act immediately, call tools instead of describing,
+  never refuse a normal engineering task) and adds the engineering discipline a
+  real coding agent needs: read before you change, make the smallest diff (no
+  speculative abstractions / over-engineering / needless comments), prefer
+  editing over creating files, diagnose failures before switching tactics, and
+  **verify before reporting done + report outcomes faithfully**. New "Acting with
+  care" section (confirm destructive / shared-state actions; approval once ≠
+  approval always; no `--no-verify` shortcuts) and output conventions
+  (`file_path:line_number`, lead with the answer, no emojis unless asked). The
+  static environment line is dropped — the richer `<env>` context head (1.9.0)
+  covers it.
+
 ## [1.9.0] — 2026-06-30
 
 ### Added
