@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.36.0] — 2026-06-30
+
+### Added
+
+- **Thinking-block rendering in the terminal** (parity roadmap T2 polish).
+  Reasoning models (DeepSeek-R1, QwQ, API extended-thinking) emit a thinking
+  block; previously the terminal dropped it entirely. Now it's shown dimmed above
+  the answer under a `✻ thinking` header, capped at 12 lines (with a `… (N more
+  lines)` note) so a long chain-of-thought doesn't bury the reply. New pure
+  `_thinking_lines` helper.
+
 ## [1.35.0] — 2026-06-30
 
 ### Added

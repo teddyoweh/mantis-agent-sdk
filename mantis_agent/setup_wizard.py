@@ -520,6 +520,58 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     return 0
 
 
+def _run_oauth_login(c: Any) -> str | None:
+    """Interactive Claude subscription (Pro/Max) OAuth login. Opens the authorize
+    page, takes the pasted code, exchanges it for an access token. Returns the
+    token, or None if cancelled/failed."""
+    import getpass  # noqa: PLC0415
+    import webbrowser  # noqa: PLC0415
+
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import anthropic_oauth as oa  # noqa: PLC0415
+
+    # Quick path: most people already have a token (`claude setup-token`, a
+    # subscription token, a gateway token). Paste it and we're done — the browser
+    # sign-in is only for people who DON'T have one yet (press Enter for it).
+    c.print(Text("\n  Paste an OAuth / auth token if you have one, or press Enter to sign in:", style="white"))
+    try:
+        existing = getpass.getpass("  token › ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if existing:
+        return existing
+
+    verifier, challenge = oa.make_pkce()
+    state = oa.make_state()
+    url = oa.build_authorize_url(code_challenge=challenge, state=state)
+
+    c.print(Text("\n  Sign in with your Claude subscription (Pro/Max) — opening your browser…", style="white"))
+    c.print(Text(f"  If it doesn't open, paste this URL:\n  {url}\n", style="bright_black"))
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        pass
+    c.print(Text("  After approving, copy the code shown and paste it here (empty to cancel).", style="white"))
+    try:
+        code = input("  code › ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not code:
+        return None
+    c.print(Text("  Exchanging code for a token…", style="bright_black"))
+    try:
+        tokens = oa.exchange_code(code, code_verifier=verifier, state=state)
+    except Exception as e:  # noqa: BLE001
+        c.print(Text(f"  ✗ token exchange failed: {e}", style="red"))
+        return None
+    token = tokens.get("access_token")
+    if not token:
+        c.print(Text("  ✗ no access_token in the response", style="red"))
+        return None
+    return str(token)
+
+
 def _run_anthropic(c: Any, prov: Any) -> int:
     """Claude auth chooser: direct API key (x-api-key), OAuth / auth token
     (Bearer — a subscription login or `claude setup-token`), or a Bedrock /
@@ -537,7 +589,7 @@ def _run_anthropic(c: Any, prov: Any) -> int:
     keys = ["apikey", "oauth", "gateway"]
     rows = [
         ("API key      ", "a direct Anthropic key (console.anthropic.com) — x-api-key"),
-        ("OAuth token  ", "subscription login / `claude setup-token` — Bearer"),
+        ("OAuth login  ", "sign in with your Claude Pro/Max subscription (browser) — no key"),
         ("Cloud gateway", "Bedrock · Vertex · Azure via a proxy URL + Bearer token"),
     ]
     idx = _arrow_select("How do you authenticate with Claude?", rows)
@@ -572,15 +624,21 @@ def _run_anthropic(c: Any, prov: Any) -> int:
         base_url = entered if entered.startswith(("http://", "https://")) else "https://" + entered
 
     # -- credential --------------------------------------------------------
-    label = "ANTHROPIC_API_KEY" if method == "apikey" else "Bearer token"
-    c.print(Text(f"\n  Paste your {label} (input hidden):", style="white"))
-    try:
-        cred = getpass.getpass("  › ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return 1
-    if not cred:
-        c.print(Text("  No credential entered — cancelled.", style=dim))
-        return 1
+    if method == "oauth":
+        cred = _run_oauth_login(c)
+        if not cred:
+            c.print(Text("  Cancelled — no token obtained.", style=dim))
+            return 1
+    else:
+        label = "ANTHROPIC_API_KEY" if method == "apikey" else "Bearer token"
+        c.print(Text(f"\n  Paste your {label} (input hidden):", style="white"))
+        try:
+            cred = getpass.getpass("  › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not cred:
+            c.print(Text("  No credential entered — cancelled.", style=dim))
+            return 1
 
     # -- validate (ping /v1/messages with the chosen auth) -----------------
     c.print(Text("  Validating…", style=dim))

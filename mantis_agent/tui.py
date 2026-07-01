@@ -123,6 +123,27 @@ def _lang_from_path(path: str | None) -> str | None:
     return _EXT_LANG.get(Path(path).suffix.lower())
 
 
+_THINK_CAP = 12  # max thinking lines rendered before eliding the rest
+
+
+def _thinking_lines(thinking: str) -> list[Any]:
+    """Rich Text lines for a ThinkingBlock — a dim ``✻ thinking`` header + the
+    reasoning dimmed and capped. Empty list when there's nothing to show. Pure
+    (returns renderables) so it's testable."""
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    body = (thinking or "").strip()
+    if not body:
+        return []
+    lines = body.splitlines()
+    out: list[Any] = [_T("✻ thinking", style="italic bright_black")]
+    for ln in lines[:_THINK_CAP]:
+        out.append(_T(f"  {ln}", style="bright_black"))
+    if len(lines) > _THINK_CAP:
+        out.append(_T(f"  … ({len(lines) - _THINK_CAP} more lines)", style="italic bright_black"))
+    return out
+
+
 def resolve_memory_target(target: str | None, cwd: str | Path, home: str | Path) -> Path:
     """Map a ``/memory`` target to the file to edit. ``project`` (default) →
     ``<cwd>/MANTIS.md``; ``agents`` → ``<cwd>/AGENTS.md``; ``user`` →
@@ -1565,7 +1586,8 @@ class MantisTUI:
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> bool:
         """Render an assistant message; return True if it emitted a tool call
         (so the caller can keep the call and its result visually hugged)."""
-        from .types import TextBlock  # noqa: PLC0415
+        from .types import TextBlock, ThinkingBlock  # noqa: PLC0415
+        from rich.text import Text as _T  # noqa: PLC0415
 
         # If this turn's text was streamed live (token-by-token), it's already on
         # screen — just close the line and skip re-printing it; still render the
@@ -1581,7 +1603,13 @@ class MantisTUI:
         # blanks here too would double the spacing.
         had_tool_call = False
         for block in msg.content:
-            if isinstance(block, TextBlock):
+            if isinstance(block, ThinkingBlock):
+                # Reasoning models (DeepSeek-R1, QwQ, API extended-thinking) emit
+                # a thinking block — show it dimmed above the answer, capped so a
+                # long chain-of-thought doesn't bury the reply.
+                for line in _thinking_lines(getattr(block, "thinking", "")):
+                    self.console.print(line)
+            elif isinstance(block, TextBlock):
                 if streamed:
                     continue  # already shown live via the streaming sink
                 if block.text.strip():
@@ -1590,8 +1618,6 @@ class MantisTUI:
                     # the big vertical margins rich adds around code by default.
                     self.console.print(_compact_markdown(block.text.strip()))
             elif isinstance(block, ToolUseBlock):
-                from rich.text import Text as _T  # noqa: PLC0415
-
                 had_tool_call = True
                 verb, target = self._tool_label(block.name, block.input or {})
                 line = _T()

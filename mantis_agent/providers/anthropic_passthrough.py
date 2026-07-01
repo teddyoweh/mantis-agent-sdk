@@ -192,6 +192,11 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         }
         if token:
             headers["authorization"] = f"Bearer {token}"
+            # A subscription OAuth token against api.anthropic.com requires the
+            # oauth beta header (Claude Code sends OAUTH_BETA_HEADER). Skip it for
+            # gateways (non-anthropic.com base) which handle auth themselves.
+            if not anthropic_beta and "anthropic.com" in url:
+                headers["anthropic-beta"] = "oauth-2025-04-20"
         else:
             headers["x-api-key"] = key
         if anthropic_beta:
