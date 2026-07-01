@@ -84,3 +84,41 @@ def test_idempotent() -> None:
     msgs = [AssistantMessage(content=[ToolUseBlock(id="c1", name="bash", input={})])]
     assert close_open_tool_calls(msgs) == 1
     assert close_open_tool_calls(msgs) == 0     # second call finds nothing open
+
+
+def test_result_slotted_before_following_user_message() -> None:
+    # open tool_use with a NEW user message after it → result goes BETWEEN them,
+    # not tacked on the end (order must stay tool_use → tool_result → user text).
+    msgs = [
+        AssistantMessage(content=[ToolUseBlock(id="c1", name="bash", input={})]),
+        UserMessage(content="actually, do something else"),
+    ]
+    assert close_open_tool_calls(msgs) == 1
+    assert [type(m).__name__ for m in msgs] == ["AssistantMessage", "UserMessage", "UserMessage"]
+    assert isinstance(msgs[1].content[0], ToolResultBlock)     # the synthetic result
+    assert msgs[2].content == "actually, do something else"    # the real message, after
+
+
+def test_run_iter_self_heals_malformed_history() -> None:
+    # A history ending in an unanswered tool_use must not break the next run —
+    # run_iter closes it before the first provider call.
+    import anyio
+
+    from mantis_agent.agent import Agent
+    from mantis_agent.providers.mock import MockProvider
+
+    async def go():
+        agent = Agent(model="mock", provider=MockProvider(default_text="ok"),
+                      auto_compact=False, include_recall=False, include_env=False,
+                      include_memory=False)
+        msgs = [
+            UserMessage(content="run ls"),
+            AssistantMessage(content=[ToolUseBlock(id="c1", name="bash", input={"command": "ls"})]),
+        ]
+        async for _ in agent.run_iter(msgs):
+            pass
+        return msgs
+
+    msgs = anyio.run(go)
+    uses, answered = _ids_answered(msgs)
+    assert uses <= answered      # the dangling tool_use was closed, run completed

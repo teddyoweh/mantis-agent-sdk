@@ -353,6 +353,31 @@ def test_run_setup_entry_points_exit_cleanly_on_cancel(monkeypatch, tmp_path) ->
         assert rc in (0, 1), f"{argv} returned {rc!r}"
 
 
+def test_openrouter_free_model_restores_key_via_backend_match(monkeypatch, tmp_path) -> None:
+    # An OpenRouter ":free" model id isn't in provider_for_model's prefix map, so
+    # restore must fall back to matching the saved backend URL to wire the key —
+    # else the model comes back with no auth and 401s.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    # Sanity: the id really does miss the heuristic.
+    assert catalog.provider_for_model("meta-llama/llama-3.3-70b:free") is None
+    or_url = catalog.BY_ID["openrouter"].base_url
+    catalog.set_key("openrouter", "sk-or-key")
+    catalog.set_last_model("meta-llama/llama-3.3-70b:free", or_url)
+
+    from mantis_agent.tui import MantisTUI
+    try:
+        t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434",
+                      api_key=None, system=None, max_tokens=1, temperature=None, max_turns=1)
+        t._restore_last_model()
+        assert t.model == "meta-llama/llama-3.3-70b:free"
+        assert t.backend.rstrip("/") == or_url.rstrip("/")
+        assert t.api_key == "sk-or-key"  # wired via backend-URL match
+    finally:
+        catalog.clear_key("openrouter")
+
+
 def test_hosted_provider_round_trip_wires_backend_and_key(monkeypatch, tmp_path) -> None:
     # The common case: an OpenAI-compat hosted provider (DeepSeek/OpenAI/Groq/…)
     # set up with a key must restore its model + backend + key and build a

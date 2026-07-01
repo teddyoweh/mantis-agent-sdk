@@ -1154,6 +1154,12 @@ class MantisTUI:
             return
         model = last["model"]
         prov = catalog.provider_for_model(model)
+        if prov is None and last.get("backend"):
+            # The model-id heuristic missed it (e.g. an OpenRouter ":free"
+            # variant, or any hosted id not in the prefix map) — match the saved
+            # backend URL to a catalog provider so its saved key still gets wired.
+            _back = last["backend"].rstrip("/")
+            prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == _back), None)
         if prov is not None:
             key = catalog.api_key_for(prov)
             if not key:

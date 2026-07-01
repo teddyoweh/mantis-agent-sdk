@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.14.0] — 2026-06-30
+
+### Changed
+
+- **Malformed-history self-healing is now library-wide, not just the TUI.**
+  `run_iter` closes any unanswered `tool_use` at the very start of a run, so a
+  history left dangling by ANY path — a cancelled `Agent.run()`, a session saved
+  mid-tool then resumed, or a hand-built message list — produces a well-formed
+  first request instead of a provider error. `close_open_tool_calls` is now
+  position-aware: it inserts the synthetic `tool_result` immediately after the
+  assistant that opened it (correctly slotting BETWEEN the tool_use and a
+  following user message), and augments a partially-answered result message.
+  Idempotent.
+
 ## [2.13.0] — 2026-06-30
 
 ### Changed

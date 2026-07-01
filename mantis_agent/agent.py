@@ -162,35 +162,48 @@ def _refusal_nudge() -> "UserMessage":
 def close_open_tool_calls(
     messages: list[Message], *, note: str = "[interrupted by user]"
 ) -> int:
-    """Append synthetic ``tool_result`` blocks for any ``tool_use`` in the history
-    that has no matching result — so the conversation stays well-formed after an
-    interrupt (providers require every tool_use be answered) WITHOUT discarding
-    the work already done. Returns how many results were synthesized.
+    """Ensure every assistant ``tool_use`` is answered by a ``tool_result`` in the
+    IMMEDIATELY following user message — inserting synthetic ``[interrupted]``
+    results in the correct position when the tools never ran. Keeps the history
+    well-formed (providers require every tool_use be answered, right after it)
+    WITHOUT discarding the work already done. Returns how many results were added.
 
-    Called when a turn is cancelled mid-tool: the last assistant message may hold
-    tool_use blocks whose tools never ran (or whose results were never appended).
+    Position-aware, so it heals a malformed tail from any source: a cancelled
+    turn, a session saved mid-tool then resumed, or a hand-built message list —
+    including the case where a new user message was already appended after the
+    open tool_use (the result is slotted BETWEEN them, not tacked on the end).
+    Idempotent.
     """
-    answered: set[str] = set()
-    for m in messages:
+    added = 0
+    i = 0
+    while i < len(messages):
+        m = messages[i]
         content = getattr(m, "content", None)
-        if isinstance(content, list):
-            for b in content:
-                if isinstance(b, ToolResultBlock):
-                    answered.add(b.tool_use_id)
-    missing: list[str] = []
-    for m in messages:
-        content = getattr(m, "content", None)
-        if isinstance(content, list):
-            for b in content:
-                if isinstance(b, ToolUseBlock) and b.id not in answered and b.id not in missing:
-                    missing.append(b.id)
-    if not missing:
-        return 0
-    results: list[ContentBlock] = [
-        ToolResultBlock(tool_use_id=tid, content=note, is_error=True) for tid in missing
-    ]
-    messages.append(UserMessage(content=results))
-    return len(results)
+        if getattr(m, "role", "") == "assistant" and isinstance(content, list):
+            use_ids = [b.id for b in content if isinstance(b, ToolUseBlock)]
+            if use_ids:
+                nxt = messages[i + 1] if i + 1 < len(messages) else None
+                nxt_content = getattr(nxt, "content", None) if nxt is not None else None
+                answered = (
+                    {b.tool_use_id for b in nxt_content if isinstance(b, ToolResultBlock)}
+                    if isinstance(nxt_content, list) else set()
+                )
+                missing = [tid for tid in use_ids if tid not in answered]
+                if missing:
+                    results: list[ContentBlock] = [
+                        ToolResultBlock(tool_use_id=tid, content=note, is_error=True)
+                        for tid in missing
+                    ]
+                    if isinstance(nxt_content, list) and answered:
+                        # partial results already there → augment that message
+                        messages[i + 1] = msgspec.structs.replace(
+                            nxt, content=[*nxt_content, *results]
+                        )
+                    else:
+                        messages.insert(i + 1, UserMessage(content=results))
+                    added += len(missing)
+        i += 1
+    return added
 
 
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
@@ -710,6 +723,13 @@ class Agent:
         """
 
         assert self._dispatcher is not None  # set in __post_init__
+
+        # Self-heal a malformed tail before doing anything: if the history ends
+        # with an assistant tool_use that was never answered (a prior run was
+        # cancelled mid-tool, or a session was saved mid-turn and resumed), close
+        # it with a synthetic result so this run's very first provider request is
+        # well-formed instead of erroring.
+        close_open_tool_calls(messages, note="[previous turn interrupted]")
 
         # Inject persistent user-context (memory + custom) as a synthetic
         # ``<system-reminder>``-wrapped UserMessage at the head of the
