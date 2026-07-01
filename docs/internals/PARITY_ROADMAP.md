@@ -76,7 +76,7 @@ Semantic navigation grep can't do: goto-definition, find-references, hover, docu
 
 ## 🟡 Tier 2 — Nice-to-have / polish
 
-**Near-free (S):** vim input mode (`EditingMode.VI`) + external editor (`enable_open_in_editor` / `$EDITOR`) · `/copy` last reply to clipboard (OSC) · todo state re-injected as a `<system-reminder>` each turn · model fallback (`Agent(fallback_model=…)`, switch on overload via `retry.py`).
+**Near-free (S):** vim input mode + external editor ✅ SHIPPED (v1.19.0) · `/copy` last reply to clipboard (OSC) · todo state re-injected as a `<system-reminder>` each turn · model fallback (`Agent(fallback_model=…)`, switch on overload via `retry.py`).
 
 **Moderate (M):** `/diff` aggregate session changes (reuse `_render_diff`) · `/cost` token counter · `/export` transcript to file · `/memory` edit memory files in `$EDITOR` · `AskUserQuestion` tool ✅ SHIPPED (v1.12.0) · multimodal/notebook Read (image/PDF/`.ipynb`) · `NotebookEdit` tool · MCP **resources** (`resources/list`/`read`), **prompts** (`prompts/list`/`get`), **OAuth/bearer auth**, **progress** notifications · hooks: **matchers** (tool-name regex) + **multiple per event** + **shell/command hooks** + actually *fire* all 28 events (today only PreToolUse/PostToolUse/PermissionDenied dispatch) · microcompaction (cache-aware tool-result eliding, runs every turn, cheaper than full compaction) · word-level intra-line diff highlighting (Claude's `diffAddedWord`/`diffRemovedWord` = `rgb(47,157,68)`/`rgb(209,69,75)`) · distinct styled panel for API `ThinkingBlock`s · inline image rendering (iTerm/kitty protocol).
 

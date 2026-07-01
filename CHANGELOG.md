@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.19.0] — 2026-06-30
+
+### Added
+
+- **Vim editing mode + external editor in the terminal** (parity roadmap T2).
+  Toggle vim keybindings on the input line with **`/vim`** (or start with
+  `MANTIS_VIM=1`). Press **Ctrl-X Ctrl-E** to compose a long or multi-line prompt
+  in `$EDITOR` — the classic shell ergonomic. Both are near-free wins for anyone
+  who lives in the terminal.
+
 ## [1.18.0] — 2026-06-30
 
 ### Added

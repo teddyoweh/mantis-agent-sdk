@@ -75,6 +75,7 @@ SLASH_COMMANDS = {
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
     "/context": "show context-window usage",
+    "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
     "/cwd": "show the working directory",
@@ -477,6 +478,8 @@ class MantisTUI:
         # engine to Allow every tool (bypass), overriding even the dangerous-
         # command safety prompt. Set by main() from the CLI flag.
         self.force_bypass = False
+        # Vim editing mode for the input line (toggled with /vim).
+        self.vim_mode = os.environ.get("MANTIS_VIM") == "1"
         self.messages: list[Any] = []
         self.agent: Any = None
         # Live todo list, mutated in place by the bound ``todo_write`` tool and

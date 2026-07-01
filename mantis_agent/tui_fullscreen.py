@@ -496,6 +496,13 @@ async def run_fullscreen(tui: Any) -> int:
         if cmd == "/context":
             await _print(lambda: _show_context())
             return True
+        if cmd == "/vim":
+            from prompt_toolkit.enums import EditingMode  # noqa: PLC0415
+            tui.vim_mode = not getattr(tui, "vim_mode", False)
+            get_app().editing_mode = EditingMode.VI if tui.vim_mode else EditingMode.EMACS
+            on = "on" if tui.vim_mode else "off"
+            await _print(lambda: tui.console.print(f"[ansibrightblack](vim mode {on})[/]"))
+            return True
         if cmd in ("/model", "/models"):
             if arg:
                 # Direct switch by id (or number into the chat-model list).
@@ -761,6 +768,14 @@ async def run_fullscreen(tui: Any) -> int:
         tui.mode_idx = (tui.mode_idx + 1) % len(MODES)
         event.app.invalidate()
 
+    @kb.add("c-x", "c-e")
+    def _(event: Any) -> None:
+        # Compose a long / multi-line prompt in $EDITOR (like the shell's C-x C-e).
+        try:
+            input_buffer.open_in_editor(event.app)
+        except Exception:  # noqa: BLE001 — no editor / spawn failed: ignore
+            pass
+
     input_window = Window(BufferControl(buffer=input_buffer), height=1, wrap_lines=False)
     layout = Layout(
         HSplit([
@@ -780,7 +795,11 @@ async def run_fullscreen(tui: Any) -> int:
         ]),
         focused_element=input_window,
     )
-    app = Application(layout=layout, key_bindings=kb, full_screen=False, erase_when_done=True)
+    from prompt_toolkit.enums import EditingMode  # noqa: PLC0415
+    app = Application(
+        layout=layout, key_bindings=kb, full_screen=False, erase_when_done=True,
+        editing_mode=EditingMode.VI if getattr(tui, "vim_mode", False) else EditingMode.EMACS,
+    )
 
     async def _animate() -> None:
         while True:
