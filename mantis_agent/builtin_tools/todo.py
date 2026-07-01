@@ -13,9 +13,29 @@ matching the upstream contract — but we don't hard-enforce it, only summarize.
 
 from __future__ import annotations
 
+import re
+
 from ..tools import Tool, tool
 
 _STATUSES = ("pending", "in_progress", "completed")
+
+# Models use synonyms for the three statuses constantly ("done", "doing",
+# "todo", "in-progress", …). Map them to the canonical value — keyed by the
+# alnum-normalized form — so a finished item isn't silently shown as pending.
+_STATUS_ALIASES: dict[str, str] = {
+    "completed": "completed", "complete": "completed", "done": "completed",
+    "finished": "completed", "closed": "completed", "resolved": "completed", "fixed": "completed",
+    "inprogress": "in_progress", "active": "in_progress", "doing": "in_progress",
+    "working": "in_progress", "started": "in_progress", "wip": "in_progress",
+    "current": "in_progress", "ongoing": "in_progress",
+    "pending": "pending", "todo": "pending", "open": "pending", "notstarted": "pending",
+    "queued": "pending", "new": "pending", "waiting": "pending", "blocked": "pending",
+}
+
+
+def _normalize_status(s: object) -> str:
+    key = re.sub(r"[^a-z]", "", str(s).lower())
+    return _STATUS_ALIASES.get(key, "pending")
 
 
 def make_todo_write(store: list[dict]) -> Tool:
@@ -42,9 +62,7 @@ def make_todo_write(store: list[dict]) -> Tool:
         for i, t in enumerate(todos):
             if not isinstance(t, dict) or "content" not in t:
                 raise ValueError(f"todo #{i + 1} must be an object with 'content'")
-            status = t.get("status", "pending")
-            if status not in _STATUSES:
-                status = "pending"
+            status = _normalize_status(t.get("status", "pending"))
             cleaned.append({
                 "content": str(t["content"]),
                 "status": status,

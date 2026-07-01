@@ -434,6 +434,12 @@ async def run_fullscreen(tui: Any) -> int:
             key = catalog.api_key_for(prov)
             if key:
                 tui.backend, tui.api_key = prov.base_url, key
+            elif prov.id == "anthropic":
+                import os  # noqa: PLC0415
+                if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+                    # OAuth/gateway Bearer token — api_key_for returns None; switch
+                    # with no api_key so the passthrough authenticates via env Bearer.
+                    tui.backend, tui.api_key = prov.base_url, None
         tui.model = model_id
         tui.agent = tui._build_agent()
         if tui.agent is not None and tui.agent.permissions is not None:

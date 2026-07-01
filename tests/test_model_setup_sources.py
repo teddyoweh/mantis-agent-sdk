@@ -894,6 +894,26 @@ def test_env_only_claude_model_autowires_anthropic(monkeypatch) -> None:
     assert "authorization" not in headers
 
 
+def test_env_only_claude_model_autowires_oauth_token_as_bearer(monkeypatch) -> None:
+    # With only an OAuth/gateway token (ANTHROPIC_AUTH_TOKEN, no sk-ant key),
+    # api_key_for() returns None — but the auto-wire must still point at Anthropic
+    # with api_key=None so the passthrough authenticates via env Bearer, not
+    # x-api-key, and NOT emit the misleading "no API key" warning.
+    from mantis_agent import paths
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-tok-xyz")
+    monkeypatch.setattr("mantis_agent.catalog.api_key_for", lambda *a, **k: None)
+    t = MantisTUI(model="claude-opus-4-8", backend=paths.ollama_base_url(), api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert "anthropic.com" in (t.backend or "")
+    assert t.api_key is None  # passthrough reads the Bearer token from the env
+    headers = dict(t._build_agent().provider.client.headers)
+    assert "authorization" in headers and "x-api-key" not in headers
+
+
 def test_explicit_backend_not_overridden_for_hosted_model(monkeypatch) -> None:
     # An explicitly-set MANTIS_AGENT_BASE_URL (e.g. a self-host serving gpt-4o)
     # must never be clobbered by the auto-wire.

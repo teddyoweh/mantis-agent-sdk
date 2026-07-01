@@ -1310,6 +1310,14 @@ class MantisTUI:
                     self.backend, self.api_key = hosted.base_url, key
                     self.console.print(
                         f"[ansibrightblack]→ using {hosted.label} for [white]{self.model}[/][/]")
+                elif hosted.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+                    # Anthropic OAuth/gateway Bearer token: wire the backend with no
+                    # api_key so the passthrough reads ANTHROPIC_AUTH_TOKEN (Bearer)
+                    # from the env. api_key_for() returns None for it, so this must
+                    # come before the "no key" branch below.
+                    self.backend, self.api_key = hosted.base_url, None
+                    self.console.print(
+                        f"[ansibrightblack]→ using {hosted.label} for [white]{self.model}[/][/]")
                 else:
                     # Hosted model but no key + backend still Ollama: it *will* fail,
                     # and the later "ollama pull" hint would be wrong. Say why now.

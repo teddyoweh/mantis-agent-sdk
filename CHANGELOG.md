@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.42.0] — 2026-06-30
+
+### Fixed
+
+- **`todo_write` maps status synonyms instead of dropping them to `pending`.** A
+  model that marked an item `done`, `finished`, `complete`, `doing`, `in-progress`,
+  `todo`, `blocked`, etc. had it silently normalized to `pending` — so a *finished*
+  task showed as *not started*, misreporting progress to the user. Statuses are now
+  mapped to the canonical `pending`/`in_progress`/`completed` via a synonym table
+  (case/format-insensitive); a genuinely unknown value still defaults to `pending`.
+
 ## [2.41.0] — 2026-06-30
 
 ### Added
