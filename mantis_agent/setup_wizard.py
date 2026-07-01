@@ -19,6 +19,7 @@ import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -115,26 +116,60 @@ def recommend(budget_gb: float) -> CodingModel:
 # ---------------------------------------------------------------------------
 
 
+# Providers with a well-known no-card free tier (used by `mantis setup --free`
+# and the "Free hosted" menu entry). The signup URL is in each provider's note.
+FREE_PROVIDER_IDS = frozenset({"groq", "cerebras", "gemini", "openrouter"})
+
+
 def run_setup(argv: list[str]) -> int:
     import argparse  # noqa: PLC0415
 
     from rich.console import Console  # noqa: PLC0415
     from rich.text import Text  # noqa: PLC0415
 
-    from . import catalog, setup_local  # noqa: PLC0415
-
-    p = argparse.ArgumentParser(prog="mantis setup", description="Set up a local coding model for mantis.")
-    p.add_argument("--auto", action="store_true", help="No prompts — pull the best model that fits.")
-    p.add_argument("--model", default=None, help="Pull a specific Ollama tag.")
-    p.add_argument("--list", action="store_true", dest="list_only", help="Just print the catalog.")
+    p = argparse.ArgumentParser(prog="mantis setup", description="Set up a model for mantis — local, hosted, or free.")
+    p.add_argument("--auto", action="store_true", help="No prompts — pull the best local model that fits.")
+    p.add_argument("--model", default=None, help="Pull a specific Ollama tag (local).")
+    p.add_argument("--list", action="store_true", dest="list_only", help="Just print the local catalog.")
+    p.add_argument("--local", action="store_true", help="Go straight to the local (Ollama) flow.")
+    p.add_argument("--hosted", action="store_true", help="Go straight to the hosted-API flow (paste a key).")
+    p.add_argument("--free", action="store_true", help="Go straight to the free-hosted-tier flow.")
     args = p.parse_args(argv)
 
     c = Console()
-    green, dim, gold = "#7cb342", "bright_black", "#cddc39"
+    green, dim = "#7cb342", "bright_black"
 
     c.print()
     c.print(Text("  🦗  mantis setup", style=f"bold {green}"))
-    c.print(Text("  Let's get you a local coding agent.\n", style=dim))
+    c.print(Text("  Let's get you a working model.\n", style=dim))
+
+    # -- top-level: how do you want to run models? -------------------------
+    # Explicit flags / the local-only options skip the menu.
+    local_flags = args.list_only or args.model or args.auto or args.local
+    if args.hosted:
+        return _run_hosted(c, free_only=False)
+    if args.free:
+        return _run_hosted(c, free_only=True)
+    if not local_flags:
+        choice = _choose_path(c)
+        if choice is None:
+            c.print(Text("\n  Cancelled.", style=dim))
+            return 1
+        if choice == "hosted":
+            return _run_hosted(c, free_only=False)
+        if choice == "free":
+            return _run_hosted(c, free_only=True)
+        # choice == "local" → fall through to the Ollama flow below
+
+    return _run_local(c, args)
+
+
+def _run_local(c: Any, args: Any) -> int:
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import catalog, setup_local  # noqa: PLC0415
+
+    green, dim, gold = "#7cb342", "bright_black", "#cddc39"
 
     budget, label = detect_hardware()
     c.print(Text(f"  Detected:  {label}", style="white"))
@@ -233,3 +268,125 @@ def _interactive_pick(c: object, budget: float, rec: object) -> str | None:
         return CODING_MODELS[int(raw) - 1].tag
     c.print(Text(f"  (didn't recognise {raw!r} — using the recommended)", style="bright_black"))
     return rec.tag  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Path chooser + hosted-provider flow (reuses catalog.py — same store the
+# in-app /enable command writes, so a model set up here Just Works on launch).
+# ---------------------------------------------------------------------------
+
+
+def _choose_path(c: Any) -> str | None:
+    """Top-level menu: local (Ollama) / hosted API / free hosted. Returns
+    'local' | 'hosted' | 'free', or None if cancelled."""
+    from rich.text import Text  # noqa: PLC0415
+
+    c.print(Text("  How do you want to run models?\n", style="white"))
+    c.print(Text("   1  Local        free, on your machine (Ollama) — private, offline", style="white"))
+    c.print(Text("   2  Hosted API   OpenAI · DeepSeek · Kimi · Together · … (paste a key)", style="white"))
+    c.print(Text("   3  Free hosted  Groq · Cerebras · Gemini · OpenRouter free tiers", style="white"))
+    try:
+        raw = input("\n  Pick [1-3, Enter=1]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return {"": "local", "1": "local", "2": "hosted", "3": "free"}.get(raw)
+
+
+def _run_hosted(c: Any, *, free_only: bool) -> int:
+    """Pick a hosted provider, paste + validate a key, choose a model, and save
+    it as the default. Saved via catalog.set_key / set_last_model, so mantis
+    restores the backend + key automatically on next launch."""
+    import getpass  # noqa: PLC0415
+
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+
+    green, dim, gold, red = "#7cb342", "bright_black", "#cddc39", "red"
+
+    providers = [
+        p for p in catalog.CATALOG
+        if not free_only or p.id in FREE_PROVIDER_IDS
+    ]
+    title = "Free hosted tiers" if free_only else "Hosted API providers"
+    c.print(Text(f"\n  {title}  (OpenAI-compatible)\n", style=dim))
+    for i, p in enumerate(providers, 1):
+        line = Text()
+        line.append(f"  {i:>2}  ", style=gold)
+        line.append(f"{p.label:<16}", style="white")
+        line.append(f"{p.note}", style=dim)
+        if catalog.saved_key(p.id):
+            line.append("   ✓ key saved", style=green)
+        elif p.id in FREE_PROVIDER_IDS and not free_only:
+            line.append("   · free tier", style=green)
+        c.print(line)
+
+    try:
+        raw = input("\n  Pick a provider number: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return 1
+    if not (raw.isdigit() and 1 <= int(raw) <= len(providers)):
+        c.print(Text("  Cancelled.", style=dim))
+        return 1
+    prov = providers[int(raw) - 1]
+
+    # -- key ---------------------------------------------------------------
+    existing = catalog.saved_key(prov.id)
+    if existing:
+        c.print(Text(f"\n  {prov.label} already has a saved key.", style=green))
+        try:
+            ans = input("  Reuse it? [Y/n] (or paste a new key): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        key = existing if ans.lower() in ("", "y", "yes") else ans
+    else:
+        c.print(Text(f"\n  Get a key: {prov.note.split('·')[0].strip()}", style=dim))
+        c.print(Text(f"  Paste your {prov.api_key_env} (input hidden):", style="white"))
+        try:
+            key = getpass.getpass("  key> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+    if not key:
+        c.print(Text("  No key entered — cancelled.", style=dim))
+        return 1
+
+    # -- validate (store first so the probe uses it; roll back on failure) --
+    c.print(Text("  Validating…", style=dim))
+    catalog.set_key(prov.id, key)
+    ok, msg = catalog.validate_provider(prov)
+    if not ok:
+        catalog.clear_key(prov.id)
+        c.print(Text(f"  ✗ {msg}", style=red))
+        c.print(Text("  (key not saved) — double-check it and re-run  mantis setup.", style=dim))
+        return 1
+    c.print(Text("  ✓ key works", style=green))
+
+    # -- pick a model (live list, chat-filtered; falls back to flagships) ---
+    live = catalog.refresh_live_models(prov) or []
+    try:
+        from .tui import _is_chat_model  # noqa: PLC0415
+        chat = [m for m in live if _is_chat_model(m)]
+    except Exception:  # noqa: BLE001
+        chat = live
+    models = chat or list(prov.models)
+    c.print(Text("\n  Models:\n", style=dim))
+    for i, m in enumerate(models[:20], 1):
+        c.print(Text(f"   {i:>2}  {m}", style="white"))
+    try:
+        raw = input(f"\n  Pick a model [1-{min(len(models), 20)}, Enter={models[0]}], or type an id: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return 1
+    if not raw:
+        model = models[0]
+    elif raw.isdigit() and 1 <= int(raw) <= min(len(models), 20):
+        model = models[int(raw) - 1]
+    else:
+        model = raw  # exact id the user typed
+
+    catalog.set_last_model(model, prov.base_url)
+    c.print()
+    c.print(Text(f"  ✓ {prov.label} enabled · default model  {model}", style=f"bold {green}"))
+    c.print(Text("\n  Start coding:", style="white"))
+    c.print(Text("      mantis", style=f"bold {gold}"))
+    c.print(Text("  Switch models any time with  /models  ·  add more with  mantis setup.\n", style=dim))
+    return 0

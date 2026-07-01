@@ -548,6 +548,8 @@ class MantisTUI:
         registry.add(make_ask_user_question(self._ask_user_question))  # ask the user
         from .builtin_tools.plan import make_exit_plan_mode  # noqa: PLC0415
         registry.add(make_exit_plan_mode(self._exit_plan_mode))  # plan approval handoff
+        from .builtin_tools.skill_tool import load_skill  # noqa: PLC0415
+        registry.add(load_skill)  # progressive-disclosure skill loading
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the

@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.21.0] — 2026-06-30
+
+### Added
+
+- **Skills are now live in the product** (parity roadmap T1.3). The SKILL.md
+  progressive-disclosure system was built but dead — now it works end to end.
+  Drop a skill at `~/.mantis-agent/skills/<slug>/SKILL.md` (or
+  `./.mantis/skills/...` per project) with `name`/`description` frontmatter and a
+  markdown body. Each session injects only the **catalog** (name + one-line
+  description) into context; when a task matches, the agent calls the new
+  **`load_skill`** tool to pull the full instructions on demand — so N skills
+  cost N one-liners, not N documents. `skills.discover_skills` /
+  `render_skill_catalog` / `load_skill_body`.
+
 ## [1.20.0] — 2026-06-30
 
 ### Added

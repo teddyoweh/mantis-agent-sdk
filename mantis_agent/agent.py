@@ -467,6 +467,16 @@ class Agent:
             except Exception:  # noqa: BLE001
                 _log.debug("MANTIS.md load skipped (I/O error)", exc_info=True)
 
+            # Skills catalog — frontmatter only (name + description). The model
+            # sees what's available and calls load_skill for the body on demand.
+            try:
+                from .skills import discover_skills, render_skill_catalog
+                catalog = render_skill_catalog(discover_skills()).strip()
+                if catalog:
+                    ctx["skills"] = catalog
+            except Exception:  # noqa: BLE001
+                _log.debug("skills catalog skipped", exc_info=True)
+
         # User-supplied extras flow through ``extra={"user_context": {...}}``.
         if isinstance(self.extra, dict):
             extra_ctx = self.extra.get("user_context")

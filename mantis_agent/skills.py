@@ -26,6 +26,7 @@ callers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable
 
 import msgspec
@@ -218,4 +219,105 @@ def render_skills(skills: list[Skill]) -> str:
     return "\n".join(parts).rstrip() + "\n"
 
 
-__all__ = ["Skill", "SkillRegistry", "render_skills"]
+# ---------------------------------------------------------------------------
+# Filesystem discovery — SKILL.md progressive disclosure
+# ---------------------------------------------------------------------------
+#
+# A skill lives at ``<dir>/skills/<slug>/SKILL.md`` with YAML-ish frontmatter::
+#
+#     ---
+#     name: pdf-forms
+#     description: Fill and flatten PDF forms with pdftk
+#     ---
+#     <markdown body: the actual how-to>
+#
+# Only the frontmatter (name + description) is injected into context each turn —
+# the model reads the *catalog*, then calls ``load_skill`` to pull a body on
+# demand. That's the progressive-disclosure win: N skills cost N one-liners, not
+# N full documents.
+
+SKILLS_SUBDIR = "skills"
+
+
+def _parse_skill_md(text: str) -> tuple[dict[str, str], str]:
+    """Split a SKILL.md into (frontmatter dict, body)."""
+    meta: dict[str, str] = {}
+    body = text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm = text[3:end].strip()
+            body = text[end + 4:].lstrip("\n")
+            for line in fm.splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    meta[k.strip().lower()] = v.strip().strip("'\"")
+    return meta, body.strip()
+
+
+def _skill_dirs(cwd: str | Path | None = None) -> list[Path]:
+    """User-level then project-level skill directories (project wins on name)."""
+    from .paths import get_mantis_agent_dir  # noqa: PLC0415
+
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    dirs = [get_mantis_agent_dir() / SKILLS_SUBDIR, base / ".mantis" / SKILLS_SUBDIR]
+    return [d for d in dirs if d.is_dir()]
+
+
+def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
+    """Scan the skill directories and return every ``SKILL.md`` as a
+    :class:`Skill` (name defaults to the folder slug). Best-effort — unreadable
+    or malformed files are skipped. Later dirs (project) override earlier ones
+    (user) by name."""
+    found: dict[str, Skill] = {}
+    for d in _skill_dirs(cwd):
+        for md in sorted(d.glob("*/SKILL.md")):
+            try:
+                meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+            name = (meta.get("name") or md.parent.name).strip()
+            if not name:
+                continue
+            found[name] = Skill(
+                name=name,
+                description=meta.get("description", ""),
+                body=body,
+                always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
+                category=meta.get("category"),
+            )
+    return list(found.values())
+
+
+def render_skill_catalog(skills: list[Skill]) -> str:
+    """The frontmatter-only catalog injected into context: one line per skill
+    so the model knows what's available and can ``load_skill`` the body when
+    relevant. Empty input → empty string."""
+    if not skills:
+        return ""
+    lines = [
+        "Available skills (call load_skill with the name to load the full "
+        "instructions when a task matches one):"
+    ]
+    for s in skills:
+        lines.append(f"- {s.name}: {s.description}" if s.description else f"- {s.name}")
+    return "\n".join(lines)
+
+
+def load_skill_body(name: str, cwd: str | Path | None = None) -> str | None:
+    """Return the full body of the named skill, or ``None`` if not found."""
+    for s in discover_skills(cwd):
+        if s.name == name:
+            return s.body
+    return None
+
+
+__all__ = [
+    "SKILLS_SUBDIR",
+    "Skill",
+    "SkillRegistry",
+    "discover_skills",
+    "load_skill_body",
+    "render_skill_catalog",
+    "render_skills",
+]
