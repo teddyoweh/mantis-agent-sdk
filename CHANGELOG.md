@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.41.0] — 2026-06-30
+
+### Added
+
+- **`sleep` tool** (parity roadmap T2). A bounded, interruptible wait for agents
+  that must pause for external progress — a deploy to roll out, a CI run to
+  advance, a background process (`bash_output`) to produce more output — before
+  checking again. `sleep(seconds)` clamps to 0–600s, holds no shell, and respects
+  cancellation, so it's safe for waits longer than a `bash` `sleep` (which the
+  120s command timeout would kill). Registered in the coding tool belt.
+
 ## [2.40.0] — 2026-06-30
 
 ### Added

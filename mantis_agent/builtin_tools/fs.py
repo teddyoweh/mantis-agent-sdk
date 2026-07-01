@@ -946,6 +946,29 @@ def _py_grep(
 # Registration helper
 # ---------------------------------------------------------------------------
 
+@tool(is_read_only=True, is_concurrency_safe=True)
+async def sleep(seconds: float = 5.0) -> str:
+    """Wait for a fixed number of seconds, then return.
+
+    Use this ONLY when you must wait for something external to make progress —
+    a deploy to roll out, a CI run to advance, a background process (see
+    ``bash_output``) to produce more output — before checking again. Don't sleep
+    to pad time or in a tight poll loop. This is interruptible and holds no shell,
+    so it's safe for longer waits than a ``bash`` ``sleep`` (which the command
+    timeout would kill).
+
+    Args:
+        seconds: How long to wait (clamped to 0–600).
+    """
+    try:
+        s = float(seconds)
+    except (TypeError, ValueError):
+        s = 5.0
+    s = max(0.0, min(s, 600.0))
+    await anyio.sleep(s)
+    return f"slept {s:g}s"
+
+
 CODING_TOOLS: tuple[Tool, ...] = (
     bash,
     bash_output,
@@ -957,6 +980,7 @@ CODING_TOOLS: tuple[Tool, ...] = (
     ls,
     glob,
     grep,
+    sleep,
 )
 
 __all__ = [
@@ -971,4 +995,5 @@ __all__ = [
     "ls",
     "glob",
     "grep",
+    "sleep",
 ]

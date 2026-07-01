@@ -767,6 +767,18 @@ def test_ping_chat_model_uses_max_completion_tokens_for_new_openai(monkeypatch) 
     assert "max_tokens" in captured["payload"] and "max_completion_tokens" not in captured["payload"]
 
 
+def test_ping_treats_max_completion_tokens_error_as_pass(monkeypatch) -> None:
+    # A model our name-detection missed (e.g. the "chat-latest" alias) rejects
+    # max_tokens with "use max_completion_tokens" — that proves the model+key work
+    # (the provider swaps the field at runtime), so the ping must treat it as a pass.
+    import httpx
+
+    from mantis_agent import setup_wizard as sw
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R(400, {"error": {"message":
+        "Unsupported parameter: 'max_tokens' is not supported. Use 'max_completion_tokens' instead."}}))
+    assert sw._ping_chat_model("https://api.openai.com/v1", "chat-latest", "k")[0] is True
+
+
 def test_ping_chat_model_truncation_is_pass_but_wrong_endpoint_fails(monkeypatch) -> None:
     import httpx
 
@@ -873,7 +885,13 @@ def test_env_only_claude_model_autowires_anthropic(monkeypatch) -> None:
                   system=None, max_tokens=1, temperature=None, max_turns=1)
     t._resolve_model()
     assert "anthropic.com" in (t.backend or "")
-    assert type(t._build_agent().provider).__name__ == "AnthropicPassthroughProvider"
+    ag = t._build_agent()
+    assert type(ag.provider).__name__ == "AnthropicPassthroughProvider"
+    # A standard sk-ant key authenticates via x-api-key + anthropic-version, NOT
+    # the Bearer header the OpenAI-compat path uses.
+    headers = dict(ag.provider.client.headers)
+    assert "x-api-key" in headers and "anthropic-version" in headers
+    assert "authorization" not in headers
 
 
 def test_explicit_backend_not_overridden_for_hosted_model(monkeypatch) -> None:
