@@ -368,6 +368,12 @@ async def run_fullscreen(tui: Any) -> int:
         _hdr = f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
         if flt:
             _hdr += f"   {_DIM}filter: {flt}{_RESET}"
+        from .capabilities import lookup_model  # noqa: PLC0415
+
+        def _ctx(m: str) -> str:
+            cw = lookup_model(m).context_window
+            return f"  {cw // 1000}k" if cw >= 1000 else ""
+
         rows = [_hdr]
         for i in range(lo, min(lo + _PICKER_ROWS, n)):
             it = items[i]
@@ -382,9 +388,9 @@ async def run_fullscreen(tui: Any) -> int:
                 else:
                     rows.append(f"  {_DIM}{m} 🔒{_RESET}")
             elif i == sel:
-                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_RESET}")
+                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_ctx(m)}{_RESET}")
             else:
-                rows.append(f"  {m}{_DIM}{cur}{_RESET}")
+                rows.append(f"  {m}{_DIM}{cur}{_ctx(m)}{_RESET}")
         return ANSI("\n".join(rows))
 
     def _picker_height() -> Any:
@@ -573,6 +579,19 @@ async def run_fullscreen(tui: Any) -> int:
 
         base = len(tui.messages)
         tui.messages.append(UserMessage(content=text))
+        # @-file-mentions → inject the referenced files' contents so the model
+        # has them inline (no extra read_file round-trip). isMeta, so the visible
+        # transcript keeps the user's clean message.
+        try:
+            import os  # noqa: PLC0415
+
+            from .tui import render_mention_block, resolve_file_mentions  # noqa: PLC0415
+            _mentions = resolve_file_mentions(text, os.getcwd())
+            if _mentions:
+                tui.messages.append(
+                    UserMessage(content=render_mention_block(_mentions), isMeta=True))
+        except Exception:  # noqa: BLE001 — mention expansion is best-effort
+            pass
         state.update(working=True, started=time.monotonic(),
                      word=random.choice(THINKING_WORDS), task=asyncio.current_task())
         get_app().invalidate()

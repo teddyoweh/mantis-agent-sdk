@@ -171,6 +171,51 @@ INIT_PROMPT = (
 )
 
 
+_MENTION_TOKEN_RE = __import__("re").compile(r"(?:^|\s)@([\w./~-]+\.[\w]+)")
+
+
+def resolve_file_mentions(
+    text: str, cwd: str | Path, *, max_bytes: int = 50_000
+) -> list[tuple[str, str]]:
+    """Find ``@path`` tokens in ``text`` that resolve to a real file under
+    ``cwd`` and return ``(mention, content)`` for each — so the model gets the
+    referenced file's contents inline instead of having to guess or re-read.
+    Files too large to inline come back with a note pointing at ``read_file``.
+    Non-file ``@words`` (that don't resolve) are ignored."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    base = Path(cwd).expanduser()
+    for m in _MENTION_TOKEN_RE.finditer(text):
+        raw = m.group(1)
+        if raw in seen:
+            continue
+        seen.add(raw)
+        p = Path(raw).expanduser() if raw.startswith(("/", "~")) else (base / raw)
+        try:
+            if not p.is_file():
+                continue
+            data = p.read_bytes()
+        except OSError:
+            continue
+        if len(data) > max_bytes:
+            out.append((raw, f"[{raw} is {len(data) // 1024} KB — too large to inline; "
+                              f"read it with read_file using offset/limit]"))
+        else:
+            out.append((raw, data.decode("utf-8", "replace")))
+    return out
+
+
+def render_mention_block(resolved: list[tuple[str, str]]) -> str:
+    """A system-reminder carrying the contents of the files the user @-mentioned."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    parts = [f"Contents of @{mention}:\n```\n{content}\n```" for mention, content in resolved]
+    return wrap_system_reminder(
+        "The user referenced these files — here is their current content:\n\n"
+        + "\n\n".join(parts)
+    )
+
+
 def expand_slash_prompt(text: str) -> str | None:
     """Slash commands that expand into an agent prompt (run a turn) rather than
     being handled inline. Returns the prompt to submit, or None otherwise."""

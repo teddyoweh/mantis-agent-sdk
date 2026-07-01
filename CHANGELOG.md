@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.11.0] — 2026-06-30
+
+### Added
+
+- **`@`-file-mentions now inject file contents.** Previously `@`-mentions only
+  autocompleted the path; the agent saw the literal `@foo.py` and had to do a
+  separate `read_file` (or miss it). Now when you send a message mentioning
+  `@path` files that exist, their current contents are injected inline (as an
+  isMeta system-reminder, so your visible message stays clean) — the model has
+  them immediately, no extra round-trip. Files too large to inline get a note
+  pointing at `read_file`; non-file `@words` are ignored; duplicates deduped. New
+  `tui.resolve_file_mentions` / `render_mention_block`.
+
 ## [2.10.1] — 2026-06-30
 
 ### Fixed
