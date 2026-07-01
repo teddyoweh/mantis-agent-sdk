@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.10.1] — 2026-06-30
+
+### Fixed
+
+- **Friendly labels for recently-added tools.** `task`, `lsp`, `notebook_edit`,
+  `remember`, `load_skill`, `ask_user_question`, `exit_plan_mode`, and
+  `bash_output` were rendering in the terminal as a bare tool name with no target.
+  They now show a human verb + target — e.g. `⚒ Delegate find the auth bug`,
+  `⚒ Look up render_diff`, `⚒ Remember cache TTL` — matching the built-in tools.
+
 ## [2.10.0] — 2026-06-30
 
 ### Added

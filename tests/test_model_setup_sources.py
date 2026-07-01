@@ -25,6 +25,23 @@ def test_lookup_pricing_unknown_degrades_to_none_not_crash() -> None:
     assert lookup_pricing("totally-made-up-model-xyz-9000", None) is None
 
 
+def test_real_registry_tools_normalize_to_anthropic_shape() -> None:
+    # Claude selection is only useful if mantis's ACTUAL tools work: every tool
+    # the registry emits (OpenAI shape) must convert to Anthropic's
+    # {name, description, input_schema} shape — a mismatch silently breaks tools.
+    from mantis_agent.providers.anthropic_passthrough import _normalize_tools
+    from mantis_agent.tui import MantisTUI
+
+    t = MantisTUI(model="claude-opus-4-8", backend="https://api.anthropic.com/v1",
+                  api_key="x", system=None, max_tokens=1, temperature=None, max_turns=1)
+    specs = t._build_agent().tools.to_wire()
+    assert specs, "registry should produce tool specs"
+    norm = _normalize_tools(specs)
+    assert len(norm) == len(specs)
+    for x in norm:
+        assert "name" in x and isinstance(x.get("input_schema"), dict), x.get("name")
+
+
 def test_agent_resolves_correct_capabilities_for_openai_flagship() -> None:
     # End-to-end runtime propagation: an Agent on OpenAI must resolve gpt-4o to
     # native tools + 128k context AND the openai backend profile — proving the
@@ -71,6 +88,19 @@ def test_hosted_flagships_have_native_tools_and_real_context() -> None:
     assert lookup_model("gemini-2.5-pro").context_window >= 1000000
     # And the local families stayed correct.
     assert lookup_model("qwen2.5-coder:7b").context_window == 32768
+
+
+def test_catalog_providers_are_wellformed() -> None:
+    # Guard the setup fallback data: every hosted provider must have a usable id,
+    # https base URL, key env var, and at least one non-empty flagship model id.
+    seen_ids = set()
+    for p in catalog.CATALOG:
+        assert p.id and p.id not in seen_ids, f"duplicate/blank id: {p.id!r}"
+        seen_ids.add(p.id)
+        assert p.label
+        assert p.base_url.startswith("https://"), p.id
+        assert p.api_key_env, p.id
+        assert len(p.models) >= 1 and all(p.models), p.id
 
 
 def test_anthropic_is_a_catalog_provider() -> None:

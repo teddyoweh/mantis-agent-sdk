@@ -104,6 +104,14 @@ TOOL_VERBS = {
     "web_search": ("Search web", ("query",)),
     "web_fetch": ("Fetch", ("url",)),
     "todo_write": ("Plan", ()),
+    "task": ("Delegate", ("description", "prompt")),
+    "lsp": ("Look up", ("symbol",)),
+    "notebook_edit": ("Edit cell", ("path", "file_path")),
+    "remember": ("Remember", ("name",)),
+    "load_skill": ("Load skill", ("name", "skill")),
+    "ask_user_question": ("Ask", ()),
+    "exit_plan_mode": ("Present plan", ()),
+    "bash_output": ("Check output", ("bash_id", "id")),
 }
 
 # File extension → pygments lexer name, for syntax-highlighting diff bodies.
