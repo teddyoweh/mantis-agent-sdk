@@ -74,6 +74,23 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.10.0] — 2026-06-30
+
+### Added
+
+- **Memory recall is now wired into the run loop — the agent surfaces the *right*
+  memories.** Before each turn it scores the `~/.mantis-agent/memory/` topic
+  files against the latest user message (keyword-overlap, fully offline) and
+  injects the top matches as an isMeta `<system-reminder>`, deduped across the
+  session, with a staleness caveat for notes older than a day. Previously the
+  whole `MEMORY.md` index was dumped regardless of relevance; the rich
+  `memory_recall.py` engine was dead code. New `Agent.include_recall` (default
+  True; disabled by `MANTIS_AGENT_NO_CONTEXT=1`).
+- **A `remember` tool** gives the agent a write path into persistent memory — it
+  can save durable facts (project conventions, preferences, gotchas) that recall
+  then surfaces automatically in future sessions. Wired into the `mantis`
+  terminal's tool belt. Read + write now form a closed loop.
+
 ## [1.9.1] — 2026-06-30
 
 ### Changed

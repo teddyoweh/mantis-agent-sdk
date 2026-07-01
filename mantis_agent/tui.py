@@ -505,6 +505,7 @@ class MantisTUI:
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
         from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
+        from .builtin_tools.memory_tool import remember  # noqa: PLC0415
         from .builtin_tools.todo import make_todo_write  # noqa: PLC0415
         from .permissions import PermissionContext  # noqa: PLC0415
         from .providers.base import detect_provider, resolve  # noqa: PLC0415
@@ -530,6 +531,7 @@ class MantisTUI:
         registry.add(*CODING_TOOLS)
         registry.add(web_search, web_fetch)
         registry.add(make_todo_write(self.todos))
+        registry.add(remember)  # write path into persistent memory (recall is automatic)
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the

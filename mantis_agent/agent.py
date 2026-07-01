@@ -216,6 +216,13 @@ class Agent:
     # stable across turns. Set False to disable (tests / non-repo runs).
     include_env: bool = True
 
+    # Memory recall — before each turn, surface the ``~/.mantis-agent/memory/``
+    # topic files most relevant to the latest user message (keyword-scored,
+    # offline) as a ``<system-reminder>``, deduped across the session via
+    # ``_surfaced``. The read side of the memory system (write side: the
+    # ``remember`` tool / ``memory.save_memory_entry``). Set False to disable.
+    include_recall: bool = True
+
     # Structured output — see ``response_format.py``. ``None`` means "model
     # is free to emit any text"; a dict in OpenAI ``response_format`` shape
     # is translated per backend at provider-stream time. Normalized once at
@@ -250,6 +257,9 @@ class Agent:
     # Memoized ``<env>`` + git snapshot (built once, reused every turn so the
     # prompt-cache prefix stays stable). Populated lazily in _build_user_context.
     _env_context: str | None = field(default=None, init=False)
+    # Absolute paths of memory files already surfaced this session, so recall
+    # doesn't re-inject the same note every turn.
+    _surfaced: set[str] = field(default_factory=set, init=False)
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
@@ -375,6 +385,20 @@ class Agent:
 
         if not self.cancellation_signal.is_set():
             self.cancellation_signal.set()
+
+    @staticmethod
+    def _latest_user_text(messages: list[Message]) -> str:
+        """Text of the most recent real (non-meta) user message — the query
+        recall keys off. Skips the synthetic isMeta context head and
+        tool-result user messages (list content)."""
+        for m in reversed(messages):
+            if (
+                isinstance(m, UserMessage)
+                and not getattr(m, "isMeta", False)
+                and isinstance(m.content, str)
+            ):
+                return m.content
+        return ""
 
     @staticmethod
     def _has_user_context_message(messages: list[Message]) -> bool:
@@ -577,6 +601,26 @@ class Agent:
                 # The first message is now the synthetic meta UserMessage.
                 if messages and isinstance(messages[0], UserMessage) and getattr(messages[0], "isMeta", False):
                     yield messages[0]
+
+        # Memory recall — surface the topic files most relevant to THIS turn's
+        # user message (query-specific, so it rides the current turn rather than
+        # the cached head), deduped across the session. Appended after the user
+        # message so it's the freshest context the model sees before replying.
+        if self.include_recall and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+            query = self._latest_user_text(messages)
+            if query:
+                try:
+                    from .memory_recall import recall_block
+                    text, paths = recall_block(
+                        query, already_surfaced=frozenset(self._surfaced)
+                    )
+                    if text:
+                        self._surfaced.update(paths)
+                        reminder = UserMessage(content=text, isMeta=True)
+                        messages.append(reminder)
+                        yield reminder
+                except Exception:  # noqa: BLE001 — recall is best-effort
+                    _log.debug("memory recall skipped", exc_info=True)
 
         registry: ToolRegistry = self.tools  # type: ignore[assignment]
 
