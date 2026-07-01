@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.37.0] — 2026-06-30
+
+### Added
+
+- **Tool-name resolution tolerates Claude-name / case drift.** Many OSS models
+  learned Claude Code's capitalized tool names and emit `Read`, `Bash`, `Edit`,
+  `Grep`, `str_replace`, etc. — which don't match mantis's `read_file`, `bash`,
+  `edit_file`, `grep`. Tool dispatch now resolves a call by: exact match →
+  case/underscore-insensitive match → a Claude-Code-name alias table. So those
+  calls just work instead of failing as "unknown tool" and burning a turn.
+  `ToolRegistry.get()` stays exact (internal checks rely on it); the new
+  `resolve()` does the fuzzy matching, wired into the executor + agent dispatch.
+
 ## [2.36.0] — 2026-06-30
 
 ### Added

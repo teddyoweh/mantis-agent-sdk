@@ -297,6 +297,31 @@ def _type_to_schema(t: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# Claude-Code tool names (and common synonyms) → mantis tool names, keyed by the
+# normalized (lowercase, alnum-only) form. Only used as a last resort in
+# ``ToolRegistry.resolve`` when a tool-call name doesn't match a registered tool.
+_TOOL_ALIASES: dict[str, str] = {
+    "read": "read_file", "readfile": "read_file", "view": "read_file", "cat": "read_file",
+    "write": "write_file", "writefile": "write_file", "createfile": "write_file",
+    "edit": "edit_file", "strreplace": "edit_file", "strreplaceeditor": "edit_file",
+    "multiedit": "multi_edit",
+    "notebookedit": "notebook_edit",
+    "shell": "bash", "run": "bash", "runcommand": "bash", "terminal": "bash",
+    "execute": "bash", "exec": "bash", "runshell": "bash", "command": "bash",
+    "findfiles": "glob", "find": "glob",
+    "search": "grep", "ripgrep": "grep", "rg": "grep", "searchtext": "grep",
+    "searchcode": "grep", "grepsearch": "grep",
+    "list": "ls", "listdir": "ls", "listfiles": "ls", "listdirectory": "ls",
+    "websearch": "web_search", "searchweb": "web_search", "googlesearch": "web_search",
+    "webfetch": "web_fetch", "fetch": "web_fetch", "fetchurl": "web_fetch",
+    "gethttp": "web_fetch", "browse": "web_fetch",
+    "agent": "task", "dispatchagent": "task", "subagent": "task", "delegate": "task",
+    "todowrite": "todo_write", "todo": "todo_write", "updatetodos": "todo_write",
+    "remember": "remember", "savememory": "remember",
+    "looklsp": "lsp", "lsplookup": "lsp",
+}
+
+
 @dataclass(slots=True)
 class ToolRegistry:
     """Holds tools by name. Cheap to construct per ``Agent``."""
@@ -311,6 +336,30 @@ class ToolRegistry:
 
     def get(self, name: str) -> Tool | None:
         return self._by_name.get(name)
+
+    def resolve(self, name: str) -> Tool | None:
+        """Find a tool by the model's (possibly drifted) name. Tries, in order:
+        exact match, case/underscore-insensitive match over registered tools,
+        then a Claude-Code-name alias (``Read`` → ``read_file``, ``Bash`` →
+        ``bash``, …). Many OSS models learned Claude's capitalized tool names, so
+        this keeps their calls working against mantis's lower_snake tools."""
+        if not name:
+            return None
+        t = self._by_name.get(name)
+        if t is not None:
+            return t
+        import re  # noqa: PLC0415
+
+        norm = re.sub(r"[^a-z0-9]", "", name.lower())
+        if not norm:
+            return None
+        for reg_name, tool in self._by_name.items():
+            if re.sub(r"[^a-z0-9]", "", reg_name.lower()) == norm:
+                return tool
+        alias = _TOOL_ALIASES.get(norm)
+        if alias:
+            return self._by_name.get(alias)
+        return None
 
     def to_wire(self) -> list[dict[str, Any]]:
         return [t.to_wire() for t in self._by_name.values()]

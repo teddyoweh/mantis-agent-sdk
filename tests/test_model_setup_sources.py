@@ -847,6 +847,20 @@ def test_env_only_hosted_model_without_key_stays_put(monkeypatch) -> None:
     assert t.backend == ollama  # unchanged — no key to wire
 
 
+def test_env_only_claude_model_autowires_anthropic(monkeypatch) -> None:
+    # The auto-wire must be provider-agnostic: a claude model routes to the
+    # Anthropic passthrough (different auth/base URL than the OpenAI path).
+    from mantis_agent import paths
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setattr("mantis_agent.catalog.api_key_for", lambda *a, **k: "sk-ant-test")
+    t = MantisTUI(model="claude-opus-4-8", backend=paths.ollama_base_url(), api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert "anthropic.com" in (t.backend or "")
+    assert type(t._build_agent().provider).__name__ == "AnthropicPassthroughProvider"
+
+
 def test_explicit_backend_not_overridden_for_hosted_model(monkeypatch) -> None:
     # An explicitly-set MANTIS_AGENT_BASE_URL (e.g. a self-host serving gpt-4o)
     # must never be clobbered by the auto-wire.

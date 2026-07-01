@@ -1296,7 +1296,7 @@ class Agent:
             for call in ordered_calls:
                 if call.id in short_circuit:
                     continue
-                tool = registry.get(call.name)
+                tool = registry.resolve(call.name)
                 if tool is None:
                     continue
                 result = by_id.get(call.id)
@@ -1402,7 +1402,7 @@ class Agent:
 
         assert self._dispatcher is not None
         registry: ToolRegistry = self.tools  # type: ignore[assignment]
-        tool = registry.get(call.name)
+        tool = registry.resolve(call.name)
         if tool is None:
             return call, None
 

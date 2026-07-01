@@ -865,6 +865,12 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
     low = detail.lower()
     if "could not finish" in low or "reduce the length" in low:
         return True, "ok"
+    # Model wants max_completion_tokens (a recent OpenAI model our name-based
+    # detection missed, e.g. the "chat-latest" alias). The request still reached a
+    # real model with valid auth, so it's fine — the provider retries with the
+    # right field at runtime.
+    if "max_completion_tokens" in low:
+        return True, "ok"
     return False, detail
 
 

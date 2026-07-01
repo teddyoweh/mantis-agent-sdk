@@ -714,7 +714,7 @@ class StreamingToolExecutor:
                     _LOG.debug("tracer span end failed", exc_info=True)
 
     async def _run_one_inner(self, idx: int, block: ToolUseBlock) -> None:
-        tool = self._registry.get(block.name)
+        tool = self._registry.resolve(block.name)
         if tool is None:
             self._record_result(
                 idx,

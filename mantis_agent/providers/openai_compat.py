@@ -261,24 +261,35 @@ class OpenAICompatProvider(HTTPProviderMixin):
 
         # why: ``client.stream(...)`` is the only httpx call that doesn't drain
         # the body up front; we need that to keep the SSE channel open.
-        async with self.client.stream(
-            "POST",
-            "/chat/completions",
-            content=_PAYLOAD_ENCODER.encode(payload),
-        ) as response:
-            if response.status_code >= 400:
-                await response.aread()
-                raise_for_status(response)
+        # One retry: some recent OpenAI models require ``max_completion_tokens``
+        # instead of ``max_tokens`` (and reject a custom temperature) but aren't
+        # matched by name — e.g. the bare ``chat-latest`` alias. Rather than fail
+        # a valid model, swap the field on that specific 400 and retry once.
+        for _attempt in range(2):
+            async with self.client.stream(
+                "POST",
+                "/chat/completions",
+                content=_PAYLOAD_ENCODER.encode(payload),
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    if (_attempt == 0 and "max_tokens" in payload
+                            and b"max_completion_tokens" in response.content):
+                        payload["max_completion_tokens"] = payload.pop("max_tokens")
+                        payload.pop("temperature", None)
+                        continue
+                    raise_for_status(response)
 
-            if path == "A":
-                async for ev in _translate_native(response, model):
-                    yield ev
-            else:
-                emits_thinking = bool(cap and cap.emits_inline_thinking)
-                async for ev in _translate_prompt_engineered(
-                    response, model, emits_thinking=emits_thinking
-                ):
-                    yield ev
+                if path == "A":
+                    async for ev in _translate_native(response, model):
+                        yield ev
+                else:
+                    emits_thinking = bool(cap and cap.emits_inline_thinking)
+                    async for ev in _translate_prompt_engineered(
+                        response, model, emits_thinking=emits_thinking
+                    ):
+                        yield ev
+                return
 
     # ------------------------------------------------------------------
     # Payload construction
