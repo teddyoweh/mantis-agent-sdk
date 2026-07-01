@@ -178,6 +178,31 @@ def test_no_key_means_no_auth_headers() -> None:
 # -- Free hosted filter ------------------------------------------------------
 
 
+def test_free_hosted_openrouter_offers_only_free_models(monkeypatch, tmp_path) -> None:
+    # "Free hosted → OpenRouter" must surface only :free models, not paid ones.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    free_ids = [p.id for p in catalog.CATALOG if p.id in sw.FREE_PROVIDER_IDS]
+    idx = free_ids.index("openrouter") + 1  # 1-based numeric pick in the free list
+    inputs = iter([str(idx), "1"])  # pick openrouter, then model #1
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "sk-or-key")
+    monkeypatch.setattr(catalog, "validate_provider", lambda *a, **k: (True, "ok"))
+    monkeypatch.setattr(catalog, "refresh_live_models",
+                        lambda *a, **k: ["openai/gpt-4o", "meta-llama/llama-3.3-70b:free", "z-ai/glm:free"])
+    monkeypatch.setattr(sw, "_confirm_model", lambda *a, **k: True)
+
+    try:
+        rc = sw._run_hosted(_NullConsole(), free_only=True)
+        assert rc == 0
+        saved = catalog.get_last_model()["model"]
+        assert saved.endswith(":free"), saved
+    finally:
+        catalog.clear_key("openrouter")
+
+
 def test_free_provider_ids_are_all_real_catalog_ids() -> None:
     for pid in FREE_PROVIDER_IDS:
         assert pid in catalog.BY_ID, pid

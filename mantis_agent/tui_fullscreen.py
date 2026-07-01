@@ -611,8 +611,13 @@ async def run_fullscreen(tui: Any) -> int:
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     await _print(lambda m=msg: _result(m))
         except asyncio.CancelledError:
-            del tui.messages[base:]
-            await _print(lambda: tui.console.print("[ansibrightblack](interrupted)[/]"))
+            # Keep the work done so far; just close any tool_use left unanswered
+            # by the interrupt so the next turn's request stays well-formed and
+            # the user can redirect or continue.
+            from .agent import close_open_tool_calls  # noqa: PLC0415
+            close_open_tool_calls(tui.messages)
+            await _print(lambda: tui.console.print(
+                "[ansibrightblack](interrupted — you can continue or redirect)[/]"))
         except Exception as e:  # noqa: BLE001
             del tui.messages[base:]
             await _print(lambda e=e: tui.console.print(f"[ansired]error:[/] {e}"))

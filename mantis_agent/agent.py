@@ -159,6 +159,40 @@ def _refusal_nudge() -> "UserMessage":
     )
 
 
+def close_open_tool_calls(
+    messages: list[Message], *, note: str = "[interrupted by user]"
+) -> int:
+    """Append synthetic ``tool_result`` blocks for any ``tool_use`` in the history
+    that has no matching result — so the conversation stays well-formed after an
+    interrupt (providers require every tool_use be answered) WITHOUT discarding
+    the work already done. Returns how many results were synthesized.
+
+    Called when a turn is cancelled mid-tool: the last assistant message may hold
+    tool_use blocks whose tools never ran (or whose results were never appended).
+    """
+    answered: set[str] = set()
+    for m in messages:
+        content = getattr(m, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolResultBlock):
+                    answered.add(b.tool_use_id)
+    missing: list[str] = []
+    for m in messages:
+        content = getattr(m, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolUseBlock) and b.id not in answered and b.id not in missing:
+                    missing.append(b.id)
+    if not missing:
+        return 0
+    results: list[ContentBlock] = [
+        ToolResultBlock(tool_use_id=tid, content=note, is_error=True) for tid in missing
+    ]
+    messages.append(UserMessage(content=results))
+    return len(results)
+
+
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
 

@@ -542,6 +542,13 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     except Exception:  # noqa: BLE001
         chat = live
     models = chat or list(prov.models)
+    # "Free hosted" on OpenRouter should actually be free — its zero-cost models
+    # carry a ":free" suffix, so surface only those (fall back to all if the live
+    # list didn't include any). Groq/Cerebras/Gemini free tiers use normal ids.
+    if free_only and prov.id == "openrouter":
+        free = [m for m in models if m.endswith(":free")]
+        if free:
+            models = free
     model = _pick_model_id(c, models)
     if model is None:
         c.print(Text("  Cancelled.", style=dim))

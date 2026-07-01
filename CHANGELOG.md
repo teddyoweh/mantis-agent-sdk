@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.13.0] — 2026-06-30
+
+### Changed
+
+- **Interrupting a turn now keeps the work.** Pressing Esc/Ctrl-C mid-reply used
+  to discard the ENTIRE turn — your message and everything the agent had already
+  done (files read, tools run) vanished. Now the completed work is kept; only the
+  tool calls left unanswered by the interrupt are closed with a synthetic
+  `[interrupted by user]` result, so the history stays well-formed and you can
+  continue or redirect from where it stopped (the Claude Code behavior). New
+  `agent.close_open_tool_calls`.
+
 ## [2.12.0] — 2026-06-30
 
 ### Added
