@@ -192,9 +192,13 @@ class OpenAICompatProvider(HTTPProviderMixin):
         if key is None:
             for var in _ENV_KEY_CHAIN:
                 v = os.environ.get(var)
-                if v:
+                if v and v.strip():
                     key = v
                     break
+        # Strip stray whitespace/newlines from an env/.env key so it doesn't
+        # poison the Bearer header and 401 confusingly.
+        if key:
+            key = key.strip()
 
         headers: dict[str, str] = {
             "content-type": "application/json",

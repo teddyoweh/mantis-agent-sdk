@@ -83,6 +83,17 @@ def _check_write_guard(p: Path) -> None:
         pass
 
 
+def _human_size(n: int) -> str:
+    """A compact human-readable byte size: ``512 B``, ``1.2 KB``, ``3.4 MB``."""
+    if n < 1024:
+        return f"{n} B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        n /= 1024.0
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}"
+    return f"{n:.1f} TB"
+
+
 def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     if len(text) <= limit:
         return text
@@ -788,8 +799,20 @@ async def ls(path: str = ".") -> str:
     entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
     if not entries:
         return f"{p} is empty"
-    lines = [f"{e.name}/" if e.is_dir() else e.name for e in entries[:_MAX_MATCHES]]
-    out = "\n".join(lines)
+    n_dir = sum(1 for e in entries if e.is_dir())
+    n_file = len(entries) - n_dir
+
+    def _row(e: Path) -> str:
+        if e.is_dir():
+            return f"{e.name}/"
+        try:
+            return f"{e.name} ({_human_size(e.stat().st_size)})"
+        except OSError:
+            return e.name
+
+    lines = [_row(e) for e in entries[:_MAX_MATCHES]]
+    header = f"{p}  ({n_dir} dir{'s' * (n_dir != 1)}, {n_file} file{'s' * (n_file != 1)})"
+    out = header + "\n" + "\n".join(lines)
     if len(entries) > _MAX_MATCHES:
         out += f"\n… [{len(entries) - _MAX_MATCHES} more entries]"
     return out

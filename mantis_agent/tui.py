@@ -893,9 +893,12 @@ class MantisTUI:
     def __init__(self, *, model: str, backend: str, api_key: str | None,
                  system: str | None, max_tokens: int, temperature: float | None,
                  max_turns: int) -> None:
-        self.model = model
-        self.backend = backend
-        self.api_key = api_key
+        # Strip stray whitespace a shell/.env can leave on the model id, backend
+        # URL, or key (a trailing \n on the model → "model not found"; on the key
+        # → a poisoned auth header that 401s confusingly).
+        self.model = model.strip() if model else model
+        self.backend = backend.strip() if backend else backend
+        self.api_key = api_key.strip() if api_key else api_key
         self.system = system
         self.max_tokens = max_tokens
         self.temperature = temperature

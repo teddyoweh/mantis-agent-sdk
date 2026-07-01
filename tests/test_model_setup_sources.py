@@ -245,6 +245,46 @@ def test_pro_filter_excludes_only_openai_responses_models() -> None:
         assert _is_chat_model(m) is False, m
 
 
+def test_tui_constructor_strips_model_backend_key() -> None:
+    # $MANTIS_AGENT_MODEL / --backend / --api-key from a shell or .env can carry a
+    # trailing newline; the model id, URL, and key must all be cleaned at the door.
+    from mantis_agent.tui import MantisTUI
+    t = MantisTUI(model="  gpt-4o\n", backend="  https://api.openai.com/v1 \n", api_key="  sk-k\n",
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    assert t.model == "gpt-4o"
+    assert t.backend == "https://api.openai.com/v1"
+    assert t.api_key == "sk-k"
+
+
+def test_provider_auth_headers_strip_whitespace(monkeypatch) -> None:
+    # A key/token with a trailing newline (from .env / paste) must not poison the
+    # auth header on either provider — env chain and Bearer token alike.
+    from mantis_agent.providers.anthropic_passthrough import AnthropicPassthroughProvider
+    from mantis_agent.providers.openai_compat import OpenAICompatProvider
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "  tok\n")
+    p = AnthropicPassthroughProvider(base_url="https://api.anthropic.com/v1")
+    assert p.client.headers.get("authorization") == "Bearer tok"
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "  sk-x\n")
+    p2 = OpenAICompatProvider(base_url="https://api.openai.com/v1")
+    assert p2.client.headers.get("authorization") == "Bearer sk-x"
+
+
+def test_api_key_whitespace_is_stripped(monkeypatch, tmp_path) -> None:
+    # .env files / copy-paste often add a trailing newline — a key must never be
+    # returned or stored with stray whitespace (it'd auth-fail confusingly).
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "  sk-env\n")
+    assert catalog.api_key_for(catalog.BY_ID["openai"]) == "sk-env"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    catalog.set_key("openai", "  sk-stored\t\n")
+    try:
+        assert catalog.saved_key("openai") == "sk-stored"
+    finally:
+        catalog.clear_key("openai")
+
+
 def test_provider_key_env_aliases_are_honored(monkeypatch) -> None:
     # Gemini also accepts GOOGLE_API_KEY; GLM/Z.ai also accepts ZAI_API_KEY —
     # so a direct-env user is found whichever common name they used.

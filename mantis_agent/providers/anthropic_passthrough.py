@@ -173,8 +173,10 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         #     (ANTHROPIC_AUTH_TOKEN). This is what a subscription OAuth login,
         #     or a Bedrock/Vertex/Azure/LiteLLM gateway in front of Anthropic,
         #     issues. auth_token wins when both are present.
-        token = auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        # Strip stray whitespace/newlines — .env files and copy-paste often add a
+        # trailing \n, which would otherwise poison the auth header and 401.
+        token = (auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip() or None
+        key = (api_key or os.environ.get("ANTHROPIC_API_KEY") or "").strip() or None
         if not token and not key:
             raise AuthError(
                 "AnthropicPassthroughProvider needs credentials. Pass api_key=… "

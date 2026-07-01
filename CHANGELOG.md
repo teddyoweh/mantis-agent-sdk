@@ -74,6 +74,24 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.55.0] — 2026-07-01
+
+### Fixed
+
+- **Credentials and backend URLs are whitespace-stripped.** A trailing newline on
+  an API key or token — which `.env` files and copy-paste routinely add — poisons
+  the `Authorization` header and produces a confusing 401. Keys, `ANTHROPIC_AUTH_TOKEN`,
+  and the backend URL are now `.strip()`ed at every entry point (`catalog.set_key`
+  / `api_key_for`, the Anthropic-passthrough provider, and the TUI constructor).
+
+### Added
+
+- **`ls` shows file sizes and a count summary.** Each file entry now includes a
+  human-readable size (`config.json (2 B)`, `data.csv (4.1 KB)`) and the listing
+  is headed by a `(N dirs, M files)` count, so the model can gauge a file's size
+  before deciding whether to read it whole or page with `offset`/`limit`.
+  Directories are still listed first, marked with a trailing `/`.
+
 ## [2.54.0] — 2026-06-30
 
 ### Added

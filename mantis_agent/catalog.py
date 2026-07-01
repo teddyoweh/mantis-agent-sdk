@@ -193,6 +193,7 @@ def saved_key(provider_id: str) -> str | None:
 
 def set_key(provider_id: str, key: str) -> None:
     """Persist a key and make it live for this process."""
+    key = key.strip()  # defensive: never store a paste's stray whitespace/newline
     data = _load_store()
     data.setdefault("keys", {})[provider_id] = key
     _save_store(data)
@@ -259,9 +260,13 @@ def api_key_for(provider: Provider) -> str | None:
     var names (e.g. GOOGLE_API_KEY for Gemini) so a direct-env user's key is found
     whichever common convention they used."""
     for var in (provider.api_key_env, *provider.key_env_aliases):
-        if var and os.environ.get(var):
-            return os.environ[var]
-    return saved_key(provider.id)
+        v = os.environ.get(var) if var else None
+        if v and v.strip():
+            # Strip stray whitespace/newlines — .env files and copy-paste often
+            # add a trailing \n, which would otherwise auth-fail confusingly.
+            return v.strip()
+    saved = saved_key(provider.id)
+    return saved.strip() if saved else saved
 
 
 def is_enabled(provider: Provider) -> bool:
