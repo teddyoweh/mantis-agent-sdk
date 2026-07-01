@@ -7,11 +7,9 @@ The client speaks the v0-relevant subset of the MCP protocol:
 * ``tools/list`` (discover tools)
 * ``tools/call`` (invoke a tool, returning ``CallToolResult``)
 * ``notifications/cancelled`` (best-effort cancellation of a request)
+* ``resources/list`` + ``resources/read`` (list / read server resources)
+* ``prompts/list`` + ``prompts/get`` (list / render server prompt templates)
 * ``elicitation/create`` (server-initiated; client routes to handler)
-
-Everything else — resources, prompts, sampling, logging — is out of scope
-for the v0 surface. They can be added by extending ``_request`` callers;
-the dispatcher already handles arbitrary methods.
 
 Concurrency model
 -----------------
@@ -58,6 +56,8 @@ from .types import (
     ElicitationRequest,
     ElicitationResult,
     HttpServerConfig,
+    MCPPrompt,
+    MCPResource,
     MCPTool,
     SamplingHandler,
     SamplingMessage,
@@ -254,6 +254,82 @@ class MCPClient:
             if not cursor:
                 break
         return tools
+
+    async def list_resources(self) -> list["MCPResource"]:
+        """Call ``resources/list`` (paginated) — the readable blobs the server
+        exposes (files, rows, API responses), addressed by URI."""
+        out: list[MCPResource] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"cursor": cursor} if cursor else {}
+            result = await self._request("resources/list", params)
+            for raw in result.get("resources", []):
+                if isinstance(raw, dict) and raw.get("uri"):
+                    out.append(MCPResource(
+                        uri=str(raw["uri"]),
+                        name=str(raw.get("name", "")),
+                        description=str(raw.get("description", "")),
+                        mime_type=raw.get("mimeType"),
+                        server_id=self.server_id,
+                    ))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+        return out
+
+    async def read_resource(self, uri: str) -> str:
+        """Call ``resources/read`` for ``uri`` and return the text contents.
+        Binary parts are noted (not decoded) so the model isn't handed base64."""
+        result = await self._request("resources/read", {"uri": uri})
+        parts: list[str] = []
+        for c in result.get("contents", []):
+            if not isinstance(c, dict):
+                continue
+            if isinstance(c.get("text"), str):
+                parts.append(c["text"])
+            elif "blob" in c:
+                mt = c.get("mimeType", "application/octet-stream")
+                parts.append(f"[binary resource {mt} — not shown]")
+        return "\n".join(parts)
+
+    async def list_prompts(self) -> list["MCPPrompt"]:
+        """Call ``prompts/list`` (paginated) — the reusable named prompt
+        templates the server offers."""
+        out: list[MCPPrompt] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"cursor": cursor} if cursor else {}
+            result = await self._request("prompts/list", params)
+            for raw in result.get("prompts", []):
+                if isinstance(raw, dict) and raw.get("name"):
+                    out.append(MCPPrompt(
+                        name=str(raw["name"]),
+                        description=str(raw.get("description", "")),
+                        arguments=list(raw.get("arguments", []) or []),
+                        server_id=self.server_id,
+                    ))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+        return out
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> str:
+        """Call ``prompts/get`` and render the template's messages to text
+        (``[role] text`` lines)."""
+        result = await self._request(
+            "prompts/get", {"name": name, "arguments": arguments or {}}
+        )
+        parts: list[str] = []
+        for m in result.get("messages", []):
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role", "")
+            content = m.get("content", {})
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                parts.append(f"[{role}] {content['text']}")
+            elif isinstance(content, str):
+                parts.append(f"[{role}] {content}")
+        return "\n".join(parts)
 
     async def call_tool(
         self,

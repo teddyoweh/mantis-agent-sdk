@@ -101,6 +101,30 @@ ServerConfig = Annotated[
 # ---------------------------------------------------------------------------
 
 
+class MCPResource(msgspec.Struct, frozen=True, omit_defaults=True):
+    """A resource discovered via ``resources/list`` — a readable blob the server
+    exposes (a file, a DB row, an API response) addressed by ``uri``. Read its
+    contents with ``MCPClient.read_resource(uri)``."""
+
+    uri: str
+    name: str = ""
+    description: str = ""
+    mime_type: str | None = None
+    server_id: str = ""
+
+
+class MCPPrompt(msgspec.Struct, frozen=True, omit_defaults=True):
+    """A prompt template discovered via ``prompts/list`` — a reusable, named
+    message the server can render (with arguments) via ``MCPClient.get_prompt``.
+    ``arguments`` is the list of ``{name, description, required}`` the template
+    accepts."""
+
+    name: str
+    description: str = ""
+    arguments: list[dict[str, Any]] = []
+    server_id: str = ""
+
+
 class MCPTool(msgspec.Struct, frozen=True, omit_defaults=True):
     """A tool discovered via ``tools/list`` on an MCP server.
 

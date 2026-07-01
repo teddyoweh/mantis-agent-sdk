@@ -291,33 +291,74 @@ async def run_fullscreen(tui: Any) -> int:
 
     # -- model picker overlay (state-driven, like the permission prompt) ------
 
+    _PICKER_ROWS = 11  # visible model/header rows in the picker window
+
     def _open_model_picker() -> None:
-        models = _chat_models()
-        cur = models.index(tui.model) if tui.model in models else 0
-        state["picking_model"] = {"models": models, "sel": cur}
+        # Build a GROUPED item list: active backend first, then other ENABLED
+        # providers, then DISABLED providers (shown dimmed + 🔒 so you can see
+        # every model and enable one on demand). Items are headers or models.
+        from .tui import _is_chat_model  # noqa: PLC0415
+        from . import catalog  # noqa: PLC0415
+
+        items: list[dict] = []
+        active = _chat_models()
+        active_set = set(active)
+        where = ("Ollama (local)" if ("localhost" in (tui.backend or "")
+                 or "127.0.0.1" in (tui.backend or "")) else (tui.backend or "backend"))
+        items.append({"kind": "header", "label": f"● active · {where}"})
+        for m in active:
+            items.append({"kind": "model", "model": m, "enabled": True, "provider_id": None})
+        try:
+            for g in catalog.grouped_provider_models():
+                models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set]
+                if not models:
+                    continue
+                tag = "" if g["enabled"] else "  · not enabled"
+                items.append({"kind": "header", "label": f"{g['label']}{tag}"})
+                for m in models:
+                    items.append({"kind": "model", "model": m,
+                                  "enabled": g["enabled"], "provider_id": g["provider_id"]})
+        except Exception:  # noqa: BLE001
+            pass
+        sel = next((i for i, it in enumerate(items)
+                    if it["kind"] == "model" and it["model"] == tui.model), None)
+        if sel is None:
+            sel = next((i for i, it in enumerate(items) if it["kind"] == "model"), 0)
+        state["picking_model"] = {"items": items, "sel": sel}
         get_app().invalidate()
 
     def picker_ft() -> Any:
         p = state.get("picking_model")
         if not p:
             return ANSI("")
-        models, sel = p["models"], p["sel"] % max(1, len(p["models"]))
-        # Window of up to 8 rows centered on the selection.
-        lo = max(0, min(sel - 3, len(models) - 8))
+        items, sel = p["items"], p["sel"]
+        n = len(items)
+        lo = max(0, min(sel - _PICKER_ROWS // 2, n - _PICKER_ROWS))
         rows = [f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · enter · esc){_RESET}"]
-        for i in range(lo, min(lo + 7, len(models))):
-            m = models[i]
-            mark = "  ← current" if m == tui.model else ""
-            if i == sel:
-                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{mark}{_RESET}")
+        for i in range(lo, min(lo + _PICKER_ROWS, n)):
+            it = items[i]
+            if it["kind"] == "header":
+                rows.append(f"{_DIM}\033[1m{it['label']}\033[0m{_RESET}")
+                continue
+            m = it["model"]
+            cur = "  ← current" if m == tui.model else ""
+            if not it["enabled"]:
+                if i == sel:
+                    rows.append(f"\033[30;48;5;179m {m} 🔒 \033[0m{_DIM} enter to enable{_RESET}")
+                else:
+                    rows.append(f"  {_DIM}{m} 🔒{_RESET}")
+            elif i == sel:
+                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_RESET}")
             else:
-                rows.append(f"  {m}{_DIM}{mark}{_RESET}")
+                rows.append(f"  {m}{_DIM}{cur}{_RESET}")
         return ANSI("\n".join(rows))
 
     def _picker_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
         p = state.get("picking_model")
-        return Dimension.exact(1 + min(len(p["models"]), 7)) if p else Dimension.exact(0)
+        if not p:
+            return Dimension.exact(0)
+        return Dimension.exact(1 + min(len(p["items"]), _PICKER_ROWS))
 
     def menu_ft() -> Any:
         opts = _menu_options()
@@ -625,16 +666,29 @@ async def run_fullscreen(tui: Any) -> int:
         state["pending_question"]["typing"] = True
         event.app.invalidate()
 
-    @kb.add("up", filter=_picker_open)
+    def _picker_move(delta: int) -> None:
+        p = state.get("picking_model")
+        if not p:
+            return
+        items = p["items"]
+        n = len(items)
+        i = p["sel"]
+        for _ in range(n):  # step over header rows to the next model
+            i = (i + delta) % n
+            if items[i]["kind"] == "model":
+                p["sel"] = i
+                return
 
     @kb.add("up", filter=_picker_open)
+    @kb.add("c-p", filter=_picker_open)
     def _(event: Any) -> None:
-        state["picking_model"]["sel"] -= 1
+        _picker_move(-1)
         event.app.invalidate()
 
     @kb.add("down", filter=_picker_open)
+    @kb.add("c-n", filter=_picker_open)
     def _(event: Any) -> None:
-        state["picking_model"]["sel"] += 1
+        _picker_move(1)
         event.app.invalidate()
 
     async def _announce(msg: str) -> None:

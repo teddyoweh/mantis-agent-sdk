@@ -286,6 +286,45 @@ def provider_for_model(model_id: str) -> Provider | None:
     return None
 
 
+def enabled_provider_models() -> list[tuple[str, str]]:
+    """Every model from every ENABLED hosted provider (one with a saved or env
+    key), as ``(model_id, provider_label)`` pairs. Prefers each provider's cached
+    live ``/v1/models`` (fresh within the TTL) and falls back to its flagship
+    list. Powers the unified in-app ``/models`` picker so a user can jump to any
+    provider they've set up — not just the active backend. Deduplicated by id."""
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for p in CATALOG:
+        if not is_enabled(p):
+            continue
+        models = cached_live_models(p.id) or list(p.models)
+        for m in models:
+            if m and m not in seen:
+                seen.add(m)
+                out.append((m, p.label))
+    return out
+
+
+def grouped_provider_models() -> list[dict[str, Any]]:
+    """One group per hosted provider for the unified ``/models`` picker — ENABLED
+    providers first, then disabled (so you can *see* every model and enable a
+    provider on demand). Each group is ``{label, provider_id, enabled, note,
+    models}``; models come from cached live ``/v1/models`` when fresh, else the
+    flagship list."""
+    enabled = [p for p in CATALOG if is_enabled(p)]
+    disabled = [p for p in CATALOG if not is_enabled(p)]
+    out: list[dict[str, Any]] = []
+    for p in enabled + disabled:
+        out.append({
+            "label": p.label,
+            "provider_id": p.id,
+            "enabled": is_enabled(p),
+            "note": p.note,
+            "models": list(cached_live_models(p.id) or p.models),
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Live-model cache (~/.mantis-agent/live_models.json)
 #

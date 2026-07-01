@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.27.0] — 2026-06-30
+
+### Added
+
+- **MCP resources + prompts** (parity roadmap T2). The MCP client gained
+  `list_resources()` / `read_resource(uri)` (the readable blobs a server exposes)
+  and `list_prompts()` / `get_prompt(name, arguments)` (reusable named prompt
+  templates, rendered to `[role] text`). Both list calls are paginated; binary
+  resource parts are noted rather than dumped as base64. New `MCPResource` /
+  `MCPPrompt` types. Previously the client only spoke `tools/list` + `tools/call`.
+
 ## [1.26.0] — 2026-06-30
 
 ### Added
