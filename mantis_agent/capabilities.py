@@ -450,6 +450,27 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         chat_template_id="kimi",
         family_specific_stops=("<|im_end|>",),
     ),
+    # Hosted flagships (OpenAI / Anthropic / Google / Zhipu). These are served
+    # over their provider APIs (or the anthropic passthrough), so the chat
+    # template is unused — but the capability drives native-tool routing (path A)
+    # and the context-window indicator / auto-compaction. Windows are safe floors
+    # (underestimate compacts a little early; overestimate risks a 413).
+    "openai": ModelCapability(
+        name="openai-unknown", family="openai",
+        supports_native_tools=True, context_window=128000,
+    ),
+    "claude": ModelCapability(
+        name="claude-unknown", family="claude",
+        supports_native_tools=True, context_window=200000,
+    ),
+    "gemini": ModelCapability(
+        name="gemini-unknown", family="gemini",
+        supports_native_tools=True, context_window=1000000,
+    ),
+    "glm": ModelCapability(
+        name="glm-unknown", family="glm",
+        supports_native_tools=True, context_window=128000,
+    ),
 }
 
 # Heuristic: substrings to family
@@ -482,6 +503,15 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     ("internlm", "qwen2.5"),  # ChatML-shaped
     ("granite", "llama3"),
     ("yi", "qwen2.5"),
+    # Hosted flagships — so gpt-4o/gpt-5.x, claude-*, o1/o3/o4, gemini, glm don't
+    # fall through to the tiny 8192 / no-native-tools generic default.
+    ("claude", "claude"),
+    ("gpt-", "openai"),
+    ("o1", "openai"),
+    ("o3", "openai"),
+    ("o4", "openai"),
+    ("gemini", "gemini"),
+    ("glm", "glm"),
 )
 
 

@@ -75,6 +75,7 @@ SLASH_COMMANDS = {
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
     "/context": "show context-window usage",
+    "/compact": "compress the conversation now (optional focus)",
     "/copy": "copy the last reply to the clipboard",
     "/export": "save the conversation to a markdown file",
     "/diff": "review this session's file changes",

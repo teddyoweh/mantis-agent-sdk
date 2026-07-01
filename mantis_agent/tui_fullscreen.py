@@ -611,6 +611,22 @@ async def run_fullscreen(tui: Any) -> int:
             from pathlib import Path  # noqa: PLC0415
             await _print(lambda: tui.console.print(f"[ansibrightblack]{Path.cwd()}[/]"))
             return True
+        if cmd == "/compact":
+            if tui.agent is None or len(tui.messages) < 2:
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack](nothing to compact yet)[/]"))
+                return True
+            from .compact import run_manual_compaction  # noqa: PLC0415
+            await _print(lambda: tui.console.print(
+                "[ansibrightblack](compacting the conversation…)[/]"))
+            try:
+                new_msgs, note = await run_manual_compaction(
+                    tui.messages, tui.agent._summarize, focus=arg.strip())
+                tui.messages[:] = new_msgs
+            except Exception as e:  # noqa: BLE001
+                note = f"compaction failed: {e}"
+            await _print(lambda n=note: tui.console.print(f"[ansibrightblack]({n})[/]"))
+            return True
         if cmd == "/context":
             await _print(lambda: _show_context())
             return True

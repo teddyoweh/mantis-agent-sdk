@@ -383,6 +383,31 @@ the transcript. Quote exact identifiers and paths. Begin with:
 """
 
 
+async def run_manual_compaction(
+    messages: list[Message],
+    summarizer_fn: "SummarizerFn",
+    *,
+    focus: str = "",
+    keep_recent: int = 4,
+) -> tuple[list[Message], str]:
+    """Compact ``messages`` on demand (the ``/compact`` command). Keeps the last
+    ``keep_recent`` turns verbatim and summarizes the rest with ``summarizer_fn``;
+    an optional ``focus`` hint is appended to the summarizer prompt so the user
+    can steer what the summary preserves. Returns ``(new_messages, note)`` and
+    leaves the input untouched when there's nothing to compact."""
+    fn = summarizer_fn
+    if focus.strip():
+        async def fn(prompt: str, _s=summarizer_fn, _f=focus.strip()) -> str:  # noqa: A001
+            return await _s(f"{prompt}\n\nFocus your summary especially on: {_f}")
+
+    comp = SimpleCompactor(fn, keep_recent_turns=max(1, keep_recent))
+    before = len(messages)
+    out = await comp.compact(list(messages))
+    if len(out) < before:
+        return out, f"compacted {before} → {len(out)} messages"
+    return list(messages), "nothing to compact yet — the conversation is still short"
+
+
 def _build_summarization_prompt(messages: list[Message]) -> str:
     """Stitch messages into a textual prompt the summarizer model can chew on."""
 

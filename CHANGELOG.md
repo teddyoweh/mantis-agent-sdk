@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.7.0] — 2026-06-30
+
+### Added
+
+- **`/compact` command.** Compress the conversation on demand instead of waiting
+  for auto-compaction — frees context before a big next step. Takes an optional
+  focus hint (`/compact the auth refactor`) that steers what the summary
+  preserves. Keeps the last few turns verbatim, summarizes the rest with the
+  current model, and reports the before→after message count. Short conversations
+  are a no-op. New `compact.run_manual_compaction` helper.
+
 ## [2.6.0] — 2026-06-30
 
 ### Added
