@@ -186,6 +186,9 @@ class SimpleCompactor:
         "_threshold",
         "_keep_recent",
         "_preserve_system",
+        "_micro_threshold",
+        "_micro_keep",
+        "_micro_min_chars",
     )
 
     def __init__(
@@ -195,6 +198,9 @@ class SimpleCompactor:
         threshold: float = 0.85,
         keep_recent_turns: int = 8,
         preserve_system: bool = True,
+        micro_threshold: float = 0.6,
+        micro_keep_tool_results: int = 8,
+        micro_min_chars: int = 800,
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")
@@ -204,23 +210,70 @@ class SimpleCompactor:
         self._threshold = threshold
         self._keep_recent = keep_recent_turns
         self._preserve_system = preserve_system
+        # Microcompaction: cheaper first line. When context passes
+        # ``micro_threshold`` of the window, clear the *content* of tool results
+        # older than the last ``micro_keep_tool_results`` (only ones larger than
+        # ``micro_min_chars``) — no summarizer call. Defers full compaction.
+        self._micro_threshold = micro_threshold
+        self._micro_keep = max(1, micro_keep_tool_results)
+        self._micro_min_chars = micro_min_chars
+
+    @staticmethod
+    def _used(messages: list[Message], usage: Usage) -> int:
+        reported = usage.input_tokens + usage.output_tokens if usage else 0
+        estimate = sum(_message_token_estimate(m) for m in messages)
+        return max(reported, estimate)
 
     async def should_compact(
         self, messages: list[Message], usage: Usage, ctx_window: int
     ) -> bool:
         # Prefer reported usage if we have it — that's the model's truth.
-        # Otherwise estimate from message contents.
+        # Otherwise estimate from message contents. The model's reported
+        # input_tokens undercounts the NEXT prompt (it predates the tool results
+        # we just appended), so take the larger of reported and our estimate so
+        # we trigger before the next call overflows, not after.
         if ctx_window <= 0:
             return False
-        # The model's reported input_tokens is the prompt size BEFORE the last
-        # turn's output + the tool results we just appended, so on its own it
-        # undercounts the size of the NEXT prompt. Take the larger of the
-        # reported usage and our own estimate over the full current history so
-        # we trigger before the next call overflows, not after.
-        reported = usage.input_tokens + usage.output_tokens if usage else 0
-        estimate = sum(_message_token_estimate(m) for m in messages)
-        used = max(reported, estimate)
-        return used >= self._threshold * ctx_window
+        return self._used(messages, usage) >= self._threshold * ctx_window
+
+    def should_microcompact(
+        self, messages: list[Message], usage: Usage, ctx_window: int
+    ) -> bool:
+        if ctx_window <= 0:
+            return False
+        return self._used(messages, usage) >= self._micro_threshold * ctx_window
+
+    def microcompact(self, messages: list[Message]) -> bool:
+        """Clear the content of tool results older than the last
+        ``micro_keep`` (only those over ``micro_min_chars``), in place. Keeps the
+        block + its tool_use_id so pairing is untouched. Returns True if anything
+        changed. Cheap (no model call), idempotent."""
+        import msgspec  # noqa: PLC0415
+
+        tr_idx = [i for i, m in enumerate(messages) if _is_tool_result_message(m)]
+        if len(tr_idx) <= self._micro_keep:
+            return False
+        cleared = "[old tool result cleared to save context]"
+        changed = False
+        for i in tr_idx[: -self._micro_keep]:
+            m = messages[i]
+            new_blocks = []
+            touched = False
+            for b in m.content:  # type: ignore[union-attr]
+                if (
+                    isinstance(b, ToolResultBlock)
+                    and isinstance(b.content, str)
+                    and len(b.content) > self._micro_min_chars
+                    and b.content != cleared
+                ):
+                    new_blocks.append(msgspec.structs.replace(b, content=cleared))
+                    touched = True
+                else:
+                    new_blocks.append(b)
+            if touched:
+                messages[i] = msgspec.structs.replace(m, content=new_blocks)
+                changed = True
+        return changed
 
     async def compact(self, messages: list[Message]) -> list[Message]:
         """Summarize older messages into a single replacement message, keeping

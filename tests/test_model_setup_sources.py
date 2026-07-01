@@ -92,6 +92,24 @@ def test_model_ping_unreachable_does_not_block_save() -> None:
     assert ok is True
 
 
+def test_confirm_model_routes_anthropic_to_messages_api(monkeypatch) -> None:
+    from mantis_agent import setup_wizard as sw
+    hit = {}
+    monkeypatch.setattr(sw, "_ping_anthropic_model", lambda *a, **k: (hit.__setitem__("anthropic", 1), (True, "ok"))[1])
+    monkeypatch.setattr(sw, "_ping_chat_model", lambda *a, **k: (hit.__setitem__("chat", 1), (True, "ok"))[1])
+    sw._confirm_model(_NullConsole(), "https://api.anthropic.com/v1", "claude-opus-4-8", "k")
+    assert hit.get("anthropic") and not hit.get("chat")
+
+
+def test_confirm_model_routes_openai_to_chat_completions(monkeypatch) -> None:
+    from mantis_agent import setup_wizard as sw
+    hit = {}
+    monkeypatch.setattr(sw, "_ping_anthropic_model", lambda *a, **k: (hit.__setitem__("anthropic", 1), (True, "ok"))[1])
+    monkeypatch.setattr(sw, "_ping_chat_model", lambda *a, **k: (hit.__setitem__("chat", 1), (True, "ok"))[1])
+    sw._confirm_model(_NullConsole(), "https://api.openai.com/v1", "gpt-4o", "k")
+    assert hit.get("chat") and not hit.get("anthropic")
+
+
 # -- Arrow selector ----------------------------------------------------------
 
 

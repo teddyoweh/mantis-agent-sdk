@@ -500,10 +500,9 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
         c.print(Text("  Cancelled.", style=dim))
         return 1
 
-    # Anthropic speaks /v1/messages, not /chat/completions — the key was already
-    # validated against /models, so skip the chat ping for it. For everyone else,
-    # confirm the exact model answers before committing it as the default.
-    if prov.id != "anthropic" and not _confirm_model(c, prov.base_url, model, key):
+    # Confirm the exact model answers before committing it as the default.
+    # _confirm_model routes Anthropic → /v1/messages, everyone else → /chat/completions.
+    if not _confirm_model(c, prov.base_url, model, key):
         c.print(Text("  Not saved — re-run  mantis setup  to pick another.", style=dim))
         return 1
 
@@ -546,13 +545,45 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
     return False, detail
 
 
+def _ping_anthropic_model(base_url: str, model: str, key: str, *, timeout: float = 10.0) -> tuple[bool, str]:
+    """Ping a Claude model via ``/v1/messages`` — Anthropic's API isn't OpenAI-
+    compatible (x-api-key + anthropic-version, ``/messages`` not
+    ``/chat/completions``). Returns ``(ok, detail)``; a network blip → (True, "")."""
+    try:
+        import httpx  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return True, ""
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    if key:
+        headers["x-api-key"] = key
+    payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+    try:
+        r = httpx.post(f"{base_url.rstrip('/')}/messages", headers=headers, json=payload, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        return True, ""
+    if r.status_code == 200:
+        return True, "ok"
+    detail = f"HTTP {r.status_code}"
+    try:
+        err = r.json().get("error", {})
+        if isinstance(err, dict) and err.get("message"):
+            detail = str(err["message"])[:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return False, detail
+
+
 def _confirm_model(c: Any, base_url: str, model: str, key: str) -> bool:
     """Ping the model; if it fails, show why and ask whether to save anyway.
-    Returns True to proceed with saving, False to abort."""
+    Returns True to proceed with saving, False to abort. Routes Anthropic to its
+    Messages API, everything else to /chat/completions."""
     from rich.text import Text  # noqa: PLC0415
 
     c.print(Text("  Testing the model…", style="bright_black"))
-    ok, detail = _ping_chat_model(base_url, model, key)
+    if "anthropic.com" in base_url:
+        ok, detail = _ping_anthropic_model(base_url, model, key)
+    else:
+        ok, detail = _ping_chat_model(base_url, model, key)
     if ok:
         c.print(Text("  ✓ model responds", style="#7cb342"))
         return True

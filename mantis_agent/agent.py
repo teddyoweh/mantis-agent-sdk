@@ -770,9 +770,16 @@ class Agent:
                     if self.model_capability is not None
                     else 0
                 )
-                if await self._compactor.should_compact(
-                    messages, last_usage or Usage(), ctx_window
+                usage_now = last_usage or Usage()
+                # Cheap first line: clear old tool-result bodies (no model call).
+                micro = getattr(self._compactor, "microcompact", None)
+                should_micro = getattr(self._compactor, "should_microcompact", None)
+                if micro is not None and should_micro is not None and should_micro(
+                    messages, usage_now, ctx_window
                 ):
+                    micro(messages)
+                # Fallback: full summarizing compaction when still over threshold.
+                if await self._compactor.should_compact(messages, usage_now, ctx_window):
                     before_len = len(messages)
                     compacted = await self._compactor.compact(messages)
                     if len(compacted) < before_len:

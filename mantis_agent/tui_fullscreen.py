@@ -101,6 +101,10 @@ async def run_fullscreen(tui: Any) -> int:
         BufferControl,
         FormattedTextControl,
     )
+    from prompt_toolkit.layout.processors import (  # noqa: PLC0415
+        ConditionalProcessor,
+        PasswordProcessor,
+    )
     from rich.markup import escape as _esc  # noqa: PLC0415
 
     from .types import (  # noqa: PLC0415
@@ -924,7 +928,18 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001 — no editor / spawn failed: ignore
             pass
 
-    input_window = Window(BufferControl(buffer=input_buffer), height=1, wrap_lines=False)
+    input_window = Window(
+        BufferControl(
+            buffer=input_buffer,
+            # Mask the line (••••) ONLY while pasting an API key for a locked
+            # provider — normal chat input stays visible.
+            input_processors=[ConditionalProcessor(
+                PasswordProcessor(),
+                Condition(lambda: state.get("awaiting_key") is not None),
+            )],
+        ),
+        height=1, wrap_lines=False,
+    )
     layout = Layout(
         HSplit([
             Window(FormattedTextControl(rule_ft), height=1),

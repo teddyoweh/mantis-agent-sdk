@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.29.0] — 2026-06-30
+
+### Added
+
+- **Microcompaction** (parity roadmap T2). A cheap first line of context defense
+  that runs before full compaction: once the window passes 60%, the bodies of
+  tool results older than the last 8 (only those over ~800 chars) are cleared to
+  `[old tool result cleared to save context]` — no summarizer call. It keeps the
+  blocks and their `tool_use_id` intact (pairing untouched) and is idempotent, so
+  a long chain of `read`/`grep`/`bash` dumps you've already acted on stops
+  bloating the window, deferring the expensive summarizing compaction (which
+  still fires at 85% as the fallback). New `SimpleCompactor.should_microcompact`
+  / `microcompact`.
+
 ## [1.28.0] — 2026-06-30
 
 ### Added
