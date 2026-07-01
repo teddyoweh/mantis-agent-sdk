@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.6.0] — 2026-06-30
+
+### Added
+
+- **Inline image rendering** in the terminal (iTerm2 / WezTerm). When the agent
+  reads an image with multimodal `read_file`, the `mantis` terminal now *shows*
+  it inline (via the iTerm2 `OSC 1337;File=` protocol, with tmux passthrough)
+  plus a `[media, size]` note — the visual counterpart to the model being able to
+  see it (1.28). Terminals without support just get the note, so nothing breaks.
+  New `mantis_agent.inline_image` module (`iterm2_image_escape`,
+  `supports_inline_images`, `image_block_to_inline`).
+
 ## [2.5.0] — 2026-06-30
 
 ### Changed

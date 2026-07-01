@@ -88,7 +88,6 @@
   --color-code: #1c1a15; /* dark code surface — the platform pop */
   --color-code-2: #26231d;
 
-  --font-serif: var(--ff-serif);
   /* self-hosted Google Sans wins when present; next/font Google Sans is the fallback */
   --font-sans: "Google Sans Local", var(--ff-sans);
   --font-mono: var(--ff-mono);
@@ -149,12 +148,12 @@
   }
 }
 
-/* ---- serif display ---- */
+/* ---- display headings (Google Sans) ---- */
 .font-display {
-  font-family: var(--font-serif);
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  line-height: 0.98;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
 }
 
 /* ---- mono eyebrow / label ---- */
@@ -353,10 +352,10 @@
   background-size: 100% 1px;
 }
 .prose h2 {
-  font-family: var(--font-serif);
-  font-weight: 400;
-  font-size: 1.7rem;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: -0.025em;
   color: var(--color-ink);
   margin: 2.4em 0 0.7em;
   line-height: 1.1;

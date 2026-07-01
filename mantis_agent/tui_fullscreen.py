@@ -315,8 +315,13 @@ async def run_fullscreen(tui: Any) -> int:
         active_set = set(active_all)
         active = [m for m in active_all if keep(m)]
         if active:
-            where = ("Ollama (local)" if ("localhost" in (tui.backend or "")
-                     or "127.0.0.1" in (tui.backend or "")) else (tui.backend or "backend"))
+            back = (tui.backend or "").rstrip("/")
+            if "localhost" in back or "127.0.0.1" in back:
+                where = "Ollama (local)"
+            else:
+                # Show the friendly provider name when the backend is a known one.
+                where = next((p.label for p in catalog.CATALOG
+                              if p.base_url.rstrip("/") == back), back or "backend")
             items.append({"kind": "header", "label": f"● active · {where}"})
             for m in active:
                 items.append({"kind": "model", "model": m, "enabled": True, "provider_id": None})

@@ -1676,6 +1676,23 @@ class MantisTUI:
         for block in msg.content:
             if not isinstance(block, ToolResultBlock):
                 continue
+            # Rich content (a multimodal read_file returning an image) → show the
+            # image inline on iTerm2/WezTerm, else just a size note.
+            if isinstance(block.content, list):
+                from .inline_image import image_block_to_inline, image_note  # noqa: PLC0415
+                from .types import ImageBlock as _ImageBlock  # noqa: PLC0415
+                imgs = [b for b in block.content if isinstance(b, _ImageBlock)]
+                if imgs:
+                    for img in imgs:
+                        note = _T()
+                        note.append("  └ ", style=LEG)
+                        note.append(image_note(img), style="bright_black")
+                        self.console.print(note)
+                        esc = image_block_to_inline(img)
+                        if esc:
+                            self.console.file.write("    " + esc + "\n")
+                            self.console.file.flush()
+                    continue
             body = block.content if isinstance(block.content, str) else str(block.content)
             lines = body.strip().splitlines() or ["(no output)"]
             colour = "red" if block.is_error else "bright_black"

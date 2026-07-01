@@ -1,23 +1,16 @@
 import type { Metadata } from "next";
-import { Google_Sans, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Google_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const googleSans = Google_Sans({
   variable: "--ff-sans",
   subsets: ["latin"],
+  style: ["normal", "italic"],
   display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--ff-mono",
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const instrumentSerif = Instrument_Serif({
-  variable: "--ff-serif",
-  weight: "400",
-  style: ["normal", "italic"],
   subsets: ["latin"],
   display: "swap",
 });
@@ -67,7 +60,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${googleSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
+      className={`${googleSans.variable} ${geistMono.variable} antialiased`}
     >
       <body>{children}</body>
     </html>

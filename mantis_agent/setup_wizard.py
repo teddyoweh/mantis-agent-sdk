@@ -322,7 +322,15 @@ def _print_status(c: Any) -> None:
         c.print(Text(f"  Current:  {last['model']}  ·  {where}", style="white"))
     else:
         c.print(Text("  Current:  nothing configured yet", style=dim))
-    enabled = [p.label for p in catalog.CATALOG if catalog.is_enabled(p)]
+    enabled = []
+    for p in catalog.CATALOG:
+        if not catalog.is_enabled(p):
+            continue
+        label = p.label
+        # Anthropic can be key- or token-authed — show which.
+        if p.id == "anthropic" and not catalog.api_key_for(p) and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            label += " (token)"
+        enabled.append(label)
     if enabled:
         c.print(Text("  Enabled:  " + "  ·  ".join(enabled), style=green))
 
