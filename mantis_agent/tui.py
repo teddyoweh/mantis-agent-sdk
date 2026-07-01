@@ -114,6 +114,7 @@ TOOL_VERBS = {
     "ask_user_question": ("Ask", ()),
     "exit_plan_mode": ("Present plan", ()),
     "bash_output": ("Check output", ("bash_id", "id")),
+    "bash_kill": ("Kill", ("bash_id",)),
 }
 
 # File extension → pygments lexer name, for syntax-highlighting diff bodies.

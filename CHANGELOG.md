@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.54.0] — 2026-06-30
+
+### Added
+
+- **`bash_kill` tool** — terminate a background shell (Claude's KillShell). The
+  agent could start (`bash run_in_background=True`) and read (`bash_output`) a
+  long-running background process, but had no way to STOP one it started — only
+  session-end cleanup did. `bash_kill(bash_id)` terminates it (whole process
+  group, so forked children die too) and deregisters it; reports if the id is
+  unknown or already exited. Completes the background-shell lifecycle:
+  start → read → kill.
+
 ## [2.53.0] — 2026-06-30
 
 ### Changed

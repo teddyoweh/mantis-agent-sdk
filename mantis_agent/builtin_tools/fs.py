@@ -335,6 +335,39 @@ def terminate_background_shells() -> int:
     return n
 
 
+@tool(name="bash_kill", is_read_only=False, is_concurrency_safe=True)
+async def bash_kill(bash_id: str) -> str:
+    """Terminate a background shell started with ``bash(run_in_background=True)``.
+
+    Use this to stop a dev server, watcher, or other long-running background
+    process you started once you're done with it. Kills the whole process group
+    (so forked children die too).
+
+    Args:
+        bash_id: The id returned when the background command was started.
+    """
+    import signal  # noqa: PLC0415
+
+    entry = _BG_SHELLS.get(bash_id)
+    if entry is None:
+        running = ", ".join(_BG_SHELLS) or "none"
+        return f"no background shell {bash_id!r} (running: {running})"
+    proc = entry["proc"]
+    rc = proc.poll()
+    if rc is not None:
+        _BG_SHELLS.pop(bash_id, None)
+        return f"{bash_id} had already exited (code {rc})"
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+    _BG_SHELLS.pop(bash_id, None)
+    return f"terminated background shell {bash_id} ({entry['cmd']})"
+
+
 @tool(is_read_only=True)
 async def bash_output(bash_id: str) -> str:
     """Read the accumulated output of a background shell started with
@@ -1011,6 +1044,7 @@ async def sleep(seconds: float = 5.0) -> str:
 CODING_TOOLS: tuple[Tool, ...] = (
     bash,
     bash_output,
+    bash_kill,
     read_file,
     write_file,
     edit_file,
@@ -1026,6 +1060,7 @@ __all__ = [
     "CODING_TOOLS",
     "bash",
     "bash_output",
+    "bash_kill",
     "read_file",
     "write_file",
     "edit_file",

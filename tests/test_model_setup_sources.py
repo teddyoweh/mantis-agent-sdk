@@ -259,6 +259,18 @@ def test_provider_key_env_aliases_are_honored(monkeypatch) -> None:
     assert catalog.api_key_for(catalog.BY_ID["qwen"]) == "q-key"
 
 
+def test_key_env_alias_enables_provider_in_picker_grouping(monkeypatch) -> None:
+    # The alias must flow through api_key_for → is_enabled → the picker's
+    # grouped_provider_models, so a provider keyed via an alias shows as enabled.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    before = {x["provider_id"]: x["enabled"] for x in catalog.grouped_provider_models()}
+    assert before["gemini"] is False
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
+    after = {x["provider_id"]: x["enabled"] for x in catalog.grouped_provider_models()}
+    assert after["gemini"] is True
+
+
 def test_primary_key_env_takes_precedence_over_alias(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "primary")
     monkeypatch.setenv("GOOGLE_API_KEY", "alias")
