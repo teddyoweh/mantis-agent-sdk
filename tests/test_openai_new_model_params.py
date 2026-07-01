@@ -37,3 +37,72 @@ def test_legacy_openai_models_keep_max_tokens_and_temperature() -> None:
     assert pl.get("max_tokens") == 100
     assert "max_completion_tokens" not in pl
     assert pl.get("temperature") == 0.7
+
+
+def test_stream_retries_with_max_completion_tokens_on_param_error() -> None:
+    # A recent model our name-detection misses (e.g. the bare "chat-latest" alias)
+    # 400s on max_tokens; the provider must swap the field and retry, not fail.
+    import anyio
+    import httpx
+
+    from mantis_agent.providers.openai_compat import OpenAICompatProvider
+    from mantis_agent.types import UserMessage
+
+    calls: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.content)
+        if b'"max_tokens"' in request.content:
+            return httpx.Response(400, json={"error": {"message":
+                "Unsupported parameter: 'max_tokens' is not supported with this model. "
+                "Use 'max_completion_tokens' instead."}})
+        sse = ('data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
+               'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+               'data: [DONE]\n\n')
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    p = OpenAICompatProvider(base_url="https://api.openai.com/v1", api_key="x")
+    p.client = httpx.AsyncClient(base_url="https://api.openai.com/v1",
+                                 transport=httpx.MockTransport(handler))
+
+    async def go() -> list:
+        return [ev async for ev in p.stream(model="chat-latest",
+                                            messages=[UserMessage(content="hi")], max_tokens=10)]
+
+    anyio.run(go)
+    assert len(calls) == 2  # first attempt 400'd, second retried
+    assert b"max_completion_tokens" in calls[1] and b'"max_tokens"' not in calls[1]
+
+
+def test_stream_retries_dropping_temperature_when_reported_first() -> None:
+    # If OpenAI reports the temperature rejection first (before the token-field
+    # one), the retry must still fire — drop temperature and retry.
+    import anyio
+    import httpx
+
+    from mantis_agent.providers.openai_compat import OpenAICompatProvider
+    from mantis_agent.types import UserMessage
+
+    calls: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.content)
+        if b'"temperature"' in request.content:
+            return httpx.Response(400, json={"error": {"message":
+                "Unsupported value: 'temperature' does not support 0.7 — only the default (1) is supported."}})
+        sse = ('data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
+               'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+               'data: [DONE]\n\n')
+        return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+
+    p = OpenAICompatProvider(base_url="https://api.openai.com/v1", api_key="x")
+    p.client = httpx.AsyncClient(base_url="https://api.openai.com/v1",
+                                 transport=httpx.MockTransport(handler))
+
+    async def go() -> list:
+        return [ev async for ev in p.stream(model="some-new-model", messages=[UserMessage(content="hi")],
+                                            max_tokens=10, temperature=0.7)]
+
+    anyio.run(go)
+    assert len(calls) == 2
+    assert b'"temperature"' not in calls[1]

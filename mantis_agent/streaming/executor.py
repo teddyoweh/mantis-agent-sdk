@@ -173,6 +173,65 @@ def _accepted_params(fn: Any) -> frozenset[str] | None:
     return _ACCEPTED_PARAMS_CACHE[key]
 
 
+_TRUE_STRS = frozenset({"true", "yes", "1", "on", "y", "t"})
+_FALSE_STRS = frozenset({"false", "no", "0", "off", "n", "f", ""})
+
+
+def _coerce_value(v: Any, jtype: str | None) -> Any:
+    """Coerce a single value to the JSON-schema type — models pass numbers/bools
+    as strings constantly. Best-effort: leaves the value unchanged if it can't
+    convert cleanly (so the tool still sees SOMETHING rather than a wrong guess)."""
+    if jtype == "integer" and isinstance(v, str):
+        try:
+            return int(float(v.strip()))
+        except ValueError:
+            return v
+    if jtype == "number" and isinstance(v, str):
+        try:
+            return float(v.strip())
+        except ValueError:
+            return v
+    if jtype == "boolean":
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in _TRUE_STRS:
+                return True
+            if s in _FALSE_STRS:
+                return False
+    if jtype in ("array", "object") and isinstance(v, str):
+        try:
+            parsed = msgspec.json.decode(v.encode())
+        except (msgspec.DecodeError, ValueError):
+            return v
+        if (jtype == "array" and isinstance(parsed, list)) or (
+            jtype == "object" and isinstance(parsed, dict)
+        ):
+            return parsed
+    return v
+
+
+def _coerce_to_schema(input: dict[str, Any], schema: dict[str, Any] | None) -> dict[str, Any]:
+    """Coerce each arg to the type its ``input_schema`` property declares, so a
+    model that passes ``"10"`` for an int or ``"true"`` for a bool still gets a
+    working call. No-op when there's no typed schema."""
+    props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict) or not input:
+        return input
+    out: dict[str, Any] = {}
+    changed = False
+    for k, v in input.items():
+        spec = props.get(k)
+        jtype = spec.get("type") if isinstance(spec, dict) else None
+        nv = _coerce_value(v, jtype) if jtype else v
+        out[k] = nv
+        changed = changed or (nv is not v)
+    return out if changed else input
+
+
 def _filter_tool_input(fn: Any, input: dict[str, Any]) -> dict[str, Any]:
     """Drop keys ``fn`` won't accept so a model's hallucinated extra arg doesn't
     TypeError the call. Pass-through when ``fn`` takes ``**kwargs`` or ``input``
@@ -776,10 +835,12 @@ class StreamingToolExecutor:
         """Run the tool body with optional timeout. Captures every exception
         and stores a ``ToolResultBlock``. May trigger sibling abort."""
         timeout = getattr(tool, "timeout_s", None)
-        # Drop arguments the tool doesn't accept — small/local models routinely
-        # hallucinate extra kwargs, which would TypeError the call and burn a turn.
-        # Tools that take **kwargs (e.g. explicit-schema tools) are passed as-is.
-        call_input = _filter_tool_input(tool.fn, block.input)
+        # Repair a model's loose args before calling: coerce typed values passed
+        # as strings ("10" → 10, "true" → True) to the schema type, then drop
+        # kwargs the tool doesn't accept (hallucinated extras) — either would
+        # otherwise error the call and burn a turn.
+        coerced = _coerce_to_schema(block.input, getattr(tool, "input_schema", None))
+        call_input = _filter_tool_input(tool.fn, coerced)
         try:
             if timeout is not None:
                 with anyio.fail_after(timeout):

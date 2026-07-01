@@ -273,11 +273,23 @@ class OpenAICompatProvider(HTTPProviderMixin):
             ) as response:
                 if response.status_code >= 400:
                     await response.aread()
-                    if (_attempt == 0 and "max_tokens" in payload
-                            and b"max_completion_tokens" in response.content):
-                        payload["max_completion_tokens"] = payload.pop("max_tokens")
-                        payload.pop("temperature", None)
-                        continue
+                    # Handle the two "recent OpenAI model" param rejections
+                    # independently (OpenAI may report either first): swap
+                    # max_tokens→max_completion_tokens, and/or drop a temperature
+                    # the model won't accept. Retry once if we changed anything.
+                    body = response.content
+                    if _attempt == 0:
+                        retry = False
+                        if "max_tokens" in payload and b"max_completion_tokens" in body:
+                            payload["max_completion_tokens"] = payload.pop("max_tokens")
+                            retry = True
+                        if ("temperature" in payload and b"temperature" in body
+                                and (b"nsupported" in body or b"does not support" in body
+                                     or b"only the default" in body or b"only supports" in body)):
+                            payload.pop("temperature", None)
+                            retry = True
+                        if retry:
+                            continue
                     raise_for_status(response)
 
                 if path == "A":

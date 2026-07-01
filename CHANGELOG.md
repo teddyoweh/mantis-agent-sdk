@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.38.0] — 2026-06-30
+
+### Added
+
+- **Schema-driven tool-argument coercion.** Models pass typed args as strings
+  constantly — `head_limit="10"`, `replace_all="true"`, `timeout="30"`. The
+  executor now coerces each argument to the type its `input_schema` declares
+  before calling: `"10"`→`10` (integer), `"0.5"`→`0.5` (number),
+  `"true"/"yes"/"1"`→`True` / `"false"/"no"/"0"`→`False` (boolean), and a
+  JSON-string array/object into the real structure. Best-effort — an
+  uncoercible value is left untouched, correct types are a no-op. Runs right
+  before the extra-arg filter (2.36), so loose model output is repaired end to
+  end. New `_coerce_to_schema`.
+
 ## [2.37.0] — 2026-06-30
 
 ### Added
