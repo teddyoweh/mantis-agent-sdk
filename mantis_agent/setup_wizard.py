@@ -260,6 +260,20 @@ def _print_catalog(c: object, budget: float, rec: object) -> None:
 def _interactive_pick(c: object, budget: float, rec: object) -> str | None:
     from rich.text import Text  # noqa: PLC0415
 
+    # Arrow-key menu (pre-selecting the ★ recommendation). Rows show fit + size.
+    rows: list[tuple[str, str]] = []
+    for m in CODING_MODELS:
+        fits = "✓ fits" if m.min_ram_gb <= budget else "needs more RAM"
+        star = "★ " if m is rec else "  "
+        rows.append((f"{star}{m.label:<20}", f"{m.blurb}  · ~{m.size_gb:g} GB · {fits}"))
+    start = CODING_MODELS.index(rec) if rec in CODING_MODELS else 0  # type: ignore[arg-type]
+    idx = _arrow_select("Coding models  (↑ more capable)", rows, start=start)
+    if idx is None:
+        return None
+    if idx >= 0:
+        return CODING_MODELS[idx].tag
+
+    # numeric fallback (non-TTY)
     c.print()
     _print_catalog(c, budget, rec)
     c.print(Text(f"\n  ★ recommended for your machine: {rec.label}", style="#cddc39"))  # type: ignore[attr-defined]
@@ -338,6 +352,35 @@ def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) ->
         full_screen=False,
     )
     return app.run()
+
+
+def _pick_model_id(c: Any, models: list[str], *, current: str | None = None) -> str | None:
+    """Arrow-pick a model id from ``models`` (numeric fallback for non-TTY).
+    The current default (if any) is pre-highlighted. Returns the id or None."""
+    from rich.text import Text  # noqa: PLC0415
+
+    shown = models[:30]
+    rows = [(m, "← current" if m == current else "") for m in shown]
+    start = shown.index(current) if current in shown else 0
+    idx = _arrow_select("Pick a model", rows, start=start)
+    if idx is None:
+        return None
+    if idx >= 0:
+        return shown[idx]
+    # numeric fallback (non-TTY)
+    c.print(Text("\n  Models:\n", style="bright_black"))
+    for i, m in enumerate(shown[:20], 1):
+        mark = "  ← current" if m == current else ""
+        c.print(Text(f"   {i:>2}  {m}{mark}", style="white"))
+    try:
+        raw = input(f"\n  Pick [1-{min(len(shown), 20)}, Enter={shown[0]}], or type an id: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not raw:
+        return shown[0]
+    if raw.isdigit() and 1 <= int(raw) <= min(len(shown), 20):
+        return shown[int(raw) - 1]
+    return raw  # exact id the user typed
 
 
 def _choose_path(c: Any) -> str | None:
@@ -452,19 +495,10 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     except Exception:  # noqa: BLE001
         chat = live
     models = chat or list(prov.models)
-    c.print(Text("\n  Models:\n", style=dim))
-    for i, m in enumerate(models[:20], 1):
-        c.print(Text(f"   {i:>2}  {m}", style="white"))
-    try:
-        raw = input(f"\n  Pick a model [1-{min(len(models), 20)}, Enter={models[0]}], or type an id: ").strip()
-    except (EOFError, KeyboardInterrupt):
+    model = _pick_model_id(c, models)
+    if model is None:
+        c.print(Text("  Cancelled.", style=dim))
         return 1
-    if not raw:
-        model = models[0]
-    elif raw.isdigit() and 1 <= int(raw) <= min(len(models), 20):
-        model = models[int(raw) - 1]
-    else:
-        model = raw  # exact id the user typed
 
     catalog.set_last_model(model, prov.base_url)
     c.print()
@@ -473,6 +507,54 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     c.print(Text("      mantis", style=f"bold {gold}"))
     c.print(Text("  Switch models any time with  /models  ·  add more with  mantis setup.\n", style=dim))
     return 0
+
+
+def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10.0) -> tuple[bool, str]:
+    """Confirm a model actually answers on ``/chat/completions`` with a 1-token
+    request — catches responses-only / wrong-endpoint / decommissioned models
+    BEFORE we save them as the default. Returns ``(ok, detail)``. Best-effort:
+    a network flake returns ``(True, "")`` so we never block a save on a blip."""
+    try:
+        import httpx  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return True, ""
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    payload = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+    try:
+        r = httpx.post(f"{base_url.rstrip('/')}/chat/completions",
+                       headers=headers, json=payload, timeout=timeout)
+    except Exception:  # noqa: BLE001 — connect/timeout → don't block the save
+        return True, ""
+    if r.status_code == 200:
+        return True, "ok"
+    detail = f"HTTP {r.status_code}"
+    try:
+        err = r.json().get("error", {})
+        if isinstance(err, dict) and err.get("message"):
+            detail = str(err["message"])[:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return False, detail
+
+
+def _confirm_model(c: Any, base_url: str, model: str, key: str) -> bool:
+    """Ping the model; if it fails, show why and ask whether to save anyway.
+    Returns True to proceed with saving, False to abort."""
+    from rich.text import Text  # noqa: PLC0415
+
+    c.print(Text("  Testing the model…", style="bright_black"))
+    ok, detail = _ping_chat_model(base_url, model, key)
+    if ok:
+        c.print(Text("  ✓ model responds", style="#7cb342"))
+        return True
+    c.print(Text(f"  ⚠ {model} didn't answer: {detail}", style="#cddc39"))
+    try:
+        ans = input("  Save it anyway? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return ans in ("y", "yes")
 
 
 def _probe_openai_models(url: str, key: str) -> list[str] | None:
@@ -521,19 +603,11 @@ def _run_selfhost(c: Any) -> int:
     c.print(Text("  Probing endpoint…", style=dim))
     models = _probe_openai_models(url, key)
     if models:
-        c.print(Text(f"  ✓ reachable — {len(models)} model(s)\n", style=green))
-        for i, m in enumerate(models[:20], 1):
-            c.print(Text(f"   {i:>2}  {m}", style="white"))
-        try:
-            raw = input(f"\n  Pick [1-{min(len(models), 20)}, Enter={models[0]}], or type an id: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        c.print(Text(f"  ✓ reachable — {len(models)} model(s)", style=green))
+        model = _pick_model_id(c, models)
+        if model is None:
+            c.print(Text("  Cancelled.", style=dim))
             return 1
-        if not raw:
-            model = models[0]
-        elif raw.isdigit() and 1 <= int(raw) <= min(len(models), 20):
-            model = models[int(raw) - 1]
-        else:
-            model = raw
     else:
         c.print(Text("  (couldn't list /v1/models — enter the model id your server serves)", style=dim))
         try:

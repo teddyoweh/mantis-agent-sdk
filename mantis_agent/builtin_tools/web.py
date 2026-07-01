@@ -27,10 +27,12 @@ WebFetch is the same idea — fetch a URL, return readable text. Optional
 
 from __future__ import annotations
 
+import html as html_mod
 import logging
 import os
+import re
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import httpx
 
@@ -237,6 +239,31 @@ async def _tavily_search(
     return "\n".join(rows) if rows else "no results"
 
 
+_DDG_LINK_RE = re.compile(
+    r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.DOTALL | re.IGNORECASE
+)
+_DDG_SNIPPET_RE = re.compile(
+    r'class="result__snippet"[^>]*>(.*?)</a>', re.DOTALL | re.IGNORECASE
+)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _ddg_text(fragment: str) -> str:
+    return html_mod.unescape(_TAG_RE.sub("", fragment)).strip()
+
+
+def _ddg_real_url(href: str) -> str:
+    """DDG wraps result links in a ``/l/?uddg=<encoded real url>`` redirector —
+    unwrap it so callers get the actual destination."""
+    if href.startswith("//"):
+        href = "https:" + href
+    if "duckduckgo.com/l/" in href or href.startswith("/l/"):
+        q = parse_qs(urlparse(href).query)
+        if q.get("uddg"):
+            return unquote(q["uddg"][0])
+    return href
+
+
 async def _ddg_search(
     query: str,
     *,
@@ -244,40 +271,41 @@ async def _ddg_search(
     blocked: list[str] | None,
     num: int = 8,
 ) -> str:
-    """DuckDuckGo HTML scraping. No key, free, lower quality, redirector URLs."""
+    """DuckDuckGo — no key, free, dependency-free (stdlib HTML parsing). Tries
+    the html endpoint, then the lite endpoint if it comes back empty (DDG rate-
+    limits / A-B-tests markup, so a second surface improves reliability)."""
 
-    # bs4 is imported lazily so users who don't use this fallback don't pay.
-    try:
-        from bs4 import BeautifulSoup  # type: ignore[import-untyped]
-    except ImportError:
-        return (
-            "DDG fallback requires 'beautifulsoup4'. "
-            "Either install it or set EXA_API_KEY for proper search."
-        )
-
-    url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
-    try:
-        r = await _client().get(url)
-        r.raise_for_status()
-    except httpx.HTTPError as e:
-        return f"search error: {e!r}"
-
-    soup = BeautifulSoup(r.text, "html.parser")
-    rows: list[str] = []
-    for result in soup.select("div.result")[: num * 2]:  # over-fetch for filter
-        title_el = result.select_one("a.result__a")
-        if title_el is None:
+    for base in (
+        "https://html.duckduckgo.com/html/?q=",
+        "https://lite.duckduckgo.com/lite/?q=",
+    ):
+        try:
+            r = await _client().get(base + quote_plus(query))
+            r.raise_for_status()
+        except httpx.HTTPError:
             continue
-        href = title_el.get("href", "")
-        if not _domain_filter(href, allowed, blocked):
-            continue
-        title = title_el.get_text(strip=True)
-        snip_el = result.select_one(".result__snippet")
-        snip = snip_el.get_text(strip=True) if snip_el else ""
-        rows.append(f"{title} — {href} — {snip[:280]}")
-        if len(rows) >= num:
-            break
-    return "\n".join(rows) if rows else "no results"
+
+        rows: list[str] = []
+        titles = _DDG_LINK_RE.findall(r.text)
+        snippets = _DDG_SNIPPET_RE.findall(r.text)
+        for i, (href, title_html) in enumerate(titles):
+            real = _ddg_real_url(href)
+            if not real.startswith("http") or "duckduckgo.com" in real:
+                continue
+            if not _domain_filter(real, allowed, blocked):
+                continue
+            title = _ddg_text(title_html)
+            snip = _ddg_text(snippets[i]) if i < len(snippets) else ""
+            rows.append(f"{title} — {real} — {snip[:280]}")
+            if len(rows) >= num:
+                break
+        if rows:
+            return "\n".join(rows)
+
+    return (
+        "no results (DuckDuckGo returned nothing — it may be rate-limiting). "
+        "For reliable search set EXA_API_KEY, BRAVE_API_KEY, or TAVILY_API_KEY."
+    )
 
 
 # ---------------------------------------------------------------------------

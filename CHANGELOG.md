@@ -74,6 +74,28 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.25.0] — 2026-06-30
+
+### Fixed
+
+- **Web search works out of the box again.** The keyless DuckDuckGo fallback
+  required `beautifulsoup4` (not a dependency), so `web_search` returned an error
+  unless you set an API key. It's now dependency-free (stdlib HTML parsing),
+  unwraps DuckDuckGo's `/l/?uddg=` redirector to real URLs, and falls back to the
+  `lite` endpoint when the html one is empty. Set `EXA_API_KEY` / `BRAVE_API_KEY`
+  / `TAVILY_API_KEY` for higher-quality results as before.
+
+### Added
+
+- **Todo re-injection** (parity roadmap T2). When an `Agent` is given a live
+  `todos` list (the one `todo_write` mutates), the current state is re-injected
+  as a `<system-reminder>` at the top of each turn — refreshed, not accumulated —
+  so the model keeps its plan in view over a long task. Wired in the terminal.
+
+### Changed
+
+- The terminal input prompt is now `❯` (was `›`).
+
 ## [1.24.0] — 2026-06-30
 
 ### Added

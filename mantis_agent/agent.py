@@ -100,6 +100,23 @@ _JSON_DECODER = msgspec.json.Decoder()
 # fabricated output is shown as the answer. We salvage these into real
 # ToolUseBlocks so the loop actually runs the command and feeds back the result.
 
+_TODO_SENTINEL = "[Current todo list]"
+_TODO_GLYPH = {"completed": "[x]", "in_progress": "[→]", "pending": "[ ]"}
+
+
+def _render_todo_reminder(todos: list[dict[str, Any]]) -> str:
+    """A ``<system-reminder>`` reflecting the live todo list so the model keeps
+    its plan in view. Marked with ``_TODO_SENTINEL`` so the loop can find and
+    replace a stale copy instead of accumulating them."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    lines = [f"{_TODO_SENTINEL} — keep it updated with todo_write as you complete items:"]
+    for t in todos:
+        g = _TODO_GLYPH.get(t.get("status", "pending"), "[ ]")
+        lines.append(f"{g} {t.get('content', '')}")
+    return wrap_system_reminder("\n".join(lines))
+
+
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
 
@@ -222,6 +239,12 @@ class Agent:
     # ``_surfaced``. The read side of the memory system (write side: the
     # ``remember`` tool / ``memory.save_memory_entry``). Set False to disable.
     include_recall: bool = True
+
+    # Live todo list (the same list a ``todo_write`` tool mutates). When set,
+    # the current state is re-injected as a ``<system-reminder>`` at the top of
+    # each turn so the model keeps its plan in view over a long task instead of
+    # losing it as the ``todo_write`` result scrolls out of the window.
+    todos: list[dict[str, Any]] | None = None
 
     # Structured output — see ``response_format.py``. ``None`` means "model
     # is free to emit any text"; a dict in OpenAI ``response_format`` shape
@@ -631,6 +654,19 @@ class Agent:
                         yield reminder
                 except Exception:  # noqa: BLE001 — recall is best-effort
                     _log.debug("memory recall skipped", exc_info=True)
+
+        # Todo state — keep the model's plan in view over a long task. Refresh
+        # rather than accumulate: drop any prior todo reminder, append the
+        # current one (isMeta, so UIs filter it from the visible transcript).
+        if self.todos:
+            messages[:] = [
+                m for m in messages
+                if not (isinstance(m, UserMessage) and getattr(m, "isMeta", False)
+                        and isinstance(m.content, str) and _TODO_SENTINEL in m.content)
+            ]
+            todo_msg = UserMessage(content=_render_todo_reminder(self.todos), isMeta=True)
+            messages.append(todo_msg)
+            yield todo_msg
 
         registry: ToolRegistry = self.tools  # type: ignore[assignment]
 

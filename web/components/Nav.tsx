@@ -5,10 +5,10 @@ import Link from "next/link";
 import { Logo } from "./Logo";
 
 const LINKS = [
-  { href: "/docs", label: "Docs" },
+  { href: "/docs", label: "Docs", always: true },
   { href: "/docs/guides/models-and-backends", label: "Models" },
   { href: "/docs/api", label: "API" },
-  { href: "https://github.com/teddyoweh/mantis-agent-sdk", label: "GitHub", external: true },
+  { href: "https://github.com/teddyoweh/mantis-agent-sdk", label: "GitHub", external: true, always: true },
 ];
 
 export function Nav() {
@@ -39,14 +39,16 @@ export function Nav() {
               key={l.href}
               href={l.href}
               target={l.external ? "_blank" : undefined}
-              className="px-2.5 py-1.5 text-[13.5px] text-ink-2 hover:text-ink transition-colors"
+              className={`px-2.5 py-1.5 text-[13.5px] text-ink-2 hover:text-ink transition-colors ${
+                l.always ? "" : "hidden sm:inline"
+              }`}
             >
               {l.label}
             </Link>
           ))}
           <Link
             href="/docs/getting-started/quickstart"
-            className="ml-1 sm:ml-2 mono text-[12.5px] px-3 py-1.5 rounded-full bg-ink text-paper hover:bg-clay transition-colors"
+            className="hidden sm:inline-block ml-2 mono text-[12.5px] px-3 py-1.5 rounded-full bg-ink text-paper hover:bg-clay transition-colors"
           >
             pip install
           </Link>

@@ -64,7 +64,7 @@ export async function renderMarkdown(
     .use(rehypePrettyCode, {
       theme: "vesper",
       keepBackground: true,
-      defaultLang: "text",
+      defaultLang: { block: "text" },
     })
     .use(rehypeStringify)
     .process(content);

@@ -66,9 +66,9 @@ export function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2 group">
       <MantisMark size={22} className="text-ink transition-transform duration-300 group-hover:-rotate-6" />
-      <span className="font-mono text-[15px] tracking-tight text-ink">
+      <span className="font-mono text-[15px] tracking-tight text-ink whitespace-nowrap">
         mantis
-        <span className="text-ink-3">-agent-sdk</span>
+        <span className="text-ink-3 hidden sm:inline">-agent-sdk</span>
       </span>
     </Link>
   );

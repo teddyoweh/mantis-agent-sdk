@@ -625,6 +625,7 @@ class MantisTUI:
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             max_steps=self.max_turns,
+            todos=self.todos,
         )
 
     async def _permit(self, tool: Any, tool_input: dict, ctx: Any) -> Any:

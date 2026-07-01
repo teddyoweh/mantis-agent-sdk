@@ -356,7 +356,7 @@ async def run_fullscreen(tui: Any) -> int:
         return ANSI(f"{_GREY}{'─' * _width()}{_RESET}")
 
     def prompt_ft() -> Any:
-        return ANSI(f"{_GREEN}›{_RESET} ")
+        return ANSI(f"{_GREEN}❯{_RESET} ")
 
     def footer_ft() -> Any:
         if state["working"]:
@@ -430,7 +430,7 @@ async def run_fullscreen(tui: Any) -> int:
     # EXCEPT a tool call — which prints none, so its result hugs it directly.
 
     def _echo(t: str) -> None:
-        tui.console.print(f"[ansibrightblack]›[/] {_esc(t)}")
+        tui.console.print(f"[ansibrightblack]❯[/] {_esc(t)}")
         tui.console.print()
 
     def _assist(m: Any) -> None:

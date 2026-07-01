@@ -6,7 +6,11 @@ in the wiring the /loop built so a regression can't silently drop a source.
 from __future__ import annotations
 
 import mantis_agent.catalog as catalog
-from mantis_agent.setup_wizard import FREE_PROVIDER_IDS, _probe_openai_models
+from mantis_agent.setup_wizard import (
+    FREE_PROVIDER_IDS,
+    _arrow_select,
+    _probe_openai_models,
+)
 
 
 # -- Anthropic / Claude ------------------------------------------------------
@@ -56,3 +60,35 @@ def test_free_provider_ids_are_all_real_catalog_ids() -> None:
 def test_selfhost_probe_unreachable_returns_none() -> None:
     # A closed port must degrade to None (→ manual model entry), never raise.
     assert _probe_openai_models("http://127.0.0.1:59999/v1", "") is None
+
+
+# -- Arrow selector ----------------------------------------------------------
+
+
+def test_arrow_select_non_tty_returns_sentinel() -> None:
+    # Under pytest stdin/stdout aren't TTYs — the selector must return -1 so
+    # callers fall back to numeric input() instead of hanging on app.run().
+    assert _arrow_select("pick", [("a", "x"), ("b", "y")]) == -1
+
+
+class _NullConsole:
+    def print(self, *a: object, **k: object) -> None:  # noqa: D102
+        pass
+
+
+def test_pick_model_id_numeric_fallback(monkeypatch) -> None:
+    from mantis_agent import setup_wizard as sw
+    monkeypatch.setattr("builtins.input", lambda *a: "2")
+    assert sw._pick_model_id(_NullConsole(), ["m-a", "m-b", "m-c"]) == "m-b"
+
+
+def test_pick_model_id_enter_takes_first(monkeypatch) -> None:
+    from mantis_agent import setup_wizard as sw
+    monkeypatch.setattr("builtins.input", lambda *a: "")
+    assert sw._pick_model_id(_NullConsole(), ["first", "second"]) == "first"
+
+
+def test_pick_model_id_accepts_typed_exact_id(monkeypatch) -> None:
+    from mantis_agent import setup_wizard as sw
+    monkeypatch.setattr("builtins.input", lambda *a: "org/my-custom-model")
+    assert sw._pick_model_id(_NullConsole(), ["m-a"]) == "org/my-custom-model"
