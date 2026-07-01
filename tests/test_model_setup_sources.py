@@ -55,6 +55,17 @@ def test_agent_resolves_correct_capabilities_for_openai_flagship() -> None:
     assert a.backend_capability.supports_native_tools is True
 
 
+def test_openai_compat_chat_url_preserves_versioned_base() -> None:
+    # Gemini/GLM chat correctness relies on httpx keeping the base path when a
+    # leading-slash "/chat/completions" is joined — lock that behavior so a
+    # provider refactor or httpx change can't silently drop "/v1beta/openai".
+    from mantis_agent.providers.openai_compat import OpenAICompatProvider
+    base = "https://generativelanguage.googleapis.com/v1beta/openai"
+    p = OpenAICompatProvider(base_url=base, api_key="k")
+    url = str(p.client.build_request("POST", "/chat/completions").url)
+    assert url == f"{base}/chat/completions"
+
+
 def test_available_models_endpoint_for_versioned_base(monkeypatch) -> None:
     # Gemini's base already carries a version path (…/v1beta/openai), so the
     # models endpoint is a direct child ({base}/models) — NOT {base}/v1/models,

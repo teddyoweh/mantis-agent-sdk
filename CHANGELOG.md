@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.19.0] — 2026-06-30
+
+### Added
+
+- **`mantis run --tools` — scriptable one-shot agent.** The one-shot `run` (and
+  `chat`) command was chat-only: `mantis run "fix foo.py"` couldn't read or edit
+  anything. The new `--tools` flag gives it the full coding kit (read/write/edit/
+  bash/grep/glob/ls/lsp/web), so a single headless command can actually do the
+  work — `mantis run --tools --model … "run the tests and summarize failures"` —
+  for CI/automation (Claude's `-p` use case). Non-dangerous tools run without a
+  prompt in this headless mode; dangerous shell commands are still refused.
+
 ## [2.18.0] — 2026-06-30
 
 ### Changed

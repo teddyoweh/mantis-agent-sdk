@@ -67,6 +67,15 @@ def test_exchange_code_splits_code_hash_state(monkeypatch) -> None:
     assert captured["body"]["grant_type"] == "authorization_code"
 
 
+def test_passthrough_messages_url_preserves_gateway_base() -> None:
+    # Gateway support (Bedrock/Vertex/Azure via …/anthropic/v1) relies on the
+    # /messages route resolving against the full versioned base — lock it.
+    for base in ("https://api.anthropic.com/v1", "https://gw.example.com/anthropic/v1"):
+        p = AnthropicPassthroughProvider(auth_token="t", base_url=base)
+        url = str(p.client.build_request("POST", "/messages").url)
+        assert url == f"{base}/messages", url
+
+
 def test_oauth_token_sends_beta_header_on_native_only() -> None:
     native = _lower_headers(AnthropicPassthroughProvider(auth_token="t"))
     gateway = _lower_headers(

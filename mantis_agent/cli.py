@@ -238,6 +238,14 @@ def _add_agent_flags(p: argparse.ArgumentParser) -> None:
         default=10,
         help="Maximum agent turns before stopping (default 10).",
     )
+    p.add_argument(
+        "--tools",
+        action="store_true",
+        help="Give the agent the coding tools (read/write/edit/bash/grep/glob/"
+             "lsp/web) so a one-shot run can actually DO the work, not just chat. "
+             "Non-dangerous tools run automatically (no prompt); dangerous shell "
+             "commands are refused in this headless mode.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +586,10 @@ def _build_options(args: argparse.Namespace) -> dict[str, Any]:
         out["temperature"] = args.temperature
     if args.api_key:
         out["api_key"] = args.api_key
+    if getattr(args, "tools", False):
+        from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
+        from .builtin_tools.codenav import lsp  # noqa: PLC0415
+        out["tools"] = [*CODING_TOOLS, web_search, web_fetch, lsp]
     return out
 
 
