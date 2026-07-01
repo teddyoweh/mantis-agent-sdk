@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.33.0] — 2026-06-30
+
+### Fixed
+
+- **The compaction summarizer now retries transient failures too.** The turn loop
+  got transient-error retry in 2.23, but the summarizer call that runs during
+  auto-compaction went straight to the provider with no retry — so a single rate
+  limit / 5xx / connection blip while compacting could kill the whole run (right
+  when the context was full and compaction was most needed). It now retries
+  transients with the same backoff (`max_retries`, honoring `Retry-After`); auth
+  and other non-transient errors still fail fast.
+
 ## [2.32.0] — 2026-06-30
 
 ### Changed

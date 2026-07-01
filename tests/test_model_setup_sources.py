@@ -66,6 +66,29 @@ def test_openai_compat_chat_url_preserves_versioned_base() -> None:
     assert url == f"{base}/chat/completions"
 
 
+def test_available_models_sorts_newest_first(monkeypatch) -> None:
+    # The in-app picker's active group (_available_models) must also surface
+    # recent models first — separate code path from refresh_live_models.
+    import httpx
+
+    import respx as _respx
+
+    from mantis_agent.tui import MantisTUI
+
+    base = "https://api.openai.com/v1"
+    with _respx.mock:
+        _respx.get(f"{base}/models").mock(return_value=httpx.Response(200, json={"data": [
+            {"id": "gpt-old", "created": 100},
+            {"id": "gpt-newest", "created": 300},
+            {"id": "gpt-mid", "created": 200},
+        ]}))
+        t = MantisTUI(model="gpt-newest", backend=base, api_key="k",
+                      system=None, max_tokens=1, temperature=None, max_turns=1)
+        models, ok = t._available_models()
+    assert ok
+    assert models == ["gpt-newest", "gpt-mid", "gpt-old"]
+
+
 def test_available_models_endpoint_for_versioned_base(monkeypatch) -> None:
     # Gemini's base already carries a version path (…/v1beta/openai), so the
     # models endpoint is a direct child ({base}/models) — NOT {base}/v1/models,

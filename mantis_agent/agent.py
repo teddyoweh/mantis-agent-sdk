@@ -1658,11 +1658,12 @@ class Agent:
         and bills the summary's tokens through the budget tracker (via
         ``add_usage`` only — never ``check()``, so compaction can't raise
         ``BudgetExceededError`` mid-summary). Returns "" on cancellation."""
+        import anyio  # noqa: PLC0415
+
         sig = self.cancellation_signal
         if sig is not None and sig.is_set():
             return ""
         assert self.provider is not None
-        asm = _AssistantAssembler()
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": [UserMessage(content=prompt)],
@@ -1675,12 +1676,27 @@ class Agent:
             "temperature": self.temperature,
             "extra": None,
         }
-        try:
-            stream = self.provider.stream(model_capability=self.model_capability, **kwargs)
-        except TypeError:
-            stream = self.provider.stream(**kwargs)
-        async for ev in stream:
-            asm.feed(ev)
+        # Retry the summarization on a transient failure (rate limit / 5xx /
+        # connection blip) the same way a normal turn does — a throttle during
+        # compaction shouldn't kill the whole run.
+        attempt = 0
+        while True:
+            asm = _AssistantAssembler()
+            produced = False
+            try:
+                try:
+                    stream = self.provider.stream(model_capability=self.model_capability, **kwargs)
+                except TypeError:
+                    stream = self.provider.stream(**kwargs)
+                async for ev in stream:
+                    produced = True
+                    asm.feed(ev)
+                break
+            except Exception as err:  # noqa: BLE001
+                if produced or not (_is_transient(err) and attempt < self.max_retries):
+                    raise
+                await anyio.sleep(_retry_delay(err, attempt))
+                attempt += 1
         msg = asm.finalize()
         if msg.usage is not None and self._budget_tracker is not None:
             self._budget_tracker.add_usage(
