@@ -282,14 +282,25 @@ def _edit_summary(verb: str, path: str, old: str, new: str) -> str:
     return f"{head}\n{diff}" if diff else head
 
 
+_IMAGE_READ_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_IMAGE_MEDIA = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+}
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB — refuse absurd images
+
+
 @tool(is_read_only=True)
-async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) -> str:
-    """Read a text file and return it with 1-based line numbers (``cat -n`` style).
+async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) -> Any:
+    """Read a file. Text files come back with 1-based line numbers (``cat -n``
+    style); image files (png/jpg/gif/webp/bmp) come back as an image the model
+    can see (if the backend model is vision-capable). Other binaries are noted,
+    not dumped as mojibake.
 
     Args:
         path: File to read (absolute or relative to the working directory).
-        offset: 1-based line number to start from (default 1).
-        limit: Maximum number of lines to return (default 2000).
+        offset: 1-based line number to start from (default 1). Text only.
+        limit: Maximum number of lines to return (default 2000). Text only.
     """
 
     offset = _coerce_int(offset, default=1, lo=1)
@@ -300,6 +311,22 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
         raise FileNotFoundError(f"no such file: {path}")
     if p.is_dir():
         raise IsADirectoryError(f"{path} is a directory — use ls instead")
+
+    suffix = p.suffix.lower()
+    if suffix in _IMAGE_READ_EXTS:
+        import base64  # noqa: PLC0415
+
+        from ..types import ImageBlock  # noqa: PLC0415
+        data = await anyio.to_thread.run_sync(p.read_bytes)
+        if len(data) > _MAX_IMAGE_BYTES:
+            return f"[image {path} is {len(data) // 1024} KB — too large to inline]"
+        return ImageBlock(source={
+            "type": "base64",
+            "media_type": _IMAGE_MEDIA.get(suffix, "image/png"),
+            "data": base64.b64encode(data).decode("ascii"),
+        })
+    if suffix == ".pdf":
+        return f"[{path} is a PDF — mantis can't render PDF pages yet; extract text with a tool like pdftotext]"
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
     lines = text.splitlines()

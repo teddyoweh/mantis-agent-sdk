@@ -125,6 +125,7 @@ async def run_fullscreen(tui: Any) -> int:
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
+        "awaiting_key": None,
         "pending_question": None, "ctx_tokens": 0,
     }
 
@@ -400,6 +401,27 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001
             pass
 
+    async def _apply_key(pid: str, model: str, key: str) -> None:
+        """Enable a provider inline (from the picker): save the pasted key,
+        validate it, and switch to the chosen model — or report why it failed."""
+        from . import catalog  # noqa: PLC0415
+
+        prov = catalog.BY_ID.get(pid)
+        if prov is None or not key:
+            return
+        await _announce(f"validating {prov.label} key…")
+        catalog.set_key(pid, key)
+        try:
+            ok, detail = await asyncio.to_thread(catalog.validate_provider, prov)
+        except Exception:  # noqa: BLE001
+            ok, detail = False, "validation error"
+        if not ok:
+            catalog.clear_key(pid)
+            await _announce(f"✗ {prov.label}: {detail} (key not saved)")
+            return
+        _switch_model(model)
+        await _announce(f"✓ {prov.label} enabled · model → {model}")
+
     def _width() -> int:
         return shutil.get_terminal_size((80, 24)).columns
 
@@ -407,6 +429,8 @@ async def run_fullscreen(tui: Any) -> int:
         return ANSI(f"{_GREY}{'─' * _width()}{_RESET}")
 
     def prompt_ft() -> Any:
+        if state.get("awaiting_key") is not None:
+            return ANSI(f"{_GREY}🔑{_RESET} ")  # inline key-entry mode
         return ANSI(f"{_GREEN}❯{_RESET} ")
 
     def footer_ft() -> Any:
@@ -798,15 +822,40 @@ async def run_fullscreen(tui: Any) -> int:
             else:
                 _q_resolve([opts[pq["sel"]]["label"]])
             return
-        # Model picker open → switch to the highlighted model and close it.
+        # Inline provider-enable: the line holds a pasted API key for a locked
+        # provider picked from /models. Validate + enable + switch.
+        ak = state.get("awaiting_key")
+        if ak is not None:
+            key = input_buffer.text.strip()
+            input_buffer.reset()
+            state["awaiting_key"] = None
+            if key:
+                event.app.create_background_task(_apply_key(ak["provider_id"], ak["model"], key))
+            else:
+                event.app.create_background_task(_announce("cancelled — no key entered"))
+            event.app.invalidate()
+            return
+        # Model picker open → act on the highlighted row and close it.
         p = state.get("picking_model")
         if p is not None:
-            models = p["models"]
-            if models:
-                chosen = models[p["sel"] % len(models)]
-                _switch_model(chosen)
-                event.app.create_background_task(_announce(f"model → {chosen}"))
+            items = p["items"]
+            it = items[p["sel"]] if 0 <= p["sel"] < len(items) else None
             state["picking_model"] = None
+            if it and it["kind"] == "model":
+                if it["enabled"]:
+                    _switch_model(it["model"])
+                    event.app.create_background_task(_announce(f"model → {it['model']}"))
+                else:
+                    # Locked provider → ask for its key inline, then enable+switch.
+                    pid = it.get("provider_id")
+                    if pid:
+                        from . import catalog  # noqa: PLC0415
+                        prov = catalog.BY_ID.get(pid)
+                        env = prov.api_key_env if prov else "API key"
+                        state["awaiting_key"] = {"provider_id": pid, "model": it["model"]}
+                        input_buffer.reset()
+                        event.app.create_background_task(
+                            _announce(f"paste your {env} to enable {pid} · enter to confirm · esc to cancel"))
             event.app.invalidate()
             return
         # Menu open → act on the highlighted row (switch model / fill command).
@@ -833,6 +882,12 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
+        # Esc cancels an inline key entry (don't save the pasted key).
+        if state.get("awaiting_key") is not None:
+            state["awaiting_key"] = None
+            input_buffer.reset()
+            event.app.invalidate()
+            return
         # Esc closes the model picker without switching.
         if state.get("picking_model") is not None:
             state["picking_model"] = None

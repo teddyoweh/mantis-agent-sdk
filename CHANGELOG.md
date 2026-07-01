@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.28.0] — 2026-06-30
+
+### Added
+
+- **Multimodal `read_file`** (parity roadmap T2). Reading an image
+  (png/jpg/gif/webp/bmp) now returns it as an image the model can actually see —
+  on vision-capable backends — instead of dumping mojibake; PDFs and other
+  binaries get a helpful note. Under the hood, the tool executor now passes a
+  tool that returns an `ImageBlock`/`TextBlock` (or a list of them) straight
+  through as the tool-result content instead of stringifying it, so any tool can
+  return rich content. (Anthropic serializes images in tool results; other
+  backends vary by model.)
+
 ## [1.27.0] — 2026-06-30
 
 ### Added

@@ -69,7 +69,7 @@ import msgspec
 
 from ..errors import ToolExecutionError
 from ..tools import Tool, ToolRegistry
-from ..types import ToolResultBlock, ToolUseBlock
+from ..types import ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
 __all__ = ["CanUseToolFn", "StreamingToolExecutor"]
 
@@ -149,6 +149,18 @@ _TOOL_RESULT_CAPS = {
     "bash": 40_000,
     "web_fetch": 40_000,
 }
+
+
+def _as_block_content(out: Any) -> list[Any] | None:
+    """If a tool returned rich content (an ImageBlock / TextBlock, or a list of
+    them — e.g. a multimodal ``read_file`` handing back an image), pass it
+    through as the tool_result content instead of stringifying it. Otherwise
+    return None so the caller falls back to the text path."""
+    if isinstance(out, (ImageBlock, TextBlock)):
+        return [out]
+    if isinstance(out, list) and out and all(isinstance(b, (ImageBlock, TextBlock)) for b in out):
+        return list(out)
+    return None
 
 
 def _truncate_tool_result(text: str, tool_name: str) -> str:
@@ -763,12 +775,11 @@ class StreamingToolExecutor:
             self._maybe_abort(tool)
             return
 
+        rich = _as_block_content(out)
+        content: Any = rich if rich is not None else _truncate_tool_result(_stringify(out), tool.name)
         self._record_result(
             idx,
-            ToolResultBlock(
-                tool_use_id=block.id,
-                content=_truncate_tool_result(_stringify(out), tool.name),
-            ),
+            ToolResultBlock(tool_use_id=block.id, content=content),
         )
 
     def _maybe_abort(self, tool: Tool) -> None:

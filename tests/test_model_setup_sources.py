@@ -66,6 +66,25 @@ def test_selfhost_probe_unreachable_returns_none() -> None:
 # -- Model ping (validate-before-save) ---------------------------------------
 
 
+def test_grouped_provider_models_enabled_before_disabled() -> None:
+    # The unified /models picker relies on this ordering: every enabled provider
+    # group must come before every disabled one (active/usable models on top).
+    groups = catalog.grouped_provider_models()
+    seen_disabled = False
+    for g in groups:
+        if not g["enabled"]:
+            seen_disabled = True
+        else:
+            assert not seen_disabled, "an enabled group appeared after a disabled one"
+
+
+def test_grouped_provider_models_are_real_providers_with_lists() -> None:
+    for g in catalog.grouped_provider_models():
+        assert g["provider_id"] in catalog.BY_ID
+        assert isinstance(g["models"], list)
+        assert "enabled" in g
+
+
 def test_model_ping_unreachable_does_not_block_save() -> None:
     # A network flake must NOT block a save — returns (True, "") so setup is
     # usable offline / behind a proxy. (A real 4xx from the model is separate.)
