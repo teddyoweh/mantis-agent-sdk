@@ -137,8 +137,16 @@ class TestProviderInit:
 
     def test_missing_key_raises_auth_error(self, monkeypatch) -> None:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        with pytest.raises(AuthError, match="API key"):
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        with pytest.raises(AuthError, match="credentials"):
             AnthropicPassthroughProvider()
+
+    def test_auth_token_uses_bearer_not_x_api_key(self, monkeypatch) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        p = AnthropicPassthroughProvider(auth_token="oauth-abc")
+        headers = {k.lower(): v for k, v in dict(p.client.headers).items()}
+        assert headers.get("authorization") == "Bearer oauth-abc"
+        assert "x-api-key" not in headers
 
     def test_anthropic_version_override(self) -> None:
         p = AnthropicPassthroughProvider(

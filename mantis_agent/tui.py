@@ -78,6 +78,7 @@ SLASH_COMMANDS = {
     "/copy": "copy the last reply to the clipboard",
     "/export": "save the conversation to a markdown file",
     "/diff": "review this session's file changes",
+    "/memory": "edit MANTIS.md / AGENTS.md in $EDITOR",
     "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
@@ -120,6 +121,18 @@ def _lang_from_path(path: str | None) -> str | None:
     if not path:
         return None
     return _EXT_LANG.get(Path(path).suffix.lower())
+
+
+def resolve_memory_target(target: str | None, cwd: str | Path, home: str | Path) -> Path:
+    """Map a ``/memory`` target to the file to edit. ``project`` (default) →
+    ``<cwd>/MANTIS.md``; ``agents`` → ``<cwd>/AGENTS.md``; ``user`` →
+    ``<home>/MANTIS.md``."""
+    t = (target or "project").strip().lower()
+    if t in ("user", "global"):
+        return Path(home) / "MANTIS.md"
+    if t in ("agents", "agent"):
+        return Path(cwd) / "AGENTS.md"
+    return Path(cwd) / "MANTIS.md"
 
 
 def split_git_diff(text: str) -> list[tuple[str, list[str]]]:

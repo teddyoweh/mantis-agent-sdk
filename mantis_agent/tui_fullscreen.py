@@ -637,6 +637,32 @@ async def run_fullscreen(tui: Any) -> int:
                         tui.console.print(f"  [green]+ {f}[/]")
             await _print(_show_diff)
             return True
+        if cmd == "/memory":
+            import os as _os  # noqa: PLC0415
+            import subprocess  # noqa: PLC0415
+            from pathlib import Path  # noqa: PLC0415
+
+            from .paths import get_mantis_agent_dir  # noqa: PLC0415
+            from .tui import resolve_memory_target  # noqa: PLC0415
+            dest = resolve_memory_target(arg, Path.cwd(), get_mantis_agent_dir())
+            editor = _os.environ.get("EDITOR") or _os.environ.get("VISUAL") or "vi"
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                await _print(lambda: tui.console.print(
+                    f"[ansibrightblack](memory file: {dest} — set $EDITOR to edit)[/]"))
+                return True
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if not dest.exists():
+                    dest.write_text(f"# {dest.name}\n\nProject/agent instructions for mantis.\n")
+            except OSError as e:
+                await _print(lambda e=e: tui.console.print(f"[ansired]memory error:[/] {e}"))
+                return True
+            await run_in_terminal(lambda: subprocess.call([editor, str(dest)]))
+            # Force the env/context head to rebuild so edits apply next turn.
+            if tui.agent is not None:
+                tui.agent._env_context = None
+            await _print(lambda: tui.console.print(f"[ansibrightblack](edited {dest})[/]"))
+            return True
         if cmd == "/vim":
             from prompt_toolkit.enums import EditingMode  # noqa: PLC0415
             tui.vim_mode = not getattr(tui, "vim_mode", False)

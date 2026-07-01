@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.33.0] — 2026-06-30
+
+### Added
+
+- **`/memory`** (parity roadmap T2). Open your instruction-memory files in
+  `$EDITOR` to curate what the agent knows: `/memory` (project `MANTIS.md`),
+  `/memory agents` (`AGENTS.md`), `/memory user` (user-level `MANTIS.md`).
+  Creates the file with a template if missing and rebuilds the context head so
+  edits apply on the next turn. New pure `resolve_memory_target` helper.
+
 ## [1.32.0] — 2026-06-30
 
 ### Added

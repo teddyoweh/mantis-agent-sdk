@@ -160,18 +160,26 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         self,
         *,
         api_key: str | None = None,
+        auth_token: str | None = None,
         base_url: str | None = None,
         anthropic_version: str | None = None,
         anthropic_beta: str | None = None,
         default_headers: dict[str, str] | None = None,
         backend_capability: BackendCapability | None = None,
     ) -> None:
+        # Two auth styles, mirroring Claude Code (services/api/client.ts):
+        #   * x-api-key      — a direct Anthropic API key (ANTHROPIC_API_KEY)
+        #   * Authorization: Bearer — an OAuth access token / gateway token
+        #     (ANTHROPIC_AUTH_TOKEN). This is what a subscription OAuth login,
+        #     or a Bedrock/Vertex/Azure/LiteLLM gateway in front of Anthropic,
+        #     issues. auth_token wins when both are present.
+        token = auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
+        if not token and not key:
             raise AuthError(
-                "AnthropicPassthroughProvider needs an API key. "
-                "Pass api_key=... or set $ANTHROPIC_API_KEY. This adapter "
-                "talks to api.anthropic.com — there is no unauthenticated path."
+                "AnthropicPassthroughProvider needs credentials. Pass api_key=… "
+                "(or $ANTHROPIC_API_KEY) for a direct key, or auth_token=… (or "
+                "$ANTHROPIC_AUTH_TOKEN) for an OAuth / gateway Bearer token."
             )
 
         url = _normalize_base_url(base_url or ANTHROPIC_DEFAULT_BASE_URL)
@@ -180,9 +188,12 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         headers: dict[str, str] = {
             "content-type": "application/json",
             "accept": "text/event-stream",
-            "x-api-key": key,
             "anthropic-version": version,
         }
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        else:
+            headers["x-api-key"] = key
         if anthropic_beta:
             headers["anthropic-beta"] = anthropic_beta
         if default_headers:
