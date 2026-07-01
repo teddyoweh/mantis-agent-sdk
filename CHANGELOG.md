@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.13.0] — 2026-06-30
+
+### Added
+
+- **`@`-file-mentions in the terminal** (parity roadmap T1.1). Type `@` anywhere
+  in the prompt to fuzzy-find a file under the cwd and drop its path in — no more
+  pasting paths by hand. The completer ranks basename-prefix matches first, skips
+  VCS/build dirs and dotfiles, and is bounded so it stays snappy on big repos.
+  Navigate with ↑/↓, accept with Tab/Enter.
+
 ## [1.12.0] — 2026-06-30
 
 ### Added

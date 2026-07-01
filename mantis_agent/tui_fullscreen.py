@@ -33,6 +33,43 @@ _MODE_ANSI = {
     "ansibrightblack": "90", "ansigreen": "32", "ansicyan": "36", "ansired": "31",
 }
 
+_MENTION_IGNORE = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", ".mypy_cache",
+    ".pytest_cache", "build", ".ruff_cache", ".tox", ".idea", ".egg-info",
+}
+
+
+def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
+    """Files under ``root`` matching ``partial`` (substring, case-insensitive),
+    ranked basename-prefix-first then shortest path. Bounded (skips VCS/build
+    dirs and dotfiles, caps the scan) so it stays snappy per keystroke on big
+    repos. Powers the ``@``-file-mention completer."""
+    import os  # noqa: PLC0415
+
+    pl = partial.lower()
+    hits: list[str] = []
+    scanned = 0
+    for dp, dns, fns in os.walk(root):
+        dns[:] = [d for d in dns if d not in _MENTION_IGNORE and not d.startswith(".")]
+        for f in fns:
+            if f.startswith("."):
+                continue
+            scanned += 1
+            rel = os.path.relpath(os.path.join(dp, f), root)
+            if not pl or pl in rel.lower():
+                hits.append(rel)
+            if scanned > 6000 or len(hits) > 400:
+                break
+        if scanned > 6000 or len(hits) > 400:
+            break
+
+    def _key(rel: str) -> tuple:
+        base = os.path.basename(rel).lower()
+        return (0 if base.startswith(pl) else (1 if pl in base else 2), len(rel))
+
+    hits.sort(key=_key)
+    return hits[:limit]
+
 
 async def run_fullscreen(tui: Any) -> int:
     from prompt_toolkit.application import Application, get_app  # noqa: PLC0415
@@ -137,10 +174,19 @@ async def run_fullscreen(tui: Any) -> int:
         state["model_cache"] = {"backend": tui.backend, "models": models}
         return models
 
+    def _file_matches(partial: str) -> list[str]:
+        import os  # noqa: PLC0415
+        return find_file_mentions(partial, os.getcwd())
+
     def _menu_options() -> list[tuple[str, str, str]]:
-        """Matching slash commands for the in-progress line (the type-ahead menu).
-        The model picker is a separate state-driven overlay (see picker_ft)."""
+        """Type-ahead menu rows for the in-progress line: ``@``-file-mentions
+        anywhere in the line, or slash commands at the start. The model picker
+        is a separate state-driven overlay (see picker_ft)."""
         t = input_buffer.text
+        # @-file-mention: the last whitespace-delimited token starts with @.
+        word = t.rsplit(" ", 1)[-1] if t else ""
+        if word.startswith("@"):
+            return [("file", p, "") for p in _file_matches(word[1:])]
         if not t.startswith("/") or " " in t:
             return []
         return [("cmd", c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
@@ -363,7 +409,7 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui.console.print(
                 "\n[bold]commands[/]  [white]/model[/] <id> · [white]/clear[/] · "
                 "[white]/cwd[/] · [white]/exit[/]\n"
-                "[ansibrightblack]shift+tab cycles mode · esc/Ctrl+C interrupts a "
+                "[ansibrightblack]@file to attach a path · shift+tab cycles mode · esc/Ctrl+C interrupts a "
                 "running reply (Ctrl+C also quits when idle) · Ctrl+D quits[/]\n"))
             return True
         return False  # unknown → treat as a normal prompt
@@ -456,6 +502,16 @@ async def run_fullscreen(tui: Any) -> int:
             input_buffer.reset()
             state["slash_sel"] = 0
             event.app.create_background_task(_announce(f"model → {value}"))
+            return True
+        if kind == "file":
+            # Replace the trailing @<partial> token with the chosen path.
+            t = input_buffer.text
+            idx = t.rfind("@")
+            new = (t[:idx] if idx >= 0 else t) + value + " "
+            input_buffer.text = new
+            input_buffer.cursor_position = len(new)
+            state["slash_sel"] = 0
+            event.app.invalidate()
             return True
         # command: fill it (unless already exact)
         if input_buffer.text != value:
