@@ -74,6 +74,7 @@ SLASH_COMMANDS = {
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
+    "/context": "show context-window usage",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
     "/cwd": "show the working directory",

@@ -39,6 +39,25 @@ _MENTION_IGNORE = {
 }
 
 
+def context_breakdown(messages: list, system_text: str = "") -> dict:
+    """Estimated token composition of the current context: system prompt,
+    memory/env context head (isMeta messages), and conversation. Powers
+    ``/context``. Uses the same coarse estimator as compaction."""
+    from .compact import _message_token_estimate  # noqa: PLC0415
+    from .types import UserMessage  # noqa: PLC0415
+
+    head = convo = 0
+    for m in messages:
+        est = _message_token_estimate(m)
+        if isinstance(m, UserMessage) and getattr(m, "isMeta", False):
+            head += est
+        else:
+            convo += est
+    system = len(system_text or "") // 4
+    return {"system": system, "context": head, "conversation": convo,
+            "total": system + head + convo}
+
+
 def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
     """Files under ``root`` matching ``partial`` (substring, case-insensitive),
     ranked basename-prefix-first then shortest path. Bounded (skips VCS/build
@@ -106,8 +125,56 @@ async def run_fullscreen(tui: Any) -> int:
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
-        "pending_question": None,
+        "pending_question": None, "ctx_tokens": 0,
     }
+
+    def _ctx_window() -> int:
+        cap = getattr(tui.agent, "model_capability", None) if tui.agent else None
+        return getattr(cap, "context_window", 0) or 0
+
+    def _ctx_status() -> str:
+        """A compact 'context fill' indicator for the footer, e.g. '12k/32k 38%'.
+        Empty until we've seen a turn's usage."""
+        used = state.get("ctx_tokens", 0)
+        if not used:
+            return ""
+        win = _ctx_window()
+
+        def _k(n: int) -> str:
+            return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
+
+        if win > 0:
+            pct = min(100, round(used / win * 100))
+            col = "31" if pct >= 90 else ("33" if pct >= 75 else "90")
+            return f"\033[{col}m{_k(used)}/{_k(win)} {pct}%\033[0m"
+        return f"{_GREY}{_k(used)} tok{_RESET}"
+
+    def _show_context() -> None:
+        """Render the /context breakdown: window fill + estimated composition."""
+        used = state.get("ctx_tokens", 0)
+        win = _ctx_window()
+        bd = context_breakdown(tui.messages, (tui.agent.system if tui.agent else "") or "")
+        sys_tok, head_tok, convo_tok = bd["system"], bd["context"], bd["conversation"]
+
+        def _fmt(n: int) -> str:
+            return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+        tui.console.print(f"\n[bold]Context[/]  [ansibrightblack]{tui.model}[/]")
+        if win:
+            pct = min(100, round(used / win * 100)) if used else 0
+            filled = round(pct / 5)
+            bar = "█" * filled + "░" * (20 - filled)
+            colr = "red" if pct >= 90 else ("yellow" if pct >= 75 else "green")
+            tui.console.print(
+                f"  [{colr}]{bar}[/]  {_fmt(used)} / {_fmt(win)} tokens  "
+                f"[{colr}]{pct}%[/]  [ansibrightblack]({_fmt(win - used)} free)[/]")
+        elif used:
+            tui.console.print(f"  {_fmt(used)} tokens used (context window unknown)")
+        else:
+            tui.console.print("  [ansibrightblack](no turn yet — send a message first)[/]")
+        tui.console.print(
+            f"  [ansibrightblack]estimated split:[/] system {_fmt(sys_tok)} · "
+            f"context/memory {_fmt(head_tok)} · conversation {_fmt(convo_tok)}\n")
 
     # Interactive permission asker: render an in-pane Allow/Deny prompt and
     # bridge the (serial) tool-dispatch coroutine to a keypress via a Future.
@@ -271,7 +338,9 @@ async def run_fullscreen(tui: Any) -> int:
         label, symbol, color = MODES[tui.mode_idx]
         left = "" if tui.mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
         col = _MODE_ANSI.get(color, "90")
-        return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}")
+        ctx = _ctx_status()
+        ctx_seg = f"   {ctx}" if ctx else ""
+        return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}{ctx_seg}")
 
     _PERM_OPTS = ["allow once", "allow for session", "deny"]
     _PERM_OPTS_VALUES = ["allow_once", "allow_session", "deny"]
@@ -357,6 +426,9 @@ async def run_fullscreen(tui: Any) -> int:
         try:
             async for msg in tui.agent.run_iter(tui.messages):
                 if isinstance(msg, AssistantMessage):
+                    if getattr(msg, "usage", None) is not None:
+                        # input+output of the latest turn ≈ current context fill.
+                        state["ctx_tokens"] = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
                     await _print(lambda m=msg: _assist(m))
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     await _print(lambda m=msg: _result(m))
@@ -389,6 +461,9 @@ async def run_fullscreen(tui: Any) -> int:
         if cmd == "/cwd":
             from pathlib import Path  # noqa: PLC0415
             await _print(lambda: tui.console.print(f"[ansibrightblack]{Path.cwd()}[/]"))
+            return True
+        if cmd == "/context":
+            await _print(lambda: _show_context())
             return True
         if cmd in ("/model", "/models"):
             if arg:

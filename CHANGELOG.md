@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.14.0] — 2026-06-30
+
+### Added
+
+- **Context-window awareness in the terminal** (parity roadmap T1.5). The footer
+  now shows a live fill indicator (`12k/32k 38%`, coloured green→yellow→red as it
+  fills) so you can see how full the window is at a glance. A new **`/context`**
+  command renders a bar plus an estimated split across system prompt, memory/env
+  context head, and conversation. New `context_breakdown()` helper.
+
 ## [1.13.0] — 2026-06-30
 
 ### Added
