@@ -434,7 +434,12 @@ def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str
             r = c.get(f"{provider.base_url.rstrip('/')}/models",
                       headers=_models_headers(provider, key))
             r.raise_for_status()
-            ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+            data = r.json().get("data", [])
+            # Newest first — OpenAI et al. return a "created" epoch, so the shiny
+            # recent models surface at the top instead of buried under legacy
+            # ones. Providers without "created" keep their original (stable) order.
+            data.sort(key=lambda m: m.get("created", 0) or 0, reverse=True)
+            ids = [m.get("id", "") for m in data if m.get("id")]
     except Exception:  # noqa: BLE001
         return None
     store_live_models(provider.id, ids)

@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.32.0] — 2026-06-30
+
+### Changed
+
+- **Clearer permission prompts for file edits.** The Allow/Deny prompt used to
+  show a raw `edit_file(path='...', old_string='...')` repr — hard to review at a
+  glance. File-editing tools now get a path-focused change summary:
+  `edit src/app.py:  "def old():" → "def new():"`, `write cfg.json (3 lines)`,
+  `edit m.py (2 changes)`, `edit notebook n.ipynb (cell 4)`. Long strings are
+  whitespace-collapsed and capped so the prompt stays a readable one-liner. Bash
+  prompts (with their danger warnings) are unchanged.
+
 ## [2.31.0] — 2026-06-30
 
 ### Added

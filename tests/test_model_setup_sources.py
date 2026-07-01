@@ -87,6 +87,25 @@ def test_available_models_endpoint_for_versioned_base(monkeypatch) -> None:
     assert route.called
 
 
+def test_refresh_live_models_sorts_newest_first(monkeypatch) -> None:
+    # Providers (OpenAI) return models oldest-first; we sort by "created" desc so
+    # the recent flagships surface at the top of the picker, not buried.
+    import httpx
+
+    import respx as _respx
+
+    prov = catalog.BY_ID["openai"]
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    with _respx.mock:
+        _respx.get(f"{prov.base_url.rstrip('/')}/models").mock(return_value=httpx.Response(200, json={"data": [
+            {"id": "old", "created": 100},
+            {"id": "newest", "created": 300},
+            {"id": "mid", "created": 200},
+        ]}))
+        ids = catalog.refresh_live_models(prov)
+    assert ids == ["newest", "mid", "old"]
+
+
 def test_catalog_validate_hits_direct_models_child_for_gemini(monkeypatch) -> None:
     # Setup-side probe must also hit {base}/models (a direct child) for Gemini's
     # versioned base — not an extra /v1. Guards the setup validation URL.

@@ -316,16 +316,41 @@ def _is_dangerous_bash(tool: Tool, input: dict[str, Any]) -> bool:
     return classify_bash_command(str((input or {}).get("command", ""))).is_dangerous
 
 
+def _snip(s: Any, limit: int = 32) -> str:
+    """One-line, whitespace-collapsed, length-capped preview of a value."""
+    t = " ".join(str(s or "").split())
+    return t if len(t) <= limit else t[: limit - 1] + "…"
+
+
 def _format_prompt(tool: Tool, input: dict[str, Any]) -> str:
-    """Human-readable one-liner for the Ask prompt."""
-    if tool.name == "bash":
-        cmd = str(input.get("command", "")).strip()
+    """Human-readable one-liner for the Ask prompt. File-editing tools get a
+    clear, path-focused summary of the CHANGE (so the user reviews what's actually
+    about to happen), not a raw ``tool(old_string=..., new_string=...)`` repr."""
+    name = tool.name
+    inp = input or {}
+    if name == "bash":
+        cmd = str(inp.get("command", "")).strip()
         risk = classify_bash_command(cmd)
         short = cmd if len(cmd) <= 80 else cmd[:77] + "…"
         warn = f"  ⚠ {risk.reason}" if risk.is_dangerous else ""
         return f"bash: {short}{warn}"
-    summary = ", ".join(f"{k}={v!r}" for k, v in list((input or {}).items())[:2])
-    return f"{tool.name}({summary})"
+
+    path = inp.get("path") or inp.get("file_path") or inp.get("notebook_path")
+    if path:
+        if name == "edit_file":
+            return f'edit {path}:  "{_snip(inp.get("old_string"))}" → "{_snip(inp.get("new_string"))}"'
+        if name == "multi_edit":
+            n = len(inp.get("edits") or [])
+            return f"edit {path} ({n} change{'s' if n != 1 else ''})"
+        if name == "write_file":
+            body = inp.get("content") or ""
+            lines = body.count("\n") + 1 if body else 0
+            return f"write {path} ({lines} line{'s' if lines != 1 else ''})"
+        if name == "notebook_edit":
+            return f"edit notebook {path} (cell {inp.get('cell_number', '?')})"
+
+    summary = ", ".join(f"{k}={v!r}" for k, v in list(inp.items())[:2])
+    return f"{name}({summary})"
 
 
 # ---------------------------------------------------------------------------

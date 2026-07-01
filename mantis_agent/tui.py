@@ -1184,7 +1184,9 @@ class MantisTUI:
                 has_path = urlparse(b).path not in ("", "/")
                 r = c.get(f"{b}/models" if has_path else f"{b}/v1/models", headers=headers)
                 r.raise_for_status()
-                return [m.get("id", "") for m in r.json().get("data", [])], True
+                _data = r.json().get("data", [])
+                _data.sort(key=lambda m: m.get("created", 0) or 0, reverse=True)  # newest first
+                return [m.get("id", "") for m in _data if m.get("id")], True
         except Exception:  # noqa: BLE001 — unreachable / non-2xx / bad JSON
             return [], False
 
