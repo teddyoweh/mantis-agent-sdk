@@ -513,6 +513,7 @@ class MantisTUI:
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
         from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
+        from .builtin_tools.ask import make_ask_user_question  # noqa: PLC0415
         from .builtin_tools.memory_tool import remember  # noqa: PLC0415
         from .builtin_tools.todo import make_todo_write  # noqa: PLC0415
         from .permissions import PermissionContext  # noqa: PLC0415
@@ -540,6 +541,7 @@ class MantisTUI:
         registry.add(web_search, web_fetch)
         registry.add(make_todo_write(self.todos))
         registry.add(remember)  # write path into persistent memory (recall is automatic)
+        registry.add(make_ask_user_question(self._ask_user_question))  # ask the user
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the
@@ -624,6 +626,41 @@ class MantisTUI:
         if ans in ("y", "yes", ""):
             return "allow_once"
         return "deny"
+
+    async def _ask_user_question(self, questions: list[dict]) -> list[dict]:
+        """Route AskUserQuestion to the interactive picker. The full-screen app
+        installs ``self._fs_ask``; otherwise fall back to a numbered prompt in
+        the classic REPL (or skip when there's no TTY)."""
+        import sys  # noqa: PLC0415
+
+        fs = getattr(self, "_fs_ask", None)
+        if fs is not None:
+            return await fs(questions)
+
+        # Classic REPL / no full-screen app: a simple numbered prompt.
+        results: list[dict] = []
+        tty = sys.stdin.isatty() and sys.stdout.isatty()
+        for q in questions:
+            answers: list[str] = []
+            if tty:
+                self.console.print(f"\n[bold]{q['question']}[/]")
+                for i, o in enumerate(q["options"], 1):
+                    self.console.print(
+                        f"  [white]{i}[/] {o['label']}  [ansibrightblack]{o['description']}[/]")
+                self.console.print("  [white]o[/] Other (type your own)")
+                try:
+                    raw = input("  > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    raw = ""
+                if raw.lower() in ("o", "other"):
+                    try:
+                        answers = [input("  your answer: ").strip()]
+                    except (EOFError, KeyboardInterrupt):
+                        answers = []
+                elif raw.isdigit() and 1 <= int(raw) <= len(q["options"]):
+                    answers = [q["options"][int(raw) - 1]["label"]]
+            results.append({"question": q["question"], "header": q["header"], "answers": answers})
+        return results
 
     def _load_permission_rules(self) -> Any:
         """Build a PermissionRuleSet from settings.json ``permissions`` rules

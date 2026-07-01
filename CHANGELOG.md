@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.12.0] — 2026-06-30
+
+### Added
+
+- **`ask_user_question` tool — the agent can ask *you* structured multiple-choice
+  questions mid-task** (Claude Code's AskUserQuestion). It proposes 1-4 questions,
+  each with 2-4 labelled options (label + description); you pick with number keys
+  or arrows, toggle multiple with space when `multiSelect` is set, or choose
+  "Other" to type free text. Rendered as an in-pane picker in the full-screen
+  terminal (Future-bridged like the permission prompt), with a numbered fallback
+  in the classic REPL and a graceful no-op when headless. The chosen answers come
+  back as the tool result, so the agent acts on real preferences instead of
+  guessing. Wired into the `mantis` tool belt.
+
 ## [1.11.0] — 2026-06-30
 
 ### Added

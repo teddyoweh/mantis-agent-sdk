@@ -69,6 +69,7 @@ async def run_fullscreen(tui: Any) -> int:
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
+        "pending_question": None,
     }
 
     # Interactive permission asker: render an in-pane Allow/Deny prompt and
@@ -88,6 +89,28 @@ async def run_fullscreen(tui: Any) -> int:
 
     if tui.agent is not None and tui.agent.permissions is not None:
         tui.agent.permissions.asker = _ask_permission
+
+    # Interactive AskUserQuestion picker: same Future-bridge pattern. Loops over
+    # the agent's questions, one in-pane picker at a time.
+    async def _ask_questions(questions: list[dict]) -> list[dict]:
+        results: list[dict] = []
+        for q in questions:
+            fut: asyncio.Future = asyncio.get_event_loop().create_future()
+            state["pending_question"] = {"q": q, "sel": 0, "selected": set(),
+                                         "typing": False, "future": fut}
+            get_app().invalidate()
+            try:
+                answers = await fut
+            except asyncio.CancelledError:
+                answers = []
+            finally:
+                state["pending_question"] = None
+                get_app().invalidate()
+            results.append({"question": q["question"], "header": q["header"],
+                            "answers": answers})
+        return results
+
+    tui._fs_ask = _ask_questions
 
     input_buffer = Buffer(multiline=False)
 
@@ -224,6 +247,35 @@ async def run_fullscreen(tui: Any) -> int:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
         return Dimension.exact(2) if state.get("pending_perm") else Dimension.exact(0)
 
+    def question_ft() -> Any:
+        p = state.get("pending_question")
+        if not p:
+            return ANSI("")
+        q = p["q"]
+        opts = q["options"]
+        multi = bool(q.get("multiSelect"))
+        sel, selset = p["sel"], p["selected"]
+        rows = [f"{_GREEN}?{_RESET} {q['question']}  {_DIM}[{q['header']}]{_RESET}"]
+        for i, o in enumerate(opts):
+            box = (("● " if i in selset else "○ ") if multi else "")
+            line = f" {i + 1} {box}{o['label']}  {_DIM}{o['description']}{_RESET}"
+            rows.append(f"\033[30;48;5;113m{line} \033[0m" if i == sel else f" {line}")
+        other = " o  Other…"
+        rows.append(f"\033[30;48;5;113m{other} \033[0m" if sel == len(opts) else f" {other}")
+        if p["typing"]:
+            rows.append(f"{_GREY}type your answer in the input line, then Enter{_RESET}")
+        else:
+            hint = "space toggles · enter confirms" if multi else "number or o · enter"
+            rows.append(f"{_GREY}({hint}){_RESET}")
+        return ANSI("\n".join(rows))
+
+    def _question_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        p = state.get("pending_question")
+        if not p:
+            return Dimension.exact(0)
+        return Dimension.exact(len(p["q"]["options"]) + 3)  # question + opts + Other + hint
+
     async def _print(fn: Any) -> None:
         await run_in_terminal(fn)
 
@@ -323,6 +375,59 @@ async def run_fullscreen(tui: Any) -> int:
     _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
     _picker_open = Condition(lambda: state.get("picking_model") is not None)
+    _q_open = Condition(
+        lambda: state.get("pending_question") is not None
+        and not state["pending_question"]["typing"]
+    )
+
+    def _q_resolve(answers: list) -> None:
+        p = state.get("pending_question")
+        if p and not p["future"].done():
+            p["future"].set_result(answers)
+
+    def _q_nrows() -> int:
+        p = state["pending_question"]
+        return len(p["q"]["options"]) + 1  # options + Other
+
+    @kb.add("up", filter=_q_open)
+    def _(event: Any) -> None:
+        p = state["pending_question"]
+        p["sel"] = (p["sel"] - 1) % _q_nrows()
+        event.app.invalidate()
+
+    @kb.add("down", filter=_q_open)
+    def _(event: Any) -> None:
+        p = state["pending_question"]
+        p["sel"] = (p["sel"] + 1) % _q_nrows()
+        event.app.invalidate()
+
+    @kb.add("space", filter=_q_open)
+    def _(event: Any) -> None:
+        p = state["pending_question"]
+        if p["q"].get("multiSelect") and p["sel"] < len(p["q"]["options"]):
+            p["selected"].symmetric_difference_update({p["sel"]})
+            event.app.invalidate()
+
+    for _digit in "1234":
+        @kb.add(_digit, filter=_q_open)
+        def _(event: Any, d: str = _digit) -> None:
+            p = state["pending_question"]
+            opts = p["q"]["options"]
+            i = int(d) - 1
+            if i >= len(opts):
+                return
+            if p["q"].get("multiSelect"):
+                p["selected"].symmetric_difference_update({i})
+                event.app.invalidate()
+            else:
+                _q_resolve([opts[i]["label"]])
+
+    @kb.add("o", filter=_q_open)
+    def _(event: Any) -> None:
+        state["pending_question"]["typing"] = True
+        event.app.invalidate()
+
+    @kb.add("up", filter=_picker_open)
 
     @kb.add("up", filter=_picker_open)
     def _(event: Any) -> None:
@@ -412,6 +517,25 @@ async def run_fullscreen(tui: Any) -> int:
         if state.get("pending_perm") is not None:
             _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
             return
+        # An AskUserQuestion picker steals Enter.
+        pq = state.get("pending_question")
+        if pq is not None:
+            q, opts = pq["q"], pq["q"]["options"]
+            if pq["typing"]:
+                ans = input_buffer.text.strip()
+                input_buffer.reset()
+                _q_resolve([ans] if ans else [])
+            elif pq["sel"] == len(opts):  # "Other" row
+                pq["typing"] = True
+                event.app.invalidate()
+            elif q.get("multiSelect"):
+                picks = [opts[i]["label"] for i in sorted(pq["selected"])]
+                if not picks and pq["sel"] < len(opts):
+                    picks = [opts[pq["sel"]]["label"]]
+                _q_resolve(picks)
+            else:
+                _q_resolve([opts[pq["sel"]]["label"]])
+            return
         # Model picker open → switch to the highlighted model and close it.
         p = state.get("picking_model")
         if p is not None:
@@ -456,6 +580,16 @@ async def run_fullscreen(tui: Any) -> int:
         if state.get("pending_perm") is not None:
             _resolve_perm("deny")
             return
+        # Esc during a question: cancel typing, else skip the question.
+        pq = state.get("pending_question")
+        if pq is not None:
+            if pq["typing"]:
+                pq["typing"] = False
+                input_buffer.reset()
+                event.app.invalidate()
+            else:
+                _q_resolve([])
+            return
         task = state.get("task")
         if state["working"] and task is not None:
             task.cancel()
@@ -476,6 +610,8 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(menu_ft), height=_menu_height),
             # Interactive permission prompt — height 0 unless an Ask is pending.
             Window(FormattedTextControl(perm_ft), height=_perm_height),
+            # AskUserQuestion picker — height 0 unless a question is pending.
+            Window(FormattedTextControl(question_ft), height=_question_height),
             # Model picker overlay — height 0 unless /models opened it.
             Window(FormattedTextControl(picker_ft), height=_picker_height),
             Window(FormattedTextControl(footer_ft), height=1),
