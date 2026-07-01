@@ -86,6 +86,8 @@ from .types import (
 
 _log = logging.getLogger("mantis_agent.agent")
 _JSON_DECODER = msgspec.json.Decoder()
+_DEFAULT_MAX_TOKENS = 1024  # the conservative field default; a caller who left this
+#                                gets bumped to the model's output budget in __post_init__
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +362,8 @@ class Agent:
     provider: Provider | None = None
     system: str | None = None
     tools: ToolRegistry | list = field(default_factory=ToolRegistry)
-    max_tokens: int = 1024
+    max_tokens: int = 1024  # conservative default; __post_init__ raises it to the
+    # model's max_output_tokens (≤8192) so large writes/edits don't truncate
     temperature: float | None = None
     max_steps: int = 20
     max_turns: int | None = None  # alias for max_steps
@@ -498,6 +501,17 @@ class Agent:
         # Resolve model capability if not given explicitly.
         if self.model_capability is None:
             self.model_capability = lookup_model(self.model)
+
+        # Give the model its full output budget by default. 1024 tokens (~4k
+        # chars, ~100 lines) truncates a large file write/edit mid-output; when
+        # the caller leaves the conservative 1024 default and the model can do
+        # more, use its ``max_output_tokens`` (capped at 8192 to stay sane). An
+        # explicitly-higher ``max_tokens`` is always respected.
+        cap = self.model_capability
+        if self.max_tokens == _DEFAULT_MAX_TOKENS and cap is not None:
+            model_max = getattr(cap, "max_output_tokens", 0) or 0
+            if model_max > 0:
+                self.max_tokens = min(model_max, 8192)
 
         # Resolve backend capability if not given explicitly.
         if self.backend_capability is None and self.backend:

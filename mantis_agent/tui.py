@@ -1330,9 +1330,11 @@ class MantisTUI:
             if not key:
                 # Anthropic may be authed by an OAuth/gateway Bearer token
                 # (ANTHROPIC_AUTH_TOKEN) — restore with no api_key so the
-                # passthrough picks the token up from the environment.
-                if prov.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-                    self.model, self.backend, self.api_key = model, last.get("backend") or prov.base_url, None
+                # passthrough picks the token up from the environment, keeping the
+                # saved gateway URL. (Same tested rule the switch/auto-wire use.)
+                bearer = catalog.anthropic_bearer_backend(prov, last.get("backend"))
+                if bearer is not None:
+                    self.model, self.backend, self.api_key = model, bearer, None
                     return
                 return  # provider disabled since — don't restore a dead model
             self.model, self.backend, self.api_key = model, prov.base_url, key

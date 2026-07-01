@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.47.0] — 2026-06-30
+
+### Changed
+
+- **`max_tokens` now defaults to the model's full output budget.** The old default
+  of 1024 tokens (~100 lines) silently truncated a large file write or edit
+  mid-output — a frequent, confusing failure. When the caller leaves the default,
+  the agent now uses the model's advertised `max_output_tokens` (e.g. 4096),
+  capped at 8192 so it stays sane, and capped DOWN for small-output models. An
+  explicitly-set `max_tokens` (any non-default value, higher or lower) is always
+  respected.
+
 ## [2.46.0] — 2026-06-30
 
 ### Added
