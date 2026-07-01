@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.16.0] — 2026-06-30
+
+### Added
+
+- **`bash` now has a persistent working directory.** Each foreground command
+  starts where the previous one left off, so `cd sub` followed by a later `ls`
+  (in a separate `bash` call) behaves like a real shell instead of resetting to
+  the launch directory every time — the Claude Code behavior, and a fix for a
+  constant papercut on multi-step shell work. Implemented by carrying the final
+  `$PWD` between calls via a marker that's stripped from output; exit codes are
+  preserved, a vanished tracked directory falls back gracefully, and background
+  commands inherit the tracked cwd too.
+
 ## [2.15.1] — 2026-06-30
 
 ### Fixed

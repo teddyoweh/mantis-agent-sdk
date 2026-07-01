@@ -333,6 +333,31 @@ def test_local_flow_end_to_end_saves_model(monkeypatch, tmp_path) -> None:
     assert "11434" in (last["backend"] or "")
 
 
+def test_local_auto_flow_pulls_recommended_model(monkeypatch, tmp_path) -> None:
+    # `mantis setup --auto`: no prompts, pull the hardware-recommended model.
+    import subprocess
+    import types
+
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    from mantis_agent import setup_local
+    from mantis_agent import setup_wizard as sw
+
+    monkeypatch.setattr(setup_local, "is_ollama_installed", lambda: True)
+    monkeypatch.setattr(setup_local, "start_ollama_server", lambda: (True, ""))
+    monkeypatch.setattr(subprocess, "call", lambda *a, **k: 0)
+    monkeypatch.setattr(sw, "_ollama_has", lambda tag: True)
+
+    budget, _label = sw.detect_hardware()
+    expected = sw.recommend(budget).tag
+    args = types.SimpleNamespace(model=None, list_only=False, auto=True)
+    rc = sw._run_local(_NullConsole(), args)
+    assert rc == 0
+    last = catalog.get_last_model()
+    assert last["model"] == expected
+    assert "11434" in (last["backend"] or "")
+
+
 def test_local_flow_aborts_when_pull_fails(monkeypatch, tmp_path) -> None:
     import subprocess
     import types

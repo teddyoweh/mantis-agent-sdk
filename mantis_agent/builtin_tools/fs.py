@@ -165,13 +165,25 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
         GIT_TERMINAL_PROMPT="0", DEBIAN_FRONTEND="noninteractive",
     )
 
-    if run_in_background:
-        return _start_background(command, env)
+    # Persistent working directory: each foreground command starts where the
+    # previous one ended, so `cd sub` then a later `ls` behaves like a real shell
+    # (Claude Code parity) instead of resetting to the launch dir every call.
+    cwd = _BASH_CWD["cwd"]
+    if cwd is not None and not os.path.isdir(cwd):
+        cwd = _BASH_CWD["cwd"] = None  # the tracked dir vanished — fall back
 
+    if run_in_background:
+        return _start_background(command, env, cwd=cwd)
+
+    # Append a marker that prints the final $PWD so we can carry it to the next
+    # call. Runs after the command (preserving its exit code); skipped only if the
+    # command exits the shell itself, in which case we simply keep the old cwd.
+    wrapped = f"{command}\n__mrc=$?\nprintf '\\n{_CWD_MARKER}%s\\n' \"$PWD\"\nexit $__mrc"
     try:
         with anyio.fail_after(timeout):
             result = await anyio.run_process(
-                ["bash", "-lc", command], check=False, input=stdin_bytes, env=env
+                ["bash", "-lc", wrapped], check=False, input=stdin_bytes, env=env,
+                cwd=cwd,
             )
     except TimeoutError:
         raise TimeoutError(
@@ -179,7 +191,10 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
             f"on input? pass it via the stdin argument): {command}"
         ) from None
 
-    out = _strip_terminal_controls(result.stdout.decode("utf-8", "replace"))
+    raw_out, new_cwd = _extract_cwd_marker(result.stdout.decode("utf-8", "replace"))
+    if new_cwd:
+        _BASH_CWD["cwd"] = new_cwd
+    out = _strip_terminal_controls(raw_out)
     err = _strip_terminal_controls(result.stderr.decode("utf-8", "replace"))
     parts = []
     if out:
@@ -200,8 +215,24 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
 _BG_SHELLS: dict[str, dict[str, Any]] = {}
 _BG_COUNTER = [0]
 
+# Working directory carried across foreground bash calls (a shared shell's cwd).
+_BASH_CWD: dict[str, str | None] = {"cwd": None}
+_CWD_MARKER = "__MANTIS_CWD_9f3a__:"
 
-def _start_background(command: str, env: dict[str, str]) -> str:
+
+def _extract_cwd_marker(text: str) -> tuple[str, str | None]:
+    """Pull the trailing ``$PWD`` marker line out of bash output → (clean, cwd)."""
+    cwd: str | None = None
+    kept: list[str] = []
+    for ln in text.split("\n"):
+        if ln.startswith(_CWD_MARKER):
+            cwd = ln[len(_CWD_MARKER):].strip() or None
+        else:
+            kept.append(ln)
+    return "\n".join(kept), cwd
+
+
+def _start_background(command: str, env: dict[str, str], *, cwd: str | None = None) -> str:
     import subprocess  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
@@ -212,7 +243,7 @@ def _start_background(command: str, env: dict[str, str]) -> str:
         proc = subprocess.Popen(  # noqa: S603
             ["bash", "-lc", command],  # noqa: S607
             stdout=fd, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-            env=env, start_new_session=True,  # detach from our process group
+            env=env, cwd=cwd, start_new_session=True,  # detach from our process group
         )
     finally:
         os.close(fd)

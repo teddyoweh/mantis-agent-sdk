@@ -390,9 +390,9 @@ async def run_fullscreen(tui: Any) -> int:
             cur = "  ← current" if m == tui.model else ""
             if not it["enabled"]:
                 if i == sel:
-                    rows.append(f"\033[30;48;5;179m {m} 🔒 \033[0m{_DIM} enter to enable{_RESET}")
+                    rows.append(f"\033[30;48;5;179m {m} 🔒 \033[0m{_DIM}{_ctx(it)} · enter to enable{_RESET}")
                 else:
-                    rows.append(f"  {_DIM}{m} 🔒{_RESET}")
+                    rows.append(f"  {_DIM}{m} 🔒{_ctx(it)}{_RESET}")
             elif i == sel:
                 rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_ctx(it)}{_RESET}")
             else:

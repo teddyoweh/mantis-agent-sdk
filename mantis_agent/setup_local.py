@@ -546,8 +546,10 @@ def pull_model(tag: str) -> int:
     return subprocess.call(["ollama", "pull", tag])
 
 
-def smoke_test(tag: str, base_url: str = "http://localhost:11434") -> bool:
+def smoke_test(tag: str, base_url: str | None = None) -> bool:
     """Send a one-token prompt to confirm the model loads and responds."""
+    from .paths import ollama_base_url  # noqa: PLC0415
+    base_url = base_url or ollama_base_url()
 
     body = json.dumps(
         {
@@ -583,7 +585,7 @@ def run_setup_local(
     model: str | None = None,
     install_ollama_if_missing: bool = False,
     skip_smoke_test: bool = False,
-    base_url: str = "http://localhost:11434",
+    base_url: str | None = None,
     auto_start_server: bool = True,
     start_timeout_s: float = 15.0,
 ) -> int:
@@ -596,6 +598,8 @@ def run_setup_local(
     second terminal defeats the purpose. Pass ``auto_start_server=False``
     (CLI: ``--no-auto-start-server``) if you'd rather keep that behavior.
     """
+    from .paths import ollama_base_url  # noqa: PLC0415
+    base_url = base_url or ollama_base_url()
 
     if not is_ollama_installed():
         if not install_ollama_if_missing:
