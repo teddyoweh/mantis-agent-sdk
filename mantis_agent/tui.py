@@ -43,7 +43,7 @@ from . import __version__
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODEL = os.environ.get("MANTIS_AGENT_MODEL", "qwen2.5-7b-instruct")
-DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL", "http://localhost:11434")
+DEFAULT_BACKEND = os.environ.get("MANTIS_AGENT_BASE_URL") or _paths.ollama_base_url()
 
 # Mascot palette — a green praying mantis reared up in profile, facing right.
 BODY = "#7cb342"  # mantis green

@@ -121,6 +121,13 @@ def recommend(budget_gb: float) -> CodingModel:
 FREE_PROVIDER_IDS = frozenset({"groq", "cerebras", "gemini", "openrouter"})
 
 
+def _ollama_base() -> str:
+    """The Ollama base URL, honoring ``$OLLAMA_HOST``. Delegates to the shared
+    :func:`mantis_agent.paths.ollama_base_url` so setup + launch agree."""
+    from .paths import ollama_base_url  # noqa: PLC0415
+    return ollama_base_url()
+
+
 def run_setup(argv: list[str]) -> int:
     import argparse  # noqa: PLC0415
 
@@ -228,7 +235,7 @@ def _run_local(c: Any, args: Any) -> int:
 
     # -- verify + persist as default --------------------------------------
     installed = _ollama_has(chosen_tag)
-    catalog.set_last_model(chosen_tag, "http://localhost:11434")
+    catalog.set_last_model(chosen_tag, _ollama_base())
 
     c.print()
     c.print(Text(f"  ✓ {chosen_tag} is ready{'' if installed else ' (pulled)'} and set as your default.",

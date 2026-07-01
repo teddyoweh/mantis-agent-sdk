@@ -254,7 +254,25 @@ def _is_edit_tool(tool: Tool) -> bool:
     return n in _EDIT_TOOL_NAMES or n.startswith("write_") or n.startswith("edit_")
 
 
+# Tools whose "allow for session" should scope to the FILE, not the exact call.
+# Every edit to a file has different old_string/new_string/content, so keying on
+# the full input would re-prompt on every single edit — making session-allow
+# pointless for exactly the highest-friction case. Keying by path means: approve
+# editing foo.py once, and further edits to foo.py this session don't re-prompt
+# (bar.py still asks).
+_SESSION_BY_PATH = {"edit_file", "write_file", "multi_edit", "notebook_edit"}
+
+
 def _session_key(tool: Tool, input: dict[str, Any]) -> tuple[str, str]:
+    if tool.name in _SESSION_BY_PATH:
+        path = (
+            input.get("path")
+            or input.get("file_path")
+            or input.get("notebook_path")
+            or input.get("filename")
+            or ""
+        )
+        return (tool.name, str(path))
     return (tool.name, _project_input(input))
 
 

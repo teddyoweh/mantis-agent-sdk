@@ -90,6 +90,18 @@ def test_hosted_flagships_have_native_tools_and_real_context() -> None:
     assert lookup_model("qwen2.5-coder:7b").context_window == 32768
 
 
+def test_ollama_base_respects_ollama_host(monkeypatch) -> None:
+    from mantis_agent.setup_wizard import _ollama_base
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert _ollama_base() == "http://localhost:11434"
+    monkeypatch.setenv("OLLAMA_HOST", "192.168.1.5:11435")
+    assert _ollama_base() == "http://192.168.1.5:11435"
+    monkeypatch.setenv("OLLAMA_HOST", "gpu-box")  # no port → default appended
+    assert _ollama_base() == "http://gpu-box:11434"
+    monkeypatch.setenv("OLLAMA_HOST", "https://remote.example.com:443")
+    assert _ollama_base() == "https://remote.example.com:443"
+
+
 def test_catalog_providers_are_wellformed() -> None:
     # Guard the setup fallback data: every hosted provider must have a usable id,
     # https base URL, key env var, and at least one non-empty flagship model id.

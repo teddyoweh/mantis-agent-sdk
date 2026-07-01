@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.15.0] — 2026-06-30
+
+### Changed
+
+- **"Allow for session" now actually sticks for edits.** It was keyed on the
+  exact tool input, so every `edit_file`/`write_file` — which always has a
+  different old_string/new_string/content — re-prompted anyway, making the option
+  useless for the highest-friction case. Edit/write/notebook tools are now keyed
+  by the FILE PATH: approve editing `foo.py` once and further edits to `foo.py`
+  this session don't re-prompt (`bar.py` still asks). `bash` and other tools stay
+  scoped to the exact call, as before.
+
 ## [2.14.0] — 2026-06-30
 
 ### Changed

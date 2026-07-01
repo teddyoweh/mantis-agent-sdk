@@ -164,3 +164,19 @@ def ensure_dir(path: Path) -> Path:
 
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def ollama_base_url() -> str:
+    """The local Ollama base URL, honoring ``$OLLAMA_HOST`` (users who run Ollama
+    on a custom host/port — remote GPU box, non-default port, Docker) — else the
+    default ``http://localhost:11434``. OLLAMA_HOST may be ``host``, ``host:port``,
+    or a full URL; normalize all three."""
+    host = os.environ.get("OLLAMA_HOST", "").strip()
+    if not host:
+        return "http://localhost:11434"
+    if not host.startswith(("http://", "https://")):
+        host = "http://" + host
+    from urllib.parse import urlparse  # noqa: PLC0415
+    if urlparse(host).port is None:
+        host = f"{host.rstrip('/')}:11434"
+    return host.rstrip("/")
