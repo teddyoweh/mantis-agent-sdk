@@ -305,10 +305,16 @@ async def run_fullscreen(tui: Any) -> int:
         from .tui import _is_chat_model  # noqa: PLC0415
         from . import catalog  # noqa: PLC0415
 
+        from .capabilities import lookup_model  # noqa: PLC0415
+
         fl = flt.lower().strip()
 
         def keep(m: str) -> bool:
             return not fl or fl in m.lower()
+
+        def ctxlab(m: str) -> str:
+            cw = lookup_model(m).context_window
+            return f"{cw // 1000}k" if cw >= 1000 else ""
 
         items: list[dict] = []
         active_all = _chat_models()
@@ -324,7 +330,8 @@ async def run_fullscreen(tui: Any) -> int:
                               if p.base_url.rstrip("/") == back), back or "backend")
             items.append({"kind": "header", "label": f"● active · {where}"})
             for m in active:
-                items.append({"kind": "model", "model": m, "enabled": True, "provider_id": None})
+                items.append({"kind": "model", "model": m, "enabled": True,
+                              "provider_id": None, "ctx": ctxlab(m)})
         try:
             for g in catalog.grouped_provider_models():
                 models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set and keep(m)]
@@ -333,8 +340,8 @@ async def run_fullscreen(tui: Any) -> int:
                 tag = "" if g["enabled"] else "  · not enabled"
                 items.append({"kind": "header", "label": f"{g['label']}{tag}"})
                 for m in models:
-                    items.append({"kind": "model", "model": m,
-                                  "enabled": g["enabled"], "provider_id": g["provider_id"]})
+                    items.append({"kind": "model", "model": m, "enabled": g["enabled"],
+                                  "provider_id": g["provider_id"], "ctx": ctxlab(m)})
         except Exception:  # noqa: BLE001
             pass
         return items
@@ -368,11 +375,10 @@ async def run_fullscreen(tui: Any) -> int:
         _hdr = f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
         if flt:
             _hdr += f"   {_DIM}filter: {flt}{_RESET}"
-        from .capabilities import lookup_model  # noqa: PLC0415
 
-        def _ctx(m: str) -> str:
-            cw = lookup_model(m).context_window
-            return f"  {cw // 1000}k" if cw >= 1000 else ""
+        def _ctx(it: dict) -> str:
+            c = it.get("ctx")  # precomputed in _build_picker_items
+            return f"  {c}" if c else ""
 
         rows = [_hdr]
         for i in range(lo, min(lo + _PICKER_ROWS, n)):
@@ -388,9 +394,9 @@ async def run_fullscreen(tui: Any) -> int:
                 else:
                     rows.append(f"  {_DIM}{m} 🔒{_RESET}")
             elif i == sel:
-                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_ctx(m)}{_RESET}")
+                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_ctx(it)}{_RESET}")
             else:
-                rows.append(f"  {m}{_DIM}{cur}{_ctx(m)}{_RESET}")
+                rows.append(f"  {m}{_DIM}{cur}{_ctx(it)}{_RESET}")
         return ANSI("\n".join(rows))
 
     def _picker_height() -> Any:

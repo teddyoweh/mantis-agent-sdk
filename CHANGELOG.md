@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.12.0] — 2026-06-30
+
+### Added
+
+- **`/learn` command** — memory consolidation. Have the agent review the current
+  session and save the DURABLE facts worth keeping (your preferences and
+  conventions, project gotchas, where things live, decisions + rationale) to
+  persistent memory via the `remember` tool — the manual, on-demand form of
+  auto-memory. `/learn` reviews everything; `/learn <focus>` steers it. Prompt is
+  guarded against saving transient task state or duplicating existing memories.
+  Recalled automatically in future sessions.
+
 ## [2.11.0] — 2026-06-30
 
 ### Added

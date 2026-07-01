@@ -81,6 +81,7 @@ SLASH_COMMANDS = {
     "/diff": "review this session's file changes",
     "/memory": "edit MANTIS.md / AGENTS.md in $EDITOR",
     "/init": "analyze the project & write MANTIS.md",
+    "/learn": "save durable facts from this session to memory",
     "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
@@ -216,11 +217,27 @@ def render_mention_block(resolved: list[tuple[str, str]]) -> str:
     )
 
 
+LEARN_PROMPT = (
+    "Review this conversation and save any DURABLE facts worth remembering for "
+    "future sessions — call the `remember` tool once per fact. Good candidates: "
+    "the user's stated preferences and working style, project conventions, gotchas "
+    "or setup steps you discovered, where important things live, and decisions with "
+    "their rationale. Do NOT save transient task state, one-off details, or anything "
+    "already obvious from the code or git history. If a fact refines something "
+    "already in memory, update that instead of duplicating. If nothing durable is "
+    "worth saving, say so briefly rather than inventing memories."
+)
+
+
 def expand_slash_prompt(text: str) -> str | None:
     """Slash commands that expand into an agent prompt (run a turn) rather than
     being handled inline. Returns the prompt to submit, or None otherwise."""
-    if text.strip() == "/init":
+    t = text.strip()
+    if t == "/init":
         return INIT_PROMPT
+    if t == "/learn" or t.startswith("/learn "):
+        focus = t[len("/learn"):].strip()
+        return LEARN_PROMPT + (f"\n\nFocus especially on: {focus}" if focus else "")
     return None
 
 
