@@ -100,10 +100,19 @@ async def run_fullscreen(tui: Any) -> int:
     # -- live menu: slash commands OR a model picker (a real layout window) ---
 
     def _chat_models() -> list[str]:
+        # Cache the backend's model list — _available_models() is a *synchronous*
+        # HTTP probe, and this is called on every render/keystroke while the
+        # picker is open, so without a cache it froze the event loop each frame.
+        # Cache is keyed by backend so switching providers refetches.
+        cache = state.get("model_cache")
+        if cache is not None and cache.get("backend") == tui.backend:
+            return cache["models"]
         from .tui import _is_chat_model  # noqa: PLC0415
         avail, _ = tui._available_models()
         chat = [m for m in (avail or []) if _is_chat_model(m)]
-        return chat or list(avail or [])  # if filtering nukes everything, show all
+        models = chat or list(avail or [])  # if filtering nukes everything, show all
+        state["model_cache"] = {"backend": tui.backend, "models": models}
+        return models
 
     def _menu_options() -> list[tuple[str, str, str]]:
         """Returns ``(kind, value, meta)`` rows. kind is 'cmd' or 'model'."""
