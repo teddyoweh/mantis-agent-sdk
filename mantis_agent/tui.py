@@ -543,6 +543,8 @@ class MantisTUI:
         registry.add(make_todo_write(self.todos))
         registry.add(remember)  # write path into persistent memory (recall is automatic)
         registry.add(make_ask_user_question(self._ask_user_question))  # ask the user
+        from .builtin_tools.plan import make_exit_plan_mode  # noqa: PLC0415
+        registry.add(make_exit_plan_mode(self._exit_plan_mode))  # plan approval handoff
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the
@@ -597,8 +599,9 @@ class MantisTUI:
         if mode == "plan mode on":
             return Deny(
                 reason=(
-                    f"plan mode is on — `{tool.name}` is blocked. Don't modify "
-                    f"anything; instead describe the plan. (shift+tab to switch mode)"
+                    f"plan mode is on — `{tool.name}` is blocked. Research read-only, "
+                    f"then call `exit_plan_mode` with your plan to get approval "
+                    f"before making any changes."
                 )
             )
         if mode == "accept edits on" and _is_edit_tool(tool):
@@ -662,6 +665,32 @@ class MantisTUI:
                     answers = [q["options"][int(raw) - 1]["label"]]
             results.append({"question": q["question"], "header": q["header"], "answers": answers})
         return results
+
+    async def _exit_plan_mode(self, plan: str) -> str:
+        """Present a plan for approval. The full-screen app installs
+        ``self._fs_plan`` (renders the plan + an approve/keep-planning picker and
+        flips the mode); otherwise fall back to a simple prompt."""
+        import sys  # noqa: PLC0415
+
+        if MODES[self.mode_idx][0] != "plan mode on":
+            return "You are not in plan mode — just proceed with the implementation."
+
+        fs = getattr(self, "_fs_plan", None)
+        if fs is not None:
+            return await fs(plan)
+
+        # Classic REPL fallback.
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return "Non-interactive — proceeding with the plan."
+        self.console.print(f"\n[bold]Plan[/]\n{plan}\n")
+        try:
+            ans = input("  Proceed with this plan? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = ""
+        if ans in ("y", "yes"):
+            self.mode_idx = 0  # lift plan mode → default
+            return "Plan approved. Plan mode is now OFF — proceed with the implementation."
+        return "The user did not approve the plan. Stay in plan mode and revise it."
 
     def _load_permission_rules(self) -> Any:
         """Build a PermissionRuleSet from settings.json ``permissions`` rules

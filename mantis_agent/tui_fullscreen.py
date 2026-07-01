@@ -216,6 +216,37 @@ async def run_fullscreen(tui: Any) -> int:
 
     tui._fs_ask = _ask_questions
 
+    # Plan-mode approval handoff: render the plan, ask approve/keep-planning via
+    # the same picker, and lift plan mode on approval.
+    async def _fs_plan(plan: str) -> str:
+        def _show() -> None:
+            from .tui import _compact_markdown  # noqa: PLC0415
+            tui.console.print("\n[bold #cddc39]▶ Plan[/]")
+            try:
+                tui.console.print(_compact_markdown(plan))
+            except Exception:  # noqa: BLE001
+                tui.console.print(plan)
+            tui.console.print()
+        await _print(_show)
+        answers = await _ask_questions([{
+            "question": "Proceed with this plan?",
+            "header": "Plan",
+            "options": [
+                {"label": "Yes, proceed", "description": "Approve and start making changes"},
+                {"label": "Keep planning", "description": "Refine the plan first"},
+            ],
+            "multiSelect": False,
+        }])
+        picked = answers[0]["answers"][0] if answers and answers[0]["answers"] else ""
+        if picked.lower().startswith("yes"):
+            tui.mode_idx = 0  # lift plan mode → default
+            get_app().invalidate()
+            return "Plan approved. Plan mode is now OFF — proceed with the implementation."
+        note = f" ({picked})" if picked else ""
+        return f"The user did not approve the plan yet{note}. Stay in plan mode and revise it."
+
+    tui._fs_plan = _fs_plan
+
     input_buffer = Buffer(multiline=False)
 
     # Reset the slash-menu selection whenever the line stops being a slash cmd.

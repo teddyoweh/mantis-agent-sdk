@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.17.0] — 2026-06-30
+
+### Added
+
+- **Plan-mode approval handoff** (parity roadmap T1.6). Plan mode already gated
+  mutations read-only; now there's the missing present-plan → approve → execute
+  flow. In plan mode the agent researches, then calls the new **`exit_plan_mode`**
+  tool with its plan; the terminal renders it and asks you to approve via the
+  same picker as AskUserQuestion. On approval plan mode is lifted so the agent
+  can start editing; otherwise it stays read-only and revises. The plan-mode
+  denial message now points the model at `exit_plan_mode`.
+
 ## [1.16.0] — 2026-06-30
 
 ### Added
