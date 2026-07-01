@@ -96,12 +96,14 @@ CATALOG: tuple[Provider, ...] = (
         "glm", "GLM (Zhipu)", "https://api.z.ai/api/paas/v4", "ZHIPUAI_API_KEY",
         ("glm-4.7", "glm-4.6", "glm-4-plus", "glm-4-flash"),
         "z.ai",
+        key_env_aliases=("ZAI_API_KEY", "ZHIPU_API_KEY"),
     ),
     Provider(
         "qwen", "Qwen (DashScope)",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
         ("qwen-max", "qwen-plus", "qwen3-235b-a22b", "qwen3-coder-plus"),
         "dashscope-intl.aliyuncs.com · Qwen3",
+        key_env_aliases=("QWEN_API_KEY",),  # intuitive name for the "Qwen" label
     ),
     Provider(
         "groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",

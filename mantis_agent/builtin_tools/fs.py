@@ -351,13 +351,22 @@ async def bash_output(bash_id: str) -> str:
     proc = entry["proc"]
     rc = proc.poll()
     status = "running" if rc is None else f"exited with code {rc}"
+    # Return only output written SINCE the last read (Claude's BashOutput
+    # behavior) — polling a long-running process must not re-dump the whole log
+    # into context every call. Track a byte offset per shell.
+    pos = entry.get("read_pos", 0)
     try:
-        with open(entry["log"], encoding="utf-8", errors="replace") as fh:
-            body = _strip_terminal_controls(fh.read()).strip()
+        with open(entry["log"], "rb") as fh:
+            fh.seek(pos)
+            new_bytes = fh.read()
+            entry["read_pos"] = fh.tell()
+        body = _strip_terminal_controls(new_bytes.decode("utf-8", "replace")).strip()
     except OSError:
         body = ""
     header = f"[{bash_id} · {status}] {entry['cmd']}"
-    return _truncate(f"{header}\n{body}" if body else f"{header}\n(no output yet)")
+    if not body:
+        return f"{header}\n{'(no new output)' if pos > 0 else '(no output yet)'}"
+    return _truncate(f"{header}\n{body}")
 
 
 # ANSI/terminal control: CSI sequences, OSC strings, and the alt-screen /

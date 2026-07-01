@@ -245,6 +245,26 @@ def test_pro_filter_excludes_only_openai_responses_models() -> None:
         assert _is_chat_model(m) is False, m
 
 
+def test_provider_key_env_aliases_are_honored(monkeypatch) -> None:
+    # Gemini also accepts GOOGLE_API_KEY; GLM/Z.ai also accepts ZAI_API_KEY —
+    # so a direct-env user is found whichever common name they used.
+    for var in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ZHIPUAI_API_KEY", "ZAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
+    assert catalog.api_key_for(catalog.BY_ID["gemini"]) == "g-key"
+    monkeypatch.setenv("ZAI_API_KEY", "z-key")
+    assert catalog.api_key_for(catalog.BY_ID["glm"]) == "z-key"
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.setenv("QWEN_API_KEY", "q-key")
+    assert catalog.api_key_for(catalog.BY_ID["qwen"]) == "q-key"
+
+
+def test_primary_key_env_takes_precedence_over_alias(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "primary")
+    monkeypatch.setenv("GOOGLE_API_KEY", "alias")
+    assert catalog.api_key_for(catalog.BY_ID["gemini"]) == "primary"
+
+
 def test_env_var_key_is_discovered_for_each_provider(monkeypatch) -> None:
     # Setting {PROVIDER}_API_KEY must make api_key_for() find it — a wrong/typo'd
     # api_key_env would silently fail to pick up an env-set key.

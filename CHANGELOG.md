@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.53.0] — 2026-06-30
+
+### Changed
+
+- **`bash_output` is now incremental.** It returned the ENTIRE accumulated log on
+  every call — so an agent polling a long-running background process (a dev server,
+  a slow build) re-injected all prior output into context each time, wasting the
+  window and confusing the model with repeats. It now returns only the output
+  written SINCE the last read (tracking a byte offset per shell, Claude's
+  BashOutput behavior), with a `(no new output)` note when nothing changed. The
+  running/exited status is still shown each call.
+
 ## [2.52.0] — 2026-06-30
 
 ### Added
