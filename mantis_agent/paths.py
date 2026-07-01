@@ -179,4 +179,8 @@ def ollama_base_url() -> str:
     from urllib.parse import urlparse  # noqa: PLC0415
     if urlparse(host).port is None:
         host = f"{host.rstrip('/')}:11434"
-    return host.rstrip("/")
+    host = host.rstrip("/")
+    # 0.0.0.0 is a *bind* address (OLLAMA_HOST=0.0.0.0 exposes the server on all
+    # interfaces); as a client connect target it's unroutable, so rewrite it to
+    # loopback — exactly what Ollama's own client does.
+    return host.replace("://0.0.0.0", "://127.0.0.1")

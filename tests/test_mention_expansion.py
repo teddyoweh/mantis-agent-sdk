@@ -47,3 +47,27 @@ def test_render_block(tmp_path: Path) -> None:
     block = render_mention_block(resolve_file_mentions("@foo.py", tmp_path))
     assert "Contents of @foo.py" in block and "CODE" in block
     assert "system-reminder" in block.lower()
+
+
+def test_directory_mention_lists_contents(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("x")
+    (tmp_path / "src" / "sub").mkdir()
+    r = resolve_file_mentions("look at @src/ please", tmp_path)
+    assert len(r) == 1
+    body = r[0][1]
+    assert "directory listing" in body
+    assert "app.py" in body and "sub/" in body      # dirs marked with /
+
+
+def test_directory_mention_without_slash(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "readme.md").write_text("hi")
+    r = resolve_file_mentions("see @docs", tmp_path)
+    assert r and "readme.md" in r[0][1]
+
+
+def test_empty_directory_mention(tmp_path):
+    (tmp_path / "empty").mkdir()
+    r = resolve_file_mentions("@empty", tmp_path)
+    assert r and "(empty directory)" in r[0][1]

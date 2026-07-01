@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.17.0] — 2026-06-30
+
+### Added
+
+- **`@`-mentions now support directories.** Mentioning `@src/` (or `@src`) injects
+  a listing of that directory's contents (subdirectories marked with `/`) so the
+  agent sees the structure immediately — the counterpart to file mentions
+  injecting file contents (2.11). The mention matcher no longer requires a file
+  extension, so directory and extension-less paths resolve too; `@words` that
+  aren't real paths (`@teammate`, emails) are still ignored.
+
 ## [2.16.0] — 2026-06-30
 
 ### Added

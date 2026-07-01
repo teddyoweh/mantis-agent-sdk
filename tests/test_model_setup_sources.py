@@ -55,6 +55,27 @@ def test_agent_resolves_correct_capabilities_for_openai_flagship() -> None:
     assert a.backend_capability.supports_native_tools is True
 
 
+def test_available_models_endpoint_for_versioned_base(monkeypatch) -> None:
+    # Gemini's base already carries a version path (…/v1beta/openai), so the
+    # models endpoint is a direct child ({base}/models) — NOT {base}/v1/models,
+    # which 404s. Verify _available_models hits the right URL and parses it.
+    import httpx
+
+    import respx as _respx
+
+    from mantis_agent.tui import MantisTUI
+
+    base = "https://generativelanguage.googleapis.com/v1beta/openai"
+    with _respx.mock:
+        route = _respx.get(f"{base}/models").mock(
+            return_value=httpx.Response(200, json={"data": [{"id": "gemini-2.5-pro"}]}))
+        t = MantisTUI(model="gemini-2.5-pro", backend=base, api_key="k",
+                      system=None, max_tokens=1, temperature=None, max_turns=1)
+        models, ok = t._available_models()
+    assert ok and "gemini-2.5-pro" in models
+    assert route.called
+
+
 def test_hosted_backend_profiles_have_correct_provider_hints() -> None:
     # Without these, OpenAI/Gemini/GLM/Qwen fell to the generic vLLM profile
     # (hint="vllm"), so cost/pricing tracking used the wrong provider.
@@ -100,6 +121,9 @@ def test_ollama_base_respects_ollama_host(monkeypatch) -> None:
     assert _ollama_base() == "http://gpu-box:11434"
     monkeypatch.setenv("OLLAMA_HOST", "https://remote.example.com:443")
     assert _ollama_base() == "https://remote.example.com:443"
+    # 0.0.0.0 (bind-all) must be rewritten to loopback for the client connection.
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11434")
+    assert _ollama_base() == "http://127.0.0.1:11434"
 
 
 def test_catalog_providers_are_wellformed() -> None:

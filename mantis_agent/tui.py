@@ -173,17 +173,18 @@ INIT_PROMPT = (
 )
 
 
-_MENTION_TOKEN_RE = __import__("re").compile(r"(?:^|\s)@([\w./~-]+\.[\w]+)")
+_MENTION_TOKEN_RE = __import__("re").compile(r"(?:^|\s)@([\w./~-]+)")
 
 
 def resolve_file_mentions(
-    text: str, cwd: str | Path, *, max_bytes: int = 50_000
+    text: str, cwd: str | Path, *, max_bytes: int = 50_000, max_dir_entries: int = 100
 ) -> list[tuple[str, str]]:
-    """Find ``@path`` tokens in ``text`` that resolve to a real file under
-    ``cwd`` and return ``(mention, content)`` for each — so the model gets the
-    referenced file's contents inline instead of having to guess or re-read.
-    Files too large to inline come back with a note pointing at ``read_file``.
-    Non-file ``@words`` (that don't resolve) are ignored."""
+    """Find ``@path`` tokens in ``text`` that resolve to a real file OR directory
+    under ``cwd`` and return ``(mention, content)`` — so the model gets the
+    referenced file's contents (or a directory's listing) inline instead of
+    having to guess or re-read. Files too large to inline come back with a note
+    pointing at ``read_file``. ``@words`` that don't resolve to a real path
+    (``@teammate``, an email) are ignored."""
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     base = Path(cwd).expanduser()
@@ -194,16 +195,25 @@ def resolve_file_mentions(
         seen.add(raw)
         p = Path(raw).expanduser() if raw.startswith(("/", "~")) else (base / raw)
         try:
-            if not p.is_file():
-                continue
-            data = p.read_bytes()
+            if p.is_file():
+                data = p.read_bytes()
+                if len(data) > max_bytes:
+                    out.append((raw, f"[{raw} is {len(data) // 1024} KB — too large to "
+                                     f"inline; read it with read_file using offset/limit]"))
+                else:
+                    out.append((raw, data.decode("utf-8", "replace")))
+            elif p.is_dir():
+                names = sorted(
+                    e.name + ("/" if e.is_dir() else "")
+                    for e in p.iterdir() if not e.name.startswith(".")
+                )
+                listing = "\n".join(names[:max_dir_entries]) or "(empty directory)"
+                if len(names) > max_dir_entries:
+                    listing += f"\n… (+{len(names) - max_dir_entries} more)"
+                out.append((raw, f"(directory listing)\n{listing}"))
+            # else: not a real path — ignore
         except OSError:
             continue
-        if len(data) > max_bytes:
-            out.append((raw, f"[{raw} is {len(data) // 1024} KB — too large to inline; "
-                              f"read it with read_file using offset/limit]"))
-        else:
-            out.append((raw, data.decode("utf-8", "replace")))
     return out
 
 
@@ -1096,10 +1106,14 @@ class MantisTUI:
                     headers = {"Authorization": f"Bearer {self.api_key}"}
                 else:
                     headers = {}
-                # Strip a trailing "/v1" *suffix* (not a char set — rstrip('/v1')
-                # would eat any trailing /, v or 1) before re-appending it.
-                root = base[:-3] if base.endswith("/v1") else base
-                r = c.get(f"{root}/v1/models", headers=headers)
+                # ``models`` is a direct child of the OpenAI-compat base. If the
+                # base already carries a version path (…/v1, Gemini's
+                # …/v1beta/openai, GLM's …/paas/v4) → "{base}/models". A bare
+                # host (self-hosted vLLM at :8000) → default to /v1/models.
+                from urllib.parse import urlparse  # noqa: PLC0415
+                b = base.rstrip("/")
+                has_path = urlparse(b).path not in ("", "/")
+                r = c.get(f"{b}/models" if has_path else f"{b}/v1/models", headers=headers)
                 r.raise_for_status()
                 return [m.get("id", "") for m in r.json().get("data", [])], True
         except Exception:  # noqa: BLE001 — unreachable / non-2xx / bad JSON
