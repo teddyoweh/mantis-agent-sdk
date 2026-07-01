@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.31.0] — 2026-06-30
+
+### Added
+
+- **`PreCompact` hook is now dispatched.** It fires just before the agent
+  summarizes (compacts) old history — a lossy step — so integrators can snapshot
+  or persist the full transcript before it's compressed, or return `block=True` to
+  skip the built-in compaction and handle it themselves. Defined-but-dead before;
+  now wired into the run loop's compaction path. Follows `UserPromptSubmit` (2.28)
+  in bringing the hook system past tool-only events into the run lifecycle.
+
 ## [2.30.0] — 2026-06-30
 
 ### Changed

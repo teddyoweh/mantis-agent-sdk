@@ -355,27 +355,43 @@ def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) ->
         from prompt_toolkit import Application  # noqa: PLC0415
         from prompt_toolkit.formatted_text import ANSI  # noqa: PLC0415
         from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
+        from prompt_toolkit.keys import Keys  # noqa: PLC0415
         from prompt_toolkit.layout import HSplit, Layout, Window  # noqa: PLC0415
         from prompt_toolkit.layout.controls import FormattedTextControl  # noqa: PLC0415
     except Exception:  # noqa: BLE001
         return -1
 
-    state = {"sel": max(0, min(start, len(rows) - 1))}
     view = 14  # visible rows at once — scroll a viewport so long lists (OpenAI
     # returns 50+ chat models) don't build a taller-than-the-terminal window.
+    state = {"sel": 0, "filter": ""}
+
+    def visible() -> list[tuple[int, str, str]]:
+        # (original_index, label, hint) rows matching the type-to-filter.
+        f = state["filter"].lower()
+        return [(i, lbl, h) for i, (lbl, h) in enumerate(rows) if not f or f in lbl.lower()]
+
+    # Start the cursor on the requested row (in the initially-unfiltered list).
+    state["sel"] = next((vi for vi, (oi, _, _) in enumerate(visible())
+                         if oi == max(0, min(start, len(rows) - 1))), 0)
 
     def render() -> Any:
-        sel, n = state["sel"], len(rows)
+        vis = visible()
+        n = len(vis)
+        sel = min(state["sel"], max(0, n - 1))
         lo = max(0, min(sel - view // 2, n - view)) if n > view else 0
-        out = [f"  \033[1m{title}\033[0m\n"]
+        flt = state["filter"]
+        head = f"  \033[1m{title}\033[0m" + (f"  \033[90m/{flt}\033[0m" if flt else "")
+        out = [head + "\n"]
         for i in range(lo, min(lo + view, n)):
-            label, hint = rows[i]
+            _oi, label, hint = vis[i]
             if i == sel:
                 out.append(f"\033[30;48;5;150m ▸ {label} \033[0m  \033[90m{hint}\033[0m")
             else:
                 out.append(f"    \033[97m{label}\033[0m  \033[90m{hint}\033[0m")
+        if not vis:
+            out.append("    \033[90m(no match — backspace to clear)\033[0m")
         pos = f"  ({sel + 1}/{n})" if n > view else ""
-        out.append(f"\n  \033[90m↑/↓ · enter to pick · esc to cancel{pos}\033[0m")
+        out.append(f"\n  \033[90m↑/↓ · type to filter · enter · esc{pos}\033[0m")
         return ANSI("\n".join(out))
 
     kb = KeyBindings()
@@ -383,21 +399,42 @@ def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) ->
     @kb.add("up")
     @kb.add("c-p")
     def _(_e: Any) -> None:
-        state["sel"] = (state["sel"] - 1) % len(rows)
+        n = len(visible())
+        if n:
+            state["sel"] = (state["sel"] - 1) % n
 
     @kb.add("down")
     @kb.add("c-n")
     def _(_e: Any) -> None:
-        state["sel"] = (state["sel"] + 1) % len(rows)
+        n = len(visible())
+        if n:
+            state["sel"] = (state["sel"] + 1) % n
 
     @kb.add("enter")
     def _(e: Any) -> None:
-        e.app.exit(result=state["sel"])
+        vis = visible()
+        # Only commit on a real selection — Enter while the filter matches nothing
+        # is a no-op (stay open) rather than cancelling the whole setup on a typo.
+        if vis and 0 <= state["sel"] < len(vis):
+            e.app.exit(result=vis[state["sel"]][0])
 
     @kb.add("escape", eager=True)
     @kb.add("c-c")
     def _(e: Any) -> None:
         e.app.exit(result=None)
+
+    @kb.add("backspace")
+    def _(_e: Any) -> None:
+        if state["filter"]:
+            state["filter"] = state["filter"][:-1]
+            state["sel"] = 0
+
+    @kb.add(Keys.Any)
+    def _(e: Any) -> None:
+        ch = e.data
+        if ch and len(ch) == 1 and ch.isprintable():
+            state["filter"] += ch
+            state["sel"] = 0
 
     app = Application(
         layout=Layout(HSplit([Window(FormattedTextControl(render), height=min(len(rows), view) + 3)])),

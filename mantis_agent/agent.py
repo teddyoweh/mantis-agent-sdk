@@ -1021,11 +1021,22 @@ class Agent:
                     micro(messages)
                 # Fallback: full summarizing compaction when still over threshold.
                 if await self._compactor.should_compact(messages, usage_now, ctx_window):
-                    before_len = len(messages)
-                    compacted = await self._compactor.compact(messages)
-                    if len(compacted) < before_len:
-                        messages[:] = compacted
-                        compactions += 1
+                    # PreCompact hook — fires just before the (lossy) summarization
+                    # so integrators can snapshot/persist the full transcript before
+                    # it's compressed, or block it to handle compaction themselves.
+                    skip_compact = False
+                    if self._dispatcher.has("PreCompact"):
+                        pc = await self._dispatcher.dispatch(
+                            "PreCompact",
+                            HookContext(event="PreCompact", messages_snapshot=messages),
+                        )
+                        skip_compact = pc.block
+                    if not skip_compact:
+                        before_len = len(messages)
+                        compacted = await self._compactor.compact(messages)
+                        if len(compacted) < before_len:
+                            messages[:] = compacted
+                            compactions += 1
 
             # Per-turn span — nests under agent.run when tracing is on.
             turn_span = maybe_start_span(
