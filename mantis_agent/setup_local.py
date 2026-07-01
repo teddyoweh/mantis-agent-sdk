@@ -237,8 +237,11 @@ def is_ollama_installed() -> bool:
     return shutil.which("ollama") is not None
 
 
-def is_ollama_running(base_url: str = "http://localhost:11434") -> bool:
-    """Does the local Ollama HTTP server answer ``/api/version``?"""
+def is_ollama_running(base_url: str | None = None) -> bool:
+    """Does the local Ollama HTTP server answer ``/api/version``? Honors
+    ``$OLLAMA_HOST`` when no explicit ``base_url`` is given."""
+    from .paths import ollama_base_url  # noqa: PLC0415
+    base_url = base_url or ollama_base_url()
     try:
         with urllib.request.urlopen(f"{base_url}/api/version", timeout=2) as r:
             return r.status == 200
@@ -248,7 +251,7 @@ def is_ollama_running(base_url: str = "http://localhost:11434") -> bool:
 
 def start_ollama_server(
     *,
-    base_url: str = "http://localhost:11434",
+    base_url: str | None = None,
     timeout_s: float = 15.0,
     log_path: str | None = None,
 ) -> tuple[bool, str | None]:
@@ -265,6 +268,8 @@ def start_ollama_server(
     ``log_path`` (a tempfile by default) so the user can read what went
     wrong if the spawn fails.
     """
+    from .paths import ollama_base_url  # noqa: PLC0415
+    base_url = base_url or ollama_base_url()
 
     if is_ollama_running(base_url):
         return True, None

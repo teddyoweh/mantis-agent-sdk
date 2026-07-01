@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from . import paths as _paths
 
 # ---------------------------------------------------------------------------
 # Defaults (mirrors mantis-agent run/chat, sourced from the shared env vars)

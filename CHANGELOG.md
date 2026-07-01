@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.15.1] — 2026-06-30
+
+### Fixed
+
+- **`/resume`, `/branch`, `/rewind` now work in the default (full-screen) TUI.**
+  They were implemented and advertised in the slash menu, but the full-screen
+  dispatcher never wired them — so typing `/resume` fell through and was sent to
+  the model as the literal text "/resume" instead of resuming a session. Now they
+  run their `MantisTUI` handlers inside `in_terminal` so the output scrolls above
+  the pinned prompt like every other command.
+
 ## [2.15.0] — 2026-06-30
 
 ### Changed

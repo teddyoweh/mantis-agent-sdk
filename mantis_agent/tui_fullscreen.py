@@ -628,6 +628,21 @@ async def run_fullscreen(tui: Any) -> int:
     async def _slash(text: str) -> bool:
         cmd, _, arg = text.partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
+        if cmd in ("/resume", "/branch", "/rewind"):
+            # Session commands live on MantisTUI (shared with the classic REPL);
+            # they print via self.console, so run them inside in_terminal so the
+            # output scrolls above the pinned prompt. Without this wiring these
+            # advertised commands fell through and were sent to the model as text.
+            from prompt_toolkit.application.run_in_terminal import in_terminal  # noqa: PLC0415
+            async with in_terminal():
+                if cmd == "/resume":
+                    await tui._cmd_resume(arg)
+                elif cmd == "/branch":
+                    tui._cmd_branch()
+                else:
+                    tui._cmd_rewind(arg)
+            get_app().invalidate()
+            return True
         if cmd in ("/exit", "/quit"):
             get_app().exit(result=0)
             return True
