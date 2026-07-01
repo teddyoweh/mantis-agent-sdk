@@ -909,8 +909,17 @@ class MantisTUI:
                     r = c.get(f"{base}/api/tags")
                     r.raise_for_status()
                     return [m.get("name", "") for m in r.json().get("models", [])], True
-                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-                r = c.get(f"{base.rstrip('/v1')}/v1/models", headers=headers)
+                # Anthropic isn't OpenAI-compat: x-api-key + anthropic-version.
+                if self.api_key and "anthropic.com" in base:
+                    headers = {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}
+                elif self.api_key:
+                    headers = {"Authorization": f"Bearer {self.api_key}"}
+                else:
+                    headers = {}
+                # Strip a trailing "/v1" *suffix* (not a char set — rstrip('/v1')
+                # would eat any trailing /, v or 1) before re-appending it.
+                root = base[:-3] if base.endswith("/v1") else base
+                r = c.get(f"{root}/v1/models", headers=headers)
                 r.raise_for_status()
                 return [m.get("id", "") for m in r.json().get("data", [])], True
         except Exception:  # noqa: BLE001 — unreachable / non-2xx / bad JSON

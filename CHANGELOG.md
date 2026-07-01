@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.31.0] — 2026-06-30
+
+### Added
+
+- **Notebook (`.ipynb`) reading** (parity roadmap T2). `read_file` on a Jupyter
+  notebook now renders readable cells — markdown, code, and text outputs (stream,
+  execute_result, and errors as `EName: value`; image outputs noted) — instead of
+  dumping raw JSON. Falls back to plain text if the file isn't valid notebook
+  JSON. New `_render_notebook` helper.
+
 ## [1.30.0] — 2026-06-30
 
 ### Added

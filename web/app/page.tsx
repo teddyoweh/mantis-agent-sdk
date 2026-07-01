@@ -130,28 +130,36 @@ export default function Home() {
           <div className="max-w-[820px]">
             <div className="rise eyebrow flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-mantis inline-block" />
-              the claude agent sdk, for open models
+              claude code · claude agent sdk · for open models
             </div>
             <h1
               className="rise font-display mt-5 text-[clamp(2.9rem,7.5vw,5.6rem)]"
               style={{ animationDelay: "0.05s" }}
             >
-              Write to Claude.
-              <br />
-              Run on{" "}
+              Claude Code, for{" "}
               <span className="italic" style={{ color: "var(--color-clay)" }}>
-                anything
+                open source
+              </span>
+              .
+              <br />
+              Any{" "}
+              <span className="italic" style={{ color: "var(--color-mantis)" }}>
+                model
               </span>{" "}
-              you can serve.
+              you can serve, on any{" "}
+              <span className="italic" style={{ color: "var(--color-mantis)" }}>
+                provider
+              </span>
+              .
             </h1>
             <p
               className="rise mt-6 text-[17px] sm:text-[18px] text-ink-2 leading-relaxed max-w-[620px]"
               style={{ animationDelay: "0.1s" }}
             >
-              <span className="mono text-ink">mantis-agent-sdk</span> is Anthropic&apos;s{" "}
-              <span className="mono text-ink">claude-agent-sdk</span> surface, reimplemented on top of
-              Llama, Qwen, DeepSeek, GLM — anything behind Ollama, vLLM, llama.cpp, Together, Groq, or
-              your own GPU box. The migration is one import.
+              A Claude-Code-style coding agent in your terminal, and Anthropic&apos;s{" "}
+              <span className="mono text-ink">claude-agent-sdk</span> surface as a library — both
+              running on Llama, Qwen, DeepSeek, GLM, or anything behind Ollama, vLLM, Groq, or your
+              own GPU box. The migration is one import.
             </p>
           </div>
 

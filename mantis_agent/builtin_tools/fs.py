@@ -282,6 +282,55 @@ def _edit_summary(verb: str, path: str, old: str, new: str) -> str:
     return f"{head}\n{diff}" if diff else head
 
 
+def _nb_source(src: Any) -> str:
+    return "".join(src) if isinstance(src, list) else str(src or "")
+
+
+def _notebook_output_text(out: dict) -> str:
+    """Extract the text of one notebook output cell (stream / result / error)."""
+    kind = out.get("output_type")
+    if kind == "stream":
+        return _nb_source(out.get("text", ""))
+    if kind == "error":
+        return f"{out.get('ename', 'Error')}: {out.get('evalue', '')}"
+    data = out.get("data", {})
+    if isinstance(data, dict):
+        if data.get("text/plain"):
+            return _nb_source(data["text/plain"])
+        if data.get("image/png") or data.get("image/jpeg"):
+            return "[image output]"
+    return ""
+
+
+def _render_notebook(text: str) -> str | None:
+    """Render a ``.ipynb`` into readable cells (code + markdown + text outputs)
+    instead of raw JSON. Returns ``None`` if it isn't valid notebook JSON so the
+    caller falls back to plain text."""
+    import json  # noqa: PLC0415
+
+    try:
+        nb = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(nb, dict) or "cells" not in nb:
+        return None
+    parts: list[str] = []
+    for i, cell in enumerate(nb.get("cells", []), 1):
+        if not isinstance(cell, dict):
+            continue
+        ctype = cell.get("cell_type", "code")
+        parts.append(f"# ── Cell {i} · {ctype} ──")
+        src = _nb_source(cell.get("source", "")).rstrip()
+        if src:
+            parts.append(src)
+        if ctype == "code":
+            outs = [t for o in cell.get("outputs", []) if isinstance(o, dict)
+                    and (t := _notebook_output_text(o).rstrip())]
+            if outs:
+                parts.append("# Output:\n" + "\n".join(outs))
+    return "\n\n".join(parts) if parts else "(empty notebook)"
+
+
 _IMAGE_READ_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _IMAGE_MEDIA = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -329,6 +378,11 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
         return f"[{path} is a PDF — mantis can't render PDF pages yet; extract text with a tool like pdftotext]"
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+
+    if suffix == ".ipynb":
+        rendered = _render_notebook(text)
+        if rendered is not None:
+            return rendered  # readable cells instead of raw JSON
     lines = text.splitlines()
     start = max(1, offset)
     chunk = lines[start - 1 : start - 1 + max(1, limit)]
