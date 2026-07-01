@@ -17,6 +17,31 @@ from mantis_agent.setup_wizard import (
 # -- Anthropic / Claude ------------------------------------------------------
 
 
+def test_lookup_pricing_unknown_degrades_to_none_not_crash() -> None:
+    # Cost tracking must skip USD (return None) for models with no pricing entry
+    # rather than crash or invent a number — wrong cost figures are worse than $0.
+    from mantis_agent.budget import lookup_pricing
+    assert lookup_pricing("totally-made-up-model-xyz-9000", "openai") is None
+    assert lookup_pricing("totally-made-up-model-xyz-9000", None) is None
+
+
+def test_hosted_backend_profiles_have_correct_provider_hints() -> None:
+    # Without these, OpenAI/Gemini/GLM/Qwen fell to the generic vLLM profile
+    # (hint="vllm"), so cost/pricing tracking used the wrong provider.
+    from mantis_agent.capabilities import hosted_profile_from_url
+    cases = {
+        "https://api.openai.com/v1": "openai",
+        "https://generativelanguage.googleapis.com/v1beta/openai": "gemini",
+        "https://api.z.ai/api/paas/v4": "glm",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1": "qwen",
+    }
+    for url, hint in cases.items():
+        p = hosted_profile_from_url(url)
+        assert p is not None, url
+        assert p.provider_hint == hint, (url, p.provider_hint)
+        assert p.supports_native_tools is True, url
+
+
 def test_hosted_flagships_have_native_tools_and_real_context() -> None:
     # Regression: the popular hosted models must resolve to native tool-calling
     # (path A) + their true context windows — not the 8192 / no-tools generic

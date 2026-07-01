@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.9.0] — 2026-06-30
+
+### Added
+
+- **`/init` command** (parity roadmap T1.2, completing it). Bootstraps a project's
+  `MANTIS.md` — `/init` expands into a canned prompt that has the agent explore the
+  codebase (ls/glob/grep/read) and write a tight `MANTIS.md` with the build/lint/
+  test/run commands, high-level architecture, key conventions, and gotchas. That
+  file then auto-loads into context every future session (the load-bearing half,
+  already shipped). Improves an existing `MANTIS.md` rather than clobbering it. New
+  `tui.INIT_PROMPT` / `expand_slash_prompt`.
+
 ## [2.8.0] — 2026-06-30
 
 ### Added

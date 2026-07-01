@@ -80,6 +80,7 @@ SLASH_COMMANDS = {
     "/export": "save the conversation to a markdown file",
     "/diff": "review this session's file changes",
     "/memory": "edit MANTIS.md / AGENTS.md in $EDITOR",
+    "/init": "analyze the project & write MANTIS.md",
     "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
@@ -143,6 +144,31 @@ def _thinking_lines(thinking: str) -> list[Any]:
     if len(lines) > _THINK_CAP:
         out.append(_T(f"  … ({len(lines) - _THINK_CAP} more lines)", style="italic bright_black"))
     return out
+
+
+INIT_PROMPT = (
+    "Analyze this codebase and create a MANTIS.md file in the current directory "
+    "to orient an AI coding agent working here in future sessions. Include, "
+    "concisely:\n"
+    "- The build, lint, test, and run commands — find them in package.json, "
+    "pyproject.toml, Makefile, CI config, etc.; don't guess.\n"
+    "- The high-level architecture: the main components/modules and how they fit "
+    "together (a few sentences, not a file listing).\n"
+    "- Key conventions and patterns a contributor must follow.\n"
+    "- Any non-obvious gotchas or required setup steps.\n\n"
+    "First explore with ls/glob/grep/read so every claim is grounded in what's "
+    "actually here, then write MANTIS.md with the write_file tool. Keep it tight — "
+    "it loads into context every session. If a MANTIS.md already exists, read it "
+    "and improve it rather than clobbering useful content."
+)
+
+
+def expand_slash_prompt(text: str) -> str | None:
+    """Slash commands that expand into an agent prompt (run a turn) rather than
+    being handled inline. Returns the prompt to submit, or None otherwise."""
+    if text.strip() == "/init":
+        return INIT_PROMPT
+    return None
 
 
 def resolve_memory_target(target: str | None, cwd: str | Path, home: str | Path) -> Path:

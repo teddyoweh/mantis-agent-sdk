@@ -563,7 +563,11 @@ async def run_fullscreen(tui: Any) -> int:
     async def _handle(text: str) -> None:
         await _print(lambda: _echo(text))
 
-        if text.startswith("/") and await _slash(text):
+        from .tui import expand_slash_prompt  # noqa: PLC0415
+        expanded = expand_slash_prompt(text)
+        if expanded is not None:
+            text = expanded  # e.g. /init → canned prompt; runs as a normal turn
+        elif text.startswith("/") and await _slash(text):
             get_app().invalidate()
             return
 
