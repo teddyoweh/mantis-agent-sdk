@@ -738,6 +738,12 @@ class MantisTUI:
         registry.add(load_skill)  # progressive-disclosure skill loading
         from .builtin_tools.codenav import lsp  # noqa: PLC0415
         registry.add(lsp)  # semantic code navigation (Python, ast-based)
+        from .subagent import make_task_tool  # noqa: PLC0415
+        # Read-only exploration subagent: delegate a focused investigation to a
+        # fresh child that returns just its findings, keeping this context clean.
+        _explore = [t for t in CODING_TOOLS if getattr(t, "is_read_only", False)]
+        registry.add(make_task_tool(
+            model=self.model, provider=provider, tools=[*_explore, lsp, web_search, web_fetch]))
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the

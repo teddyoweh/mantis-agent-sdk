@@ -82,6 +82,7 @@ create_sdk_mcp_server
 fork_session
 lookup_model
 make_checkpoints
+make_task_tool
 normalize_response_format
 query
 resolve_tool_use_path

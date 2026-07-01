@@ -74,6 +74,21 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.10.0] — 2026-06-30
+
+### Added
+
+- **`task` tool — subagent delegation** in the terminal (Claude Code's Task
+  primitive). The agent can now hand a focused, multi-step investigation to a
+  fresh read-only subagent that runs to completion and returns just its findings —
+  keeping the main context clean (no dozens of intermediate file dumps). The
+  subagent shares the parent's model/provider but gets only a read-only kit
+  (read_file, grep, glob, ls, lsp, web) — it cannot edit, run shell, recurse into
+  another `task`, or prompt the user, so delegation is safe and unsupervised. Runs
+  concurrently for parallel exploration. New `subagent.make_task_tool` (the
+  underlying `SubAgentTool`/`as_subagent_tool` machinery already existed; this
+  wires a general-purpose read-only variant into the `mantis` agent).
+
 ## [2.9.0] — 2026-06-30
 
 ### Added

@@ -131,6 +131,7 @@ from .subagent import (
     SubAgentTool,
     WrappedAgentTool,
     as_subagent_tool,
+    make_task_tool,
 )
 from .response_format import (
     ResponseFormatError,
@@ -180,6 +181,7 @@ __all__ = [
     "SubAgentTool",
     "WrappedAgentTool",
     "as_subagent_tool",
+    "make_task_tool",
     # Capabilities / routing
     "BackendCapability",
     "ModelCapability",
@@ -284,7 +286,7 @@ def _detect_version() -> str:
 
         return version("mantis-agent-sdk")
     except Exception:  # pragma: no cover - extremely defensive
-        return "2.9.0"
+        return "2.10.0"
 
 
 __version__ = _detect_version()

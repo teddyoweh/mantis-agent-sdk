@@ -51,7 +51,7 @@ from typing import Any, Literal, overload
 
 from .agent import Agent
 from .providers.base import Provider
-from .tools import Tool, ToolRegistry
+from .tools import Tool, ToolRegistry, tool
 from .types import AssistantMessage, Message, TextBlock, UserMessage
 
 IsolationMode = Literal["asyncio_task", "subprocess", "remote"]
@@ -302,6 +302,75 @@ def as_subagent_tool(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_TASK_SUBAGENT_SYSTEM = (
+    "You are a read-only exploration subagent, launched by a parent coding agent "
+    "to investigate a focused question autonomously. You have search/read tools "
+    "(read_file, grep, glob, ls, lsp, web) but CANNOT edit files, run shell "
+    "commands, or ask the user anything — work entirely from what you can read. "
+    "Investigate thoroughly, then return ONE concise report: the concrete answer "
+    "with exact file:line references and any facts the parent needs to act. No "
+    "preamble — return only the findings."
+)
+
+_TASK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {
+            "type": "string",
+            "description": "A short (3-5 word) description of the task.",
+        },
+        "prompt": {
+            "type": "string",
+            "description": (
+                "The investigation for the subagent to perform. Be detailed and "
+                "self-contained — it starts fresh with NO memory of this "
+                "conversation, so include every path, name, and constraint it needs."
+            ),
+        },
+    },
+    "required": ["prompt"],
+}
+
+
+def make_task_tool(
+    *,
+    model: str,
+    tools: list[Tool],
+    provider: Provider | None = None,
+    backend: str | None = None,
+    max_steps: int = 20,
+) -> Tool:
+    """Build the general-purpose ``task`` tool: the parent delegates a focused,
+    multi-step investigation to a fresh read-only subagent that runs to completion
+    and returns just its findings — keeping the parent's context clean. The
+    subagent shares the parent's provider/model but gets only ``tools`` (a
+    read-only kit) and cannot recurse, edit, or prompt the user."""
+
+    @tool(name="task", is_read_only=True, is_concurrency_safe=True, input_schema=_TASK_SCHEMA)
+    async def task(args: dict) -> str:
+        prompt = (args or {}).get("prompt", "")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return "task: a non-empty 'prompt' is required."
+        registry = ToolRegistry()
+        if tools:
+            registry.add(*tools)
+        child = Agent(
+            model=model,
+            provider=provider,
+            backend=backend,
+            system=_TASK_SUBAGENT_SYSTEM,
+            tools=registry,
+            max_steps=max_steps,
+            include_recall=False,   # subagent is stateless; no session memory
+            include_env=False,
+        )
+        messages: list[Message] = [UserMessage(content=prompt)]
+        await child.run(messages)
+        return _extract_final_text(messages) or "(subagent produced no output)"
+
+    return task
 
 
 def _extract_final_text(messages: list[Message]) -> str:

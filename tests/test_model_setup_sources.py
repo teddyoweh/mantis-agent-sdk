@@ -25,6 +25,19 @@ def test_lookup_pricing_unknown_degrades_to_none_not_crash() -> None:
     assert lookup_pricing("totally-made-up-model-xyz-9000", None) is None
 
 
+def test_agent_resolves_correct_capabilities_for_openai_flagship() -> None:
+    # End-to-end runtime propagation: an Agent on OpenAI must resolve gpt-4o to
+    # native tools + 128k context AND the openai backend profile — proving the
+    # capability/profile fixes actually reach the agent (not just the tables).
+    from mantis_agent.agent import Agent
+    a = Agent(model="gpt-4o", backend="https://api.openai.com/v1")
+    assert a.model_capability.supports_native_tools is True
+    assert a.model_capability.context_window == 128000
+    assert a.backend_capability is not None
+    assert a.backend_capability.provider_hint == "openai"
+    assert a.backend_capability.supports_native_tools is True
+
+
 def test_hosted_backend_profiles_have_correct_provider_hints() -> None:
     # Without these, OpenAI/Gemini/GLM/Qwen fell to the generic vLLM profile
     # (hint="vllm"), so cost/pricing tracking used the wrong provider.
