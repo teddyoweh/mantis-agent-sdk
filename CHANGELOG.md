@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.44.0] — 2026-06-30
+
+### Fixed
+
+- **`@`-mentioning a binary/image file no longer dumps garbage into context.**
+  `@screenshot.png`, `@archive.zip`, `@model.bin` used to read the file's bytes and
+  decode them as UTF-8 — injecting a wall of replacement-character garbage that
+  wasted context and confused the model. Such files are now detected (by extension
+  or a NUL-byte sniff) and noted instead: `[pic.png is a binary/image file — not
+  inlined; read it with read_file (images render inline on vision models)]`. Text
+  files — including ones with unusual extensions — are still inlined normally.
+
 ## [2.43.0] — 2026-06-30
 
 ### Added

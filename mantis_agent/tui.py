@@ -176,6 +176,24 @@ INIT_PROMPT = (
 _MENTION_TOKEN_RE = __import__("re").compile(r"(?:^|\s)@([\w./~-]+)")
 
 
+_BINARY_MENTION_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".pdf",
+    ".zip", ".gz", ".tar", ".tgz", ".bz2", ".xz", ".7z", ".rar",
+    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".class", ".pyc", ".wasm",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".mp3", ".mp4", ".mov", ".avi", ".wav", ".flac", ".ogg", ".webm",
+    ".bin", ".dat", ".db", ".sqlite", ".parquet", ".pkl", ".npy",
+}
+
+
+def _looks_binary(data: bytes, p: Path) -> bool:
+    """Whether a mentioned file is binary/image (so we note it instead of dumping
+    decoded garbage into context). Extension first, then a NUL-byte sniff."""
+    if p.suffix.lower() in _BINARY_MENTION_EXTS:
+        return True
+    return b"\x00" in data[:8192]
+
+
 def resolve_file_mentions(
     text: str, cwd: str | Path, *, max_bytes: int = 50_000, max_dir_entries: int = 100
 ) -> list[tuple[str, str]]:
@@ -200,6 +218,10 @@ def resolve_file_mentions(
                 if len(data) > max_bytes:
                     out.append((raw, f"[{raw} is {len(data) // 1024} KB — too large to "
                                      f"inline; read it with read_file using offset/limit]"))
+                elif _looks_binary(data, p):
+                    out.append((raw, f"[{raw} is a binary/image file — not inlined as text; "
+                                     f"read it with read_file (images render inline on "
+                                     f"vision models)]"))
                 else:
                     out.append((raw, data.decode("utf-8", "replace")))
             elif p.is_dir():
