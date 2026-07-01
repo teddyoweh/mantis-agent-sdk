@@ -339,6 +339,8 @@ class Agent:
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
     _surfaced: set[str] = field(default_factory=set, init=False)
+    # Path-scoped conditional rules already injected this session (dedup by path).
+    _rules_surfaced: set[str] = field(default_factory=set, init=False)
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
@@ -710,6 +712,36 @@ class Agent:
                         yield reminder
                 except Exception:  # noqa: BLE001 — recall is best-effort
                     _log.debug("memory recall skipped", exc_info=True)
+
+        # Path-scoped conditional rules — inject a ``.mantis/rules/*.md`` rule
+        # only when a file matching its globs is active in the conversation (an
+        # @-mention or a file just read/edited). Deduped by path across the
+        # session. Keeps project instructions lean: SQL rules ride only SQL work.
+        if os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+            try:
+                from .rules import (
+                    active_files_from_messages,
+                    discover_conditional_rules,
+                    render_rules_reminder,
+                    select_matching_rules,
+                )
+                all_rules = discover_conditional_rules(os.getcwd())
+                if all_rules:
+                    active = active_files_from_messages(messages)
+                    fresh = [
+                        (p, body) for p, body in select_matching_rules(all_rules, active)
+                        if str(p) not in self._rules_surfaced
+                    ]
+                    if fresh:
+                        self._rules_surfaced.update(str(p) for p, _ in fresh)
+                        rules_msg = UserMessage(
+                            content=render_rules_reminder([b for _, b in fresh]),
+                            isMeta=True,
+                        )
+                        messages.append(rules_msg)
+                        yield rules_msg
+            except Exception:  # noqa: BLE001 — rules are best-effort
+                _log.debug("conditional rules skipped", exc_info=True)
 
         # Todo state — keep the model's plan in view over a long task. Refresh
         # rather than accumulate: drop any prior todo reminder, append the

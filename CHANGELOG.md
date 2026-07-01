@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.8.0] — 2026-06-30
+
+### Added
+
+- **Path-scoped conditional rules.** A `.mantis/rules/*.md` file may now declare
+  `globs:` (or `paths:`) in frontmatter, and is injected into context ONLY when a
+  matching file is active in the conversation — an `@`-mention or a file the agent
+  just read/edited. So a SQL style rule rides only SQL work, a Go rule only Go
+  work, keeping project instructions lean instead of spending context on rules
+  that don't apply. Rules with no globs stay unconditional (loaded always, as
+  before). Deduped per session. New `mantis_agent.rules` module. Mirrors Claude
+  Code's path-specific instructions.
+
 ## [2.7.0] — 2026-06-30
 
 ### Added

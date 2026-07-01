@@ -708,6 +708,36 @@ HOSTED_PROFILES: dict[str, BackendCapability] = {
         supports_prefix_caching=True,  # implicit prompt caching with cache_control blocks
         provider_hint="anthropic",
     ),
+    # OpenAI + other first-party hosted APIs. Without these they fell through to
+    # the generic vLLM fallback, which tags provider_hint="vllm" — so budget/cost
+    # tracking looked up the wrong pricing. Native tools + no local grammar.
+    "openai": BackendCapability(
+        kind="openai_compat",
+        supports_native_tools=True,
+        supports_grammar=False,
+        supports_logprobs=True,
+        supports_prefix_caching=True,  # OpenAI does automatic prompt caching
+        provider_hint="openai",
+    ),
+    "gemini": BackendCapability(
+        kind="openai_compat",
+        supports_native_tools=True,
+        supports_grammar=False,
+        supports_logprobs=False,
+        provider_hint="gemini",
+    ),
+    "glm": BackendCapability(
+        kind="openai_compat",
+        supports_native_tools=True,
+        supports_grammar=False,
+        provider_hint="glm",
+    ),
+    "qwen": BackendCapability(
+        kind="openai_compat",
+        supports_native_tools=True,
+        supports_grammar=False,
+        provider_hint="qwen",
+    ),
     "mock": BackendCapability(
         kind="mock",
         supports_native_tools=True,
@@ -743,6 +773,14 @@ def hosted_profile_from_url(base_url: str) -> BackendCapability | None:
         return HOSTED_PROFILES["deepseek"]
     if "moonshot" in url or "kimi" in url:
         return HOSTED_PROFILES["moonshot"]
+    if "api.openai.com" in url:
+        return HOSTED_PROFILES["openai"]
+    if "generativelanguage.googleapis" in url:
+        return HOSTED_PROFILES["gemini"]
+    if "z.ai" in url or "bigmodel.cn" in url or "zhipu" in url:
+        return HOSTED_PROFILES["glm"]
+    if "dashscope" in url or "aliyuncs" in url:
+        return HOSTED_PROFILES["qwen"]
     if "11434" in url or "ollama" in url:
         return HOSTED_PROFILES["ollama"]
     if "8080" in url and "llama" in url:

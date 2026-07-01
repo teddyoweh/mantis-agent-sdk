@@ -17,6 +17,24 @@ from mantis_agent.setup_wizard import (
 # -- Anthropic / Claude ------------------------------------------------------
 
 
+def test_hosted_flagships_have_native_tools_and_real_context() -> None:
+    # Regression: the popular hosted models must resolve to native tool-calling
+    # (path A) + their true context windows — not the 8192 / no-tools generic
+    # default, which silently degrades tool routing and triggers early compaction.
+    from mantis_agent.capabilities import lookup_model
+    for m in ("gpt-4o", "gpt-5.4", "gpt-5.5", "o1", "o3", "glm-4.7"):
+        c = lookup_model(m)
+        assert c.supports_native_tools is True, m
+        assert c.context_window >= 128000, (m, c.context_window)
+    for m in ("claude-opus-4-8", "claude-sonnet-5"):
+        c = lookup_model(m)
+        assert c.supports_native_tools is True, m
+        assert c.context_window >= 200000, (m, c.context_window)
+    assert lookup_model("gemini-2.5-pro").context_window >= 1000000
+    # And the local families stayed correct.
+    assert lookup_model("qwen2.5-coder:7b").context_window == 32768
+
+
 def test_anthropic_is_a_catalog_provider() -> None:
     prov = catalog.BY_ID.get("anthropic")
     assert prov is not None

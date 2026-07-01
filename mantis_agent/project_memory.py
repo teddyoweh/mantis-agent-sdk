@@ -84,7 +84,11 @@ def _project_candidates(cwd: Path) -> list[Path]:
         out.append(d / WORKSPACE_DIR / PROJECT_FILE)
         rules = d / WORKSPACE_DIR / RULES_SUBDIR
         if rules.is_dir():
-            out.extend(sorted(rules.glob("*.md")))
+            from .rules import rule_file_has_globs  # noqa: PLC0415
+
+            # Only UNCONDITIONAL rules load always; path-scoped ones (with globs)
+            # are injected per-turn when a matching file is active (see rules.py).
+            out.extend(f for f in sorted(rules.glob("*.md")) if not rule_file_has_globs(f))
     return out
 
 
