@@ -135,6 +135,10 @@ _NONCHAT_MARKERS = (
     "moderation", "rerank", "guard", "similar", "-search", "realtime", "sora",
     "clip", "-edit", "ada-", "babbage", "curie", "davinci", "ocr", "-voice",
     "video", "stable-diffusion", "flux",
+    # responses-only OpenAI models — these 400 on /v1/chat/completions ("use the
+    # v1/responses endpoint instead"), which mantis doesn't speak, so hide them
+    # from the picker: the -codex coding models, computer-use, and -pro reasoners.
+    "codex", "computer-use", "-pro",
     # legacy / date-stamped OpenAI engines (so modern flagships survive the cap)
     "gpt-3.5", "gpt-4-0", "gpt-4-1", "-0613", "-0314", "-0301", "-1106", "-0125", "-16k",
 )
@@ -468,6 +472,10 @@ class MantisTUI:
         self.temperature = temperature
         self.max_turns = max_turns
         self.mode_idx = 0
+        # --godmode / --dangerously-skip-permissions: force the permission
+        # engine to Allow every tool (bypass), overriding even the dangerous-
+        # command safety prompt. Set by main() from the CLI flag.
+        self.force_bypass = False
         self.messages: list[Any] = []
         self.agent: Any = None
         # Live todo list, mutated in place by the bound ``todo_write`` tool and
@@ -543,7 +551,10 @@ class MantisTUI:
             system=self.system or self._default_system(),
             tools=registry,
             permissions=PermissionContext(
-                mode="default",
+                # godmode → engine-level bypass (Allow everything, even dangerous
+                # shell commands, no prompt). Otherwise "default" and _permit
+                # drives the live shift+tab mode.
+                mode="bypass" if self.force_bypass else "default",
                 can_use_tool=self._permit,
                 asker=self._ask_permission,
                 rules=self._load_permission_rules(),
@@ -2252,6 +2263,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--temperature", type=float, default=None)
     p.add_argument("--max-turns", type=int, default=20)
+    # Start in bypass-permissions mode: every tool runs with NO confirmation
+    # prompt (including dangerous shell commands). --godmode is a friendly alias.
+    p.add_argument(
+        "--dangerously-skip-permissions", action="store_true",
+        help="Run every tool with no permission prompt (bypass mode). Dangerous.",
+    )
+    p.add_argument(
+        "--godmode", action="store_true",
+        help="Alias for --dangerously-skip-permissions.",
+    )
     args = p.parse_args(argv)
 
     # Dependency preflight with a friendly message.
@@ -2273,6 +2294,18 @@ def main(argv: list[str] | None = None) -> int:
         temperature=args.temperature,
         max_turns=args.max_turns,
     )
+
+    # Start in bypass-permissions mode if requested. force_bypass makes the
+    # permission engine itself return Allow for EVERY tool (even dangerous shell
+    # commands), so nothing prompts — true godmode. Warn loudly.
+    if args.dangerously_skip_permissions or args.godmode:
+        tui.force_bypass = True
+        tui.mode_idx = [m[0] for m in MODES].index("bypass permissions on")
+        print(
+            "\033[31m⏵⏵ bypass permissions on — tools run with NO confirmation "
+            "(godmode). Ctrl+C to quit.\033[0m",
+            file=sys.stderr,
+        )
 
     # Full-screen mode (input pinned to the bottom, always visible) is the
     # default; MANTIS_CLASSIC=1 forces the classic scrolling REPL. If full-screen

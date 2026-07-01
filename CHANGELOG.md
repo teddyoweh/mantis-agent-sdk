@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.11.0] — 2026-06-30
+
+### Added
+
+- **`mantis --dangerously-skip-permissions` (alias `mantis --godmode`)** starts
+  the terminal in engine-level bypass: every tool runs with no confirmation
+  prompt — including dangerous shell commands (`rm -rf`, `curl|sh`, `sudo`),
+  which are otherwise always gated. Sets the permission context's `mode=bypass`
+  so the whole permission pipeline short-circuits to Allow, and prints a red
+  warning banner on start. For trusted, unattended runs where you accept all
+  risk.
+
 ## [1.10.0] — 2026-06-30
 
 ### Added

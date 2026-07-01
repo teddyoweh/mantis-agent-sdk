@@ -78,3 +78,32 @@ def test_build_agent_registers_web_tools() -> None:
     names = {t.name for t in _tui()._build_agent().tools}
     assert {"web_search", "web_fetch"} <= names
     assert {"bash", "read_file", "write_file", "edit_file"} <= names
+
+
+def test_remember_tool_registered() -> None:
+    names = {t.name for t in _tui()._build_agent().tools}
+    assert "remember" in names
+
+
+def test_godmode_allows_dangerous_without_prompt() -> None:
+    # --godmode / --dangerously-skip-permissions → engine-level bypass: every
+    # tool is allowed with no prompt, overriding even the dangerous-command gate.
+    from mantis_agent.builtin_tools.fs import CODING_TOOLS
+    from mantis_agent.permissions import Allow, check_permission
+
+    bash = next(t for t in CODING_TOOLS if t.name == "bash")
+
+    normal = _tui()._build_agent()
+    decision = anyio.run(
+        lambda: check_permission(bash, {"command": "rm -rf /tmp/x"}, normal.permissions)
+    )
+    assert not isinstance(decision, Allow)  # default mode gates a dangerous command
+
+    god = _tui()
+    god.force_bypass = True
+    agent = god._build_agent()
+    assert agent.permissions.mode == "bypass"
+    decision = anyio.run(
+        lambda: check_permission(bash, {"command": "rm -rf /tmp/x"}, agent.permissions)
+    )
+    assert isinstance(decision, Allow)  # godmode runs it with no prompt
