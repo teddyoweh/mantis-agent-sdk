@@ -281,16 +281,87 @@ def _interactive_pick(c: object, budget: float, rec: object) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) -> int | None:
+    """Beautiful inline arrow-key menu (prompt_toolkit). ``rows`` is a list of
+    ``(label, hint)``. Returns the picked index, or None if cancelled. Returns
+    the sentinel ``-1`` when stdin isn't a TTY (pipe / test) so the caller can
+    fall back to numeric ``input()``."""
+    import sys  # noqa: PLC0415
+
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return -1
+    try:
+        from prompt_toolkit import Application  # noqa: PLC0415
+        from prompt_toolkit.formatted_text import ANSI  # noqa: PLC0415
+        from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
+        from prompt_toolkit.layout import HSplit, Layout, Window  # noqa: PLC0415
+        from prompt_toolkit.layout.controls import FormattedTextControl  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return -1
+
+    state = {"sel": max(0, min(start, len(rows) - 1))}
+
+    def render() -> Any:
+        out = [f"  \033[1m{title}\033[0m\n"]
+        for i, (label, hint) in enumerate(rows):
+            if i == state["sel"]:
+                out.append(f"\033[30;48;5;150m ▸ {label} \033[0m  \033[90m{hint}\033[0m")
+            else:
+                out.append(f"    \033[97m{label}\033[0m  \033[90m{hint}\033[0m")
+        out.append(f"\n  \033[90m↑/↓ · enter to pick · esc to cancel\033[0m")
+        return ANSI("\n".join(out))
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    @kb.add("c-p")
+    def _(_e: Any) -> None:
+        state["sel"] = (state["sel"] - 1) % len(rows)
+
+    @kb.add("down")
+    @kb.add("c-n")
+    def _(_e: Any) -> None:
+        state["sel"] = (state["sel"] + 1) % len(rows)
+
+    @kb.add("enter")
+    def _(e: Any) -> None:
+        e.app.exit(result=state["sel"])
+
+    @kb.add("escape", eager=True)
+    @kb.add("c-c")
+    def _(e: Any) -> None:
+        e.app.exit(result=None)
+
+    app = Application(
+        layout=Layout(HSplit([Window(FormattedTextControl(render), height=len(rows) + 3)])),
+        key_bindings=kb,
+        full_screen=False,
+    )
+    return app.run()
+
+
 def _choose_path(c: Any) -> str | None:
-    """Top-level menu: local (Ollama) / hosted API / free hosted. Returns
-    'local' | 'hosted' | 'free', or None if cancelled."""
+    """Top-level menu: local (Ollama) / hosted API / free hosted / self-host.
+    Returns 'local' | 'hosted' | 'free' | 'selfhost', or None if cancelled.
+    Arrow-key navigable, with a numeric fallback for pipes/tests."""
     from rich.text import Text  # noqa: PLC0415
 
+    keys = ["local", "hosted", "free", "selfhost"]
+    rows = [
+        ("Local      ", "free, on your machine (Ollama) — private, offline"),
+        ("Hosted API ", "OpenAI · DeepSeek · Kimi · Claude · … (paste a key)"),
+        ("Free hosted", "Groq · Cerebras · Gemini · OpenRouter free tiers"),
+        ("Self-host  ", "your own endpoint — vLLM · TGI · llama.cpp · a GPU box"),
+    ]
+    idx = _arrow_select("How do you want to run models?", rows)
+    if idx is None:
+        return None
+    if idx >= 0:
+        return keys[idx]
+    # numeric fallback (non-TTY)
     c.print(Text("  How do you want to run models?\n", style="white"))
-    c.print(Text("   1  Local        free, on your machine (Ollama) — private, offline", style="white"))
-    c.print(Text("   2  Hosted API   OpenAI · DeepSeek · Kimi · Together · … (paste a key)", style="white"))
-    c.print(Text("   3  Free hosted  Groq · Cerebras · Gemini · OpenRouter free tiers", style="white"))
-    c.print(Text("   4  Self-host    your own endpoint — vLLM · TGI · llama.cpp · a GPU box", style="white"))
+    for i, (label, hint) in enumerate(rows, 1):
+        c.print(Text(f"   {i}  {label.strip():<11}  {hint}", style="white"))
     try:
         raw = input("\n  Pick [1-4, Enter=1]: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -315,26 +386,32 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
         if not free_only or p.id in FREE_PROVIDER_IDS
     ]
     title = "Free hosted tiers" if free_only else "Hosted API providers"
-    c.print(Text(f"\n  {title}  (OpenAI-compatible)\n", style=dim))
-    for i, p in enumerate(providers, 1):
-        line = Text()
-        line.append(f"  {i:>2}  ", style=gold)
-        line.append(f"{p.label:<20}", style="white")
-        line.append(f"{p.note}", style=dim)
-        if catalog.saved_key(p.id):
-            line.append("   ✓ key saved", style=green)
-        elif p.id in FREE_PROVIDER_IDS and not free_only:
-            line.append("   · free tier", style=green)
-        c.print(line)
 
-    try:
-        raw = input("\n  Pick a provider number: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return 1
-    if not (raw.isdigit() and 1 <= int(raw) <= len(providers)):
+    def _row(p: Any) -> tuple[str, str]:
+        tag = "  ✓ key saved" if catalog.saved_key(p.id) else (
+            "  · free tier" if (p.id in FREE_PROVIDER_IDS and not free_only) else "")
+        return (f"{p.label:<20}", f"{p.note}{tag}")
+
+    rows = [_row(p) for p in providers]
+    idx = _arrow_select(title, rows)
+    if idx is None:
         c.print(Text("  Cancelled.", style=dim))
         return 1
-    prov = providers[int(raw) - 1]
+    if idx >= 0:
+        prov = providers[idx]
+    else:
+        # numeric fallback (non-TTY)
+        c.print(Text(f"\n  {title}\n", style=dim))
+        for i, (label, hint) in enumerate(rows, 1):
+            c.print(Text(f"  {i:>2}  {label}{hint}", style="white"))
+        try:
+            raw = input("\n  Pick a provider number: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not (raw.isdigit() and 1 <= int(raw) <= len(providers)):
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
+        prov = providers[int(raw) - 1]
 
     # -- key ---------------------------------------------------------------
     existing = catalog.saved_key(prov.id)

@@ -496,6 +496,35 @@ async def run_fullscreen(tui: Any) -> int:
         if cmd == "/context":
             await _print(lambda: _show_context())
             return True
+        if cmd == "/copy":
+            from .types import AssistantMessage, TextBlock  # noqa: PLC0415
+            last = ""
+            for m in reversed(tui.messages):
+                if isinstance(m, AssistantMessage):
+                    last = "\n\n".join(b.text for b in m.content if isinstance(b, TextBlock)).strip()
+                    if last:
+                        break
+            if not last:
+                await _print(lambda: tui.console.print("[ansibrightblack](nothing to copy yet)[/]"))
+                return True
+            from .clipboard import copy_to_clipboard  # noqa: PLC0415
+            ok = copy_to_clipboard(last)
+            msg = "copied last reply to clipboard" if ok else "no clipboard tool found (pbcopy/xclip/wl-copy)"
+            await _print(lambda m=msg: tui.console.print(f"[ansibrightblack]({m})[/]"))
+            return True
+        if cmd == "/export":
+            from pathlib import Path  # noqa: PLC0415
+
+            from .tui import render_transcript  # noqa: PLC0415
+            text = render_transcript(tui.messages)
+            dest = Path(arg).expanduser() if arg else Path.cwd() / "mantis-conversation.md"
+            try:
+                dest.write_text(text, encoding="utf-8")
+                note = f"exported {len(tui.messages)} messages → {dest}"
+            except OSError as e:
+                note = f"export failed: {e}"
+            await _print(lambda n=note: tui.console.print(f"[ansibrightblack]({n})[/]"))
+            return True
         if cmd == "/vim":
             from prompt_toolkit.enums import EditingMode  # noqa: PLC0415
             tui.vim_mode = not getattr(tui, "vim_mode", False)

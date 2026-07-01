@@ -75,6 +75,8 @@ SLASH_COMMANDS = {
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
     "/context": "show context-window usage",
+    "/copy": "copy the last reply to the clipboard",
+    "/export": "save the conversation to a markdown file",
     "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
@@ -117,6 +119,32 @@ def _lang_from_path(path: str | None) -> str | None:
     if not path:
         return None
     return _EXT_LANG.get(Path(path).suffix.lower())
+
+
+def render_transcript(messages: list[Any]) -> str:
+    """Render a conversation to shareable markdown (for /export). Skips the
+    synthetic isMeta context head and tool-result plumbing; keeps user text,
+    assistant text, and a one-line note per tool call."""
+    from .types import AssistantMessage, TextBlock, ToolUseBlock, UserMessage  # noqa: PLC0415
+
+    out: list[str] = ["# mantis conversation", ""]
+    for m in messages:
+        if isinstance(m, UserMessage):
+            if getattr(m, "isMeta", False):
+                continue
+            content = m.content
+            if isinstance(content, str) and content.strip():
+                out += ["## User", "", content.strip(), ""]
+        elif isinstance(m, AssistantMessage):
+            parts: list[str] = []
+            for b in m.content:
+                if isinstance(b, TextBlock) and b.text.strip():
+                    parts.append(b.text.strip())
+                elif isinstance(b, ToolUseBlock):
+                    parts.append(f"› _{b.name}_")
+            if parts:
+                out += ["## Assistant", "", "\n\n".join(parts), ""]
+    return "\n".join(out).rstrip() + "\n"
 
 
 def _word_diff_spans(old: str, new: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:

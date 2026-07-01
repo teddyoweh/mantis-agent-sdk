@@ -196,8 +196,37 @@ def looks_like_path(text: str) -> str | None:
 __all__ = [
     "file_to_blocks",
     "grab_clipboard_file_path",
+    "copy_to_clipboard",
     "grab_clipboard_image",
     "has_clipboard_image",
     "is_image_path",
     "looks_like_path",
 ]
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """Copy ``text`` to the OS clipboard. Tries the platform tool
+    (pbcopy / wl-copy / xclip / clip); returns True on success, False if no
+    clipboard tool is available. Best-effort, never raises."""
+    import shutil  # noqa: PLC0415
+
+    candidates: list[list[str]]
+    if platform.system() == "Darwin":
+        candidates = [["pbcopy"]]
+    elif platform.system() == "Windows":
+        candidates = [["clip"]]
+    else:
+        candidates = [["wl-copy"], ["xclip", "-selection", "clipboard"]]
+    for cmd in candidates:
+        if shutil.which(cmd[0]) is None:
+            continue
+        try:
+            p = subprocess.run(  # noqa: S603
+                cmd, input=text.encode("utf-8"), timeout=5,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if p.returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return False

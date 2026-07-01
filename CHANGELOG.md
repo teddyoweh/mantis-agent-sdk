@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.24.0] — 2026-06-30
+
+### Added
+
+- **`/export` and `/copy`** (parity roadmap T2). `/export [path]` saves the
+  conversation to a shareable markdown file (default `mantis-conversation.md`);
+  `/copy` copies the last assistant reply to the system clipboard (pbcopy /
+  wl-copy / xclip / clip). New pure `render_transcript()` helper and
+  `clipboard.copy_to_clipboard()`.
+
 ## [1.23.0] — 2026-06-30
 
 ### Added
