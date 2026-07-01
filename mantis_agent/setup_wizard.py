@@ -456,6 +456,11 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
             return 1
         prov = providers[int(raw) - 1]
 
+    # Anthropic has several auth styles (API key / OAuth token / cloud gateway) —
+    # hand it to a dedicated sub-flow instead of the generic x-api-key path.
+    if prov.id == "anthropic":
+        return _run_anthropic(c, prov)
+
     # -- key ---------------------------------------------------------------
     existing = catalog.saved_key(prov.id)
     if existing:
@@ -513,6 +518,129 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     c.print(Text("      mantis", style=f"bold {gold}"))
     c.print(Text("  Switch models any time with  /models  ·  add more with  mantis setup.\n", style=dim))
     return 0
+
+
+def _run_anthropic(c: Any, prov: Any) -> int:
+    """Claude auth chooser: direct API key (x-api-key), OAuth / auth token
+    (Bearer — a subscription login or `claude setup-token`), or a Bedrock /
+    Vertex / Azure gateway (custom base URL + Bearer token). Saves so mantis
+    restores it on launch."""
+    import getpass  # noqa: PLC0415
+
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+    from .settings import update_setting_source  # noqa: PLC0415
+
+    green, dim, gold, red = "#7cb342", "bright_black", "#cddc39", "red"
+
+    keys = ["apikey", "oauth", "gateway"]
+    rows = [
+        ("API key      ", "a direct Anthropic key (console.anthropic.com) — x-api-key"),
+        ("OAuth token  ", "subscription login / `claude setup-token` — Bearer"),
+        ("Cloud gateway", "Bedrock · Vertex · Azure via a proxy URL + Bearer token"),
+    ]
+    idx = _arrow_select("How do you authenticate with Claude?", rows)
+    if idx is None:
+        c.print(Text("  Cancelled.", style=dim))
+        return 1
+    if idx < 0:
+        c.print(Text("\n  Claude auth:", style=dim))
+        for i, (label, hint) in enumerate(rows, 1):
+            c.print(Text(f"   {i}  {label.strip():<13}  {hint}", style="white"))
+        try:
+            raw = input("\n  Pick [1-3]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not (raw.isdigit() and 1 <= int(raw) <= 3):
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
+        idx = int(raw) - 1
+    method = keys[idx]
+
+    base_url = prov.base_url
+    if method == "gateway":
+        c.print(Text("\n  Point at your Anthropic-compatible gateway "
+                     "(LiteLLM / Bedrock Access Gateway / Azure Foundry /anthropic).", style=dim))
+        try:
+            entered = input("  Gateway base URL: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not entered:
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
+        base_url = entered if entered.startswith(("http://", "https://")) else "https://" + entered
+
+    # -- credential --------------------------------------------------------
+    label = "ANTHROPIC_API_KEY" if method == "apikey" else "Bearer token"
+    c.print(Text(f"\n  Paste your {label} (input hidden):", style="white"))
+    try:
+        cred = getpass.getpass("  › ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return 1
+    if not cred:
+        c.print(Text("  No credential entered — cancelled.", style=dim))
+        return 1
+
+    # -- validate (ping /v1/messages with the chosen auth) -----------------
+    c.print(Text("  Validating…", style=dim))
+    if method == "apikey":
+        ok, detail = _ping_anthropic_model(base_url, prov.models[0], cred)
+    else:
+        ok, detail = _ping_anthropic_bearer(base_url, prov.models[0], cred)
+    if not ok:
+        c.print(Text(f"  ✗ {detail}", style=red))
+        c.print(Text("  (nothing saved) — double-check the credential and re-run  mantis setup.", style=dim))
+        return 1
+    c.print(Text("  ✓ credential works", style=green))
+
+    # -- pick a model ------------------------------------------------------
+    model = _pick_model_id(c, list(prov.models))
+    if model is None:
+        c.print(Text("  Cancelled.", style=dim))
+        return 1
+
+    # -- persist -----------------------------------------------------------
+    if method == "apikey":
+        catalog.set_key("anthropic", cred)
+    else:
+        # Bearer token → settings.env; mantis loads it into os.environ at launch
+        # and the passthrough sends it as Authorization: Bearer.
+        update_setting_source("user", {"env": {"ANTHROPIC_AUTH_TOKEN": cred}})
+    catalog.set_last_model(model, base_url)
+
+    c.print()
+    c.print(Text(f"  ✓ Claude enabled ({method}) · default model  {model}", style=f"bold {green}"))
+    c.print(Text("\n  Start coding:", style="white"))
+    c.print(Text("      mantis", style=f"bold {gold}"))
+    c.print(Text("  Switch models any time with  /models.\n", style=dim))
+    return 0
+
+
+def _ping_anthropic_bearer(base_url: str, model: str, token: str, *, timeout: float = 10.0) -> tuple[bool, str]:
+    """Like :func:`_ping_anthropic_model` but with an OAuth/gateway Bearer token
+    instead of x-api-key. Returns ``(ok, detail)``; a network blip → (True, "")."""
+    try:
+        import httpx  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return True, ""
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01",
+               "authorization": f"Bearer {token}"}
+    payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+    try:
+        r = httpx.post(f"{base_url.rstrip('/')}/messages", headers=headers, json=payload, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        return True, ""
+    if r.status_code == 200:
+        return True, "ok"
+    detail = f"HTTP {r.status_code}"
+    try:
+        err = r.json().get("error", {})
+        if isinstance(err, dict) and err.get("message"):
+            detail = str(err["message"])[:200]
+    except Exception:  # noqa: BLE001
+        pass
+    return False, detail
 
 
 def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10.0) -> tuple[bool, str]:

@@ -648,6 +648,8 @@ class MantisTUI:
         registry.add(make_exit_plan_mode(self._exit_plan_mode))  # plan approval handoff
         from .builtin_tools.skill_tool import load_skill  # noqa: PLC0415
         registry.add(load_skill)  # progressive-disclosure skill loading
+        from .builtin_tools.codenav import lsp  # noqa: PLC0415
+        registry.add(lsp)  # semantic code navigation (Python, ast-based)
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the
@@ -991,6 +993,12 @@ class MantisTUI:
         if prov is not None:
             key = catalog.api_key_for(prov)
             if not key:
+                # Anthropic may be authed by an OAuth/gateway Bearer token
+                # (ANTHROPIC_AUTH_TOKEN) — restore with no api_key so the
+                # passthrough picks the token up from the environment.
+                if prov.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+                    self.model, self.backend, self.api_key = model, last.get("backend") or prov.base_url, None
+                    return
                 return  # provider disabled since — don't restore a dead model
             self.model, self.backend, self.api_key = model, prov.base_url, key
         else:

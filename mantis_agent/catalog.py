@@ -251,7 +251,13 @@ def api_key_for(provider: Provider) -> str | None:
 
 
 def is_enabled(provider: Provider) -> bool:
-    return bool(api_key_for(provider))
+    if api_key_for(provider):
+        return True
+    # Anthropic can also be authed by an OAuth / gateway Bearer token, which
+    # rides ANTHROPIC_AUTH_TOKEN rather than the x-api-key store.
+    if provider.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return True
+    return False
 
 
 def provider_for_model(model_id: str) -> Provider | None:

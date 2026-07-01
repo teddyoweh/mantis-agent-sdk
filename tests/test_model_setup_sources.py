@@ -30,6 +30,20 @@ def test_claude_models_route_to_anthropic() -> None:
         assert prov is not None and prov.id == "anthropic", m
 
 
+def test_anthropic_enabled_via_auth_token(monkeypatch) -> None:
+    # A Claude OAuth / gateway Bearer token (ANTHROPIC_AUTH_TOKEN) must count as
+    # "enabled" even with no x-api-key in the store.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-tok")
+    assert catalog.is_enabled(catalog.BY_ID["anthropic"]) is True
+
+
+def test_anthropic_bearer_ping_unreachable_does_not_block() -> None:
+    from mantis_agent.setup_wizard import _ping_anthropic_bearer
+    ok, _detail = _ping_anthropic_bearer("http://127.0.0.1:59999/v1", "claude-x", "tok")
+    assert ok is True
+
+
 def test_anthropic_uses_x_api_key_not_bearer() -> None:
     anth = catalog.BY_ID["anthropic"]
     h = catalog._models_headers(anth, "sk-secret")

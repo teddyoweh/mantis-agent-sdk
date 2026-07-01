@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.34.0] — 2026-06-30
+
+### Added
+
+- **`lsp` tool — semantic code navigation** (parity roadmap T1.8). Goto-definition
+  and find-references for Python, done the mantis way: via the stdlib `ast` module
+  instead of an external language server, so it has zero dependencies and works
+  out of the box. Unlike grep it distinguishes a *definition* (function / class /
+  method / module-level assignment) from a *mention*, resolves attribute accesses
+  (`x.method`), and skips names in comments/strings. `lsp(operation="definition"
+  | "references", symbol=..., path=...)`. Wired into the `mantis` tool belt. New
+  `find_definitions` / `find_references` helpers.
+
 ## [1.33.0] — 2026-06-30
 
 ### Added

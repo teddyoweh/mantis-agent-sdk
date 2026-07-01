@@ -3,19 +3,19 @@ import { Google_Sans, Geist_Mono, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
 const googleSans = Google_Sans({
-  variable: "--font-sans",
+  variable: "--ff-sans",
   subsets: ["latin"],
   display: "swap",
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-mono",
+  variable: "--ff-mono",
   subsets: ["latin"],
   display: "swap",
 });
 
 const instrumentSerif = Instrument_Serif({
-  variable: "--font-serif",
+  variable: "--ff-serif",
   weight: "400",
   style: ["normal", "italic"],
   subsets: ["latin"],

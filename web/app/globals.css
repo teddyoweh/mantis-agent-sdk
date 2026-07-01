@@ -29,9 +29,9 @@
   --color-code: #1c1a15; /* dark code surface — the platform pop */
   --color-code-2: #26231d;
 
-  --font-serif: var(--font-serif);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+  --font-serif: var(--ff-serif);
+  --font-sans: var(--ff-sans);
+  --font-mono: var(--ff-mono);
 }
 
 @layer base {
