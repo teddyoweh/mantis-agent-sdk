@@ -133,6 +133,39 @@ def _stringify(out: Any) -> str:
         return str(out)
 
 
+# Tool-result truncation backstop. A single huge tool result (a `cat bigfile`,
+# a noisy build log, an MCP tool dumping JSON) can blow the whole context window
+# in one turn — most builtin tools self-cap, but this guards custom / MCP tools
+# and full-file reads. Head+tail are kept (the ends usually carry the signal);
+# the middle is elided with a note. Caps are tool-aware (reads/shell get more
+# room than a grep). Override the default via MANTIS_AGENT_MAX_TOOL_RESULT.
+try:
+    _DEFAULT_TOOL_RESULT_CAP = max(2000, int(os.environ.get("MANTIS_AGENT_MAX_TOOL_RESULT", "30000")))
+except ValueError:
+    _DEFAULT_TOOL_RESULT_CAP = 30000
+
+_TOOL_RESULT_CAPS = {
+    "read_file": 60_000,
+    "bash": 40_000,
+    "web_fetch": 40_000,
+}
+
+
+def _truncate_tool_result(text: str, tool_name: str) -> str:
+    cap = _TOOL_RESULT_CAPS.get(tool_name, _DEFAULT_TOOL_RESULT_CAP)
+    if len(text) <= cap:
+        return text
+    head = cap * 2 // 3
+    tail = cap - head
+    dropped = len(text) - head - tail
+    note = (
+        f"\n\n… [{dropped:,} characters elided — {len(text):,} total. "
+        f"Re-run with a narrower query, a line range, or a filter to see the "
+        f"middle.] …\n\n"
+    )
+    return text[:head] + note + text[-tail:]
+
+
 def _flatten_exception_group(eg: BaseExceptionGroup) -> list[BaseException]:
     """Walk a (possibly nested) ``BaseExceptionGroup`` and return the leaf
     exceptions. anyio 4.x can nest groups arbitrarily — a single-leaf
@@ -734,7 +767,7 @@ class StreamingToolExecutor:
             idx,
             ToolResultBlock(
                 tool_use_id=block.id,
-                content=_stringify(out),
+                content=_truncate_tool_result(_stringify(out), tool.name),
             ),
         )
 

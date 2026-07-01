@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.16.0] — 2026-06-30
+
+### Added
+
+- **Tool-result truncation backstop** (parity roadmap T0.3). A single huge tool
+  result — `cat`-ing a big file, a noisy build log, an MCP tool dumping JSON —
+  can no longer blow the whole context window in one turn. The executor caps each
+  result (tool-aware: reads/shell/web-fetch get more room than a generic tool),
+  keeping head + tail and eliding the middle with a note that says how much was
+  dropped and to narrow the query. Default 30k chars; override with
+  `MANTIS_AGENT_MAX_TOOL_RESULT`.
+
 ## [1.15.0] — 2026-06-30
 
 ### Added
