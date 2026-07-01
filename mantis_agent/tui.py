@@ -553,6 +553,17 @@ def error_hint(err: BaseException, backend: str | None) -> str | None:
         ra = getattr(err, "retry_after_s", None)
         when = f"retry in ~{int(ra)}s" if isinstance(ra, (int, float)) and ra > 0 else "wait a moment and retry"
         return f"rate limited — {when}, or /models to switch provider"
+    if any(p in low for p in ("context length", "context window", "maximum context",
+                              "too many tokens", "context_length_exceeded",
+                              "reduce the length", "prompt is too long", "input is too long")):
+        return "the conversation is too long for this model's context — /compact to shrink it, or /clear to start fresh"
+    if any(p in low for p in ("does not support tools", "tools are not supported",
+                              "tool use is not", "function calling is not",
+                              "doesn't support function", "no tool support")):
+        return "this model doesn't support tool calling — /models to pick a tool-capable model"
+    if any(p in low for p in ("out of memory", "cuda out of memory", "oom",
+                              "not enough memory", "insufficient memory")):
+        return "the model ran out of memory — pick a smaller / more-quantized model with /models"
     if any(p in low for p in ("does not exist", "not found", "not supported", "unknown model")):
         if "localhost" in (backend or "") or "127.0.0.1" in (backend or ""):
             return "not installed — `ollama pull <model>`, or /models to pick another"

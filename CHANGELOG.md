@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.50.0] — 2026-06-30
+
+### Added
+
+- **Actionable hints for three more common errors.** When a turn fails, the error
+  line now suggests a fix for: **context-length-exceeded** ("the conversation is
+  too long — /compact to shrink it, or /clear to start fresh"), a model that
+  **doesn't support tool calling** ("/models to pick a tool-capable model"), and
+  **out-of-memory** on local models ("pick a smaller / more-quantized model").
+  These join the existing auth / rate-limit / model-not-found / connection hints.
+  Ordered so a "tools not supported" message isn't mis-hinted as "model not
+  available."
+
 ## [2.49.0] — 2026-06-30
 
 ### Added
