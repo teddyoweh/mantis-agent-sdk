@@ -287,6 +287,7 @@ class HookDispatcher:
         # prior one's mutated input); the FIRST block short-circuits. A hook that
         # raises or matches nothing is skipped — never crashes the loop.
         mutated: dict[str, Any] | None = None
+        notes: list[str] = []
         for pattern, fn in registered:
             if not _matcher_hits(pattern, ctx):
                 continue
@@ -300,9 +301,14 @@ class HookDispatcher:
             if res.mutated_input is not None:
                 mutated = res.mutated_input
                 ctx = msgspec.structs.replace(ctx, input=mutated)  # thread onward
+            if res.note:
+                notes.append(res.note)
             if res.block:
                 return HookResult(block=True, mutated_input=mutated, note=res.note)
-        return HookResult(mutated_input=mutated) if mutated is not None else HookResult()
+        # Propagate accumulated notes from non-blocking hooks too — a
+        # UserPromptSubmit hook uses this to inject additional context.
+        combined = "\n".join(notes) if notes else None
+        return HookResult(mutated_input=mutated, note=combined)
 
     def has(self, event: str) -> bool:
         """Cheap check used by the loop to skip context assembly when nothing

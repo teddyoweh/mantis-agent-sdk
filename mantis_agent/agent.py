@@ -788,6 +788,29 @@ class Agent:
         # well-formed instead of erroring.
         close_open_tool_calls(messages, note="[previous turn interrupted]")
 
+        # UserPromptSubmit hook — fires once as the user's turn begins, BEFORE any
+        # model call. A hook may inject extra context (its ``note``, wrapped as a
+        # system-reminder) or BLOCK the prompt entirely (``block=True``) — a
+        # guardrail integrators asked for. No hook configured → skipped. This runs
+        # before the run span opens, so a block returns cleanly.
+        if self._dispatcher.has("UserPromptSubmit"):
+            ups = await self._dispatcher.dispatch(
+                "UserPromptSubmit",
+                HookContext(event="UserPromptSubmit", messages_snapshot=messages),
+            )
+            if ups.block:
+                _log.info("prompt blocked by UserPromptSubmit hook: %s", ups.note)
+                if ups.note:
+                    blocked = AssistantMessage(content=[TextBlock(text=ups.note)])
+                    messages.append(blocked)
+                    yield blocked
+                return
+            if ups.note:
+                from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+                extra = UserMessage(content=wrap_system_reminder(ups.note), isMeta=True)
+                messages.append(extra)
+                yield extra
+
         # Inject persistent user-context (memory + custom) as a synthetic
         # ``<system-reminder>``-wrapped UserMessage at the head of the
         # conversation. Matches Claude SDK 1:1. No-op when context is

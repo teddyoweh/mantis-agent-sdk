@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.28.0] — 2026-06-30
+
+### Added
+
+- **`UserPromptSubmit` hook is now dispatched.** The event was defined but never
+  fired. It now runs once as each user turn begins, before any model call, and a
+  hook can either **inject extra context** (its `note`, wrapped as a
+  system-reminder — for dynamic per-turn context) or **block the prompt entirely**
+  (`block=True` — a guardrail). Hook errors are swallowed (never crash the run),
+  and with no hook configured it's a no-op.
+- The hook dispatcher now **propagates notes from non-blocking hooks** (previously
+  a `note` was only returned on a block), which is what makes UserPromptSubmit
+  context-injection work; other events are unaffected.
+
 ## [2.27.1] — 2026-06-30
 
 ### Fixed

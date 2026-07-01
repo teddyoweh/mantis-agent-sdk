@@ -459,6 +459,12 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         name="openai-unknown", family="openai",
         supports_native_tools=True, context_window=128000,
     ),
+    # o-series reasoning models (o1/o3/o4) have a 200k context, unlike the 128k
+    # gpt-4o family — so track it accurately (understating it compacts early).
+    "openai_reasoning": ModelCapability(
+        name="openai-reasoning-unknown", family="openai",
+        supports_native_tools=True, context_window=200000,
+    ),
     "claude": ModelCapability(
         name="claude-unknown", family="claude",
         supports_native_tools=True, context_window=200000,
@@ -507,9 +513,9 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     # fall through to the tiny 8192 / no-native-tools generic default.
     ("claude", "claude"),
     ("gpt-", "openai"),
-    ("o1", "openai"),
-    ("o3", "openai"),
-    ("o4", "openai"),
+    ("o1", "openai_reasoning"),
+    ("o3", "openai_reasoning"),
+    ("o4", "openai_reasoning"),
     ("gemini", "gemini"),
     ("glm", "glm"),
 )

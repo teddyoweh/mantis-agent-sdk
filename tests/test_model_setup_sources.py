@@ -135,6 +135,9 @@ def test_hosted_flagships_have_native_tools_and_real_context() -> None:
         assert c.supports_native_tools is True, m
         assert c.context_window >= 200000, (m, c.context_window)
     assert lookup_model("gemini-2.5-pro").context_window >= 1000000
+    # o-series reasoning models have a 200k window (bigger than the 128k gpt-4o).
+    for m in ("o1", "o3", "o4-mini"):
+        assert lookup_model(m).context_window == 200000, m
     # And the local families stayed correct.
     assert lookup_model("qwen2.5-coder:7b").context_window == 32768
 
@@ -152,6 +155,25 @@ def test_ollama_base_respects_ollama_host(monkeypatch) -> None:
     # 0.0.0.0 (bind-all) must be rewritten to loopback for the client connection.
     monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11434")
     assert _ollama_base() == "http://127.0.0.1:11434"
+
+
+def test_no_legit_chat_model_is_over_filtered() -> None:
+    # Guard against over-broad _NONCHAT_MARKERS (like the -pro bug): every real
+    # chat model across every provider must survive the picker's chat filter.
+    from mantis_agent.tui import _is_chat_model
+    legit = [
+        "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-5.4", "gpt-5.4-mini",
+        "gpt-5.5", "o1", "o1-mini", "o3", "o3-mini", "o4-mini", "chatgpt-4o-latest",
+        "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash",
+        "deepseek-chat", "deepseek-reasoner", "deepseek-v3",
+        "qwen-max", "qwen3-235b-a22b", "qwen3-coder-plus", "glm-4.7", "glm-4-plus",
+        "kimi-latest", "moonshotai/kimi-k2-instruct-0905",
+        "llama-3.3-70b-versatile", "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "mixtral-8x7b-instruct", "mistral-large-2", "openai/gpt-oss-120b", "zai-org/GLM-4.7",
+    ]
+    for m in legit:
+        assert _is_chat_model(m) is True, m
 
 
 def test_pro_filter_excludes_only_openai_responses_models() -> None:
