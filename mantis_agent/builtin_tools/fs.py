@@ -90,6 +90,29 @@ def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     return f"{head}\n… [truncated {len(text) - limit} chars]"
 
 
+def _path_suggestion(p: Path) -> str:
+    """A ``. Did you mean <path>?`` hint when a near-name file exists in the same
+    directory — so a model that guessed a slightly-wrong path self-corrects in one
+    step instead of flailing."""
+    import difflib  # noqa: PLC0415
+
+    parent = p.parent
+    try:
+        if not parent.is_dir():
+            return ""
+        names = [e.name for e in parent.iterdir()]
+    except OSError:
+        return ""
+    close = difflib.get_close_matches(p.name, names, n=1, cutoff=0.6)
+    if close and close[0] != p.name:
+        return f". Did you mean {parent / close[0]}?"
+    return ""
+
+
+def _missing_file_error(path: str, p: Path) -> FileNotFoundError:
+    return FileNotFoundError(f"no such file: {path}{_path_suggestion(p)}")
+
+
 def _not_found_hint(old_string: str, text: str, path: str) -> str:
     """An *actionable* edit-miss error. A model that gets only 'not found' tends
     to retry blindly; pointing it at the likely cause (stale/auto-formatted text,
@@ -413,7 +436,7 @@ async def notebook_edit(
 
     p = Path(path).expanduser()
     if not p.exists():
-        raise FileNotFoundError(f"no such file: {path}")
+        raise _missing_file_error(path, p)
     try:
         nb = json.loads(await anyio.to_thread.run_sync(lambda: p.read_text("utf-8")))
     except (ValueError, OSError) as e:
@@ -524,7 +547,7 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
 
     p = Path(path).expanduser()
     if not p.exists():
-        raise FileNotFoundError(f"no such file: {path}")
+        raise _missing_file_error(path, p)
     if p.is_dir():
         raise IsADirectoryError(f"{path} is a directory — use ls instead")
 
@@ -617,7 +640,7 @@ async def edit_file(
 
     p = Path(path).expanduser()
     if not p.exists():
-        raise FileNotFoundError(f"no such file: {path}")
+        raise _missing_file_error(path, p)
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
     count = text.count(old_string)
@@ -652,7 +675,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
 
     p = Path(path).expanduser()
     if not p.exists():
-        raise FileNotFoundError(f"no such file: {path}")
+        raise _missing_file_error(path, p)
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
     original = text

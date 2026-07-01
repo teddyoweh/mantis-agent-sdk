@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.40.0] — 2026-06-30
+
+### Added
+
+- **"Did you mean?" for wrong file paths.** When `read_file`/`edit_file`/
+  `multi_edit` are given a path that doesn't exist but a close-name file DOES in
+  the same directory, the error now suggests it — `no such file: config.jsonn.
+  Did you mean .../config.json?` — so a model that guessed a slightly-wrong path
+  self-corrects in one step instead of flailing. Uses `difflib` on the directory
+  listing; a genuinely-missing file or bad directory still gets a plain error (no
+  false suggestions). Mirrors the existing edit-miss hint. New `_path_suggestion`.
+
 ## [2.39.0] — 2026-06-30
 
 ### Fixed

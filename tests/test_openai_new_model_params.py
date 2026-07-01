@@ -52,10 +52,15 @@ def test_stream_retries_with_max_completion_tokens_on_param_error() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.content)
+        # A gpt-5-era model rejects BOTH legacy params. The token-field error is
+        # reported first; if the retry keeps temperature it trips this second 400.
         if b'"max_tokens"' in request.content:
             return httpx.Response(400, json={"error": {"message":
                 "Unsupported parameter: 'max_tokens' is not supported with this model. "
                 "Use 'max_completion_tokens' instead."}})
+        if b'"temperature"' in request.content:
+            return httpx.Response(400, json={"error": {"message":
+                "Unsupported value: 'temperature' only the default (1) is supported."}})
         sse = ('data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
                'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
                'data: [DONE]\n\n')
@@ -66,12 +71,15 @@ def test_stream_retries_with_max_completion_tokens_on_param_error() -> None:
                                  transport=httpx.MockTransport(handler))
 
     async def go() -> list:
-        return [ev async for ev in p.stream(model="chat-latest",
+        return [ev async for ev in p.stream(model="chat-latest", temperature=0.7,
                                             messages=[UserMessage(content="hi")], max_tokens=10)]
 
     anyio.run(go)
-    assert len(calls) == 2  # first attempt 400'd, second retried
+    # The one retry must fix BOTH params at once (swap token field + drop temp),
+    # so it succeeds on attempt 2 rather than tripping the temperature error.
+    assert len(calls) == 2
     assert b"max_completion_tokens" in calls[1] and b'"max_tokens"' not in calls[1]
+    assert b'"temperature"' not in calls[1]
 
 
 def test_stream_retries_dropping_temperature_when_reported_first() -> None:

@@ -282,6 +282,10 @@ class OpenAICompatProvider(HTTPProviderMixin):
                         retry = False
                         if "max_tokens" in payload and b"max_completion_tokens" in body:
                             payload["max_completion_tokens"] = payload.pop("max_tokens")
+                            # Models that require max_completion_tokens (gpt-5.x /
+                            # o-series) also reject a non-default temperature — drop
+                            # it too so the retry doesn't just trip the next error.
+                            payload.pop("temperature", None)
                             retry = True
                         if ("temperature" in payload and b"temperature" in body
                                 and (b"nsupported" in body or b"does not support" in body
