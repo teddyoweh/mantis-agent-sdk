@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 import anyio
 
@@ -82,11 +83,17 @@ def _coerce_int(value: object, *, default: int, lo: int | None = None,
 
 
 @tool(is_read_only=False, is_concurrency_safe=False, timeout_s=120.0)
-async def bash(command: str, timeout: int = 120, stdin: str = "") -> str:
+async def bash(command: str, timeout: int = 120, stdin: str = "",
+               run_in_background: bool = False) -> str:
     """Run a shell command and return its combined stdout + stderr.
 
     Use this to inspect the system, run builds/tests, git, grep, find, etc.
     Runs through ``bash -lc`` in the current working directory.
+
+    Set ``run_in_background=True`` for a long-running command (a dev server, a
+    file watcher, a slow build) — it starts detached, returns a background id
+    immediately, and you read its accumulated output later with the
+    ``bash_output`` tool. Don't background a command whose result you need now.
 
     The command runs NON-INTERACTIVELY (no terminal): there is no human to
     answer prompts. If a command needs input, either pass it via ``stdin``, or
@@ -121,6 +128,9 @@ async def bash(command: str, timeout: int = 120, stdin: str = "") -> str:
         GIT_TERMINAL_PROMPT="0", DEBIAN_FRONTEND="noninteractive",
     )
 
+    if run_in_background:
+        return _start_background(command, env)
+
     try:
         with anyio.fail_after(timeout):
             result = await anyio.run_process(
@@ -143,6 +153,62 @@ async def bash(command: str, timeout: int = 120, stdin: str = "") -> str:
     if result.returncode != 0:
         body = f"{body}\n[exit code: {result.returncode}]".lstrip()
     return _truncate(body) or f"(no output, exit code {result.returncode})"
+
+
+# ---------------------------------------------------------------------------
+# Background shells — for long-running commands (dev servers, watchers, builds).
+# Detached, stdout+stderr streamed to a temp log; read later with bash_output.
+# ---------------------------------------------------------------------------
+
+_BG_SHELLS: dict[str, dict[str, Any]] = {}
+_BG_COUNTER = [0]
+
+
+def _start_background(command: str, env: dict[str, str]) -> str:
+    import subprocess  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    _BG_COUNTER[0] += 1
+    bid = f"bg_{_BG_COUNTER[0]}"
+    fd, log_path = tempfile.mkstemp(prefix="mantis-bg-", suffix=".log")
+    try:
+        proc = subprocess.Popen(  # noqa: S603
+            ["bash", "-lc", command],  # noqa: S607
+            stdout=fd, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            env=env, start_new_session=True,  # detach from our process group
+        )
+    finally:
+        os.close(fd)
+    _BG_SHELLS[bid] = {"proc": proc, "log": log_path, "cmd": command}
+    return (
+        f"Started in background as {bid} (pid {proc.pid}): {command}\n"
+        f"Read its output with bash_output(bash_id=\"{bid}\")."
+    )
+
+
+@tool(is_read_only=True)
+async def bash_output(bash_id: str) -> str:
+    """Read the accumulated output of a background shell started with
+    ``bash(run_in_background=True)``, plus whether it's still running or has
+    exited (with its code).
+
+    Args:
+        bash_id: The id returned when the background command was started.
+    """
+    entry = _BG_SHELLS.get(bash_id)
+    if entry is None:
+        running = ", ".join(_BG_SHELLS) or "none"
+        return f"no background shell {bash_id!r} (running: {running})"
+    proc = entry["proc"]
+    rc = proc.poll()
+    status = "running" if rc is None else f"exited with code {rc}"
+    try:
+        with open(entry["log"], encoding="utf-8", errors="replace") as fh:
+            body = _strip_terminal_controls(fh.read()).strip()
+    except OSError:
+        body = ""
+    header = f"[{bash_id} · {status}] {entry['cmd']}"
+    return _truncate(f"{header}\n{body}" if body else f"{header}\n(no output yet)")
 
 
 # ANSI/terminal control: CSI sequences, OSC strings, and the alt-screen /
@@ -587,6 +653,7 @@ def _py_grep(
 
 CODING_TOOLS: tuple[Tool, ...] = (
     bash,
+    bash_output,
     read_file,
     write_file,
     edit_file,
@@ -599,6 +666,7 @@ CODING_TOOLS: tuple[Tool, ...] = (
 __all__ = [
     "CODING_TOOLS",
     "bash",
+    "bash_output",
     "read_file",
     "write_file",
     "edit_file",

@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.20.0] — 2026-06-30
+
+### Added
+
+- **`bash(run_in_background=True)` + the `bash_output` tool** (parity roadmap
+  T1.4 complete). Long-running commands — a dev server, a file watcher, a slow
+  build — can now run detached: bash returns a background id immediately instead
+  of blocking or timing out, streams stdout+stderr to a temp log, and
+  `bash_output(bash_id=...)` reads the accumulated output plus whether it's still
+  running or has exited (with its code). Processes start in their own session so
+  they survive independently.
+
 ## [1.19.0] — 2026-06-30
 
 ### Added
