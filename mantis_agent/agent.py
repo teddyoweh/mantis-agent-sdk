@@ -177,6 +177,20 @@ def _retry_delay(
     return min(base * (2 ** attempt), cap)
 
 
+_OVERFLOW_MARKERS = (
+    "context length", "context window", "maximum context", "too many tokens",
+    "context_length_exceeded", "reduce the length", "prompt is too long",
+    "input is too long", "maximum context length",
+)
+
+
+def _is_context_overflow(err: BaseException) -> bool:
+    """Whether a failure is the model rejecting an over-long prompt — which we can
+    recover from by compacting and retrying, rather than failing the turn."""
+    low = str(err).lower()
+    return any(p in low for p in _OVERFLOW_MARKERS)
+
+
 def _is_transient(err: BaseException) -> bool:
     """Whether a provider failure is worth retrying: rate limits, 5xx / overload,
     and transport blips (connection reset, read timeout). Auth failures and
@@ -1569,6 +1583,7 @@ class Agent:
         import anyio  # noqa: PLC0415
 
         attempt = 0
+        overflow_retried = False
         while True:
             produced = False
             try:
@@ -1579,6 +1594,19 @@ class Agent:
             except Exception as err:  # noqa: BLE001
                 if produced:
                     raise  # can't retry partial output
+                # Context-overflow: the prompt is too long. Emergency-compact
+                # (clear old tool results + summarize) and retry ONCE, rather than
+                # failing the turn — a last-resort safety net when auto-compaction
+                # didn't fire in time (e.g. a sudden huge input).
+                if (
+                    not overflow_retried
+                    and self._compactor is not None
+                    and _is_context_overflow(err)
+                ):
+                    overflow_retried = True
+                    if await self._emergency_compact(messages):
+                        _log.warning("context overflow (%r); compacted and retrying", err)
+                        continue
                 # Same-model retry on a transient error, with backoff.
                 if _is_transient(err) and attempt < self.max_retries:
                     delay = _retry_delay(err, attempt)
@@ -1598,6 +1626,26 @@ class Agent:
         # propagate normally).
         async for ev in self._provider_stream(messages):
             yield ev
+
+    async def _emergency_compact(self, messages: list[Message]) -> bool:
+        """Shrink ``messages`` in place as much as possible after a context-
+        overflow error: clear old tool-result bodies (microcompaction, no model
+        call) AND summarize older turns. Returns True if anything shrank."""
+        if self._compactor is None:
+            return False
+        before = len(messages)
+        before_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+        micro = getattr(self._compactor, "microcompact", None)
+        if micro is not None:
+            micro(messages)
+        try:
+            compacted = await self._compactor.compact(messages)
+            if len(compacted) < len(messages):
+                messages[:] = compacted
+        except Exception:  # noqa: BLE001 — summarizer failed; microcompaction may still help
+            _log.debug("emergency summarize failed", exc_info=True)
+        after_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+        return len(messages) < before or after_chars < before_chars
 
     def _activate_fallback(self, error: BaseException) -> None:
         _log.warning(

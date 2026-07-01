@@ -439,6 +439,10 @@ async def run_fullscreen(tui: Any) -> int:
         # prefix heuristic can't tell which group the user actually picked.
         prov = catalog.BY_ID.get(provider_id) if provider_id else catalog.provider_for_model(model_id)
         if prov is not None:
+            # NOTE: unlike the startup auto-wire, do NOT fall back to tui.api_key
+            # (the generic key) here — mid-session it holds the *current* backend's
+            # key, which may be a gateway's or another provider's, and sending it to
+            # prov.base_url would auth-fail. Only the provider's own key is safe.
             key = catalog.api_key_for(prov)
             if key:
                 tui.backend, tui.api_key = prov.base_url, key

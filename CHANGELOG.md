@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.51.0] — 2026-06-30
+
+### Added
+
+- **Context-overflow auto-recovery.** When a model rejects a prompt as too long
+  (`context_length_exceeded`, "maximum context length…", "prompt is too long"),
+  the agent now emergency-compacts — clears old tool-result bodies (no model call)
+  AND summarizes older turns — and retries the request ONCE, instead of failing the
+  turn. A safety net for when auto-compaction didn't fire in time (a sudden huge
+  input, or a model whose real window is smaller than advertised). Retries only
+  once (if it still overflows, it errors with the `/compact` hint from 2.50), and
+  needs no config beyond the compactor that's on by default. New
+  `_is_context_overflow` / `Agent._emergency_compact`.
+
 ## [2.50.0] — 2026-06-30
 
 ### Added
