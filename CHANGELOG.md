@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.18.0] — 2026-06-30
+
+### Changed
+
+- **`glob` skips dependency/VCS/build junk by default.** A broad `**/*.py` (or
+  any recursive glob) used to return every match inside `.venv`, `node_modules`,
+  `.git`, `__pycache__`, `dist`, `target`, etc. — drowning the real files and
+  blowing the 200-match cap on vendored noise. It now filters those directories,
+  matching ripgrep's gitignore-aware behavior (grep was already clean). An
+  explicit glob INTO such a dir (`node_modules/**/*.js`) or a `path` inside one is
+  still honored.
+
 ## [2.17.0] — 2026-06-30
 
 ### Added

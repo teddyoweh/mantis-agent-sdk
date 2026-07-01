@@ -76,6 +76,23 @@ def test_available_models_endpoint_for_versioned_base(monkeypatch) -> None:
     assert route.called
 
 
+def test_catalog_validate_hits_direct_models_child_for_gemini(monkeypatch) -> None:
+    # Setup-side probe must also hit {base}/models (a direct child) for Gemini's
+    # versioned base — not an extra /v1. Guards the setup validation URL.
+    import httpx
+
+    import respx as _respx
+
+    prov = catalog.BY_ID["gemini"]  # base = …/v1beta/openai
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    with _respx.mock:
+        route = _respx.get(f"{prov.base_url.rstrip('/')}/models").mock(
+            return_value=httpx.Response(200, json={"data": [{"id": "gemini-2.5-pro"}]}))
+        ok, _detail = catalog.validate_provider(prov)
+    assert ok
+    assert route.called
+
+
 def test_hosted_backend_profiles_have_correct_provider_hints() -> None:
     # Without these, OpenAI/Gemini/GLM/Qwen fell to the generic vLLM profile
     # (hint="vllm"), so cost/pricing tracking used the wrong provider.

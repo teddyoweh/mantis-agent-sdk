@@ -32,6 +32,13 @@ _MAX_OUTPUT = 30_000  # chars of bash stdout/stderr returned
 _MAX_READ_LINES = 2000  # default lines per read_file call
 _MAX_LINE = 2000  # chars per line before truncation
 _MAX_MATCHES = 200  # grep/glob hits returned
+# Directories glob skips by default (dependency / VCS / build output), matching
+# ripgrep's gitignore-aware behavior. Bypassed when a call explicitly targets one.
+_GLOB_IGNORE = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".next",
+    "target", ".cache", "vendor", ".gradle", ".egg-info",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -682,8 +689,27 @@ async def glob(pattern: str, path: str = ".") -> str:
 
     base = Path(path).expanduser()
 
+    # Skip dependency / VCS / build junk (like ripgrep's gitignore defaults) so a
+    # broad ``**/*.py`` doesn't drown real files in .venv/node_modules matches —
+    # UNLESS the caller explicitly targets such a dir (then honor the request).
+    targeted = any(j in pattern for j in _GLOB_IGNORE) or any(
+        part in _GLOB_IGNORE for part in base.parts
+    )
+
     def _glob() -> list[Path]:
-        return [m for m in base.glob(pattern) if m.is_file()]
+        out: list[Path] = []
+        for m in base.glob(pattern):
+            if not m.is_file():
+                continue
+            if not targeted:
+                try:
+                    rel_parts = m.relative_to(base).parts
+                except ValueError:
+                    rel_parts = m.parts
+                if any(part in _GLOB_IGNORE for part in rel_parts):
+                    continue
+            out.append(m)
+        return out
 
     matches = await anyio.to_thread.run_sync(_glob)
     if not matches:
