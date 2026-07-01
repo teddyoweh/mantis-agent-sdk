@@ -1156,34 +1156,41 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
-        # Esc cancels an inline key entry (don't save the pasted key).
-        if state.get("awaiting_key") is not None:
+        from .tui import esc_action  # noqa: PLC0415
+        pq = state.get("pending_question")
+        action = esc_action(
+            awaiting_key=state.get("awaiting_key") is not None,
+            picking_model=state.get("picking_model") is not None,
+            pending_perm=state.get("pending_perm") is not None,
+            question_open=pq is not None,
+            question_typing=bool(pq and pq.get("typing")),
+            working=bool(state["working"]),
+            has_input=bool(input_buffer.text),
+        )
+        if action == "cancel_key":
             state["awaiting_key"] = None
             input_buffer.reset()
-            event.app.invalidate()
-            return
-        # Esc closes the model picker without switching.
-        if state.get("picking_model") is not None:
+        elif action == "close_picker":
             state["picking_model"] = None
-            event.app.invalidate()
-            return
-        # Esc during a permission prompt = deny (don't run the tool).
-        if state.get("pending_perm") is not None:
+        elif action == "deny":
             _resolve_perm("deny")
             return
-        # Esc during a question: cancel typing, else skip the question.
-        pq = state.get("pending_question")
-        if pq is not None:
-            if pq["typing"]:
-                pq["typing"] = False
-                input_buffer.reset()
-                event.app.invalidate()
-            else:
-                _q_resolve([])
+        elif action == "cancel_question_typing":
+            pq["typing"] = False
+            input_buffer.reset()
+        elif action == "skip_question":
+            _q_resolve([])
             return
-        task = state.get("task")
-        if state["working"] and task is not None:
-            task.cancel()
+        elif action == "interrupt":
+            task = state.get("task")
+            if task is not None:
+                task.cancel()
+            return
+        elif action == "clear_input":
+            input_buffer.reset()          # idle: Esc clears a half-typed line
+        else:
+            return
+        event.app.invalidate()
 
     @kb.add("s-tab")
     def _(event: Any) -> None:

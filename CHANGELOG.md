@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.46.0] — 2026-06-30
+
+### Added
+
+- **Esc clears a half-typed input line when idle.** Previously Esc did nothing if
+  you'd typed a message but not sent it — now it clears the line (the standard
+  REPL expectation), while every existing Esc behavior is preserved by precedence:
+  cancel an inline key entry, close the model picker, deny a permission prompt,
+  cancel/skip a question, or interrupt a running reply — those all still win over
+  clearing. The precedence is now an explicit, tested `tui.esc_action` decision
+  function instead of a nested if-ladder.
+
 ## [2.45.0] — 2026-06-30
 
 ### Added

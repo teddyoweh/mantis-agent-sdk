@@ -262,6 +262,34 @@ LEARN_PROMPT = (
 )
 
 
+def esc_action(
+    *,
+    awaiting_key: bool,
+    picking_model: bool,
+    pending_perm: bool,
+    question_open: bool,
+    question_typing: bool,
+    working: bool,
+    has_input: bool,
+) -> str:
+    """What pressing Esc should do, by precedence. Extracted so the precedence is
+    testable. Highest-priority modal state wins; when idle, Esc clears a
+    half-typed input line (the common REPL expectation) — previously a no-op."""
+    if awaiting_key:
+        return "cancel_key"
+    if picking_model:
+        return "close_picker"
+    if pending_perm:
+        return "deny"
+    if question_open:
+        return "cancel_question_typing" if question_typing else "skip_question"
+    if working:
+        return "interrupt"
+    if has_input:
+        return "clear_input"
+    return "none"
+
+
 def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
     """The footer usage indicator: ``12k/32k 38% · $0.03``. Tokens colour by fill
     (grey → yellow ≥75% → red ≥90%); the cost tail is shown only when > 0 (so
