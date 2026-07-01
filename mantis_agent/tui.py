@@ -423,12 +423,18 @@ def error_hint(err: BaseException, backend: str | None) -> str | None:
     most: a bad API key, an unavailable model, and an unreachable backend.
     Returns plain text with ``backtick`` command spans so any renderer can style
     it; pure + importable so it can be unit-tested."""
-    from .errors import AuthError  # noqa: PLC0415
+    from .errors import AuthError, RateLimitError  # noqa: PLC0415
 
     low = str(err).lower()
     if isinstance(err, AuthError) or "api key" in low or "authentication" in low:
         return "the API key looks invalid — re-run `mantis setup`, or /models to switch"
+    if isinstance(err, RateLimitError) or "rate limit" in low or "too many requests" in low or "429" in low:
+        ra = getattr(err, "retry_after_s", None)
+        when = f"retry in ~{int(ra)}s" if isinstance(ra, (int, float)) and ra > 0 else "wait a moment and retry"
+        return f"rate limited — {when}, or /models to switch provider"
     if any(p in low for p in ("does not exist", "not found", "not supported", "unknown model")):
+        if "localhost" in (backend or "") or "127.0.0.1" in (backend or ""):
+            return "not installed — `ollama pull <model>`, or /models to pick another"
         return "that model isn't available on this backend — /models to pick another"
     if any(p in low for p in ("connect", "refused", "timed out", "timeout", "unreachable",
                               "all connection attempts failed", "name or service", "getaddrinfo")):
@@ -2646,13 +2652,16 @@ class MantisTUI:
                     continue
                 except Exception as e:  # noqa: BLE001
                     self.console.print(f"\n[ansired]error:[/] {e}")
-                    msg = str(e).lower()
-                    if "not found" in msg or "pull" in msg:
+                    hint = error_hint(e, self.backend)
+                    if hint:
+                        import re as _re  # noqa: PLC0415
+                        styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
+                        self.console.print(f"[ansibrightblack]→ {styled}[/]")
+                    elif "not found" in str(e).lower() or "pull" in str(e).lower():
                         self.console.print(
                             f"[ansibrightblack]→ install it:[/] [white]ollama pull "
                             f"{self.model}[/]  [ansibrightblack]or pick another with[/] "
-                            f"[white]/model <name>[/]"
-                        )
+                            f"[white]/model <name>[/]")
         finally:
             if self.agent is not None:
                 await self.agent.aclose()

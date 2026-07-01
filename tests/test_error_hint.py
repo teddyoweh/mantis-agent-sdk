@@ -5,8 +5,24 @@ down. These lock the routing so a mis-selection always points to the fix.
 
 from __future__ import annotations
 
-from mantis_agent.errors import AuthError
+from mantis_agent.errors import AuthError, RateLimitError
 from mantis_agent.tui import error_hint
+
+
+def test_rate_limit_suggests_wait_or_switch() -> None:
+    # Free tiers (Groq/Gemini) 429 aggressively — the hint must guide recovery.
+    h = error_hint(RateLimitError("Rate limit reached", status_code=429), None)
+    assert "rate limited" in h.lower()
+    assert "/models" in h
+    assert "rate limited" in error_hint(Exception("429 Too Many Requests"), None).lower()
+
+
+def test_rate_limit_surfaces_retry_after_when_known() -> None:
+    h = error_hint(RateLimitError("slow down", status_code=429, retry_after_s=30), None)
+    assert "30s" in h
+    # No retry-after → generic wording, no bogus number.
+    h2 = error_hint(RateLimitError("slow down", status_code=429), None)
+    assert "retry in" not in h2 and "wait a moment" in h2
 
 
 def test_bad_key_points_to_setup() -> None:
@@ -17,6 +33,14 @@ def test_bad_key_points_to_setup() -> None:
 def test_unavailable_model_points_to_models_picker() -> None:
     assert "/models" in error_hint(Exception("The model `nope` does not exist"), None)
     assert "/models" in error_hint(Exception("not supported in the v1/chat/completions endpoint"), None)
+
+
+def test_unavailable_model_is_local_aware() -> None:
+    # On a local Ollama backend, a missing model should suggest `ollama pull`.
+    local = error_hint(Exception("model `x` not found"), "http://localhost:11434")
+    assert "ollama pull" in local.lower()
+    remote = error_hint(Exception("model `x` not found"), "https://api.openai.com/v1")
+    assert "ollama pull" not in remote.lower()
 
 
 def test_connection_hint_is_context_aware() -> None:

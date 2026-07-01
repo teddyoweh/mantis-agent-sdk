@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.23.0] — 2026-06-30
+
+### Added
+
+- **Transient-error retry with backoff.** A model call that fails BEFORE any
+  output with a transient error — rate limit (429), 5xx / overloaded (500/502/
+  503/504/529), or a transport blip (connection reset, read timeout) — is now
+  retried up to `max_retries` times (default 2) with exponential backoff
+  (0.5s → 1s → …, capped) instead of killing the turn on a single throttle. Auth
+  failures and other 4xx are never retried (they won't self-heal); a failure
+  after streaming has begun still propagates (can't retry partial output); model
+  fallback still kicks in after retries are exhausted. New `Agent.max_retries`
+  and `_is_transient`.
+
 ## [2.22.0] — 2026-06-30
 
 ### Added

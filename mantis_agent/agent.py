@@ -159,6 +159,29 @@ def _refusal_nudge() -> "UserMessage":
     )
 
 
+_TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+
+
+def _is_transient(err: BaseException) -> bool:
+    """Whether a provider failure is worth retrying: rate limits, 5xx / overload,
+    and transport blips (connection reset, read timeout). Auth failures and
+    client (4xx other than throttle) errors are NOT retried — they won't fix
+    themselves."""
+    from .errors import AuthError, ProviderError, RateLimitError  # noqa: PLC0415
+
+    if isinstance(err, AuthError):
+        return False
+    if isinstance(err, RateLimitError):
+        return True
+    if isinstance(err, ProviderError):
+        return err.status_code in _TRANSIENT_STATUS
+    try:
+        import httpx  # noqa: PLC0415
+        return isinstance(err, httpx.TransportError)  # Connect/Read/Timeout/Protocol
+    except ImportError:
+        return False
+
+
 def close_open_tool_calls(
     messages: list[Message], *, note: str = "[interrupted by user]"
 ) -> int:
@@ -303,6 +326,11 @@ class Agent:
     # retry, instead of dead-ending the task on a spurious over-refusal. A
     # genuinely harmful request just gets refused again and stops. 0/False off.
     recover_refusals: bool = True
+    # Retry a model call that fails with a TRANSIENT error (rate limit, 5xx,
+    # connection blip) BEFORE any output, with exponential backoff, this many
+    # times before falling back / raising. 0 disables. Non-transient errors
+    # (auth, 4xx) are never retried.
+    max_retries: int = 2
     extra: dict[str, Any] | None = None
 
     # Capability + safety surface (M0.1 / M2)
@@ -1413,18 +1441,38 @@ class Agent:
         call fails BEFORE producing any event (open/first-token failure) and a
         ``fallback_model`` is configured, switch to it and retry the turn. A
         failure *after* events have streamed is re-raised (can't safely retry
-        partial output)."""
-        produced = False
-        try:
-            async for ev in self._provider_stream(messages):
-                produced = True
-                yield ev
-            return
-        except Exception as err:  # noqa: BLE001
-            if not (not produced and self.fallback_model and not self._fallback_used):
+        partial output). Before falling back, a TRANSIENT failure (rate limit,
+        5xx, connection blip) is retried up to ``max_retries`` times with
+        exponential backoff — a single throttle shouldn't kill the turn."""
+        import anyio  # noqa: PLC0415
+
+        attempt = 0
+        while True:
+            produced = False
+            try:
+                async for ev in self._provider_stream(messages):
+                    produced = True
+                    yield ev
+                return
+            except Exception as err:  # noqa: BLE001
+                if produced:
+                    raise  # can't retry partial output
+                # Same-model retry on a transient error, with backoff.
+                if _is_transient(err) and attempt < self.max_retries:
+                    delay = min(0.5 * (2 ** attempt), 8.0)
+                    _log.warning(
+                        "transient model error (%r); retry %d/%d in %.1fs",
+                        err, attempt + 1, self.max_retries, delay,
+                    )
+                    await anyio.sleep(delay)
+                    attempt += 1
+                    continue
+                # Exhausted / non-transient → try model fallback, else raise.
+                if self.fallback_model and not self._fallback_used:
+                    self._activate_fallback(err)
+                    break
                 raise
-            self._activate_fallback(err)
-        # Retry once on the fallback (outside the except so its own errors
+        # Retry once on the fallback (outside the loop so its own errors
         # propagate normally).
         async for ev in self._provider_stream(messages):
             yield ev
