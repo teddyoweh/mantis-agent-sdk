@@ -206,6 +206,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument("prompt", help="The user prompt to send.")
     _add_agent_flags(p_run)
+    p_run.add_argument(
+        "--output-format", choices=["text", "json"], default="text",
+        help="text (default): print the assistant's reply. json: print one JSON "
+             "object with result, is_error, num_turns, total_cost_usd, usage, "
+             "session_id — for scripting / CI.",
+    )
+    p_run.add_argument(
+        "--json", action="store_const", const="json", dest="output_format",
+        help="Shorthand for --output-format json.",
+    )
 
     p_chat = sub.add_parser(
         "chat", help="Interactive stdin chat loop. Streams tokens as they arrive."
@@ -472,6 +482,17 @@ def _print_profile(label: str, profile: BackendCapability) -> None:
     print(f"  prefix cache:  {'yes' if profile.supports_prefix_caching else 'no'}")
 
 
+def _result_to_json(result_msg: Any, fallback_text: str = "") -> dict[str, Any]:
+    """Serialize an ``SDKResultMessage`` to a JSON-ready dict for ``--json``. Falls
+    back to the accumulated assistant text when the result field is empty."""
+    import msgspec  # noqa: PLC0415
+
+    obj = msgspec.to_builtins(result_msg)
+    if not obj.get("result"):
+        obj["result"] = fallback_text
+    return obj
+
+
 async def _cmd_run_async(args: argparse.Namespace) -> int:
     # Imported here so the CLI cold-start path (e.g. ``mantis-agent version``)
     # doesn't pay for the query module's transitive imports.
@@ -482,6 +503,8 @@ async def _cmd_run_async(args: argparse.Namespace) -> int:
     )
 
     options = _build_options(args)
+    json_mode = getattr(args, "output_format", "text") == "json"
+    collected: list[str] = []
     async for msg in query(prompt=args.prompt, options=options):
         if isinstance(msg, SDKAssistantMessage):
             # SDKAssistantMessage wraps APIAssistantMessage under `.message`,
@@ -493,8 +516,15 @@ async def _cmd_run_async(args: argparse.Namespace) -> int:
             for block in blocks:
                 text = getattr(block, "text", None)
                 if text:
-                    print(text)
+                    if json_mode:
+                        collected.append(text)  # hold for the final JSON object
+                    else:
+                        print(text)
         elif isinstance(msg, SDKResultMessage):
+            if json_mode:
+                import json as _json  # noqa: PLC0415
+                print(_json.dumps(_result_to_json(msg, "\n".join(collected)), default=str))
+                return 1 if msg.is_error else 0
             if msg.is_error:
                 print(f"[error] {msg.result}", file=sys.stderr)
                 return 1

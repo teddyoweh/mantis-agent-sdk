@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.21.0] — 2026-06-30
+
+### Added
+
+- **`mantis run --json` (`--output-format json`)** — structured result output for
+  scripting/CI. Instead of streaming the reply as text, `run` prints one JSON
+  object with `result` (the final answer), `is_error`, `num_turns`,
+  `total_cost_usd`, `usage` (input/output tokens), `session_id`, and more —
+  matching Claude's `-p --output-format json` shape so a script can parse the
+  outcome. Exit code reflects `is_error`. Completes the automation trio with
+  `--tools` (2.19) and `--yes` (2.20).
+
 ## [2.20.0] — 2026-06-30
 
 ### Added

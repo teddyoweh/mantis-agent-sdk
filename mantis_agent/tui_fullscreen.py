@@ -625,13 +625,21 @@ async def run_fullscreen(tui: Any) -> int:
                 tui.console.print(f"[ansired]error:[/] {e}")
                 # Actionable hints for the two selection failures a user hits most.
                 from .errors import AuthError  # noqa: PLC0415
-                name = type(e).__name__
-                if isinstance(e, AuthError) or "api key" in str(e).lower() or "authentication" in str(e).lower():
+                low = str(e).lower()
+                if isinstance(e, AuthError) or "api key" in low or "authentication" in low:
                     tui.console.print("[ansibrightblack]  → the API key looks invalid. Re-run "
                                       "[white]mantis setup[/], or [white]/models[/] to switch.[/]")
-                elif "does not exist" in str(e).lower() or name == "ProviderError" and "model" in str(e).lower():
+                elif any(p in low for p in ("does not exist", "not found", "not supported")):
                     tui.console.print("[ansibrightblack]  → that model isn't available on this backend. "
                                       "[white]/models[/] to pick another.[/]")
+                elif any(p in low for p in ("connect", "refused", "timed out", "timeout",
+                                            "unreachable", "all connection attempts failed",
+                                            "name or service", "getaddrinfo")):
+                    local = "localhost" in (tui.backend or "") or "127.0.0.1" in (tui.backend or "")
+                    hint = ("Is Ollama running? [white]ollama serve[/]" if local
+                            else "check the backend URL / your network")
+                    tui.console.print(f"[ansibrightblack]  → can't reach {tui.backend}. {hint} "
+                                      "· [white]mantis setup[/] to switch.[/]")
             await _print(_show_err)
         finally:
             state.update(working=False, task=None)

@@ -417,6 +417,27 @@ def _is_chat_model(model_id: str) -> bool:
     return not any(m in model_id.lower() for m in _NONCHAT_MARKERS)
 
 
+def error_hint(err: BaseException, backend: str | None) -> str | None:
+    """A one-line, actionable recovery hint for a runtime error — or None if we
+    have nothing useful to add. Covers the three selection failures users hit
+    most: a bad API key, an unavailable model, and an unreachable backend.
+    Returns plain text with ``backtick`` command spans so any renderer can style
+    it; pure + importable so it can be unit-tested."""
+    from .errors import AuthError  # noqa: PLC0415
+
+    low = str(err).lower()
+    if isinstance(err, AuthError) or "api key" in low or "authentication" in low:
+        return "the API key looks invalid — re-run `mantis setup`, or /models to switch"
+    if any(p in low for p in ("does not exist", "not found", "not supported", "unknown model")):
+        return "that model isn't available on this backend — /models to pick another"
+    if any(p in low for p in ("connect", "refused", "timed out", "timeout", "unreachable",
+                              "all connection attempts failed", "name or service", "getaddrinfo")):
+        local = "localhost" in (backend or "") or "127.0.0.1" in (backend or "")
+        where = "Is Ollama running? `ollama serve`" if local else "check the backend URL / your network"
+        return f"can't reach {backend} — {where} · `mantis setup` to switch"
+    return None
+
+
 # Open-weight model families — the only ones you can actually self-host (run the
 # published weights on your own GPU). Everything else (gpt-5.x, gpt-4o, o3/o4,
 # gemini, claude, qwen-max/plus, glm-4-plus/air/flash, moonshot-v1) is
