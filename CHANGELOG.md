@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.30.0] — 2026-06-30
+
+### Changed
+
+- **`web_fetch` returns markdown, not flat text.** The default (non-Exa) extractor
+  now preserves the structure a model can actually navigate — headings (`#`),
+  links (`[text](url)`), and list items (`- `) — instead of collapsing everything
+  into a wall of text, matching Claude's WebFetch. Still stdlib-only (no
+  BeautifulSoup), still drops script/style/head and decodes entities; non-HTML
+  bodies are returned verbatim as before. New `_html_to_markdown` (the old
+  `_html_to_text` name remains as an alias).
+
 ## [2.29.0] — 2026-06-30
 
 ### Added

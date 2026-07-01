@@ -416,17 +416,38 @@ _BLOCK_CLOSE_RE = re.compile(
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
-def _html_to_text(html: str) -> str:
-    """HTML → readable text, stdlib only (no BeautifulSoup). Drops script/style/
-    head blocks, turns block-element closes into newlines, strips remaining tags,
-    unescapes entities, and collapses blank runs."""
+_HEADING_RE = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1\s*>", re.DOTALL | re.IGNORECASE)
+_LINK_RE = re.compile(r'<a\b[^>]*?href=["\']([^"\']+)["\'][^>]*>(.*?)</a\s*>',
+                      re.DOTALL | re.IGNORECASE)
+_LI_RE = re.compile(r"<li\b[^>]*>(.*?)</li\s*>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_inner(t: str) -> str:
+    return re.sub(r"[ \t]+", " ", _TAG_RE.sub("", t)).strip()
+
+
+def _html_to_markdown(html: str) -> str:
+    """HTML → readable MARKDOWN, stdlib only (no BeautifulSoup). Preserves the
+    structure a model can navigate — headings (``#``), links (``[text](url)``),
+    and list items (``- ``) — then drops remaining tags, unescapes entities, and
+    collapses blank runs. Far more useful to the model than flat text."""
     s = _DROP_BLOCK_RE.sub(" ", html)
+    # Links first, so a link nested in a heading/list becomes [text](url) there.
+    s = _LINK_RE.sub(lambda m: f"[{_strip_inner(m.group(2))}]({m.group(1).strip()})", s)
+    s = _HEADING_RE.sub(
+        lambda m: f"\n\n{'#' * int(m.group(1))} {_strip_inner(m.group(2))}\n\n", s)
+    s = _LI_RE.sub(lambda m: f"\n- {_strip_inner(m.group(1))}", s)
     s = _BR_RE.sub("\n", s)
     s = _BLOCK_CLOSE_RE.sub("\n", s)
     s = _TAG_RE.sub("", s)
     s = html_mod.unescape(s)
     lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in s.splitlines()]
-    return "\n".join(ln for ln in lines if ln)
+    out = "\n".join(lines)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+# Back-compat alias (the pre-markdown name).
+_html_to_text = _html_to_markdown
 
 
 async def _raw_fetch(url: str) -> str:
@@ -445,7 +466,7 @@ async def _raw_fetch(url: str) -> str:
     body = r.text
     is_html = "html" in ctype or (not ctype and "<html" in body[:2000].lower())
     if is_html:
-        text = _html_to_text(body)
+        text = _html_to_markdown(body)
         return text[:5000] if text else "(empty page)"
     return body[:5000] if body else "(empty)"
 

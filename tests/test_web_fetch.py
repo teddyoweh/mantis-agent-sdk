@@ -21,7 +21,7 @@ def test_html_to_text_drops_script_style() -> None:
 
 def test_html_to_text_block_newlines() -> None:
     out = _html_to_text("<p>a</p><p>b</p><br><div>c</div>")
-    assert out.splitlines() == ["a", "b", "c"]
+    assert [l for l in out.splitlines() if l] == ["a", "b", "c"]  # markdown keeps blank breaks
 
 
 def test_html_to_text_collapses_whitespace() -> None:
@@ -60,3 +60,33 @@ def test_web_fetch_http_error(monkeypatch) -> None:
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     out = anyio.run(lambda: web_fetch.fn(url="http://x"))
     assert "fetch error" in out
+
+
+def test_markdown_preserves_headings() -> None:
+    from mantis_agent.builtin_tools.web import _html_to_markdown
+    md = _html_to_markdown("<h1>Title</h1><p>body</p><h2>Sub</h2>")
+    assert "# Title" in md and "## Sub" in md
+
+
+def test_markdown_preserves_links() -> None:
+    from mantis_agent.builtin_tools.web import _html_to_markdown
+    md = _html_to_markdown('<p>see <a href="https://x.com/docs">the docs</a></p>')
+    assert "[the docs](https://x.com/docs)" in md
+
+
+def test_markdown_preserves_lists() -> None:
+    from mantis_agent.builtin_tools.web import _html_to_markdown
+    md = _html_to_markdown("<ul><li>one</li><li>two</li></ul>")
+    assert "- one" in md and "- two" in md
+
+
+def test_markdown_link_inside_list() -> None:
+    from mantis_agent.builtin_tools.web import _html_to_markdown
+    md = _html_to_markdown('<li>Read <a href="/g">guide</a></li>')
+    assert "- Read [guide](/g)" in md
+
+
+def test_markdown_still_drops_scripts() -> None:
+    from mantis_agent.builtin_tools.web import _html_to_markdown
+    md = _html_to_markdown("<script>bad()</script><h1>Safe</h1>")
+    assert "bad()" not in md and "# Safe" in md

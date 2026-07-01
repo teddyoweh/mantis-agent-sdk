@@ -748,6 +748,20 @@ class _NullConsole:
         pass
 
 
+def test_pick_model_id_handles_large_lists_without_capping(monkeypatch) -> None:
+    # OpenAI returns 50+ chat models with gpt-5.x at the END — a model past the
+    # old 30-item cap must still be reachable (the arrow picker now scrolls).
+    from mantis_agent import setup_wizard as sw
+    models = [f"model-{i}" for i in range(47)] + ["gpt-5.5"] + [f"tail-{i}" for i in range(8)]
+    assert len(models) > 30
+    monkeypatch.setattr("builtins.input", lambda *a: "gpt-5.5")
+    assert sw._pick_model_id(_NullConsole(), models) == "gpt-5.5"
+    # And the cap is now generous (was 30) — a 200-long list is accepted whole.
+    big = [f"m{i}" for i in range(200)]
+    monkeypatch.setattr("builtins.input", lambda *a: "m150")
+    assert sw._pick_model_id(_NullConsole(), big) == "m150"
+
+
 def test_pick_model_id_empty_list_returns_none() -> None:
     # A provider that returned no models must not crash the picker (was IndexError
     # on the "Enter=<first>" prompt) — it returns None so the caller can bail.

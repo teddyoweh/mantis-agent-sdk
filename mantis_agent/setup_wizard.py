@@ -361,15 +361,21 @@ def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) ->
         return -1
 
     state = {"sel": max(0, min(start, len(rows) - 1))}
+    view = 14  # visible rows at once — scroll a viewport so long lists (OpenAI
+    # returns 50+ chat models) don't build a taller-than-the-terminal window.
 
     def render() -> Any:
+        sel, n = state["sel"], len(rows)
+        lo = max(0, min(sel - view // 2, n - view)) if n > view else 0
         out = [f"  \033[1m{title}\033[0m\n"]
-        for i, (label, hint) in enumerate(rows):
-            if i == state["sel"]:
+        for i in range(lo, min(lo + view, n)):
+            label, hint = rows[i]
+            if i == sel:
                 out.append(f"\033[30;48;5;150m ▸ {label} \033[0m  \033[90m{hint}\033[0m")
             else:
                 out.append(f"    \033[97m{label}\033[0m  \033[90m{hint}\033[0m")
-        out.append(f"\n  \033[90m↑/↓ · enter to pick · esc to cancel\033[0m")
+        pos = f"  ({sel + 1}/{n})" if n > view else ""
+        out.append(f"\n  \033[90m↑/↓ · enter to pick · esc to cancel{pos}\033[0m")
         return ANSI("\n".join(out))
 
     kb = KeyBindings()
@@ -394,7 +400,7 @@ def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) ->
         e.app.exit(result=None)
 
     app = Application(
-        layout=Layout(HSplit([Window(FormattedTextControl(render), height=len(rows) + 3)])),
+        layout=Layout(HSplit([Window(FormattedTextControl(render), height=min(len(rows), view) + 3)])),
         key_bindings=kb,
         full_screen=False,
     )
@@ -408,7 +414,7 @@ def _pick_model_id(c: Any, models: list[str], *, current: str | None = None) -> 
 
     if not models:  # a provider that returned nothing — nothing to pick
         return None
-    shown = models[:30]
+    shown = models[:200]  # arrow picker scrolls, so no tight cap — just a sanity bound
     rows = [(m, "← current" if m == current else "") for m in shown]
     start = shown.index(current) if current in shown else 0
     idx = _arrow_select("Pick a model", rows, start=start)
