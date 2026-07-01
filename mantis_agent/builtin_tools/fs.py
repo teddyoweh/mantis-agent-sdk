@@ -266,6 +266,31 @@ def _start_background(command: str, env: dict[str, str], *, cwd: str | None = No
     )
 
 
+def terminate_background_shells() -> int:
+    """Terminate every still-running background shell (started via
+    ``bash(run_in_background=True)``) so they don't outlive the agent/session —
+    a dev server or watcher shouldn't keep holding ports after ``mantis`` exits.
+    Kills the whole process group (they're detached with ``start_new_session``),
+    so forked children die too. Returns the count terminated. Idempotent."""
+    import signal  # noqa: PLC0415
+
+    n = 0
+    for entry in list(_BG_SHELLS.values()):
+        proc = entry.get("proc")
+        if proc is None or proc.poll() is not None:
+            continue  # never started, or already exited
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        n += 1
+    _BG_SHELLS.clear()
+    return n
+
+
 @tool(is_read_only=True)
 async def bash_output(bash_id: str) -> str:
     """Read the accumulated output of a background shell started with

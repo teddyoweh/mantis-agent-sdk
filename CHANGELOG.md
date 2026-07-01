@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.35.0] — 2026-06-30
+
+### Fixed
+
+- **Background shells no longer outlive the session.** Processes started with
+  `bash(run_in_background=True)` (dev servers, watchers, long builds) were tracked
+  but never cleaned up — so they kept running after `mantis` exited, holding ports
+  and leaking resources. `Agent.aclose()` (via `aclose_builtin_clients`) now
+  terminates every still-running background shell, killing the whole detached
+  process group so forked children die too. New `terminate_background_shells`
+  (idempotent, best-effort).
+
 ## [2.34.0] — 2026-06-30
 
 ### Changed

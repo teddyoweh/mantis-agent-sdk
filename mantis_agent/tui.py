@@ -1269,7 +1269,25 @@ class MantisTUI:
 
         # Hosted models are served by their provider, not Ollama — don't let the
         # local-model resolver below swap them out for an installed Ollama model.
-        if catalog.provider_for_model(self.model):
+        hosted = catalog.provider_for_model(self.model)
+        if hosted is not None:
+            # If the user set only MANTIS_AGENT_MODEL (a hosted model) and left the
+            # backend at the Ollama default, auto-wire the provider so it actually
+            # runs — but never override an explicitly-set MANTIS_AGENT_BASE_URL.
+            if (not os.environ.get("MANTIS_AGENT_BASE_URL")
+                    and (self.backend or "").rstrip("/") == _paths.ollama_base_url().rstrip("/")):
+                key = catalog.api_key_for(hosted)
+                if key:
+                    self.backend, self.api_key = hosted.base_url, key
+                    self.console.print(
+                        f"[ansibrightblack]→ using {hosted.label} for [white]{self.model}[/][/]")
+                else:
+                    # Hosted model but no key + backend still Ollama: it *will* fail,
+                    # and the later "ollama pull" hint would be wrong. Say why now.
+                    self.console.print(
+                        f"[ansiyellow]![/] [ansibrightblack]{self.model} is a {hosted.label} "
+                        f"model but no API key is set. Run [white]mantis setup[/] or set "
+                        f"[white]{hosted.api_key_env}[/].[/]")
             return
         available, reachable = self._available_models()
         if self.model in available:

@@ -70,12 +70,18 @@ def _client() -> httpx.AsyncClient:
 
 
 async def aclose_builtin_clients() -> None:
-    """Close the shared HTTP client. Called from ``Agent.aclose()`` so
-    users don't have to remember."""
+    """Close the shared HTTP client and terminate any background shells. Called
+    from ``Agent.aclose()`` so users don't have to remember — a detached dev
+    server started by the agent shouldn't outlive the session."""
     global _CLIENT
     if _CLIENT is not None and not _CLIENT.is_closed:
         await _CLIENT.aclose()
         _CLIENT = None
+    try:
+        from .fs import terminate_background_shells  # noqa: PLC0415
+        terminate_background_shells()
+    except Exception:  # noqa: BLE001 — cleanup is best-effort
+        pass
 
 
 # ---------------------------------------------------------------------------

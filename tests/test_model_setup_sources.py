@@ -819,6 +819,31 @@ def test_pick_model_id_handles_large_lists_without_capping(monkeypatch) -> None:
     assert sw._pick_model_id(_NullConsole(), big) == "m150"
 
 
+def test_env_only_hosted_model_autowires_provider(monkeypatch) -> None:
+    # `export MANTIS_AGENT_MODEL=gpt-4o` (no backend) + a saved key must just work:
+    # _resolve_model points the backend at the provider instead of leaving it on Ollama.
+    from mantis_agent import paths
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-autowire")
+    t = MantisTUI(model="gpt-4o", backend=paths.ollama_base_url(), api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert "api.openai.com" in (t.backend or "")
+    assert t.api_key == "sk-test-autowire"
+
+
+def test_explicit_backend_not_overridden_for_hosted_model(monkeypatch) -> None:
+    # An explicitly-set MANTIS_AGENT_BASE_URL (e.g. a self-host serving gpt-4o)
+    # must never be clobbered by the auto-wire.
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.setenv("MANTIS_AGENT_BASE_URL", "http://my-vllm:8000/v1")
+    t = MantisTUI(model="gpt-4o", backend="http://my-vllm:8000/v1", api_key="local",
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert t.backend == "http://my-vllm:8000/v1"
+
+
 def test_pick_model_id_empty_list_returns_none() -> None:
     # A provider that returned no models must not crash the picker (was IndexError
     # on the "Enter=<first>" prompt) — it returns None so the caller can bail.
