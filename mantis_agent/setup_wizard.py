@@ -909,6 +909,9 @@ def _probe_openai_models(url: str, key: str) -> list[str] | None:
         if r.status_code != 200:
             return None
         data = r.json().get("data", [])
+        # Newest first when the endpoint reports "created" (a LiteLLM/gateway
+        # self-host can proxy many models); no "created" → stable original order.
+        data.sort(key=lambda m: (m.get("created", 0) or 0) if isinstance(m, dict) else 0, reverse=True)
         return [m["id"] for m in data if isinstance(m, dict) and "id" in m]
     except Exception:  # noqa: BLE001 — network/JSON/anything
         return None

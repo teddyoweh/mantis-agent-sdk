@@ -366,6 +366,21 @@ def test_free_provider_ids_are_all_real_catalog_ids() -> None:
 # -- Self-host probe ---------------------------------------------------------
 
 
+def test_selfhost_probe_sorts_newest_first() -> None:
+    # Consistent with the hosted paths: a gateway/self-host that reports "created"
+    # lists newest models first.
+    import httpx
+
+    import respx as _respx
+
+    from mantis_agent.setup_wizard import _probe_openai_models
+    with _respx.mock:
+        _respx.get("http://gw.local/v1/models").mock(return_value=httpx.Response(200, json={"data": [
+            {"id": "a", "created": 100}, {"id": "c", "created": 300}, {"id": "b", "created": 200}]}))
+        ids = _probe_openai_models("http://gw.local/v1", "")
+    assert ids == ["c", "b", "a"]
+
+
 def test_selfhost_probe_unreachable_returns_none() -> None:
     # A closed port must degrade to None (→ manual model entry), never raise.
     assert _probe_openai_models("http://127.0.0.1:59999/v1", "") is None

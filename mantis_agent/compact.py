@@ -314,6 +314,20 @@ class SimpleCompactor:
             # Nothing meaningful to summarize.
             return messages
 
+        # Preserve the ORIGINAL request verbatim: keep the first real (non-meta)
+        # user message outside the summary so the agent never loses its goal to a
+        # weak/lossy summarizer. Everything AFTER it up to the keep-window is what
+        # gets summarized. (Claude Code pins the original request the same way.)
+        anchor: list[Message] = []
+        sum_start = 0
+        if (
+            getattr(body[0], "role", None) == "user"
+            and not getattr(body[0], "isMeta", False)
+            and isinstance(getattr(body[0], "content", None), str)
+        ):
+            anchor = [body[0]]
+            sum_start = 1
+
         # Tool-pair-aware split: choose keep-last-K, then slide the split
         # FORWARD so ``recent`` never begins on a tool_result message — its
         # matching tool_use would be in the summarized half, orphaning the
@@ -327,8 +341,12 @@ class SimpleCompactor:
             # keep-window): leave history untouched.
             return messages
 
-        to_summarize = body[:split]
+        to_summarize = body[sum_start:split]
         recent = body[split:]
+        if not to_summarize:
+            # The anchor + keep-window already covers everything — nothing between
+            # them to compress, so leave history untouched.
+            return messages
 
         prompt = _build_summarization_prompt(to_summarize)
         try:
@@ -345,7 +363,7 @@ class SimpleCompactor:
                 f"{summary.strip()}"
             )
         )
-        return [*head, summary_msg, *recent]
+        return [*head, *anchor, summary_msg, *recent]
 
 
 # ---------------------------------------------------------------------------

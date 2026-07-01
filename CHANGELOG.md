@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.34.0] — 2026-06-30
+
+### Changed
+
+- **Compaction now preserves the original task verbatim.** The first real user
+  message (the original request) used to be rolled into the summary — so if the
+  summarizer (often a weak/local model) captured it poorly, the agent could lose
+  sight of its goal after a long session. It's now pinned OUTSIDE the summary,
+  kept word-for-word between the context head and the summary, so the objective
+  survives compaction regardless of summary quality (matching Claude Code). Only
+  the turns AFTER it (up to the keep-window) are summarized.
+
 ## [2.33.0] — 2026-06-30
 
 ### Fixed
