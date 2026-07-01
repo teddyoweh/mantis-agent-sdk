@@ -242,6 +242,36 @@ def test_run_setup_entry_points_exit_cleanly_on_cancel(monkeypatch, tmp_path) ->
         assert rc in (0, 1), f"{argv} returned {rc!r}"
 
 
+def test_anthropic_gateway_urls_route_to_passthrough() -> None:
+    # Bedrock/Vertex/Azure Anthropic-Messages gateways (the /anthropic path
+    # convention) must use the passthrough (/v1/messages), not OpenAI-compat.
+    from mantis_agent.providers.base import detect_provider
+    assert detect_provider("https://gw.example.com/anthropic/v1") == "anthropic_passthrough"
+    assert detect_provider("https://foundry.services.ai.azure.com/anthropic") == "anthropic_passthrough"
+    assert detect_provider("https://api.anthropic.com/v1") == "anthropic_passthrough"
+    # No false positive: an OpenAI-compat path that merely contains 'anthropic'.
+    assert detect_provider("https://api.example.com/anthropic-compat/v1") == "openai_compat"
+
+
+def test_anthropic_gateway_flow_uses_typed_model_id(monkeypatch, tmp_path) -> None:
+    # A Bedrock/Vertex/Azure gateway uses provider-specific model ids, so the
+    # gateway path must take a TYPED id (not the direct-Anthropic flagship pick).
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    inputs = iter(["3", "https://gw.example.com/anthropic/v1", "anthropic.claude-sonnet-4-5-v1:0"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "gw-token")
+    monkeypatch.setattr(sw, "_ping_anthropic_bearer", lambda *a, **k: (True, "ok"))
+
+    rc = sw._run_anthropic(_NullConsole(), catalog.BY_ID["anthropic"])
+    assert rc == 0
+    last = catalog.get_last_model()
+    assert last["model"] == "anthropic.claude-sonnet-4-5-v1:0"
+    assert last["backend"] == "https://gw.example.com/anthropic/v1"
+
+
 def test_print_status_never_crashes() -> None:
     # `mantis setup --status` must render whatever the config is (or nothing)
     # without raising — it runs before any provider is even set up.

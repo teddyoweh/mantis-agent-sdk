@@ -1,6 +1,65 @@
 @import "tailwindcss";
 
 /* ============================================================
+   Google Sans — self-hosted.
+   Drop the font files into  web/public/fonts/  with these exact
+   names and it takes over automatically (woff2 preferred; ttf or
+   otf also accepted). Until the files exist, the stack below falls
+   back to the next/font "Google Sans" and then system-ui, so the
+   site never breaks.
+     GoogleSans-Regular   (400 normal)
+     GoogleSans-Medium    (500 normal)
+     GoogleSans-Bold      (700 normal)
+     GoogleSans-Italic    (400 italic)   — optional
+     GoogleSans-MediumItalic (500 italic) — optional
+   Have only a single variable file? Name it GoogleSans-Regular
+   and it will cover every weight.
+   ============================================================ */
+@font-face {
+  font-family: "Google Sans Local";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/GoogleSans-Regular.woff2") format("woff2"),
+    url("/fonts/GoogleSans-Regular.ttf") format("truetype"),
+    url("/fonts/GoogleSans-Regular.otf") format("opentype");
+}
+@font-face {
+  font-family: "Google Sans Local";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/GoogleSans-Medium.woff2") format("woff2"),
+    url("/fonts/GoogleSans-Medium.ttf") format("truetype"),
+    url("/fonts/GoogleSans-Medium.otf") format("opentype");
+}
+@font-face {
+  font-family: "Google Sans Local";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/GoogleSans-Bold.woff2") format("woff2"),
+    url("/fonts/GoogleSans-Bold.ttf") format("truetype"),
+    url("/fonts/GoogleSans-Bold.otf") format("opentype");
+}
+@font-face {
+  font-family: "Google Sans Local";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/GoogleSans-Italic.woff2") format("woff2"),
+    url("/fonts/GoogleSans-Italic.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Google Sans Local";
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/GoogleSans-MediumItalic.woff2") format("woff2"),
+    url("/fonts/GoogleSans-MediumItalic.ttf") format("truetype");
+}
+
+/* ============================================================
    mantis — design tokens
    Claude's warm editorial palette, flattened into a dense
    developer-platform surface. Two accents held with discipline:
@@ -30,7 +89,8 @@
   --color-code-2: #26231d;
 
   --font-serif: var(--ff-serif);
-  --font-sans: var(--ff-sans);
+  /* self-hosted Google Sans wins when present; next/font Google Sans is the fallback */
+  --font-sans: "Google Sans Local", var(--ff-sans);
   --font-mono: var(--ff-mono);
 }
 

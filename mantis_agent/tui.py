@@ -213,6 +213,46 @@ def render_transcript(messages: list[Any]) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+def _compute_word_emphasis(diff_lines: list[str]) -> dict[int, list[tuple[int, int]]]:
+    """Map each modified diff-line index → the char spans to brighten. Within a
+    change block (a run of '-' then '+' lines), removed and added lines are
+    aligned by their STRIPPED text (via SequenceMatcher) so lines that only moved
+    or re-indented match as 'equal' and get no char emphasis; only genuinely
+    changed lines ('replace' runs) are word-diffed against their real counterpart.
+    A naive positional zip would misalign every line the moment a ``try:`` wrapper
+    or re-indent shifts the block, lighting up nearly every character."""
+    import difflib  # noqa: PLC0415
+
+    emphasis: dict[int, list[tuple[int, int]]] = {}
+    i = 0
+    n = len(diff_lines)
+    while i < n:
+        if diff_lines[i].startswith("-"):
+            dels, j = [], i
+            while j < n and diff_lines[j].startswith("-"):
+                dels.append(j)
+                j += 1
+            adds = []
+            while j < n and diff_lines[j].startswith("+"):
+                adds.append(j)
+                j += 1
+            old_keys = [diff_lines[d][1:].strip() for d in dels]
+            new_keys = [diff_lines[a][1:].strip() for a in adds]
+            sm = difflib.SequenceMatcher(None, old_keys, new_keys, autojunk=False)
+            for tag, a1, a2, b1, b2 in sm.get_opcodes():
+                if tag != "replace":
+                    continue  # 'equal' = same content (maybe re-indented); ± = pure
+                for k in range(min(a2 - a1, b2 - b1)):
+                    di, ai = dels[a1 + k], adds[b1 + k]
+                    os_, ns_ = _word_diff_spans(diff_lines[di][1:], diff_lines[ai][1:])
+                    if os_ or ns_:
+                        emphasis[di], emphasis[ai] = os_, ns_
+            i = j
+        else:
+            i += 1
+    return emphasis
+
+
 def _word_diff_spans(old: str, new: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Char-level diff of two lines → (old_changed_spans, new_changed_spans),
     where each span is a ``(start, end)`` char range that differs. Used to
@@ -1776,28 +1816,9 @@ class MantisTUI:
         indent = 2
         old_ln = new_ln = 0
 
-        # Precompute changed-char spans for modified line pairs: within a change
-        # block (a run of '-' lines then a run of '+' lines) pair the i-th of
-        # each and word-diff them, so a one-char edit highlights one char.
-        emphasis: dict[int, list[tuple[int, int]]] = {}
-        i = 0
-        while i < len(diff_lines):
-            if diff_lines[i].startswith("-"):
-                dels, j = [], i
-                while j < len(diff_lines) and diff_lines[j].startswith("-"):
-                    dels.append(j)
-                    j += 1
-                adds = []
-                while j < len(diff_lines) and diff_lines[j].startswith("+"):
-                    adds.append(j)
-                    j += 1
-                for di, ai in zip(dels, adds):
-                    os_, ns_ = _word_diff_spans(diff_lines[di][1:], diff_lines[ai][1:])
-                    if os_ or ns_:
-                        emphasis[di], emphasis[ai] = os_, ns_
-                i = j
-            else:
-                i += 1
+        # Changed-char spans for modified line pairs — aligned by content so a
+        # re-indent / try-wrap doesn't misalign pairs and light up every line.
+        emphasis = _compute_word_emphasis(diff_lines)
 
         def _row(num: int, marker: str, code: str, bg: str, num_col: str, fg: str,
                  word_bg: str | None = None, spans: list[tuple[int, int]] | None = None) -> None:

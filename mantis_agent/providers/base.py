@@ -121,7 +121,14 @@ def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> st
     # so api.anthropic.com doesn't silently pick the OpenAI-compat path
     # (the wire format is incompatible). Bare ``claude-*`` model names
     # are deliberately NOT routed here — see routing.py for why.
-    if s == "anthropic" or "api.anthropic.com" in s:
+    # Also route Anthropic-Messages *gateways* — the ``/anthropic/v1`` convention
+    # (Azure Foundry, Bedrock Access Gateway, LiteLLM's anthropic passthrough) —
+    # so a Bedrock/Vertex/Azure proxy speaks /v1/messages, not /chat/completions.
+    # ``/anthropic/`` (segment) or a trailing ``/anthropic`` only, so we don't
+    # false-match an OpenAI-compat path like ``/anthropic-compat``.
+    _stripped = s.rstrip("/")
+    if (s == "anthropic" or "api.anthropic.com" in s
+            or "/anthropic/" in s or _stripped.endswith("/anthropic")):
         return "anthropic_passthrough"
     # Modal serverless: ``modal:workspace/app`` spec form, or any URL on
     # the modal.run host. Checked before the generic URL fallback so a

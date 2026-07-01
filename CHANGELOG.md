@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.4.1] — 2026-06-30
+
+### Fixed
+
+- **Diff word-highlighting no longer lights up every line on a re-indent.** The
+  colored diff paired the i-th removed line with the i-th added line by position,
+  so wrapping a block in `try:`/`except` (or any re-indent) shifted every line and
+  word-diffed unrelated pairs — nearly every character showed as "changed." Now
+  removed↔added lines are aligned by their stripped content (SequenceMatcher):
+  lines that only moved/re-indented match as unchanged and get no char emphasis;
+  only genuinely modified lines are word-diffed against their real counterpart. A
+  one-char edit still highlights exactly one char. New `_compute_word_emphasis`.
+
 ## [2.4.0] — 2026-06-30
 
 ### Added

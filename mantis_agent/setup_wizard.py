@@ -687,10 +687,24 @@ def _run_anthropic(c: Any, prov: Any) -> int:
     c.print(Text("  ✓ credential works", style=green))
 
     # -- pick a model ------------------------------------------------------
-    model = _pick_model_id(c, list(prov.models))
-    if model is None:
-        c.print(Text("  Cancelled.", style=dim))
-        return 1
+    if method == "gateway":
+        # Gateways use provider-specific model ids (Bedrock
+        # 'anthropic.claude-…-v2:0', Vertex 'claude-…@20240620'), NOT the direct
+        # Anthropic flagship names — so take the exact id the gateway expects.
+        c.print(Text("\n  Enter the model id your gateway serves "
+                     "(e.g. anthropic.claude-sonnet-4-5-v1:0):", style="white"))
+        try:
+            model = input("  model › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not model:
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
+    else:
+        model = _pick_model_id(c, list(prov.models))
+        if model is None:
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
 
     # -- persist -----------------------------------------------------------
     if method == "apikey":
