@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.30.0] — 2026-06-30
+
+### Added
+
+- **`/diff`** (parity roadmap T2). Review every change the agent made this
+  session in one view — runs `git diff HEAD` and renders each file with the same
+  full-width syntax-highlighted, word-level-highlighted diff renderer used inline,
+  plus a list of new (untracked) files. New pure `split_git_diff()` parser (splits
+  `git diff` output into per-file hunks, stripping git headers). Notes when the
+  directory isn't a git repo.
+
 ## [1.29.0] — 2026-06-30
 
 ### Added

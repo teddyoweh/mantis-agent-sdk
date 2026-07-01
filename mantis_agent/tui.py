@@ -77,6 +77,7 @@ SLASH_COMMANDS = {
     "/context": "show context-window usage",
     "/copy": "copy the last reply to the clipboard",
     "/export": "save the conversation to a markdown file",
+    "/diff": "review this session's file changes",
     "/vim": "toggle vim editing mode",
     "/help": "show available commands",
     "/clear": "clear the conversation history",
@@ -119,6 +120,37 @@ def _lang_from_path(path: str | None) -> str | None:
     if not path:
         return None
     return _EXT_LANG.get(Path(path).suffix.lower())
+
+
+def split_git_diff(text: str) -> list[tuple[str, list[str]]]:
+    """Parse ``git diff`` output into ``[(path, hunk_lines), ...]`` — the shape
+    ``_render_diff`` wants. Strips the git headers (``diff --git``, ``index``,
+    ``+++``/``---``, mode lines) so only ``@@`` hunks and ``+``/``-``/context
+    body lines remain (otherwise a ``+++ b/f`` header would render as an
+    addition row)."""
+    import re  # noqa: PLC0415
+
+    files: list[tuple[str, list[str]]] = []
+    path: str | None = None
+    lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("diff --git"):
+            if path and lines:
+                files.append((path, lines))
+            m = re.search(r" b/(.+)$", line)
+            path, lines = (m.group(1) if m else None), []
+        elif line.startswith("+++ b/"):
+            path = line[6:]
+        elif line.startswith((
+            "+++ ", "--- ", "index ", "new file mode", "deleted file mode",
+            "old mode ", "new mode ", "similarity index", "rename ", "Binary files",
+        )):
+            continue
+        elif line.startswith(("@@", "+", "-", " ")):
+            lines.append(line)
+    if path and lines:
+        files.append((path, lines))
+    return files
 
 
 def render_transcript(messages: list[Any]) -> str:

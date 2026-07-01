@@ -640,6 +640,15 @@ def _run_selfhost(c: Any) -> int:
 
     c.print(Text("  Probing endpoint…", style=dim))
     models = _probe_openai_models(url, key)
+    # Most OpenAI-compat servers (vLLM, Ollama, llama.cpp, LM Studio) serve under
+    # /v1. If the user pasted a bare host and the probe missed, retry with /v1 and
+    # adopt it — so the saved backend hits /v1/chat/completions, not /chat/…​.
+    if models is None and "/v1" not in url:
+        alt = url.rstrip("/") + "/v1"
+        alt_models = _probe_openai_models(alt, key)
+        if alt_models is not None:
+            url, models = alt, alt_models
+            c.print(Text(f"  (found the API under {alt})", style=dim))
     if models:
         c.print(Text(f"  ✓ reachable — {len(models)} model(s)", style=green))
         model = _pick_model_id(c, models)

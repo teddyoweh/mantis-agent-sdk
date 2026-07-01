@@ -384,14 +384,17 @@ async def run_fullscreen(tui: Any) -> int:
         n = min(len(_menu_options()), 8)
         return Dimension.exact(n) if n else Dimension.exact(0)
 
-    def _switch_model(model_id: str) -> None:
+    def _switch_model(model_id: str, *, provider_id: str | None = None) -> None:
         from . import catalog  # noqa: PLC0415
 
         # Cross-provider switch: if this model belongs to a *different* enabled
         # provider (e.g. a Claude model while on OpenAI), re-wire the backend +
         # key too — otherwise the new model would be sent to the old endpoint
         # and 404/auth-fail. Falls back to the current backend for local ids.
-        prov = catalog.provider_for_model(model_id)
+        # When the picker knows the exact provider (``provider_id``), trust it —
+        # ids like ``openai/gpt-oss-120b`` live under several providers and the
+        # prefix heuristic can't tell which group the user actually picked.
+        prov = catalog.BY_ID.get(provider_id) if provider_id else catalog.provider_for_model(model_id)
         if prov is not None:
             key = catalog.api_key_for(prov)
             if key:
@@ -423,7 +426,7 @@ async def run_fullscreen(tui: Any) -> int:
             catalog.clear_key(pid)
             await _announce(f"✗ {prov.label}: {detail} (key not saved)")
             return
-        _switch_model(model)
+        _switch_model(model, provider_id=pid)
         await _announce(f"✓ {prov.label} enabled · model → {model}")
 
     def _width() -> int:
@@ -603,6 +606,36 @@ async def run_fullscreen(tui: Any) -> int:
             except OSError as e:
                 note = f"export failed: {e}"
             await _print(lambda n=note: tui.console.print(f"[ansibrightblack]({n})[/]"))
+            return True
+        if cmd == "/diff":
+            import subprocess  # noqa: PLC0415
+
+            from .tui import split_git_diff  # noqa: PLC0415
+            try:
+                r = subprocess.run(  # noqa: S603
+                    ["git", "diff", "HEAD"], capture_output=True, text=True, timeout=8,  # noqa: S607
+                )
+                untracked = subprocess.run(  # noqa: S603
+                    ["git", "ls-files", "--others", "--exclude-standard"],  # noqa: S607
+                    capture_output=True, text=True, timeout=8,
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                await _print(lambda: tui.console.print("[ansibrightblack](not a git repo — /diff needs git)[/]"))
+                return True
+            files = split_git_diff(r.stdout)
+
+            def _show_diff() -> None:
+                if not files and not untracked:
+                    tui.console.print("[ansibrightblack](no changes vs HEAD)[/]")
+                    return
+                for path, lines in files:
+                    tui.console.print(f"\n[bold]{path}[/]")
+                    tui._render_diff(lines, path=path)
+                if untracked:
+                    tui.console.print("\n[bold]new files (untracked)[/]")
+                    for f in untracked.splitlines():
+                        tui.console.print(f"  [green]+ {f}[/]")
+            await _print(_show_diff)
             return True
         if cmd == "/vim":
             from prompt_toolkit.enums import EditingMode  # noqa: PLC0415
@@ -847,7 +880,7 @@ async def run_fullscreen(tui: Any) -> int:
             state["picking_model"] = None
             if it and it["kind"] == "model":
                 if it["enabled"]:
-                    _switch_model(it["model"])
+                    _switch_model(it["model"], provider_id=it.get("provider_id"))
                     event.app.create_background_task(_announce(f"model → {it['model']}"))
                 else:
                     # Locked provider → ask for its key inline, then enable+switch.

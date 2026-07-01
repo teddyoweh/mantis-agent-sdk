@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { Google_Sans, Geist_Mono, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
+const googleSans = Google_Sans({
   variable: "--font-sans",
   subsets: ["latin"],
   display: "swap",
@@ -67,7 +67,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
+      className={`${googleSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
     >
       <body>{children}</body>
     </html>
