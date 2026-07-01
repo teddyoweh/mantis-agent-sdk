@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.24.0] — 2026-06-30
+
+### Changed
+
+- **Rate-limit retries honor the server's `Retry-After`.** The transient-retry
+  backoff (2.23) now waits the exact time a 429 response asks for via its
+  `Retry-After` header (already parsed into `RateLimitError.retry_after_s`),
+  instead of guessing with exponential backoff — so a throttled retry actually
+  succeeds instead of hitting the limit again too soon. Capped at 60s so a hostile
+  or huge value can't hang the agent; falls back to exponential backoff when no
+  header is present. New `_retry_delay` helper.
+
 ## [2.23.0] — 2026-06-30
 
 ### Added

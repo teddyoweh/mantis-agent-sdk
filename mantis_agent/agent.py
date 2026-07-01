@@ -162,6 +162,19 @@ def _refusal_nudge() -> "UserMessage":
 _TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 
 
+def _retry_delay(
+    err: BaseException, attempt: int, *, base: float = 0.5, cap: float = 8.0,
+    retry_after_cap: float = 60.0,
+) -> float:
+    """How long to wait before the next retry. Honors a server-supplied
+    ``Retry-After`` (on a RateLimitError) — capped so a huge value can't hang the
+    agent — otherwise exponential backoff (``base * 2**attempt``, capped)."""
+    ra = getattr(err, "retry_after_s", None)
+    if isinstance(ra, (int, float)) and ra > 0:
+        return min(float(ra), retry_after_cap)
+    return min(base * (2 ** attempt), cap)
+
+
 def _is_transient(err: BaseException) -> bool:
     """Whether a provider failure is worth retrying: rate limits, 5xx / overload,
     and transport blips (connection reset, read timeout). Auth failures and
@@ -1459,7 +1472,7 @@ class Agent:
                     raise  # can't retry partial output
                 # Same-model retry on a transient error, with backoff.
                 if _is_transient(err) and attempt < self.max_retries:
-                    delay = min(0.5 * (2 ** attempt), 8.0)
+                    delay = _retry_delay(err, attempt)
                     _log.warning(
                         "transient model error (%r); retry %d/%d in %.1fs",
                         err, attempt + 1, self.max_retries, delay,
