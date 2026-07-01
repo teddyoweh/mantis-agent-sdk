@@ -11,7 +11,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         <div className="lg:grid lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-12 xl:gap-16">
           {/* desktop sidebar */}
           <aside className="hidden lg:block">
-            <div className="sticky top-14 pt-10 pb-16 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
+            <div className="sticky top-14 pt-10 pb-16 max-h-[calc(100vh-3.5rem)] overflow-y-auto no-scrollbar">
               <Sidebar />
             </div>
           </aside>

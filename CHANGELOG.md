@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.29.0] — 2026-06-30
+
+### Added
+
+- **Budget wrap-up.** A run approaching a configured budget (USD / tokens / turns)
+  now gets the same coherent ending as a turn-limited one (2.25): once it's within
+  ~75% of the cap it's nudged (once) to stop starting new work and summarize what
+  it did, what's left, and the next step — BEFORE the hard cap raises
+  `BudgetExceededError` mid-task. The wrap-up reminder wording is now
+  limit-aware ("turn limit" vs "budget limit"). Runs with no budget configured are
+  unaffected.
+
 ## [2.28.0] — 2026-06-30
 
 ### Added

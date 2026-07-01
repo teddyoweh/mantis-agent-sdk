@@ -121,6 +121,23 @@ def test_hosted_backend_profiles_have_correct_provider_hints() -> None:
         assert p.supports_native_tools is True, url
 
 
+def test_family_capability_snapshot() -> None:
+    # A single guard for every family's (native_tools, context_window) tuned this
+    # session — a regression in any one (like the o-series 128k→200k) fails here.
+    from mantis_agent.capabilities import lookup_model
+    expected = {
+        "gpt-4o": (True, 128000), "gpt-5.4": (True, 128000),
+        "o1": (True, 200000), "o3-mini": (True, 200000), "o4-mini": (True, 200000),
+        "claude-opus-4-8": (True, 200000), "gemini-2.5-pro": (True, 1000000),
+        "glm-4.7": (True, 128000), "deepseek-chat": (True, 65536),
+        "kimi-latest": (True, 131072), "qwen2.5-coder:7b": (True, 32768),
+        "llama3.1:8b": (True, 131072),
+    }
+    for m, (nt, ctx) in expected.items():
+        c = lookup_model(m)
+        assert (c.supports_native_tools, c.context_window) == (nt, ctx), (m, c.supports_native_tools, c.context_window)
+
+
 def test_hosted_flagships_have_native_tools_and_real_context() -> None:
     # Regression: the popular hosted models must resolve to native tool-calling
     # (path A) + their true context windows — not the 8192 / no-tools generic

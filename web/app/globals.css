@@ -265,13 +265,15 @@
 /* code surfaces stay horizontally scrollable, but the scrollbar is hidden */
 [data-rehype-pretty-code-figure] pre,
 .shiki-card .shiki-pre,
-.code-scroll {
+.code-scroll,
+.no-scrollbar {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* legacy Edge */
 }
 [data-rehype-pretty-code-figure] pre::-webkit-scrollbar,
 .shiki-card .shiki-pre::-webkit-scrollbar,
-.code-scroll::-webkit-scrollbar {
+.code-scroll::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar {
   width: 0;
   height: 0;
   display: none; /* Chrome / Safari */

@@ -242,17 +242,18 @@ def close_open_tool_calls(
     return added
 
 
-def _final_turn_reminder() -> "UserMessage":
-    """A one-shot reminder injected on the last allowed step so a turn-limited
-    run ends with a summary instead of a half-finished tool call."""
+def _final_turn_reminder(reason: str = "turn limit") -> "UserMessage":
+    """A one-shot reminder injected as a run approaches a hard stop (its turn
+    limit or budget) so it ends with a summary instead of a half-finished tool
+    call. ``reason`` names the limit for the model."""
     from .system_reminder import wrap_system_reminder  # noqa: PLC0415
 
     return UserMessage(
         content=wrap_system_reminder(
-            "You have reached your turn limit — this is your FINAL turn. Do not "
-            "start new tool calls you can't finish. Instead, give the user a "
-            "concise summary of what you accomplished, what's still left, and the "
-            "clear next step, so they can pick up from here."
+            f"You are reaching your {reason} — wrap up NOW. Do not start new tool "
+            "calls you can't finish. Instead, give the user a concise summary of "
+            "what you accomplished, what's still left, and the clear next step, so "
+            "they can pick up from here."
         ),
         isMeta=True,
     )
@@ -440,6 +441,7 @@ class Agent:
     # Set once the fallback model has been activated, so we don't loop.
     _fallback_used: bool = field(default=False, init=False)
     _refusal_retried: bool = field(default=False, init=False)
+    _budget_wrapup_done: bool = field(default=False, init=False)
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
     _surfaced: set[str] = field(default_factory=set, init=False)
@@ -952,6 +954,7 @@ class Agent:
         compactions = 0
         _MAX_COMPACTIONS = 5
         self._refusal_retried = False
+        self._budget_wrapup_done = False
 
         for step in range(self.max_steps):
             # If the cancellation signal already fired BEFORE this turn
@@ -975,6 +978,19 @@ class Agent:
                 final_msg = _final_turn_reminder()
                 messages.append(final_msg)
                 yield final_msg
+
+            # Budget wrap-up: once we're within ~85% of a configured USD/token/turn
+            # budget, nudge the model to summarize BEFORE the hard cap raises
+            # BudgetExceededError — so a budget-limited run ends coherently too.
+            elif (
+                not self._budget_wrapup_done
+                and self._budget_tracker is not None
+                and self._budget_tracker.should_use_fallback(0.75)  # leave runway to summarize
+            ):
+                self._budget_wrapup_done = True
+                budget_msg = _final_turn_reminder("budget limit")
+                messages.append(budget_msg)
+                yield budget_msg
 
             # ----------------------------------------------------------------
             # Auto-compaction — at the TOP of the turn (before the model call),

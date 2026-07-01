@@ -411,7 +411,7 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         name="deepseek-unknown",
         family="deepseek",
         supports_native_tools=True,
-        context_window=32768,
+        context_window=65536,  # DeepSeek V3/R1 ship a 64k window (was understated at 32k)
         chat_template_id="deepseek",
     ),
     "mistral": ModelCapability(

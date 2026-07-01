@@ -73,7 +73,7 @@ async def _drain(agent, msgs):
 
 
 def _has_final_reminder(msgs: list) -> int:
-    return sum(1 for m in msgs if getattr(m, "isMeta", False) and "FINAL turn" in str(m.content))
+    return sum(1 for m in msgs if getattr(m, "isMeta", False) and "turn limit" in str(m.content))
 
 
 def test_reminder_on_turn_limit() -> None:
@@ -89,7 +89,7 @@ def test_no_reminder_on_natural_stop() -> None:
 def test_reminder_content() -> None:
     r = _final_turn_reminder()
     body = str(r.content).lower()
-    assert "final turn" in body and "summary" in body
+    assert "turn limit" in body and "summary" in body
     assert getattr(r, "isMeta", False) is True
 
 
