@@ -209,6 +209,13 @@ class Agent:
     # Set to False for tests / containerized runs where you don't want disk I/O.
     include_memory: bool = True
 
+    # Environment context — injects a session-start ``<env>`` + git snapshot
+    # (cwd, platform, OS, date, branch, status, recent commits) into the same
+    # isMeta context head as memory, so the model is oriented in the repo.
+    # Built once and memoized (``_env_context``) to keep the prompt-cache prefix
+    # stable across turns. Set False to disable (tests / non-repo runs).
+    include_env: bool = True
+
     # Structured output — see ``response_format.py``. ``None`` means "model
     # is free to emit any text"; a dict in OpenAI ``response_format`` shape
     # is translated per backend at provider-stream time. Normalized once at
@@ -240,6 +247,9 @@ class Agent:
     _dispatcher: HookDispatcher | None = field(default=None, init=False)
     _budget_tracker: BudgetTracker | None = field(default=None, init=False)
     _provider_hint: str | None = field(default=None, init=False)
+    # Memoized ``<env>`` + git snapshot (built once, reused every turn so the
+    # prompt-cache prefix stays stable). Populated lazily in _build_user_context.
+    _env_context: str | None = field(default=None, init=False)
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
@@ -394,6 +404,25 @@ class Agent:
         """
 
         ctx: dict[str, str] = {}
+
+        # Global opt-out for ALL persistent context (env + memory + project
+        # memory). Mirrors Claude Code skipping context injection under
+        # NODE_ENV=test; the test suite sets it so agents don't shell out to
+        # git or pick up the ambient repo's AGENTS.md/MANTIS.md.
+        if os.environ.get("MANTIS_AGENT_NO_CONTEXT") == "1":
+            return ctx
+
+        # Environment first — <env> + git snapshot, memoized so the cache prefix
+        # stays stable across turns.
+        if self.include_env:
+            try:
+                if self._env_context is None:
+                    from .system_reminder import render_environment_context
+                    self._env_context = render_environment_context().strip()
+                if self._env_context:
+                    ctx["environment"] = self._env_context
+            except Exception:  # noqa: BLE001 — subprocess / I/O can fail
+                _log.debug("env context skipped", exc_info=True)
 
         if self.include_memory:
             try:

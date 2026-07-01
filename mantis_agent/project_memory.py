@@ -33,6 +33,10 @@ from .paths import get_mantis_agent_dir
 
 # File / directory names — the mantis analogues of CLAUDE.md / .claude.
 PROJECT_FILE = "MANTIS.md"
+# AGENTS.md — the cross-tool convention (Claude Code, others). Loaded natively
+# at the same tier/precedence as MANTIS.md so a project's existing AGENTS.md is
+# picked up with no config.
+AGENTS_FILE = "AGENTS.md"
 LOCAL_FILE = "MANTIS.local.md"
 WORKSPACE_DIR = ".mantis"
 RULES_SUBDIR = "rules"
@@ -76,6 +80,7 @@ def _project_candidates(cwd: Path) -> list[Path]:
     out: list[Path] = []
     for d in reversed(_walk_up(cwd)):  # root first, cwd last
         out.append(d / PROJECT_FILE)
+        out.append(d / AGENTS_FILE)  # cross-tool convention, same tier
         out.append(d / WORKSPACE_DIR / PROJECT_FILE)
         rules = d / WORKSPACE_DIR / RULES_SUBDIR
         if rules.is_dir():

@@ -32,11 +32,16 @@ def tmp_mantis_agent_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pa
 
 def test_agent_injects_memory_as_system_reminder_user_message(
     tmp_mantis_agent_home: Path,
+    monkeypatch,
 ) -> None:
     """When include_memory=True (default), MEMORY.md is wrapped in a
     ``<system-reminder>`` and injected as a synthetic isMeta user message
     at the head of the conversation when ``run()`` is invoked. The system
     prompt itself is left untouched — Claude SDK parity."""
+
+    # This test specifically exercises context injection, which the suite-wide
+    # autouse fixture disables — re-enable it here.
+    monkeypatch.delenv("MANTIS_AGENT_NO_CONTEXT", raising=False)
 
     from mantis_agent import UserMessage
     from mantis_agent.events import (

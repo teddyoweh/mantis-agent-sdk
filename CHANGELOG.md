@@ -74,6 +74,24 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.9.0] — 2026-06-30
+
+### Added
+
+- **The agent is now oriented in your repo** (parity roadmap T0.5). Every
+  session injects an `<env>` + git snapshot into the context head: working
+  directory, platform, OS version, today's date, a shallow directory listing,
+  and git branch / main branch / user / status / recent commits (Claude Code's
+  format, incl. the "snapshot in time" disclaimer and 2k status truncation).
+  Built once and memoized (`Agent._env_context`) so the prompt-cache prefix
+  stays stable across turns; rides in the same isMeta head compaction preserves.
+  New `include_env` field (default True); `MANTIS_AGENT_NO_CONTEXT=1` disables
+  all context injection. New `system_reminder.build_env_context_block` /
+  `build_git_context` / `render_environment_context`.
+- **`AGENTS.md` is now auto-loaded** alongside `MANTIS.md` in the project-memory
+  cwd-walk (same tier/precedence) — a project's existing AGENTS.md is picked up
+  with no config.
+
 ## [1.8.1] — 2026-06-30
 
 ### Security

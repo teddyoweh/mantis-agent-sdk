@@ -22,6 +22,16 @@ from typing import Any
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_env_context(monkeypatch):
+    """Disable the session-start <env>/git context head for the whole suite so
+    Agents don't shell out to git and don't inject an extra isMeta message that
+    would shift the yielded-message indices tests assert on. Mirrors Claude
+    Code skipping context injection under NODE_ENV=test. Tests that specifically
+    exercise env injection re-enable it with ``monkeypatch.delenv(...)``."""
+    monkeypatch.setenv("MANTIS_AGENT_NO_CONTEXT", "1")
+
+
 # ---------------------------------------------------------------------------
 # Mock backend
 # ---------------------------------------------------------------------------

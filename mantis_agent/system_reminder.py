@@ -52,8 +52,11 @@ __all__ = [
     "CLOSE_TAG",
     "USER_CONTEXT_PREAMBLE",
     "USER_CONTEXT_TRAILER",
+    "build_env_context_block",
+    "build_git_context",
     "build_live_context_block",
     "is_system_reminder",
+    "render_environment_context",
     "prepend_user_context",
     "render_user_context",
     "strip_system_reminders",
@@ -223,3 +226,141 @@ def build_live_context_block(
         "but don't restate it unless it's directly relevant to your reply."
     )
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Environment / git / directory snapshot — session-start facts the model needs
+# to feel oriented in the repo. Composed into the isMeta context head (built
+# once per session, so the prompt-cache prefix stays stable). Ports Claude
+# Code's ``<env>`` block + git-status snapshot (constants/prompts.ts,
+# context.ts:getGitStatus) closely, including the "snapshot in time" disclaimer.
+# ---------------------------------------------------------------------------
+
+_GIT_STATUS_MAX_CHARS = 2000
+
+
+def build_env_context_block(
+    *,
+    cwd: str | None = None,
+    now: datetime | None = None,
+    platform_name: str | None = None,
+    os_version: str | None = None,
+    dir_entries: list[str] | None = None,
+    is_git: bool | None = None,
+    max_dir_entries: int = 40,
+) -> str:
+    """Pure(ish). The ``<env>`` block: working directory, platform, OS version,
+    today's date, and a shallow (non-recursive) directory listing. Every input
+    is injectable so this is deterministic in tests; omitted values default to
+    the real environment."""
+    import os  # noqa: PLC0415
+    import platform as _pf  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    cwd_path = Path(cwd) if cwd is not None else Path.cwd()
+    now = now or datetime.now()
+    platform_name = platform_name or _pf.system().lower()
+    os_version = os_version or _pf.platform()
+
+    if dir_entries is None:
+        try:
+            names: list[str] = []
+            with os.scandir(cwd_path) as it:
+                for e in it:
+                    if e.name.startswith("."):
+                        continue
+                    names.append(e.name + ("/" if e.is_dir() else ""))
+            dir_entries = sorted(names)[:max_dir_entries]
+        except OSError:
+            dir_entries = []
+
+    lines = ["<env>", f"Working directory: {cwd_path}"]
+    if is_git is not None:
+        lines.append(f"Is directory a git repo: {'Yes' if is_git else 'No'}")
+    lines += [
+        f"Platform: {platform_name}",
+        f"OS Version: {os_version}",
+        f"Today's date: {now.strftime('%Y-%m-%d')}",
+        "</env>",
+    ]
+    block = "\n".join(lines)
+    if dir_entries:
+        listing = "\n".join(f"- {n}" for n in dir_entries)
+        block += f"\nDirectory (shallow):\n{listing}"
+    return block
+
+
+def _run_git(args: list[str], cwd: object) -> str | None:
+    """The single monkeypatchable IO seam. Runs ``git <args>`` in ``cwd`` with a
+    short timeout. Returns stripped stdout, or ``None`` on non-zero exit, missing
+    git, not-a-repo, or timeout — so callers degrade gracefully."""
+    import subprocess  # noqa: PLC0415
+
+    try:
+        r = subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def build_git_context(cwd: str | None = None, *, run: object = None) -> str:
+    """The git snapshot: branch, git user, short status (truncated), and the
+    last 5 commits. Returns ``""`` when ``cwd`` isn't a git repo (first probe
+    returns ``None``). ``run`` overrides the IO seam for tests."""
+    from pathlib import Path  # noqa: PLC0415
+
+    cwd_path = Path(cwd) if cwd is not None else Path.cwd()
+    g = run or _run_git
+
+    branch = g(["rev-parse", "--abbrev-ref", "HEAD"], cwd_path)
+    if branch is None:
+        return ""  # not a git repo / git unavailable
+
+    parts = [
+        "This is the git status at the start of the conversation. Note that "
+        "this status is a snapshot in time, and will not update during the "
+        "conversation.",
+        f"Current branch: {branch}",
+    ]
+    main = g(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd_path)
+    if main:
+        parts.append(f"Main branch (usually for PRs): {main.removeprefix('origin/')}")
+    user = g(["config", "user.name"], cwd_path)
+    if user:
+        email = g(["config", "user.email"], cwd_path)
+        parts.append(f"Git user: {user} <{email}>" if email else f"Git user: {user}")
+    status = g(["status", "--porcelain"], cwd_path)
+    if status is not None:
+        s = status if status.strip() else "(clean)"
+        if len(s) > _GIT_STATUS_MAX_CHARS:
+            s = s[:_GIT_STATUS_MAX_CHARS] + '\n... (truncated — run `git status` for the rest)'
+        parts.append(f"Status:\n{s}")
+    log = g(["log", "--oneline", "-5"], cwd_path)
+    if log:
+        parts.append(f"Recent commits:\n{log}")
+    return "\n\n".join(parts)
+
+
+def render_environment_context(
+    cwd: str | None = None, now: datetime | None = None
+) -> str:
+    """Compose the ``<env>`` block + git snapshot into the single string that
+    becomes the ``environment`` context key. Never raises — best-effort; always
+    returns at least the ``<env>`` block even with no git."""
+    try:
+        git = build_git_context(cwd=cwd)
+    except Exception:  # noqa: BLE001
+        git = ""
+    try:
+        env = build_env_context_block(cwd=cwd, now=now, is_git=bool(git))
+    except Exception:  # noqa: BLE001
+        env = "<env>\n</env>"
+    return env + (f"\n\n{git}" if git else "")

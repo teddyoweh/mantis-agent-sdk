@@ -68,7 +68,7 @@ async def run_fullscreen(tui: Any) -> int:
 
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
-        "slash_sel": 0, "pending_perm": None,
+        "slash_sel": 0, "pending_perm": None, "picking_model": None,
     }
 
     # Interactive permission asker: render an in-pane Allow/Deny prompt and
@@ -115,19 +115,42 @@ async def run_fullscreen(tui: Any) -> int:
         return models
 
     def _menu_options() -> list[tuple[str, str, str]]:
-        """Returns ``(kind, value, meta)`` rows. kind is 'cmd' or 'model'."""
+        """Matching slash commands for the in-progress line (the type-ahead menu).
+        The model picker is a separate state-driven overlay (see picker_ft)."""
         t = input_buffer.text
-        if not t.startswith("/"):
+        if not t.startswith("/") or " " in t:
             return []
-        # Model picker: '/models' or '/model <partial>' → selectable chat models.
-        if t == "/models" or t.startswith("/model "):
-            partial = t[7:].strip().lower() if t.startswith("/model ") else ""
-            models = [m for m in _chat_models() if partial in m.lower()]
-            return [("model", m, "← current" if m == tui.model else "") for m in models[:8]]
-        # Command menu (still typing the command name).
-        if " " not in t:
-            return [("cmd", c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
-        return []
+        return [("cmd", c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
+
+    # -- model picker overlay (state-driven, like the permission prompt) ------
+
+    def _open_model_picker() -> None:
+        models = _chat_models()
+        cur = models.index(tui.model) if tui.model in models else 0
+        state["picking_model"] = {"models": models, "sel": cur}
+        get_app().invalidate()
+
+    def picker_ft() -> Any:
+        p = state.get("picking_model")
+        if not p:
+            return ANSI("")
+        models, sel = p["models"], p["sel"] % max(1, len(p["models"]))
+        # Window of up to 8 rows centered on the selection.
+        lo = max(0, min(sel - 3, len(models) - 8))
+        rows = [f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · enter · esc){_RESET}"]
+        for i in range(lo, min(lo + 7, len(models))):
+            m = models[i]
+            mark = "  ← current" if m == tui.model else ""
+            if i == sel:
+                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{mark}{_RESET}")
+            else:
+                rows.append(f"  {m}{_DIM}{mark}{_RESET}")
+        return ANSI("\n".join(rows))
+
+    def _picker_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        p = state.get("picking_model")
+        return Dimension.exact(1 + min(len(p["models"]), 7)) if p else Dimension.exact(0)
 
     def menu_ft() -> Any:
         opts = _menu_options()
@@ -270,41 +293,19 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui.console.print(f"[ansibrightblack]{Path.cwd()}[/]"))
             return True
         if cmd in ("/model", "/models"):
-            available, reachable = tui._available_models()
             if arg:
-                # Pick by list number or by id.
-                if arg.isdigit() and available and 1 <= int(arg) <= len(available):
-                    picked = available[int(arg) - 1]
+                # Direct switch by id (or number into the chat-model list).
+                models = _chat_models()
+                if arg.isdigit() and models and 1 <= int(arg) <= len(models):
+                    picked = models[int(arg) - 1]
                 else:
                     picked = arg
-                tui.model = picked
-                # REBUILD the agent so the new model actually takes effect — just
-                # setting tui.model did nothing before (the live agent kept the
-                # old model). Persist it as the last-used model too.
-                tui.agent = tui._build_agent()
-                try:
-                    from . import catalog  # noqa: PLC0415
-                    catalog.set_last_model(picked)
-                except Exception:  # noqa: BLE001
-                    pass
-
-                def _ok(p: str = picked) -> None:
-                    tui.console.print(f"[ansibrightblack](model → [white]{p}[/])[/]")
-                await _print(_ok)
+                _switch_model(picked)
+                await _print(lambda p=picked: tui.console.print(
+                    f"[ansibrightblack](model → [white]{p}[/])[/]"))
             else:
-                def _list() -> None:
-                    tui.console.print(f"\n[bold]Models[/] [ansibrightblack]· {tui.backend}[/]")
-                    if not available:
-                        tui.console.print(
-                            "  [ansibrightblack](none found — switch with[/] "
-                            "[white]/model <id>[/][ansibrightblack])[/]")
-                    for i, m in enumerate(available[:30], 1):
-                        mark = "  [white]← current[/]" if m == tui.model else ""
-                        tui.console.print(f"  [white]{i:2}[/] {m}{mark}")
-                    tui.console.print(
-                        "[ansibrightblack]→ [white]/model <number>[/] or "
-                        "[white]/model <id>[/][/]\n")
-                await _print(_list)
+                # No arg → open the interactive picker overlay (↑/↓ · enter · esc).
+                _open_model_picker()
             return True
         if cmd == "/help":
             await _print(lambda: tui.console.print(
@@ -321,6 +322,17 @@ async def run_fullscreen(tui: Any) -> int:
 
     _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
+    _picker_open = Condition(lambda: state.get("picking_model") is not None)
+
+    @kb.add("up", filter=_picker_open)
+    def _(event: Any) -> None:
+        state["picking_model"]["sel"] -= 1
+        event.app.invalidate()
+
+    @kb.add("down", filter=_picker_open)
+    def _(event: Any) -> None:
+        state["picking_model"]["sel"] += 1
+        event.app.invalidate()
 
     async def _announce(msg: str) -> None:
         await _print(lambda: tui.console.print(f"[ansibrightblack]{msg}[/]"))
@@ -400,6 +412,17 @@ async def run_fullscreen(tui: Any) -> int:
         if state.get("pending_perm") is not None:
             _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
             return
+        # Model picker open → switch to the highlighted model and close it.
+        p = state.get("picking_model")
+        if p is not None:
+            models = p["models"]
+            if models:
+                chosen = models[p["sel"] % len(models)]
+                _switch_model(chosen)
+                event.app.create_background_task(_announce(f"model → {chosen}"))
+            state["picking_model"] = None
+            event.app.invalidate()
+            return
         # Menu open → act on the highlighted row (switch model / fill command).
         if _accept_menu(event):
             return
@@ -424,6 +447,11 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
+        # Esc closes the model picker without switching.
+        if state.get("picking_model") is not None:
+            state["picking_model"] = None
+            event.app.invalidate()
+            return
         # Esc during a permission prompt = deny (don't run the tool).
         if state.get("pending_perm") is not None:
             _resolve_perm("deny")
@@ -448,6 +476,8 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(menu_ft), height=_menu_height),
             # Interactive permission prompt — height 0 unless an Ask is pending.
             Window(FormattedTextControl(perm_ft), height=_perm_height),
+            # Model picker overlay — height 0 unless /models opened it.
+            Window(FormattedTextControl(picker_ft), height=_picker_height),
             Window(FormattedTextControl(footer_ft), height=1),
         ]),
         focused_element=input_window,
