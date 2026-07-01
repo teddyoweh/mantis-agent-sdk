@@ -25,7 +25,7 @@ export function Terminal() {
         </span>
       </div>
 
-      <div className="px-4 sm:px-5 py-4 overflow-x-auto">
+      <div className="px-4 sm:px-5 py-4 overflow-x-auto code-scroll">
         {/* banner */}
         <div className="flex gap-5">
           <pre className="whitespace-pre" style={{ color: "var(--color-mantis-soft)" }}>

@@ -438,15 +438,25 @@ _NONCHAT_MARKERS = (
     "video", "stable-diffusion", "flux",
     # responses-only OpenAI models — these 400 on /v1/chat/completions ("use the
     # v1/responses endpoint instead"), which mantis doesn't speak, so hide them
-    # from the picker: the -codex coding models, computer-use, and -pro reasoners.
-    "codex", "computer-use", "-pro",
+    # from the picker: the -codex coding models + computer-use. (The -pro
+    # reasoners are handled in _is_chat_model — a blanket "-pro" marker wrongly
+    # excluded Gemini's chat model gemini-2.5-pro.)
+    "codex", "computer-use",
     # legacy / date-stamped OpenAI engines (so modern flagships survive the cap)
     "gpt-3.5", "gpt-4-0", "gpt-4-1", "-0613", "-0314", "-0301", "-1106", "-0125", "-16k",
 )
 
 
 def _is_chat_model(model_id: str) -> bool:
-    return not any(m in model_id.lower() for m in _NONCHAT_MARKERS)
+    low = model_id.lower()
+    if any(m in low for m in _NONCHAT_MARKERS):
+        return False
+    # OpenAI's -pro reasoners (o1-pro, o3-pro, gpt-5*-pro) are responses-only, but
+    # other providers' -pro/-plus tiers (gemini-2.5-pro, …) are normal chat — so
+    # only exclude the OpenAI ones.
+    if "-pro" in low and low.startswith(("o1", "o3", "o4", "gpt-5")):
+        return False
+    return True
 
 
 def error_hint(err: BaseException, backend: str | None) -> str | None:

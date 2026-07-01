@@ -61,6 +61,11 @@ def _record_seen(p: Path) -> None:
 def _check_write_guard(p: Path) -> None:
     if not p.exists() or not p.is_file():
         return  # new file — nothing to clobber
+    try:
+        if p.stat().st_size == 0:
+            return  # empty file (e.g. just `touch`ed) — no unseen content to lose
+    except OSError:
+        pass
     seen = _FILE_READS.get(str(p.resolve()))
     if seen is None:
         raise ValueError(

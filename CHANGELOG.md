@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.27.1] — 2026-06-30
+
+### Fixed
+
+- **Read-before-write guard no longer blocks writing an empty file.** After
+  creating a file another way — `bash("touch config.json")`, `> file`, an empty
+  scaffold — then calling `write_file` on it, the guard (2.3) wrongly demanded a
+  read first, even though a 0-byte file has no unseen content to clobber. Empty
+  files now write freely; non-empty unread files are still protected.
+
 ## [2.27.0] — 2026-06-30
 
 ### Added

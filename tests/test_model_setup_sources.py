@@ -154,6 +154,16 @@ def test_ollama_base_respects_ollama_host(monkeypatch) -> None:
     assert _ollama_base() == "http://127.0.0.1:11434"
 
 
+def test_pro_filter_excludes_only_openai_responses_models() -> None:
+    # The -pro exclusion must be OpenAI-specific: OpenAI's o1-pro/gpt-5-pro are
+    # responses-only, but gemini-2.5-pro (and -plus tiers) are normal chat models.
+    from mantis_agent.tui import _is_chat_model
+    for m in ("gemini-2.5-pro", "gemini-1.5-pro", "qwen3-coder-plus", "glm-4-plus"):
+        assert _is_chat_model(m) is True, m
+    for m in ("gpt-5.4-pro", "gpt-5-pro", "o1-pro", "o3-pro", "o4-pro"):
+        assert _is_chat_model(m) is False, m
+
+
 def test_catalog_providers_are_wellformed() -> None:
     # Guard the setup fallback data: every hosted provider must have a usable id,
     # https base URL, key env var, and at least one non-empty flagship model id.

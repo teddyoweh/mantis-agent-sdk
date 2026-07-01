@@ -68,3 +68,28 @@ def test_edit_records_so_write_is_allowed(tmp_path: Path) -> None:
     # edit updated the tracker's mtime → a following write_file doesn't false-trip
     anyio.run(lambda: write_file.fn(path=str(p), content="rewritten"))
     assert p.read_text() == "rewritten"
+
+
+def test_empty_file_writes_freely(tmp_path: Path) -> None:
+    # a just-`touch`ed (0-byte) file has no unseen content — allow the write
+    p = tmp_path / "config.json"
+    p.touch()
+    out = anyio.run(lambda: write_file.fn(path=str(p), content="{}"))
+    assert "Wrote" in out or "Updated" in out
+    assert p.read_text() == "{}"
+
+
+def test_nonempty_unread_still_guarded(tmp_path: Path) -> None:
+    p = tmp_path / "data.txt"
+    p.write_text("precious content")
+    with pytest.raises(ValueError, match="hasn't been read"):
+        anyio.run(lambda: write_file.fn(path=str(p), content="clobber"))
+    assert p.read_text() == "precious content"
+
+
+def test_touch_then_write_flow(tmp_path: Path) -> None:
+    # the common agent pattern: create empty via one tool, populate via write_file
+    p = tmp_path / "new.py"
+    p.touch()                                    # e.g. bash `touch`
+    anyio.run(lambda: write_file.fn(path=str(p), content="print('hi')"))
+    assert p.read_text() == "print('hi')"
