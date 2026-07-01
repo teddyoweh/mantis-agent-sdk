@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from pathlib import Path
 
 from ..tools import tool
@@ -23,19 +24,84 @@ _IGNORE_DIRS = {
 }
 
 
-def _py_files(root: str, cap: int = 3000) -> list[str]:
+def _rx(p: str) -> "re.Pattern[str]":
+    return re.compile(p)
+
+
+# Definition patterns for non-Python languages (Python uses ast). Each is
+# ``(regex_capturing_the_name, kind)`` matched per line. Kept precise — only
+# declaration syntax, so a call or a control-flow brace isn't mistaken for a def.
+_JS_DEFS = [
+    (_rx(r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)"), "function"),
+    (_rx(r"(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)"), "class"),
+    (_rx(r"(?:export\s+)?(?:const|let|var)\s+(\w+)\s*="), "const"),
+]
+_TS_EXTRA = [
+    (_rx(r"(?:export\s+)?interface\s+(\w+)"), "interface"),
+    (_rx(r"(?:export\s+)?type\s+(\w+)\s*="), "type"),
+    (_rx(r"(?:export\s+)?enum\s+(\w+)"), "enum"),
+]
+_LANG_DEFS: dict[str, list] = {
+    "js": _JS_DEFS,
+    "ts": _JS_DEFS + _TS_EXTRA,
+    "go": [(_rx(r"func\s+(?:\([^)]*\)\s*)?(\w+)"), "func"), (_rx(r"type\s+(\w+)\s"), "type")],
+    "rs": [(_rx(r"(?:pub\s+)?(?:async\s+)?fn\s+(\w+)"), "fn"),
+           (_rx(r"(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)"), "type")],
+    "java": [(_rx(r"(?:public|private|protected|static|final|abstract|\s)*(?:class|interface|enum)\s+(\w+)"), "class")],
+    "rb": [(_rx(r"def\s+(\w+)"), "def"), (_rx(r"class\s+(\w+)"), "class"),
+           (_rx(r"module\s+(\w+)"), "module")],
+    "c": [(_rx(r"^[\w\*\s]+?\s+\**(\w+)\s*\([^;{]*\)\s*\{?\s*$"), "func")],
+}
+_EXT_LANG = {
+    ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js",
+    ".ts": "ts", ".tsx": "ts",
+    ".go": "go", ".rs": "rs", ".java": "java", ".rb": "rb",
+    ".c": "c", ".h": "c", ".cpp": "c", ".cc": "c", ".hpp": "c",
+}
+_ALL_EXTS = {".py", *_EXT_LANG}
+
+
+def _source_files(root: str, exts: set[str], cap: int = 3000) -> list[str]:
     p = Path(root).expanduser()
     if p.is_file():
-        return [str(p)] if p.suffix == ".py" else []
+        return [str(p)] if p.suffix in exts else []
     out: list[str] = []
     for dp, dns, fns in os.walk(p):
         dns[:] = [d for d in dns if d not in _IGNORE_DIRS and not d.startswith(".")]
         for f in fns:
-            if f.endswith(".py"):
+            if os.path.splitext(f)[1] in exts:
                 out.append(os.path.join(dp, f))
                 if len(out) >= cap:
                     return out
     return out
+
+
+def _py_files(root: str, cap: int = 3000) -> list[str]:
+    return _source_files(root, {".py"}, cap)
+
+
+def _regex_defs(root: str, symbol: str | None) -> list[tuple[str, int, str, str]]:
+    """``(relpath, line, kind, name)`` for non-Python definitions. ``symbol``
+    None → every definition (outline); else only exact-name matches."""
+    hits: list[tuple[str, int, str, str]] = []
+    base = Path(root).expanduser()
+    base_dir = base if base.is_dir() else base.parent
+    for f in _source_files(root, set(_EXT_LANG)):
+        lang = _EXT_LANG.get(Path(f).suffix)
+        if lang is None:
+            continue
+        try:
+            text = Path(f).read_text("utf-8", "replace")
+        except OSError:
+            continue
+        rel = os.path.relpath(f, base_dir)
+        for i, line in enumerate(text.splitlines(), 1):
+            for rx, kind in _LANG_DEFS[lang]:
+                m = rx.search(line)
+                if m and (symbol is None or m.group(1) == symbol):
+                    hits.append((rel, i, kind, m.group(1)))
+                    break
+    return hits
 
 
 def find_definitions(symbol: str, root: str) -> list[tuple[str, int, str]]:
@@ -61,6 +127,8 @@ def find_definitions(symbol: str, root: str) -> list[tuple[str, int, str]]:
                     kind = "assign"
             if kind:
                 hits.append((rel, node.lineno, kind))
+    # Non-Python files (JS/TS/Go/Rust/Java/Ruby/C) via regex.
+    hits.extend((rel, ln, kind) for rel, ln, kind, _name in _regex_defs(root, symbol))
     hits.sort()
     return hits
 
@@ -124,6 +192,10 @@ def find_symbols(root: str, *, name_filter: str = "", limit: int = 500) -> list[
         _visit(tree, None)
         if len(out) >= limit:
             break
+    # Non-Python files (JS/TS/Go/Rust/Java/Ruby/C) via regex — no class nesting.
+    for rel, ln, kind, name in _regex_defs(root, None):
+        if not nf or nf in name.lower():
+            out.append((rel, ln, kind, name, None))
     out.sort(key=lambda s: (s[0], s[1]))
     return out[:limit]
 
@@ -136,15 +208,21 @@ def _render_symbols(syms: list[tuple[str, int, str, str, str | None]]) -> str:
             lines.append(f"\n{rel}:")
             cur_file = rel
         indent = "    " if kind == "method" else "  "
-        label = f"class {name}" if kind == "class" else f"{name}()"
+        if kind == "class":
+            label = f"class {name}"
+        elif kind in ("def", "method", "function", "func", "fn"):
+            label = f"{name}()"
+        else:  # interface, type, enum, const, module, struct — not callable
+            label = f"{name} [{kind}]"
         lines.append(f"{indent}{label}  (line {ln})")
     return "\n".join(lines).strip()
 
 
 @tool(name="lsp", is_read_only=True)
 async def lsp(operation: str, symbol: str = "", path: str = ".") -> str:
-    """Semantic code navigation for Python (via the stdlib ``ast`` module) —
-    more precise than grep because it understands the code structure.
+    """Semantic code navigation — Python via the stdlib ``ast`` module (precise),
+    plus JS/TS/Go/Rust/Java/Ruby/C via targeted regex. More precise than grep:
+    it matches declaration syntax, not every mention.
 
     Args:
         operation: ``definition`` (where a symbol is defined), ``references``

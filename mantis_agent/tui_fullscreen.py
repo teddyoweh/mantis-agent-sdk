@@ -298,24 +298,31 @@ async def run_fullscreen(tui: Any) -> int:
 
     _PICKER_ROWS = 11  # visible model/header rows in the picker window
 
-    def _open_model_picker() -> None:
-        # Build a GROUPED item list: active backend first, then other ENABLED
-        # providers, then DISABLED providers (shown dimmed + 🔒 so you can see
-        # every model and enable one on demand). Items are headers or models.
+    def _build_picker_items(flt: str) -> list[dict]:
+        # GROUPED items: active backend first, then other ENABLED providers, then
+        # DISABLED (dimmed + 🔒). ``flt`` is a case-insensitive substring filter
+        # on the model id — groups with no surviving models are dropped.
         from .tui import _is_chat_model  # noqa: PLC0415
         from . import catalog  # noqa: PLC0415
 
+        fl = flt.lower().strip()
+
+        def keep(m: str) -> bool:
+            return not fl or fl in m.lower()
+
         items: list[dict] = []
-        active = _chat_models()
-        active_set = set(active)
-        where = ("Ollama (local)" if ("localhost" in (tui.backend or "")
-                 or "127.0.0.1" in (tui.backend or "")) else (tui.backend or "backend"))
-        items.append({"kind": "header", "label": f"● active · {where}"})
-        for m in active:
-            items.append({"kind": "model", "model": m, "enabled": True, "provider_id": None})
+        active_all = _chat_models()
+        active_set = set(active_all)
+        active = [m for m in active_all if keep(m)]
+        if active:
+            where = ("Ollama (local)" if ("localhost" in (tui.backend or "")
+                     or "127.0.0.1" in (tui.backend or "")) else (tui.backend or "backend"))
+            items.append({"kind": "header", "label": f"● active · {where}"})
+            for m in active:
+                items.append({"kind": "model", "model": m, "enabled": True, "provider_id": None})
         try:
             for g in catalog.grouped_provider_models():
-                models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set]
+                models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set and keep(m)]
                 if not models:
                     continue
                 tag = "" if g["enabled"] else "  · not enabled"
@@ -325,12 +332,25 @@ async def run_fullscreen(tui: Any) -> int:
                                   "enabled": g["enabled"], "provider_id": g["provider_id"]})
         except Exception:  # noqa: BLE001
             pass
+        return items
+
+    def _open_model_picker(flt: str = "") -> None:
+        items = _build_picker_items(flt)
         sel = next((i for i, it in enumerate(items)
                     if it["kind"] == "model" and it["model"] == tui.model), None)
         if sel is None:
             sel = next((i for i, it in enumerate(items) if it["kind"] == "model"), 0)
-        state["picking_model"] = {"items": items, "sel": sel}
+        state["picking_model"] = {"items": items, "sel": sel, "filter": flt}
         get_app().invalidate()
+
+    def _refilter_picker() -> None:
+        p = state.get("picking_model")
+        if not p:
+            return
+        items = _build_picker_items(p.get("filter", ""))
+        p["items"] = items
+        if not (0 <= p["sel"] < len(items) and items[p["sel"]]["kind"] == "model"):
+            p["sel"] = next((i for i, it in enumerate(items) if it["kind"] == "model"), 0)
 
     def picker_ft() -> Any:
         p = state.get("picking_model")
@@ -339,7 +359,11 @@ async def run_fullscreen(tui: Any) -> int:
         items, sel = p["items"], p["sel"]
         n = len(items)
         lo = max(0, min(sel - _PICKER_ROWS // 2, n - _PICKER_ROWS))
-        rows = [f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · enter · esc){_RESET}"]
+        flt = p.get("filter", "")
+        _hdr = f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
+        if flt:
+            _hdr += f"   {_DIM}filter: {flt}{_RESET}"
+        rows = [_hdr]
         for i in range(lo, min(lo + _PICKER_ROWS, n)):
             it = items[i]
             if it["kind"] == "header":
@@ -671,8 +695,8 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui.console.print(f"[ansibrightblack](vim mode {on})[/]"))
             return True
         if cmd in ("/model", "/models"):
-            if arg:
-                # Direct switch by id (or number into the chat-model list).
+            if arg and cmd == "/model":
+                # /model <id|number> → direct switch (exact).
                 models = _chat_models()
                 if arg.isdigit() and models and 1 <= int(arg) <= len(models):
                     picked = models[int(arg) - 1]
@@ -682,8 +706,8 @@ async def run_fullscreen(tui: Any) -> int:
                 await _print(lambda p=picked: tui.console.print(
                     f"[ansibrightblack](model → [white]{p}[/])[/]"))
             else:
-                # No arg → open the interactive picker overlay (↑/↓ · enter · esc).
-                _open_model_picker()
+                # /models [partial] → picker overlay, pre-filtered if given.
+                _open_model_picker(arg or "")
             return True
         if cmd == "/help":
             await _print(lambda: tui.console.print(
@@ -777,6 +801,27 @@ async def run_fullscreen(tui: Any) -> int:
     def _(event: Any) -> None:
         _picker_move(1)
         event.app.invalidate()
+
+    # Type-to-filter the picker. A printable char narrows the list; backspace
+    # widens it. Specific bindings (up/down/enter/esc) take precedence over Any.
+    from prompt_toolkit.keys import Keys  # noqa: PLC0415
+
+    @kb.add(Keys.Any, filter=_picker_open)
+    def _(event: Any) -> None:
+        ch = event.data
+        if ch and len(ch) == 1 and ch.isprintable():
+            p = state["picking_model"]
+            p["filter"] = p.get("filter", "") + ch
+            _refilter_picker()
+            event.app.invalidate()
+
+    @kb.add("backspace", filter=_picker_open)
+    def _(event: Any) -> None:
+        p = state["picking_model"]
+        if p.get("filter"):
+            p["filter"] = p["filter"][:-1]
+            _refilter_picker()
+            event.app.invalidate()
 
     async def _announce(msg: str) -> None:
         await _print(lambda: tui.console.print(f"[ansibrightblack]{msg}[/]"))

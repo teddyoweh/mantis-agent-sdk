@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.1.0] — 2026-06-30
+
+### Added
+
+- **`lsp` is now multi-language.** Goto-definition and the `symbols` outline
+  work across JavaScript, TypeScript, Go, Rust, Java, Ruby, and C/C++ (in
+  addition to Python's precise ast path) via targeted declaration-syntax regex —
+  so a function call or a control-flow brace is never mistaken for a definition
+  the way plain grep would. TS interfaces/types/enums, Go/Rust types, Ruby
+  modules, etc. are recognized with their kind. References stay Python-only
+  (ast-precise).
+
 ## [2.0.0] — 2026-06-30
 
 ### Changed (BREAKING)

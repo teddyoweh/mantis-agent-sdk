@@ -103,8 +103,8 @@ def test_pyproject_has_release_metadata() -> None:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
     proj = data["project"]
     assert proj["name"] == "mantis-agent-sdk"
-    assert proj["version"].startswith("1."), (
-        f"pyproject.toml version {proj['version']!r} should be 1.x for the stable line."
+    assert proj["version"].startswith(("1.", "2.")), (
+        f"pyproject.toml version {proj['version']!r} should be on the stable 1.x/2.x line."
     )
     # PyPI display fields
     assert proj.get("readme") == "README.md"

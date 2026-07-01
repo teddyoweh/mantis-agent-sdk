@@ -129,7 +129,7 @@ export default function Home() {
         <section className="wrap pt-16 sm:pt-24 pb-20">
           <div className="max-w-[820px]">
             <h1
-              className="rise font-display text-[clamp(2.3rem,5.8vw,4.5rem)]"
+              className="rise font-display text-[clamp(2rem,5vw,3.85rem)]"
               style={{ animationDelay: "0.05s" }}
             >
               Claude Code, for{" "}
