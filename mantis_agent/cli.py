@@ -246,6 +246,15 @@ def _add_agent_flags(p: argparse.ArgumentParser) -> None:
              "Non-dangerous tools run automatically (no prompt); dangerous shell "
              "commands are refused in this headless mode.",
     )
+    p.add_argument(
+        "--dangerously-skip-permissions",
+        "--yes",
+        dest="skip_permissions",
+        action="store_true",
+        help="Run EVERY tool without asking — including dangerous shell commands. "
+             "There's no interactive approval in a headless run, so use this only "
+             "for trusted automation/CI where the agent is allowed full autonomy.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +599,8 @@ def _build_options(args: argparse.Namespace) -> dict[str, Any]:
         from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
         from .builtin_tools.codenav import lsp  # noqa: PLC0415
         out["tools"] = [*CODING_TOOLS, web_search, web_fetch, lsp]
+    if getattr(args, "skip_permissions", False):
+        out["permission_mode"] = "bypass"  # full autonomy — trusted automation
     return out
 
 

@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.20.0] — 2026-06-30
+
+### Added
+
+- **`mantis run --dangerously-skip-permissions` (alias `--yes`)** — full autonomy
+  for trusted automation. `--tools` in a headless run refuses dangerous shell
+  commands (there's no human to approve them), which blocked real CI use. This
+  flag sets `permission_mode=bypass` so every tool runs without asking, including
+  dangerous shell. Off by default; the safe headless behavior (auto-run
+  non-dangerous, refuse dangerous) is unchanged unless you opt in.
+
 ## [2.19.0] — 2026-06-30
 
 ### Added
