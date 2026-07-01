@@ -240,6 +240,16 @@ LEARN_PROMPT = (
 )
 
 
+def format_cost(cost: float | None) -> str:
+    """Human-readable session cost for the ``/context`` readout. Local/free models
+    (cost 0 or None) say so; small costs get 4 decimals, larger ones 2."""
+    if not cost:
+        return "$0.00 (local / no API cost)"
+    if cost < 0.01:
+        return f"${cost:.4f}"
+    return f"${cost:.2f}"
+
+
 def expand_slash_prompt(text: str) -> str | None:
     """Slash commands that expand into an agent prompt (run a turn) rather than
     being handled inline. Returns the prompt to submit, or None otherwise."""

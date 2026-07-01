@@ -131,7 +131,7 @@ async def run_fullscreen(tui: Any) -> int:
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
         "awaiting_key": None,
-        "pending_question": None, "ctx_tokens": 0,
+        "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
     }
 
     def _ctx_window() -> int:
@@ -180,7 +180,10 @@ async def run_fullscreen(tui: Any) -> int:
             tui.console.print("  [ansibrightblack](no turn yet — send a message first)[/]")
         tui.console.print(
             f"  [ansibrightblack]estimated split:[/] system {_fmt(sys_tok)} · "
-            f"context/memory {_fmt(head_tok)} · conversation {_fmt(convo_tok)}\n")
+            f"context/memory {_fmt(head_tok)} · conversation {_fmt(convo_tok)}")
+        from .tui import format_cost  # noqa: PLC0415
+        tui.console.print(
+            f"  [ansibrightblack]session cost:[/] {format_cost(state.get('session_cost', 0.0))}\n")
 
     # Interactive permission asker: render an in-pane Allow/Deny prompt and
     # bridge the (serial) tool-dispatch coroutine to a keypress via a Future.
@@ -608,6 +611,13 @@ async def run_fullscreen(tui: Any) -> int:
                     if getattr(msg, "usage", None) is not None:
                         # input+output of the latest turn ≈ current context fill.
                         state["ctx_tokens"] = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
+                        # Accumulate USD across turns (each call re-bills the full
+                        # prompt, so cost is summed per turn, not from token totals).
+                        from .budget import estimate_cost  # noqa: PLC0415
+                        c = estimate_cost(msg.usage, tui.model,
+                                          getattr(tui.agent, "_provider_hint", None))
+                        if c:
+                            state["session_cost"] += c
                     await _print(lambda m=msg: _assist(m))
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     await _print(lambda m=msg: _result(m))

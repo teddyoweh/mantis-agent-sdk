@@ -216,6 +216,17 @@ def lookup_pricing(model_id: str, backend_hint: str | None = None) -> Pricing | 
     return None
 
 
+def estimate_cost(
+    usage: Usage, model_id: str, backend_hint: str | None = None
+) -> float | None:
+    """USD for a single ``Usage`` on ``model_id``, or ``None`` when the model has
+    no known pricing (local / free models). Thin wrapper over ``lookup_pricing``
+    + ``Pricing.cost`` for callers (e.g. the TUI cost readout) that don't run a
+    full ``BudgetTracker``."""
+    pricing = lookup_pricing(model_id, backend_hint)
+    return pricing.cost(usage) if pricing is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Tracker
 # ---------------------------------------------------------------------------
@@ -337,6 +348,7 @@ class BudgetTracker:
 
 __all__ = [
     "PRICING_TABLE",
+    "estimate_cost",
     "Budget",
     "BudgetTracker",
     "Pricing",

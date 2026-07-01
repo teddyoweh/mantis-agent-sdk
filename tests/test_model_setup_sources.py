@@ -618,6 +618,48 @@ def test_grouped_provider_models_are_real_providers_with_lists() -> None:
         assert "enabled" in g
 
 
+class _R:
+    def __init__(self, status_code: int, body: dict) -> None:
+        self.status_code = status_code
+        self._b = body
+
+    def json(self) -> dict:
+        return self._b
+
+
+def test_ping_chat_model_uses_max_completion_tokens_for_new_openai(monkeypatch) -> None:
+    # gpt-5.x / o-series reject max_tokens — the setup ping must send
+    # max_completion_tokens for them (else validation 400s on a valid model).
+    import httpx
+
+    from mantis_agent import setup_wizard as sw
+    captured: dict = {}
+
+    def _post(url, headers, json, timeout):  # noqa: ANN001
+        captured["payload"] = json
+        return _R(200, {})
+
+    monkeypatch.setattr(httpx, "post", _post)
+    sw._ping_chat_model("https://api.openai.com/v1", "gpt-5.5", "k")
+    assert "max_completion_tokens" in captured["payload"] and "max_tokens" not in captured["payload"]
+    sw._ping_chat_model("https://api.openai.com/v1", "gpt-4o", "k")
+    assert "max_tokens" in captured["payload"] and "max_completion_tokens" not in captured["payload"]
+
+
+def test_ping_chat_model_truncation_is_pass_but_wrong_endpoint_fails(monkeypatch) -> None:
+    import httpx
+
+    from mantis_agent import setup_wizard as sw
+    # Reasoning model truncated by our 1-token cap → the model+key WORK → pass.
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R(
+        400, {"error": {"message": "Could not finish the message because max_tokens was reached"}}))
+    assert sw._ping_chat_model("https://api.openai.com/v1", "gpt-5.5", "k")[0] is True
+    # Responses-only (codex) model → still correctly rejected.
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _R(
+        400, {"error": {"message": "This model is not supported in the v1/chat/completions endpoint"}}))
+    assert sw._ping_chat_model("https://api.openai.com/v1", "gpt-5.2-codex", "k")[0] is False
+
+
 def test_model_ping_unreachable_does_not_block_save() -> None:
     # A network flake must NOT block a save — returns (True, "") so setup is
     # usable offline / behind a proxy. (A real 4xx from the model is separate.)

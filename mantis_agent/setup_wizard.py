@@ -796,7 +796,12 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    payload = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+    # OpenAI's gpt-5.x / o-series reject the legacy max_tokens (they want
+    # max_completion_tokens) — mirror the provider so validating those models in
+    # setup doesn't 400 on a valid model. (temperature isn't sent, so no clash.)
+    bare = model.split("/")[-1].lower()
+    token_field = "max_completion_tokens" if bare.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens"
+    payload = {"model": model, "messages": [{"role": "user", "content": "hi"}], token_field: 1}
     try:
         r = httpx.post(f"{base_url.rstrip('/')}/chat/completions",
                        headers=headers, json=payload, timeout=timeout)
@@ -811,6 +816,12 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
             detail = str(err["message"])[:200]
     except Exception:  # noqa: BLE001
         pass
+    # A truncation from our 1-token probe cap ("could not finish the message …")
+    # means the model + key WORK — reasoning models just spend the budget on
+    # hidden reasoning. That's a pass, not a validation failure.
+    low = detail.lower()
+    if "could not finish" in low or "reduce the length" in low:
+        return True, "ok"
     return False, detail
 
 

@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.26.0] — 2026-06-30
+
+### Added
+
+- **Session cost readout in `/context`.** The agent tracked spend internally but
+  never showed it. `/context` now reports the cumulative USD cost of the session,
+  summed per turn from each turn's usage against the model's pricing (each API
+  call re-bills the full prompt, so cost accumulates by turn, not token totals).
+  Local / self-hosted models correctly show `$0.00 (local / no API cost)`; unknown
+  models are skipped. New pure `budget.estimate_cost` and `tui.format_cost`.
+
 ## [2.25.0] — 2026-06-30
 
 ### Added
