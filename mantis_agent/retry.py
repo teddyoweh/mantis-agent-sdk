@@ -175,15 +175,31 @@ class RetryTransport(httpx.AsyncBaseTransport):
 
 
 def _parse_retry_after(header: str | None) -> float | None:
-    """Parse the ``Retry-After`` header. Only the seconds form is supported
-    (the HTTP-date form is rare and providers don't use it for model APIs)."""
+    """Parse the ``Retry-After`` header (RFC 7231): a delay in seconds, or an
+    HTTP-date to wait until. Returns the number of seconds to sleep, or None if
+    absent/unparseable. Most model APIs use the seconds form; the HTTP-date form
+    shows up behind some proxies/gateways."""
 
     if not header:
         return None
+    h = header.strip()
     try:
-        v = float(header.strip())
+        v = float(h)
         return v if v >= 0 else None
     except ValueError:
+        pass
+    # HTTP-date form → seconds from now (clamped at 0, never negative).
+    try:
+        from datetime import datetime, timezone  # noqa: PLC0415
+        from email.utils import parsedate_to_datetime  # noqa: PLC0415
+
+        when = parsedate_to_datetime(h)
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError):
         return None
 
 

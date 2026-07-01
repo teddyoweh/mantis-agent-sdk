@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.25.0] — 2026-06-30
+
+### Added
+
+- **Final-turn wrap-up.** When a run reaches its turn limit (`max_steps`), the
+  agent used to just stop — often on a dangling tool result with no answer,
+  leaving the user hanging mid-task. Now a one-shot reminder is injected on the
+  last allowed step telling the model to stop starting new work and instead give
+  a concise summary of what it did, what's left, and the next step — so a
+  turn-limited run ends coherently. Only fires when actually approaching the limit
+  (normal runs that finish early are unaffected); skipped for degenerate
+  single-step runs. New `_final_turn_reminder`.
+
 ## [2.24.0] — 2026-06-30
 
 ### Changed

@@ -242,6 +242,22 @@ def close_open_tool_calls(
     return added
 
 
+def _final_turn_reminder() -> "UserMessage":
+    """A one-shot reminder injected on the last allowed step so a turn-limited
+    run ends with a summary instead of a half-finished tool call."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    return UserMessage(
+        content=wrap_system_reminder(
+            "You have reached your turn limit — this is your FINAL turn. Do not "
+            "start new tool calls you can't finish. Instead, give the user a "
+            "concise summary of what you accomplished, what's still left, and the "
+            "clear next step, so they can pick up from here."
+        ),
+        isMeta=True,
+    )
+
+
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
 
@@ -914,7 +930,7 @@ class Agent:
         _MAX_COMPACTIONS = 5
         self._refusal_retried = False
 
-        for _ in range(self.max_steps):
+        for step in range(self.max_steps):
             # If the cancellation signal already fired BEFORE this turn
             # starts, bail without burning another model round-trip. The
             # signal could be set externally (``Agent.cancel()``), or by
@@ -927,6 +943,15 @@ class Agent:
                 )
                 _close_run_span()
                 return
+
+            # Final-turn wrap-up: on the last allowed step, tell the model to
+            # summarize instead of starting work it can't finish — so a run that
+            # hits the turn limit ends with a coherent answer, not a dangling
+            # tool result. Soft nudge (isMeta), injected once.
+            if self.max_steps > 1 and step == self.max_steps - 1:
+                final_msg = _final_turn_reminder()
+                messages.append(final_msg)
+                yield final_msg
 
             # ----------------------------------------------------------------
             # Auto-compaction — at the TOP of the turn (before the model call),
