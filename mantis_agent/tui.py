@@ -1045,13 +1045,15 @@ class MantisTUI:
             if "localhost" in (self.backend or "") or "127.0.0.1" in (self.backend or ""):
                 self.console.print(
                     f"[ansiyellow]![/] [ansibrightblack]can't reach Ollama at "
-                    f"{self.backend} — is it running? ([white]ollama serve[/])[/]"
+                    f"{self.backend}. Run [white]mantis setup[/] to get a model "
+                    f"(local or hosted), or start Ollama ([white]ollama serve[/]).[/]"
                 )
             return
         if not available:
             self.console.print(
                 f"[ansiyellow]![/] [ansibrightblack]no models installed on "
-                f"{self.backend}. Pull one:[/] [white]ollama pull {self.model}[/]"
+                f"{self.backend}. Run [white]mantis setup[/] to add one, or "
+                f"[white]ollama pull {self.model}[/].[/]"
             )
             return
         picked = self._pick_model(self.model, available)

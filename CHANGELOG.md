@@ -74,6 +74,21 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.4.0] — 2026-06-30
+
+### Added
+
+- **Refusal recovery.** When the model ends a turn with a bare, no-tool-call
+  refusal ("I'm sorry, but I can't complete that request") — the spurious
+  over-refusals small/aligned models emit on perfectly legitimate local work
+  (listing processes/ports, reading your own files, running builds) — the agent
+  now nudges it ONCE with a reminder that it's operating in the user's own
+  authorized environment and re-prompts, instead of dead-ending the task. Capped
+  at one retry per run, so a genuinely harmful request is simply refused again
+  and stops. New `Agent.recover_refusals` flag (default True; set False to opt
+  out). New `_looks_like_refusal` detector (length-capped + precise, so a long
+  answer or an "I can't find that file" isn't misread).
+
 ## [2.3.0] — 2026-06-30
 
 ### Added

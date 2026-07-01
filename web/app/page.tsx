@@ -126,8 +126,16 @@ export default function Home() {
       <Nav />
       <main>
         {/* ============ HERO ============ */}
-        <section className="wrap pt-16 sm:pt-24 pb-20">
-          <div className="max-w-[820px]">
+        <section className="wrap pt-16 sm:pt-24 pb-20 relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/mantis.svg"
+            alt=""
+            aria-hidden="true"
+            className="rise hidden lg:block absolute right-0 xl:right-4 top-[64px] w-[330px] xl:w-[400px] select-none pointer-events-none"
+            style={{ animationDelay: "0.3s" }}
+          />
+          <div className="max-w-[820px] lg:max-w-[600px]">
             <h1
               className="rise font-display text-[clamp(2rem,5vw,3.85rem)]"
               style={{ animationDelay: "0.05s" }}

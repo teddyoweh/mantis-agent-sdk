@@ -117,6 +117,48 @@ def _render_todo_reminder(todos: list[dict[str, Any]]) -> str:
     return wrap_system_reminder("\n".join(lines))
 
 
+_REFUSAL_RE = re.compile(
+    r"\b("
+    r"i'?m sorry,?\s+but\s+i\s+(can'?t|cannot)"
+    r"|i\s+(can'?t|cannot)\s+(help|assist|comply|complete|continue|do that|fulf-?ill|proceed)"
+    r"|i'?m\s+(not able|unable)\s+to\s+(help|assist|complete|comply|proceed|do)"
+    r"|i\s+(won'?t|will not)\s+(be able to\s+)?(help|assist|comply|complete)"
+    r"|i\s+(must|have to)\s+decline"
+    r"|i\s+can'?t\s+assist\s+with\s+that"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """A short assistant turn that reads as a canned refusal. Length-capped so a
+    long, substantive answer that merely contains a hedge isn't misread."""
+    t = (text or "").strip()
+    if not t or len(t) > 600:
+        return False
+    return bool(_REFUSAL_RE.search(t))
+
+
+def _refusal_nudge() -> "UserMessage":
+    """A one-shot system-reminder that re-frames the authorized context, so a
+    spurious over-refusal doesn't dead-end a legitimate local task."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    return UserMessage(
+        content=wrap_system_reminder(
+            "You just declined — but you are the user's own coding agent running "
+            "inside THEIR authorized local environment, at their request. Routine "
+            "development and sysadmin on the user's own machine — listing "
+            "processes/ports, reading local files, running builds/tests/scripts, "
+            "inspecting the user's own services — is legitimate and expected, not "
+            "something to refuse. Reconsider and actually complete the task. Only if "
+            "a request is genuinely harmful, name the specific concern instead of a "
+            "generic refusal."
+        ),
+        isMeta=True,
+    )
+
+
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
 
@@ -208,6 +250,12 @@ class Agent:
     # ``max_steps`` budget (and minutes of wall-clock) re-running an identical
     # failing command. 0 disables the guard.
     max_repeated_tool_calls: int = 3
+    # Refusal recovery: if the model ends a turn with a bare, no-tool-call
+    # refusal ("I'm sorry, but I can't complete that request"), nudge it ONCE
+    # with a reminder that it's the user's own authorized environment and let it
+    # retry, instead of dead-ending the task on a spurious over-refusal. A
+    # genuinely harmful request just gets refused again and stops. 0/False off.
+    recover_refusals: bool = True
     extra: dict[str, Any] | None = None
 
     # Capability + safety surface (M0.1 / M2)
@@ -287,6 +335,7 @@ class Agent:
     _env_context: str | None = field(default=None, init=False)
     # Set once the fallback model has been activated, so we don't loop.
     _fallback_used: bool = field(default=False, init=False)
+    _refusal_retried: bool = field(default=False, init=False)
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
     _surfaced: set[str] = field(default_factory=set, init=False)
@@ -736,6 +785,7 @@ class Agent:
         last_usage: Usage | None = None
         compactions = 0
         _MAX_COMPACTIONS = 5
+        self._refusal_retried = False
 
         for _ in range(self.max_steps):
             # If the cancellation signal already fired BEFORE this turn
@@ -991,6 +1041,25 @@ class Agent:
                 tool_uses = [
                     b for b in assistant.content if isinstance(b, ToolUseBlock)
                 ]
+                if not tool_uses and self.recover_refusals and not self._refusal_retried:
+                    # Bare, no-tool-call refusal? Nudge ONCE with the authorized-
+                    # context reminder and re-prompt instead of dead-ending. A
+                    # ``continue`` exits this turn's ``async with executor`` cleanly
+                    # (no tools were dispatched) and re-streams with the nudge.
+                    _text = "".join(
+                        b.text for b in assistant.content if isinstance(b, TextBlock)
+                    )
+                    if _looks_like_refusal(_text):
+                        self._refusal_retried = True
+                        messages.append(_refusal_nudge())
+                        if turn_span is not None and self.tracer is not None:
+                            turn_span.set_attributes({"turn.refusal_recovered": True})
+                            turn_span.end()
+                            mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                            close_fn = getattr(mirror, "_close", None)
+                            if callable(close_fn):
+                                close_fn(turn_span)
+                        continue
                 if not tool_uses:
                     # Natural turn-end. Fire Stop hook and exit cleanly —
                     # the executor's ``__aexit__`` releases its task group

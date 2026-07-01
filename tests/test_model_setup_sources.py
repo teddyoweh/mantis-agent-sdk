@@ -108,6 +108,140 @@ def test_selfhost_probe_unreachable_returns_none() -> None:
 # -- Model ping (validate-before-save) ---------------------------------------
 
 
+def test_hosted_flow_end_to_end_saves_model(monkeypatch, tmp_path) -> None:
+    # Drive the WHOLE hosted setup orchestration (not just helpers): pick a
+    # provider → paste key → validate → pick a model → confirm → save. Mocks the
+    # network + I/O; asserts the model is persisted as the default.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    inputs = iter(["1", "1"])  # provider #1 (DeepSeek), then model #1
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "sk-test-key")
+    monkeypatch.setattr(catalog, "validate_provider", lambda *a, **k: (True, "ok"))
+    monkeypatch.setattr(catalog, "refresh_live_models", lambda *a, **k: ["deepseek-chat", "deepseek-reasoner"])
+    monkeypatch.setattr(sw, "_confirm_model", lambda *a, **k: True)
+
+    try:
+        rc = sw._run_hosted(_NullConsole(), free_only=False)
+        assert rc == 0
+        last = catalog.get_last_model()
+        assert last and last["model"] == "deepseek-chat"
+        assert last["backend"] == catalog.BY_ID["deepseek"].base_url
+    finally:
+        catalog.clear_key("deepseek")
+
+
+def test_hosted_flow_aborts_when_key_invalid(monkeypatch, tmp_path) -> None:
+    # A rejected key must NOT save anything and must clear the bad key.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    monkeypatch.setattr("builtins.input", lambda *a: "1")
+    monkeypatch.setattr("getpass.getpass", lambda *a: "bad-key")
+    monkeypatch.setattr(catalog, "validate_provider", lambda *a, **k: (False, "invalid API key"))
+
+    rc = sw._run_hosted(_NullConsole(), free_only=False)
+    assert rc == 1
+    assert catalog.saved_key("deepseek") is None
+
+
+def test_selfhost_flow_end_to_end_saves_model(monkeypatch, tmp_path) -> None:
+    # URL → probe /v1/models → pick → confirm → save backend+model.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    from mantis_agent import setup_wizard as sw
+
+    inputs = iter(["http://localhost:9911/v1", "1"])  # base URL, then model #1
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "")  # local server, no key
+    monkeypatch.setattr(sw, "_probe_openai_models", lambda *a, **k: ["local-coder"])
+    monkeypatch.setattr(sw, "_confirm_model", lambda *a, **k: True)
+
+    rc = sw._run_selfhost(_NullConsole())
+    assert rc == 0
+    last = catalog.get_last_model()
+    assert last and last["model"] == "local-coder"
+    assert last["backend"] == "http://localhost:9911/v1"
+
+
+def test_anthropic_apikey_flow_end_to_end(monkeypatch, tmp_path) -> None:
+    # Claude auth chooser → API key → validate → pick model → save.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    inputs = iter(["1", "1"])  # auth method #1 (API key), then model #1
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "sk-ant-key")
+    monkeypatch.setattr(sw, "_ping_anthropic_model", lambda *a, **k: (True, "ok"))
+
+    try:
+        rc = sw._run_anthropic(_NullConsole(), catalog.BY_ID["anthropic"])
+        assert rc == 0
+        last = catalog.get_last_model()
+        assert last and last["model"].startswith("claude-")
+        assert catalog.saved_key("anthropic") == "sk-ant-key"
+    finally:
+        catalog.clear_key("anthropic")
+
+
+def test_local_flow_end_to_end_saves_model(monkeypatch, tmp_path) -> None:
+    # Local Ollama flow: ensure server → pull → verify → save as default.
+    # Mocks the ollama subprocess/daemon; asserts the tag is persisted @ 11434.
+    import subprocess
+    import types
+
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    from mantis_agent import setup_local
+    from mantis_agent import setup_wizard as sw
+
+    monkeypatch.setattr(setup_local, "is_ollama_installed", lambda: True)
+    monkeypatch.setattr(setup_local, "start_ollama_server", lambda: (True, ""))
+    monkeypatch.setattr(subprocess, "call", lambda *a, **k: 0)  # the `ollama pull`
+    monkeypatch.setattr(sw, "_ollama_has", lambda tag: True)
+
+    args = types.SimpleNamespace(model="qwen2.5-coder:7b", list_only=False, auto=False)
+    rc = sw._run_local(_NullConsole(), args)
+    assert rc == 0
+    last = catalog.get_last_model()
+    assert last and last["model"] == "qwen2.5-coder:7b"
+    assert "11434" in (last["backend"] or "")
+
+
+def test_local_flow_aborts_when_pull_fails(monkeypatch, tmp_path) -> None:
+    import subprocess
+    import types
+
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    from mantis_agent import setup_local
+    from mantis_agent import setup_wizard as sw
+
+    monkeypatch.setattr(setup_local, "is_ollama_installed", lambda: True)
+    monkeypatch.setattr(setup_local, "start_ollama_server", lambda: (True, ""))
+    monkeypatch.setattr(subprocess, "call", lambda *a, **k: 1)  # pull fails
+    args = types.SimpleNamespace(model="qwen2.5-coder:7b", list_only=False, auto=False)
+    assert sw._run_local(_NullConsole(), args) == 1
+
+
+def test_run_setup_entry_points_exit_cleanly_on_cancel(monkeypatch, tmp_path) -> None:
+    # Every `mantis setup [flag]` entry point must exit cleanly (0 or 1) even when
+    # the user cancels at the first prompt — never propagate an exception. This
+    # codifies the live-binary smoke test as a regression guard.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    from mantis_agent.setup_wizard import run_setup
+
+    def _eof(*_a: object) -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", _eof)
+    monkeypatch.setattr("getpass.getpass", _eof)
+    for argv in ([], ["--status"], ["--list"], ["--hosted"], ["--free"], ["--selfhost"]):
+        rc = run_setup(argv)
+        assert rc in (0, 1), f"{argv} returned {rc!r}"
+
+
 def test_print_status_never_crashes() -> None:
     # `mantis setup --status` must render whatever the config is (or nothing)
     # without raising — it runs before any provider is even set up.
@@ -188,6 +322,13 @@ def test_arrow_select_non_tty_returns_sentinel() -> None:
 class _NullConsole:
     def print(self, *a: object, **k: object) -> None:  # noqa: D102
         pass
+
+
+def test_pick_model_id_empty_list_returns_none() -> None:
+    # A provider that returned no models must not crash the picker (was IndexError
+    # on the "Enter=<first>" prompt) — it returns None so the caller can bail.
+    from mantis_agent import setup_wizard as sw
+    assert sw._pick_model_id(_NullConsole(), []) is None
 
 
 def test_pick_model_id_numeric_fallback(monkeypatch) -> None:

@@ -391,6 +391,8 @@ def _pick_model_id(c: Any, models: list[str], *, current: str | None = None) -> 
     The current default (if any) is pre-highlighted. Returns the id or None."""
     from rich.text import Text  # noqa: PLC0415
 
+    if not models:  # a provider that returned nothing — nothing to pick
+        return None
     shown = models[:30]
     rows = [(m, "← current" if m == current else "") for m in shown]
     start = shown.index(current) if current in shown else 0
