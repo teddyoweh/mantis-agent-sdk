@@ -833,6 +833,20 @@ def test_env_only_hosted_model_autowires_provider(monkeypatch) -> None:
     assert t.api_key == "sk-test-autowire"
 
 
+def test_env_only_hosted_model_without_key_stays_put(monkeypatch) -> None:
+    # Hosted model but no key: don't switch (nothing to switch to) and don't crash —
+    # _resolve_model warns and leaves the backend as-is.
+    from mantis_agent import paths
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setattr("mantis_agent.catalog.api_key_for", lambda *a, **k: None)
+    ollama = paths.ollama_base_url()
+    t = MantisTUI(model="gpt-4o", backend=ollama, api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert t.backend == ollama  # unchanged — no key to wire
+
+
 def test_explicit_backend_not_overridden_for_hosted_model(monkeypatch) -> None:
     # An explicitly-set MANTIS_AGENT_BASE_URL (e.g. a self-host serving gpt-4o)
     # must never be clobbered by the auto-wire.

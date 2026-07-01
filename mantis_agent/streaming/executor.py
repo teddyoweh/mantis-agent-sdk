@@ -151,6 +151,40 @@ _TOOL_RESULT_CAPS = {
 }
 
 
+_ACCEPTED_PARAMS_CACHE: dict[int, frozenset[str] | None] = {}
+
+
+def _accepted_params(fn: Any) -> frozenset[str] | None:
+    """Parameter names ``fn`` accepts, or ``None`` if it takes ``**kwargs`` (=
+    accept anything). Cached by function id."""
+    import inspect  # noqa: PLC0415
+
+    key = id(fn)
+    if key not in _ACCEPTED_PARAMS_CACHE:
+        try:
+            params = inspect.signature(fn).parameters
+        except (ValueError, TypeError):
+            _ACCEPTED_PARAMS_CACHE[key] = None
+        else:
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+                _ACCEPTED_PARAMS_CACHE[key] = None
+            else:
+                _ACCEPTED_PARAMS_CACHE[key] = frozenset(params)
+    return _ACCEPTED_PARAMS_CACHE[key]
+
+
+def _filter_tool_input(fn: Any, input: dict[str, Any]) -> dict[str, Any]:
+    """Drop keys ``fn`` won't accept so a model's hallucinated extra arg doesn't
+    TypeError the call. Pass-through when ``fn`` takes ``**kwargs`` or ``input``
+    is already clean."""
+    accepted = _accepted_params(fn)
+    if accepted is None or not input:
+        return input
+    if all(k in accepted for k in input):
+        return input
+    return {k: v for k, v in input.items() if k in accepted}
+
+
 def _as_block_content(out: Any) -> list[Any] | None:
     """If a tool returned rich content (an ImageBlock / TextBlock, or a list of
     them — e.g. a multimodal ``read_file`` handing back an image), pass it
@@ -742,12 +776,16 @@ class StreamingToolExecutor:
         """Run the tool body with optional timeout. Captures every exception
         and stores a ``ToolResultBlock``. May trigger sibling abort."""
         timeout = getattr(tool, "timeout_s", None)
+        # Drop arguments the tool doesn't accept — small/local models routinely
+        # hallucinate extra kwargs, which would TypeError the call and burn a turn.
+        # Tools that take **kwargs (e.g. explicit-schema tools) are passed as-is.
+        call_input = _filter_tool_input(tool.fn, block.input)
         try:
             if timeout is not None:
                 with anyio.fail_after(timeout):
-                    out = await tool.fn(**block.input)
+                    out = await tool.fn(**call_input)
             else:
-                out = await tool.fn(**block.input)
+                out = await tool.fn(**call_input)
         except TimeoutError:
             self._record_result(
                 idx,

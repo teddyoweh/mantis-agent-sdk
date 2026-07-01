@@ -1285,9 +1285,9 @@ class MantisTUI:
                     # Hosted model but no key + backend still Ollama: it *will* fail,
                     # and the later "ollama pull" hint would be wrong. Say why now.
                     self.console.print(
-                        f"[ansiyellow]![/] [ansibrightblack]{self.model} is a {hosted.label} "
-                        f"model but no API key is set. Run [white]mantis setup[/] or set "
-                        f"[white]{hosted.api_key_env}[/].[/]")
+                        f"[ansiyellow]![/] [ansibrightblack]{self.model} is served by "
+                        f"{hosted.label}, but no API key is set. Run [white]mantis setup[/] "
+                        f"or set [white]{hosted.api_key_env}[/].[/]")
             return
         available, reachable = self._available_models()
         if self.model in available:

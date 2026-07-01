@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.36.0] — 2026-06-30
+
+### Added
+
+- **Tool calls tolerate hallucinated extra arguments.** Small/local models
+  routinely add an argument a tool doesn't declare (e.g. `read_file(path=…,
+  recursive=true)`), which used to `TypeError` the call and burn a whole turn on
+  the error+retry. The executor now drops arguments the tool's function won't
+  accept before invoking it, so the call succeeds with the valid args. Tools that
+  take `**kwargs` (explicit-schema tools) are passed through untouched, clean
+  calls are unaffected, and a *misspelled required* arg still errors clearly
+  (it's dropped, not invented). Signature lookups are cached. New
+  `_filter_tool_input`.
+
 ## [2.35.0] — 2026-06-30
 
 ### Fixed
