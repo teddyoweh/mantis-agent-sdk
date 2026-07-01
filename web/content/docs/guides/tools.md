@@ -40,12 +40,12 @@ async for msg in query(
     ...
 ```
 
-Or with `ClaudeAgentOptions`:
+Or with `MantisAgentOptions`:
 
 ```python
-from mantis_agent import ClaudeAgentOptions, ClaudeSDKClient
+from mantis_agent import MantisAgentOptions, ClaudeSDKClient
 
-opts = ClaudeAgentOptions(
+opts = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[get_weather],
 )

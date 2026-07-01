@@ -95,9 +95,9 @@ The cancelled tool call surfaces in the transcript as a tool result with
 ## `ClaudeSDKClient` — multi-turn streaming
 
 ```python
-from mantis_agent import ClaudeSDKClient, ClaudeAgentOptions
+from mantis_agent import ClaudeSDKClient, MantisAgentOptions
 
-options = ClaudeAgentOptions(model="qwen2.5:7b", tools=[get_weather])
+options = MantisAgentOptions(model="qwen2.5:7b", tools=[get_weather])
 async with ClaudeSDKClient(options) as client:
     async for msg in client.query("What's the weather in Lagos?"):
         ...

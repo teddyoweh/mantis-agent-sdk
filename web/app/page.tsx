@@ -12,7 +12,7 @@ const BACKENDS = [
 ];
 
 const QUICKSTART = `import asyncio
-from mantis_agent import query, ClaudeAgentOptions, tool, AssistantMessage
+from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
 
 @tool
 async def get_weather(city: str) -> str:
@@ -22,7 +22,7 @@ async def get_weather(city: str) -> str:
 async def main():
     async for msg in query(
         prompt="What's the weather in SF?",
-        options=ClaudeAgentOptions(
+        options=MantisAgentOptions(
             model="qwen2.5:1.5b",   # routes to local Ollama automatically
             tools=[get_weather],
             max_turns=5,
@@ -36,9 +36,9 @@ async def main():
 asyncio.run(main())`;
 
 const SWAP = `# same script, three backends — change one line
-options = ClaudeAgentOptions(model="qwen2.5:7b")                       # → local Ollama
-options = ClaudeAgentOptions(model="Qwen/Qwen2.5-72B-Instruct-Turbo")  # → Together
-options = ClaudeAgentOptions(model="llama-3.3-70b-versatile",
+options = MantisAgentOptions(model="qwen2.5:7b")                       # → local Ollama
+options = MantisAgentOptions(model="Qwen/Qwen2.5-72B-Instruct-Turbo")  # → Together
+options = MantisAgentOptions(model="llama-3.3-70b-versatile",
                             backend="https://api.groq.com/openai/v1")  # → Groq`;
 
 const TRACING = `from mantis_agent import Agent, InMemoryTracer

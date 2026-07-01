@@ -1,12 +1,12 @@
-# `ClaudeAgentOptions`
+# `MantisAgentOptions`
 
 Every option you can pass to `query()` or `ClaudeSDKClient`. Accepted as
 a dataclass or a plain `dict`.
 
 ```python
-from mantis_agent import ClaudeAgentOptions, HookMatcher, Plugin
+from mantis_agent import MantisAgentOptions, HookMatcher, Plugin
 
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     backend=None,                   # auto-route from model
     base_url=None,
@@ -126,4 +126,4 @@ async for msg in query(prompt="hi", options={
 ```
 
 The two forms are interchangeable — `dict` is converted via
-`ClaudeAgentOptions(**d)` internally.
+`MantisAgentOptions(**d)` internally.

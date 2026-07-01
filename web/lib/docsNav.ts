@@ -38,7 +38,7 @@ export const DOCS_NAV: NavSection[] = [
     items: [
       { title: "Overview", slug: "api" },
       { title: "query / ClaudeSDKClient", slug: "api/client" },
-      { title: "ClaudeAgentOptions", slug: "api/options" },
+      { title: "MantisAgentOptions", slug: "api/options" },
       { title: "Message types", slug: "api/messages" },
       { title: "Tools", slug: "api/tools" },
       { title: "Sessions", slug: "api/sessions" },

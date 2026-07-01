@@ -245,6 +245,30 @@ def test_pro_filter_excludes_only_openai_responses_models() -> None:
         assert _is_chat_model(m) is False, m
 
 
+def test_env_var_key_is_discovered_for_each_provider(monkeypatch) -> None:
+    # Setting {PROVIDER}_API_KEY must make api_key_for() find it — a wrong/typo'd
+    # api_key_env would silently fail to pick up an env-set key.
+    for p in catalog.CATALOG:
+        assert p.api_key_env, p.id
+        monkeypatch.setenv(p.api_key_env, f"key-for-{p.id}")
+        assert catalog.api_key_for(p) == f"key-for-{p.id}", p.id
+        monkeypatch.delenv(p.api_key_env)
+
+
+def test_all_providers_construct_wellformed_endpoints() -> None:
+    # Every provider's base_url must be a scheme+host with a versioned/api path,
+    # so {base}/models and {base}/chat/completions resolve as proper direct
+    # children (the iter-57 endpoint fix). Guards against a future provider being
+    # added with a bare host or trailing-slash quirk that breaks listing/chat.
+    from urllib.parse import urlparse
+    for p in catalog.CATALOG:
+        b = p.base_url.rstrip("/")
+        u = urlparse(b)
+        assert u.scheme in ("http", "https"), p.id
+        assert u.netloc, p.id
+        assert u.path and u.path != "/", p.id  # carries /v1, /openai/v1, /api/paas/v4, …
+
+
 def test_catalog_providers_are_wellformed() -> None:
     # Guard the setup fallback data: every hosted provider must have a usable id,
     # https base URL, key env var, and at least one non-empty flagship model id.

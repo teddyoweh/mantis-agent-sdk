@@ -78,7 +78,7 @@ export function DiffHero() {
               {typed.length === TARGET.length && (
                 <>
                   {" "}
-                  <span style={{ color: "#c86a4a" }}>import</span> query, ClaudeAgentOptions, tool
+                  <span style={{ color: "#c86a4a" }}>import</span> query, MantisAgentOptions, tool
                 </>
               )}
             </span>

@@ -809,6 +809,7 @@ async def grep(
     file_type: str | None = None,
     head_limit: int = 0,
     multiline: bool = False,
+    fixed_strings: bool = False,
 ) -> str:
     """Search file contents for a regex pattern. Prefers ripgrep (``rg``) and
     falls back to a Python walk.
@@ -827,6 +828,10 @@ async def grep(
             ``rust``, ``js``. More convenient than a glob for a whole language.
         head_limit: Cap the number of output lines returned (0 = default cap).
         multiline: Let ``.`` and the pattern span line boundaries.
+        fixed_strings: Treat ``pattern`` as a LITERAL string, not a regex — use
+            this when searching for code with regex metacharacters like
+            ``config.get("x")`` or ``arr[0]`` so the ``.``/``(``/``[`` match
+            literally instead of as regex operators.
     """
 
     mode = output_mode if output_mode in ("content", "files_with_matches", "count") else "content"
@@ -845,6 +850,8 @@ async def grep(
                 cmd += ["-C", str(context_lines)]
         if ignore_case:
             cmd.append("-i")
+        if fixed_strings:
+            cmd.append("-F")
         if multiline:
             cmd += ["--multiline", "--multiline-dotall"]
         if glob:
@@ -864,7 +871,7 @@ async def grep(
 
     return await anyio.to_thread.run_sync(
         _py_grep, pattern, path, glob, ignore_case, mode, context_lines,
-        file_type, limit, multiline,
+        file_type, limit, multiline, fixed_strings,
     )
 
 
@@ -900,14 +907,14 @@ async def _have_rg() -> bool:
 def _py_grep(
     pattern: str, path: str, glob: str | None, ignore_case: bool,
     mode: str = "content", context_lines: int = 0, file_type: str | None = None,
-    limit: int = _MAX_MATCHES, multiline: bool = False,
+    limit: int = _MAX_MATCHES, multiline: bool = False, fixed_strings: bool = False,
 ) -> str:
     import re
 
     flags = re.IGNORECASE if ignore_case else 0
     if multiline:
         flags |= re.DOTALL
-    rx = re.compile(pattern, flags)
+    rx = re.compile(re.escape(pattern) if fixed_strings else pattern, flags)
     base = Path(path).expanduser()
     exts = _TYPE_EXTS.get(file_type or "", ())
     files: list[Path]

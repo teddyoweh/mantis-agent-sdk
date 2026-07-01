@@ -75,6 +75,7 @@ class Provider:
     api_key_env: str  # env var holding the key
     models: tuple[str, ...]  # a few flagship model ids
     note: str = ""  # signup hint
+    key_env_aliases: tuple[str, ...] = ()  # alternate env var names also honored
 
 
 # Model ids verified against provider docs, June 2026. Hosted endpoints are
@@ -118,6 +119,7 @@ CATALOG: tuple[Provider, ...] = (
         "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY",
         ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"),
         "aistudio.google.com",
+        key_env_aliases=("GOOGLE_API_KEY",),
     ),
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
@@ -251,9 +253,12 @@ def push_recent_model(model: str) -> None:
 
 
 def api_key_for(provider: Provider) -> str | None:
-    """Key from the environment first, then the saved store."""
-    if provider.api_key_env and os.environ.get(provider.api_key_env):
-        return os.environ[provider.api_key_env]
+    """Key from the environment first, then the saved store. Honors alternate env
+    var names (e.g. GOOGLE_API_KEY for Gemini) so a direct-env user's key is found
+    whichever common convention they used."""
+    for var in (provider.api_key_env, *provider.key_env_aliases):
+        if var and os.environ.get(var):
+            return os.environ[var]
     return saved_key(provider.id)
 
 

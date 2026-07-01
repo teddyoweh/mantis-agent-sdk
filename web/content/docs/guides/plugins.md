@@ -41,9 +41,9 @@ A plugin has four parts (all optional):
 ## Attaching
 
 ```python
-from mantis_agent import ClaudeAgentOptions
+from mantis_agent import MantisAgentOptions
 
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[primary_tool],
     plugins=[analytics, retries, telemetry],
@@ -79,7 +79,7 @@ telemetry = Plugin(name="telemetry", ...)
 # my_app/agents/researcher.py
 from my_app.plugins import analytics, retries, telemetry
 ...
-options = ClaudeAgentOptions(..., plugins=[analytics, retries, telemetry])
+options = MantisAgentOptions(..., plugins=[analytics, retries, telemetry])
 ```
 
 ## When to use a plugin vs. a sub-agent

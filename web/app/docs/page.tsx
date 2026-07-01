@@ -65,7 +65,7 @@ const SECTIONS: {
     blurb: "Every exported symbol, its signature, and what it returns.",
     links: [
       { title: "query / ClaudeSDKClient", href: "/docs/api/client", desc: "The two entry points" },
-      { title: "ClaudeAgentOptions", href: "/docs/api/options", desc: "Every option, typed" },
+      { title: "MantisAgentOptions", href: "/docs/api/options", desc: "Every option, typed" },
       { title: "Message types", href: "/docs/api/messages", desc: "Flat-shape message + block types" },
       { title: "Errors", href: "/docs/api/errors", desc: "The exception hierarchy" },
     ],
@@ -81,7 +81,7 @@ export default function DocsHome() {
       </h1>
       <p className="mt-6 text-[16px] text-ink-2 leading-relaxed max-w-[620px]">
         If you have working Claude SDK code, you almost always change one import. The yielded message
-        shapes match; <span className="mono text-ink">ClaudeAgentOptions</span>,{" "}
+        shapes match; <span className="mono text-ink">MantisAgentOptions</span>,{" "}
         <span className="mono text-ink">Plugin</span>, <span className="mono text-ink">HookMatcher</span>,{" "}
         <span className="mono text-ink">create_sdk_mcp_server</span> — all of it works.
       </p>

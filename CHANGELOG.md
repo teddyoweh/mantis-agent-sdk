@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.52.0] — 2026-06-30
+
+### Added
+
+- **`grep(fixed_strings=True)` — literal search** (Claude Grep parity). Models
+  constantly search for code containing regex metacharacters — `config.get("x")`,
+  `arr[0]`, `a|b` — where the `.`/`(`/`[` match wrongly (or make the pattern an
+  invalid regex that errors). `fixed_strings=True` treats the pattern as a literal
+  string (`rg -F`, or `re.escape` on the Python fallback), so it matches exactly.
+  Default remains regex.
+
 ## [2.51.0] — 2026-06-30
 
 ### Added

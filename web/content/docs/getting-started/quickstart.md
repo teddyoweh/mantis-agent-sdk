@@ -101,10 +101,10 @@ result in plain English.
 For a session that survives multiple `query()` calls:
 
 ```python
-from mantis_agent import ClaudeSDKClient, ClaudeAgentOptions
+from mantis_agent import ClaudeSDKClient, MantisAgentOptions
 
 async def main():
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         model="qwen2.5:7b",
         tools=[get_weather],
     )

@@ -25,7 +25,7 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
     title: "Reference",
     links: [
       { label: "query / client", href: "/docs/api/client" },
-      { label: "ClaudeAgentOptions", href: "/docs/api/options" },
+      { label: "MantisAgentOptions", href: "/docs/api/options" },
       { label: "Message types", href: "/docs/api/messages" },
       { label: "Errors", href: "/docs/api/errors" },
     ],
