@@ -250,6 +250,10 @@
 }
 
 /* raw shiki (landing snippets via <Shiki/>) */
+.shiki-card {
+  max-width: 100%;
+  min-width: 0;
+}
 .shiki-card .shiki-pre {
   background: var(--color-code) !important;
   padding: 16px 18px;

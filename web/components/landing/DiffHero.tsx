@@ -33,7 +33,7 @@ export function DiffHero() {
   }, []);
 
   return (
-    <div className="rise" style={{ animationDelay: "0.15s" }}>
+    <div className="rise min-w-0" style={{ animationDelay: "0.15s" }}>
       <div
         className="mono text-[13px] sm:text-[14.5px] leading-[2.05] rounded-xl overflow-hidden"
         style={{ background: "var(--color-code)" }}

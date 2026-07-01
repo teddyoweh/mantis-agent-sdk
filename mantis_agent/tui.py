@@ -626,6 +626,7 @@ class MantisTUI:
             temperature=self.temperature,
             max_steps=self.max_turns,
             todos=self.todos,
+            fallback_model=os.environ.get("MANTIS_AGENT_FALLBACK_MODEL"),
         )
 
     async def _permit(self, tool: Any, tool_input: dict, ctx: Any) -> Any:

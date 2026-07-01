@@ -86,7 +86,7 @@ export default function DocsHome() {
         <span className="mono text-ink">create_sdk_mcp_server</span> — all of it works.
       </p>
 
-      <div className="mt-8 grid sm:grid-cols-[minmax(0,1fr)_auto] gap-4 items-start">
+      <div className="mt-8 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-4 items-start">
         <div className="min-w-0">
           <Shiki code={HELLO} lang="python" title="hello.py" />
         </div>
@@ -108,7 +108,7 @@ export default function DocsHome() {
             </div>
             <h2 className="font-display text-[1.7rem] leading-tight">{sec.title}</h2>
             <p className="text-[14px] text-ink-3 mt-1 mb-5">{sec.blurb}</p>
-            <div className="grid sm:grid-cols-2 gap-x-8 gap-y-px">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-px">
               {sec.links.map((l) => (
                 <Link
                   key={l.href}

@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.26.0] — 2026-06-30
+
+### Added
+
+- **Model fallback** (parity roadmap T2). `Agent(fallback_model=...)` — if the
+  primary model call fails *before producing any output* (overload,
+  model-not-found, connection drop), the turn is retried once on the fallback
+  model (same provider/backend), so a transient outage doesn't kill the run. A
+  failure *after* tokens have streamed is re-raised (no unsafe partial-output
+  retry); the fallback is one-shot per run (no retry loop). In the terminal, set
+  `MANTIS_AGENT_FALLBACK_MODEL`.
+
 ## [1.25.0] — 2026-06-30
 
 ### Fixed

@@ -155,7 +155,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="mt-12 grid lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
+          <div className="mt-12 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
             <DiffHero />
             <div className="rise flex flex-col gap-3" style={{ animationDelay: "0.25s" }}>
               <CopyLine text="pip install mantis-agent-sdk" />
@@ -212,8 +212,8 @@ export default function Home() {
           <h2 className="font-display text-[clamp(2rem,4.5vw,3.2rem)] max-w-[720px]">
             A terminal to code in, and a library to build with.
           </h2>
-          <div className="mt-14 grid lg:grid-cols-2 gap-12 items-start">
-            <div>
+          <div className="mt-14 grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
+            <div className="min-w-0">
               <div className="flex items-baseline gap-3 mb-4">
                 <span className="mono text-[13px] text-clay">01</span>
                 <h3 className="text-[18px] font-medium">The mantis terminal</h3>
@@ -229,7 +229,7 @@ export default function Home() {
                 <CopyLine text="mantis setup && mantis" />
               </div>
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-baseline gap-3 mb-4">
                 <span className="mono text-[13px] text-mantis">02</span>
                 <h3 className="text-[18px] font-medium">The Python library</h3>
@@ -254,7 +254,7 @@ export default function Home() {
               Streaming dispatch, hooks, permissions, MCP, sub-agents, sessions. None of the OSS
               alternatives ship the whole set.
             </h2>
-            <div className="mt-14 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-10 gap-y-12">
+            <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-10 gap-y-12">
               {FEATURES.map((f) => (
                 <div key={f.k} className="group">
                   <div className="eyebrow text-clay mb-2.5">{f.k}</div>
@@ -277,7 +277,7 @@ export default function Home() {
             <span className="prose-inline-code mx-1">@tool</span>; the library figures out how the model
             in front of it can call it.
           </p>
-          <div className="mt-14 grid md:grid-cols-3 gap-px" style={{ background: "var(--color-hair)" }}>
+          <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: "var(--color-hair)" }}>
             {PATHS.map((p) => (
               <div key={p.n} className="bg-paper p-7">
                 <div className="flex items-center gap-3 mb-4">
@@ -342,7 +342,7 @@ export default function Home() {
 
         {/* ============ OBSERVABILITY ============ */}
         <section className="wrap py-24">
-          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
             <div>
               <SectionLabel>observability, shipped</SectionLabel>
               <h2 className="font-display text-[clamp(1.9rem,4vw,2.9rem)] leading-[1.05]">

@@ -50,7 +50,7 @@ export default async function DocPage({
         <div className="prose" dangerouslySetInnerHTML={{ __html: html }} />
 
         {/* prev / next */}
-        <div className="mt-16 pt-8 rule-t grid sm:grid-cols-2 gap-4">
+        <div className="mt-16 pt-8 rule-t grid grid-cols-1 sm:grid-cols-2 gap-4">
           {prev ? (
             <Link
               href={`/docs/${prev.slug}`}

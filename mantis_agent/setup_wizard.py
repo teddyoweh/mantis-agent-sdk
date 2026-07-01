@@ -500,6 +500,13 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
         c.print(Text("  Cancelled.", style=dim))
         return 1
 
+    # Anthropic speaks /v1/messages, not /chat/completions — the key was already
+    # validated against /models, so skip the chat ping for it. For everyone else,
+    # confirm the exact model answers before committing it as the default.
+    if prov.id != "anthropic" and not _confirm_model(c, prov.base_url, model, key):
+        c.print(Text("  Not saved — re-run  mantis setup  to pick another.", style=dim))
+        return 1
+
     catalog.set_last_model(model, prov.base_url)
     c.print()
     c.print(Text(f"  ✓ {prov.label} enabled · default model  {model}", style=f"bold {green}"))
@@ -617,6 +624,10 @@ def _run_selfhost(c: Any) -> int:
         if not model:
             c.print(Text("  Cancelled.", style=dim))
             return 1
+
+    if not _confirm_model(c, url, model, key):
+        c.print(Text("  Not saved — re-run  mantis setup.", style=dim))
+        return 1
 
     catalog.set_last_model(model, url)
     if key:

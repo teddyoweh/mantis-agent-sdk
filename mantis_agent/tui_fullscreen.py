@@ -339,13 +339,23 @@ async def run_fullscreen(tui: Any) -> int:
         return Dimension.exact(n) if n else Dimension.exact(0)
 
     def _switch_model(model_id: str) -> None:
+        from . import catalog  # noqa: PLC0415
+
+        # Cross-provider switch: if this model belongs to a *different* enabled
+        # provider (e.g. a Claude model while on OpenAI), re-wire the backend +
+        # key too — otherwise the new model would be sent to the old endpoint
+        # and 404/auth-fail. Falls back to the current backend for local ids.
+        prov = catalog.provider_for_model(model_id)
+        if prov is not None:
+            key = catalog.api_key_for(prov)
+            if key:
+                tui.backend, tui.api_key = prov.base_url, key
         tui.model = model_id
         tui.agent = tui._build_agent()
         if tui.agent is not None and tui.agent.permissions is not None:
             tui.agent.permissions.asker = _ask_permission
         try:
-            from . import catalog  # noqa: PLC0415
-            catalog.set_last_model(model_id)
+            catalog.set_last_model(model_id, tui.backend)
         except Exception:  # noqa: BLE001
             pass
 

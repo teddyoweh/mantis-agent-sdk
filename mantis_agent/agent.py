@@ -240,6 +240,11 @@ class Agent:
     # ``remember`` tool / ``memory.save_memory_entry``). Set False to disable.
     include_recall: bool = True
 
+    # Fallback model — if the primary model call fails *before producing any
+    # output* (overload, model-not-found, connection drop), the turn is retried
+    # once on this model (same provider/backend). ``None`` disables it.
+    fallback_model: str | None = None
+
     # Live todo list (the same list a ``todo_write`` tool mutates). When set,
     # the current state is re-injected as a ``<system-reminder>`` at the top of
     # each turn so the model keeps its plan in view over a long task instead of
@@ -280,6 +285,8 @@ class Agent:
     # Memoized ``<env>`` + git snapshot (built once, reused every turn so the
     # prompt-cache prefix stays stable). Populated lazily in _build_user_context.
     _env_context: str | None = field(default=None, init=False)
+    # Set once the fallback model has been activated, so we don't loop.
+    _fallback_used: bool = field(default=False, init=False)
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
     _surfaced: set[str] = field(default_factory=set, init=False)
@@ -827,7 +834,7 @@ class Agent:
                         or self._provider_hint or "",
                     },
                 )
-                async for ev in self._provider_stream(messages):
+                async for ev in self._stream_with_fallback(messages):
                     assembler.feed(ev)
                     # Surface raw stream events (token deltas, block start/stop)
                     # to an optional consumer so a UI can render text live as it
@@ -1238,6 +1245,37 @@ class Agent:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _stream_with_fallback(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
+        """Wrap the provider stream with one-shot model fallback. If the model
+        call fails BEFORE producing any event (open/first-token failure) and a
+        ``fallback_model`` is configured, switch to it and retry the turn. A
+        failure *after* events have streamed is re-raised (can't safely retry
+        partial output)."""
+        produced = False
+        try:
+            async for ev in self._provider_stream(messages):
+                produced = True
+                yield ev
+            return
+        except Exception as err:  # noqa: BLE001
+            if not (not produced and self.fallback_model and not self._fallback_used):
+                raise
+            self._activate_fallback(err)
+        # Retry once on the fallback (outside the except so its own errors
+        # propagate normally).
+        async for ev in self._provider_stream(messages):
+            yield ev
+
+    def _activate_fallback(self, error: BaseException) -> None:
+        _log.warning(
+            "model %r failed (%r) before output; falling back to %r",
+            self.model, error, self.fallback_model,
+        )
+        self._fallback_used = True
+        self.model = self.fallback_model  # type: ignore[assignment]
+        self.model_capability = lookup_model(self.model)
+        self._env_context = None  # env block referenced the old model; let it rebuild
 
     def _provider_stream(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
         # Hoist the system prompt: prefer explicit Agent.system, else look at

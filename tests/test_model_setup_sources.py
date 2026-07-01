@@ -9,6 +9,7 @@ import mantis_agent.catalog as catalog
 from mantis_agent.setup_wizard import (
     FREE_PROVIDER_IDS,
     _arrow_select,
+    _ping_chat_model,
     _probe_openai_models,
 )
 
@@ -60,6 +61,16 @@ def test_free_provider_ids_are_all_real_catalog_ids() -> None:
 def test_selfhost_probe_unreachable_returns_none() -> None:
     # A closed port must degrade to None (→ manual model entry), never raise.
     assert _probe_openai_models("http://127.0.0.1:59999/v1", "") is None
+
+
+# -- Model ping (validate-before-save) ---------------------------------------
+
+
+def test_model_ping_unreachable_does_not_block_save() -> None:
+    # A network flake must NOT block a save — returns (True, "") so setup is
+    # usable offline / behind a proxy. (A real 4xx from the model is separate.)
+    ok, _detail = _ping_chat_model("http://127.0.0.1:59999/v1", "some-model", "")
+    assert ok is True
 
 
 # -- Arrow selector ----------------------------------------------------------
