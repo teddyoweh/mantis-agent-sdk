@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.15.0] — 2026-06-30
+
+### Added
+
+- **`grep` gained real search modes** (parity roadmap T1.4). New args:
+  `output_mode` (`content` / `files_with_matches` / `count`), `context_lines`
+  (show lines around each match), `file_type` (restrict to a language like `py`,
+  `rust`, `js` — maps to `rg --type` and to extensions in the Python fallback),
+  `head_limit` (cap output; replaces the hardcoded 50-match limit), and
+  `multiline` (patterns spanning line boundaries). Both the ripgrep path and the
+  dependency-free Python fallback honor every mode. (`glob` already sorted results
+  by mtime, newest-first.)
+
 ## [1.14.0] — 2026-06-30
 
 ### Added

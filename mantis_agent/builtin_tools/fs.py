@@ -416,25 +416,57 @@ async def glob(pattern: str, path: str = ".") -> str:
 
 @tool(is_read_only=True, timeout_s=30.0)
 async def grep(
-    pattern: str, path: str = ".", glob: str | None = None, ignore_case: bool = False
+    pattern: str,
+    path: str = ".",
+    glob: str | None = None,
+    ignore_case: bool = False,
+    output_mode: str = "content",
+    context_lines: int = 0,
+    file_type: str | None = None,
+    head_limit: int = 0,
+    multiline: bool = False,
 ) -> str:
-    """Search file contents for a regex pattern and return matching ``file:line:text``
-    rows. Prefers ripgrep (``rg``) and falls back to a Python walk.
+    """Search file contents for a regex pattern. Prefers ripgrep (``rg``) and
+    falls back to a Python walk.
 
     Args:
         pattern: Regular expression to search for.
         path: File or directory to search (default: working directory).
         glob: Optional filename glob to restrict the search (e.g. ``*.py``).
         ignore_case: Case-insensitive match.
+        output_mode: ``content`` → ``file:line:text`` rows (default);
+            ``files_with_matches`` → just the matching file paths;
+            ``count`` → ``file:count`` per file.
+        context_lines: Lines of context to show around each match (like
+            ``rg -C``). Only applies to ``content`` mode.
+        file_type: Restrict to a language/type (``rg --type``), e.g. ``py``,
+            ``rust``, ``js``. More convenient than a glob for a whole language.
+        head_limit: Cap the number of output lines returned (0 = default cap).
+        multiline: Let ``.`` and the pattern span line boundaries.
     """
+
+    mode = output_mode if output_mode in ("content", "files_with_matches", "count") else "content"
+    limit = head_limit if head_limit > 0 else _MAX_MATCHES
 
     rg = await _have_rg()
     if rg:
-        cmd = ["rg", "--line-number", "--no-heading", "--color=never", "-m", "50"]
+        cmd = ["rg", "--color=never"]
+        if mode == "files_with_matches":
+            cmd.append("--files-with-matches")
+        elif mode == "count":
+            cmd.append("--count")
+        else:
+            cmd += ["--line-number", "--no-heading"]
+            if context_lines > 0:
+                cmd += ["-C", str(context_lines)]
         if ignore_case:
             cmd.append("-i")
+        if multiline:
+            cmd += ["--multiline", "--multiline-dotall"]
         if glob:
             cmd += ["--glob", glob]
+        if file_type:
+            cmd += ["--type", file_type]
         cmd += ["--", pattern, path]
         result = await anyio.run_process(cmd, check=False, input=b"")
         out = result.stdout.decode("utf-8", "replace").rstrip()
@@ -443,11 +475,34 @@ async def grep(
         if result.returncode > 1:
             err = result.stderr.decode("utf-8", "replace").strip()
             raise ValueError(err or f"grep failed (exit {result.returncode})")
+        out = _head(out, limit)
         return _truncate(out, _MAX_OUTPUT)
 
     return await anyio.to_thread.run_sync(
-        _py_grep, pattern, path, glob, ignore_case
+        _py_grep, pattern, path, glob, ignore_case, mode, context_lines,
+        file_type, limit, multiline,
     )
+
+
+def _head(text: str, limit: int) -> str:
+    """Keep the first ``limit`` lines, noting how many were dropped."""
+    lines = text.split("\n")
+    if len(lines) <= limit:
+        return text
+    dropped = len(lines) - limit
+    return "\n".join(lines[:limit]) + f"\n… [{dropped} more lines truncated]"
+
+
+# rg --type name → file-extension globs, for the Python fallback.
+_TYPE_EXTS = {
+    "py": (".py", ".pyi"), "python": (".py", ".pyi"),
+    "js": (".js", ".jsx", ".mjs"), "ts": (".ts", ".tsx"),
+    "rust": (".rs",), "go": (".go",), "java": (".java",), "c": (".c", ".h"),
+    "cpp": (".cpp", ".cc", ".hpp", ".h"), "rb": (".rb",), "ruby": (".rb",),
+    "md": (".md", ".markdown"), "json": (".json",), "yaml": (".yaml", ".yml"),
+    "toml": (".toml",), "sh": (".sh", ".bash"), "html": (".html", ".htm"),
+    "css": (".css", ".scss"),
+}
 
 
 async def _have_rg() -> bool:
@@ -458,32 +513,72 @@ async def _have_rg() -> bool:
         return False
 
 
-def _py_grep(pattern: str, path: str, glob: str | None, ignore_case: bool) -> str:
+def _py_grep(
+    pattern: str, path: str, glob: str | None, ignore_case: bool,
+    mode: str = "content", context_lines: int = 0, file_type: str | None = None,
+    limit: int = _MAX_MATCHES, multiline: bool = False,
+) -> str:
     import re
 
     flags = re.IGNORECASE if ignore_case else 0
+    if multiline:
+        flags |= re.DOTALL
     rx = re.compile(pattern, flags)
     base = Path(path).expanduser()
+    exts = _TYPE_EXTS.get(file_type or "", ())
     files: list[Path]
     if base.is_file():
         files = [base]
     else:
         files = [p for p in base.rglob(glob or "*") if p.is_file()]
-    hits: list[str] = []
+    if exts:
+        files = [f for f in files if f.suffix in exts]
+
+    out: list[str] = []
     for f in files:
         if ".git" + os.sep in str(f):
             continue
         try:
-            with f.open("r", encoding="utf-8", errors="replace") as fh:
-                for n, line in enumerate(fh, 1):
-                    if rx.search(line):
-                        hits.append(f"{f}:{n}:{line.rstrip()[:_MAX_LINE]}")
-                        if len(hits) >= _MAX_MATCHES:
-                            hits.append("… [more matches truncated]")
-                            return "\n".join(hits)
+            text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-    return "\n".join(hits) if hits else f"no matches for {pattern!r} in {path}"
+        if multiline:
+            if rx.search(text):
+                if mode == "files_with_matches":
+                    out.append(str(f))
+                elif mode == "count":
+                    out.append(f"{f}:{len(rx.findall(text))}")
+                else:
+                    out.append(f"{f}: (multiline match)")
+            if len(out) >= limit:
+                break
+            continue
+        lines = text.splitlines()
+        matched = [n for n, ln in enumerate(lines) if rx.search(ln)]
+        if not matched:
+            continue
+        if mode == "files_with_matches":
+            out.append(str(f))
+        elif mode == "count":
+            out.append(f"{f}:{len(matched)}")
+        else:
+            shown: set[int] = set()
+            for n in matched:
+                lo, hi = max(0, n - context_lines), min(len(lines), n + context_lines + 1)
+                for i in range(lo, hi):
+                    if i in shown:
+                        continue
+                    shown.add(i)
+                    sep = ":" if i == n else "-"
+                    out.append(f"{f}:{i + 1}{sep}{lines[i][:_MAX_LINE]}")
+                    if len(out) >= limit:
+                        break
+                if len(out) >= limit:
+                    break
+        if len(out) >= limit:
+            out.append("… [more matches truncated]")
+            break
+    return "\n".join(out) if out else f"no matches for {pattern!r} in {path}"
 
 
 # ---------------------------------------------------------------------------
