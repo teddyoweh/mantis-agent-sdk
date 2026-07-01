@@ -74,6 +74,19 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.23.0] — 2026-06-30
+
+### Added
+
+- **Hooks: multiple hooks per event + tool-name matchers** (parity roadmap T2).
+  A hook field now accepts a list of callables and/or `HookMatcher(hook=fn,
+  matcher="Bash")` — the dispatcher runs every *matching* hook in order (fnmatch
+  against the tool name; non-tool events always run), chains input mutations, and
+  short-circuits on the first block. Backward compatible: a bare callable still
+  works. The `claude_compat` SDK-shaped `HookMatcher(matcher=..., hooks=[...])`
+  now works end to end with real matcher semantics (previously only the first
+  callable per event was honored).
+
 ## [1.22.0] — 2026-06-30
 
 ### Added

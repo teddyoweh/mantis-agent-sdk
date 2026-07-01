@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import msgspec
@@ -133,6 +133,56 @@ class HookResult(msgspec.Struct, omit_defaults=True):
 HookFn = Callable[[HookContext], Awaitable["HookResult | None"]]
 
 
+@dataclass(slots=True, frozen=True)
+class HookMatcher:
+    """A hook scoped to a subset of tools (Claude-SDK ``HookMatcher`` parity).
+
+    ``matcher`` is an fnmatch pattern tested against the tool name for tool
+    events (``PreToolUse``/``PostToolUse``/...): ``"Bash"`` runs only for bash,
+    ``"*"`` / ``None`` for every tool. On non-tool events the matcher is ignored
+    and the hook always runs.
+    """
+
+    hook: HookFn
+    matcher: str | None = None
+
+
+# What a ``Hooks`` field may hold: a bare callable, a HookMatcher, or a list of
+# either — so multiple hooks can fire per event, each optionally tool-scoped.
+HookSpec = "HookFn | HookMatcher | list[HookFn | HookMatcher]"
+
+
+def _normalize_hooks(value: Any) -> list[tuple[str | None, HookFn]]:
+    """Flatten a hook field value to ``[(matcher, fn), ...]``."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else [value]
+    out: list[tuple[str | None, HookFn]] = []
+    for it in items:
+        if isinstance(it, HookMatcher):
+            out.append((it.matcher, it.hook))
+        elif hasattr(it, "hooks") and getattr(it, "hooks", None):
+            # SDK-shaped HookMatcher: {matcher, hooks: [fn, ...]}.
+            pat = getattr(it, "matcher", None)
+            out.extend((pat, fn) for fn in it.hooks if callable(fn))
+        elif callable(it):
+            out.append((None, it))
+    return out
+
+
+def _matcher_hits(pattern: str | None, ctx: HookContext) -> bool:
+    """Does ``pattern`` apply to this context? Non-tool events always match;
+    tool events match when the tool name fnmatches the pattern."""
+    if pattern is None:
+        return True
+    name = getattr(ctx.tool, "name", None)
+    if name is None:
+        return True  # not a tool event → matcher irrelevant
+    import fnmatch  # noqa: PLC0415
+
+    return fnmatch.fnmatchcase(name, pattern)
+
+
 # ---------------------------------------------------------------------------
 # Hooks registry
 # ---------------------------------------------------------------------------
@@ -152,33 +202,33 @@ class Hooks:
     ``Hooks`` over the wire — it's a runtime-only container.
     """
 
-    pre_tool_use: HookFn | None = None
-    post_tool_use: HookFn | None = None
-    post_tool_use_failure: HookFn | None = None
-    notification: HookFn | None = None
-    user_prompt_submit: HookFn | None = None
-    session_start: HookFn | None = None
-    session_end: HookFn | None = None
-    stop: HookFn | None = None
-    stop_failure: HookFn | None = None
-    subagent_start: HookFn | None = None
-    subagent_stop: HookFn | None = None
-    pre_compact: HookFn | None = None
-    post_compact: HookFn | None = None
-    permission_request: HookFn | None = None
-    permission_denied: HookFn | None = None
-    setup: HookFn | None = None
-    task_created: HookFn | None = None
-    task_completed: HookFn | None = None
-    elicitation: HookFn | None = None
-    elicitation_result: HookFn | None = None
-    config_change: HookFn | None = None
-    file_changed: HookFn | None = None
-    cwd_changed: HookFn | None = None
-    instructions_loaded: HookFn | None = None
-    worktree_create: HookFn | None = None
-    worktree_remove: HookFn | None = None
-    teammate_idle: HookFn | None = None
+    pre_tool_use: "HookSpec | None" = None
+    post_tool_use: "HookSpec | None" = None
+    post_tool_use_failure: "HookSpec | None" = None
+    notification: "HookSpec | None" = None
+    user_prompt_submit: "HookSpec | None" = None
+    session_start: "HookSpec | None" = None
+    session_end: "HookSpec | None" = None
+    stop: "HookSpec | None" = None
+    stop_failure: "HookSpec | None" = None
+    subagent_start: "HookSpec | None" = None
+    subagent_stop: "HookSpec | None" = None
+    pre_compact: "HookSpec | None" = None
+    post_compact: "HookSpec | None" = None
+    permission_request: "HookSpec | None" = None
+    permission_denied: "HookSpec | None" = None
+    setup: "HookSpec | None" = None
+    task_created: "HookSpec | None" = None
+    task_completed: "HookSpec | None" = None
+    elicitation: "HookSpec | None" = None
+    elicitation_result: "HookSpec | None" = None
+    config_change: "HookSpec | None" = None
+    file_changed: "HookSpec | None" = None
+    cwd_changed: "HookSpec | None" = None
+    instructions_loaded: "HookSpec | None" = None
+    worktree_create: "HookSpec | None" = None
+    worktree_remove: "HookSpec | None" = None
+    teammate_idle: "HookSpec | None" = None
 
 
 # CamelCase event name → dataclass field name. Built once at import time so
@@ -229,21 +279,30 @@ class HookDispatcher:
             # raise because the agent loop may pass custom event names.
             return HookResult()
 
-        fn: HookFn | None = getattr(self.hooks, field_name, None)
-        if fn is None:
+        registered = _normalize_hooks(getattr(self.hooks, field_name, None))
+        if not registered:
             return HookResult()
 
-        try:
-            res = await fn(ctx)
-        except Exception:  # noqa: BLE001 — user code; never crash the loop
-            logger.exception(
-                "hook %r raised; treating as no-op", event,
-            )
-            return HookResult()
-
-        if res is None:
-            return HookResult()
-        return res
+        # Run every matching hook in order. Mutations chain (each hook sees the
+        # prior one's mutated input); the FIRST block short-circuits. A hook that
+        # raises or matches nothing is skipped — never crashes the loop.
+        mutated: dict[str, Any] | None = None
+        for pattern, fn in registered:
+            if not _matcher_hits(pattern, ctx):
+                continue
+            try:
+                res = await fn(ctx)
+            except Exception:  # noqa: BLE001 — user code; never crash the loop
+                logger.exception("hook %r raised; treating as no-op", event)
+                continue
+            if res is None:
+                continue
+            if res.mutated_input is not None:
+                mutated = res.mutated_input
+                ctx = msgspec.structs.replace(ctx, input=mutated)  # thread onward
+            if res.block:
+                return HookResult(block=True, mutated_input=mutated, note=res.note)
+        return HookResult(mutated_input=mutated) if mutated is not None else HookResult()
 
     def has(self, event: str) -> bool:
         """Cheap check used by the loop to skip context assembly when nothing
@@ -253,12 +312,13 @@ class HookDispatcher:
         field_name = _EVENT_TO_FIELD.get(event)
         if field_name is None:
             return False
-        return getattr(self.hooks, field_name, None) is not None
+        return bool(_normalize_hooks(getattr(self.hooks, field_name, None)))
 
 
 __all__ = [
     "HOOK_EVENTS",
     "HookContext",
+    "HookMatcher",
     "HookDispatcher",
     "HookFn",
     "HookResult",

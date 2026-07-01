@@ -143,6 +143,15 @@ CATALOG: tuple[Provider, ...] = (
         ("gpt-oss-120b", "zai-glm-4.7", "llama-3.3-70b", "gemma-4-31b"),
         "cloud.cerebras.ai · very fast · hosts OpenAI gpt-oss",
     ),
+    # Anthropic is NOT OpenAI-compatible — mantis routes api.anthropic.com to the
+    # anthropic_passthrough provider, and its /models + auth use x-api-key +
+    # anthropic-version headers (handled by _models_headers below). Listed here
+    # so it shows up in `mantis setup` and /models like any other provider.
+    Provider(
+        "anthropic", "Claude (Anthropic)", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY",
+        ("claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-fable-5"),
+        "console.anthropic.com · Claude (Opus/Sonnet/Haiku)",
+    ),
 )
 
 BY_ID = {p.id: p for p in CATALOG}
@@ -268,6 +277,8 @@ def provider_for_model(model_id: str) -> Provider | None:
         "o3": "openai",
         "o4": "openai",
         "gemini-": "gemini",
+        "claude-": "anthropic",
+        "claude/": "anthropic",
     }
     for pre, pid in prefixes.items():
         if low.startswith(pre):
@@ -322,6 +333,16 @@ def store_live_models(provider_id: str, models: list[str]) -> None:
         pass
 
 
+def _models_headers(provider: Provider, key: str | None) -> dict[str, str]:
+    """Auth headers for a provider's ``/models`` probe. Anthropic uses
+    ``x-api-key`` + ``anthropic-version`` (not OpenAI's ``Bearer``)."""
+    if not key:
+        return {}
+    if provider.id == "anthropic" or "anthropic.com" in provider.base_url:
+        return {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    return {"Authorization": f"Bearer {key}"}
+
+
 def validate_provider(provider: Provider, *, timeout: float = 4.0) -> tuple[bool, str]:
     """Check that a provider's key + endpoint actually work, by hitting
     ``/v1/models``. Returns ``(ok, detail)`` — e.g. ``(True, "42 models")`` or
@@ -335,7 +356,7 @@ def validate_provider(provider: Provider, *, timeout: float = 4.0) -> tuple[bool
     try:
         with httpx.Client(timeout=timeout) as c:
             r = c.get(f"{provider.base_url.rstrip('/')}/models",
-                      headers={"Authorization": f"Bearer {key}"})
+                      headers=_models_headers(provider, key))
     except Exception:  # noqa: BLE001
         return False, "can't reach endpoint"
     if r.status_code in (401, 403):
@@ -359,7 +380,7 @@ def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str
     try:
         with httpx.Client(timeout=timeout) as c:
             r = c.get(f"{provider.base_url.rstrip('/')}/models",
-                      headers={"Authorization": f"Bearer {key}"} if key else {})
+                      headers=_models_headers(provider, key))
             r.raise_for_status()
             ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
     except Exception:  # noqa: BLE001

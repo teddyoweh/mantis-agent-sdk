@@ -319,7 +319,7 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     for i, p in enumerate(providers, 1):
         line = Text()
         line.append(f"  {i:>2}  ", style=gold)
-        line.append(f"{p.label:<16}", style="white")
+        line.append(f"{p.label:<20}", style="white")
         line.append(f"{p.note}", style=dim)
         if catalog.saved_key(p.id):
             line.append("   ✓ key saved", style=green)
@@ -395,4 +395,89 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     c.print(Text("\n  Start coding:", style="white"))
     c.print(Text("      mantis", style=f"bold {gold}"))
     c.print(Text("  Switch models any time with  /models  ·  add more with  mantis setup.\n", style=dim))
+    return 0
+
+
+def _probe_openai_models(url: str, key: str) -> list[str] | None:
+    """GET ``{url}/models`` (OpenAI shape). Returns the id list, [] if reachable
+    but empty, or None if unreachable. Best-effort — never raises."""
+    try:
+        import httpx  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return None
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    try:
+        r = httpx.get(f"{url.rstrip('/')}/models", headers=headers, timeout=4.0)
+        if r.status_code != 200:
+            return None
+        data = r.json().get("data", [])
+        return [m["id"] for m in data if isinstance(m, dict) and "id" in m]
+    except Exception:  # noqa: BLE001 — network/JSON/anything
+        return None
+
+
+def _run_selfhost(c: Any) -> int:
+    """Point mantis at any OpenAI-compatible endpoint you run yourself (vLLM,
+    TGI, llama.cpp, LM Studio, a remote GPU box). Saves backend + model as the
+    default; the API key (if the server needs one) goes to user settings."""
+    import getpass  # noqa: PLC0415
+
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+
+    green, dim, gold, red = "#7cb342", "bright_black", "#cddc39", "red"
+
+    c.print(Text("\n  Self-host — point mantis at your own OpenAI-compatible endpoint", style="white"))
+    c.print(Text("  vLLM · TGI · llama.cpp · LM Studio · a remote GPU box — anything that speaks /v1\n", style=dim))
+    try:
+        url = input("  Base URL [Enter for http://localhost:8000/v1]: ").strip() or "http://localhost:8000/v1"
+    except (EOFError, KeyboardInterrupt):
+        return 1
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    try:
+        key = getpass.getpass("  API key (Enter if none — most local servers need none): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return 1
+
+    c.print(Text("  Probing endpoint…", style=dim))
+    models = _probe_openai_models(url, key)
+    if models:
+        c.print(Text(f"  ✓ reachable — {len(models)} model(s)\n", style=green))
+        for i, m in enumerate(models[:20], 1):
+            c.print(Text(f"   {i:>2}  {m}", style="white"))
+        try:
+            raw = input(f"\n  Pick [1-{min(len(models), 20)}, Enter={models[0]}], or type an id: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not raw:
+            model = models[0]
+        elif raw.isdigit() and 1 <= int(raw) <= min(len(models), 20):
+            model = models[int(raw) - 1]
+        else:
+            model = raw
+    else:
+        c.print(Text("  (couldn't list /v1/models — enter the model id your server serves)", style=dim))
+        try:
+            model = input("  Model id: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 1
+        if not model:
+            c.print(Text("  Cancelled.", style=dim))
+            return 1
+
+    catalog.set_last_model(model, url)
+    if key:
+        try:
+            from .settings import update_setting_source  # noqa: PLC0415
+            update_setting_source("user", {"env": {"MANTIS_AGENT_API_KEY": key}})
+        except Exception:  # noqa: BLE001
+            c.print(Text("  (couldn't persist the key — set MANTIS_AGENT_API_KEY yourself)", style=red))
+
+    c.print()
+    c.print(Text(f"  ✓ connected · {model}  @  {url}", style=f"bold {green}"))
+    c.print(Text("\n  Start coding:", style="white"))
+    c.print(Text("      mantis", style=f"bold {gold}"))
+    c.print(Text("  Switch models any time with  /models  or  /connect.\n", style=dim))
     return 0

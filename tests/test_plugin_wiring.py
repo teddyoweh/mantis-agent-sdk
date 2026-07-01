@@ -134,6 +134,9 @@ def test_plugin_hooks_merge_into_combined_hooks() -> None:
     ).to_query_options()
 
     hooks = opts["hooks"]
-    # Both event handlers wired.
-    assert hooks.pre_tool_use is plugin_pre
-    assert hooks.post_tool_use is user_pre
+    # Both event handlers wired. The converter now preserves full matcher lists
+    # (multiple hooks per event), so the callable is reachable via the
+    # normalized dispatch list rather than being the bare field value.
+    from mantis_agent.hooks import _normalize_hooks
+    assert plugin_pre in [fn for _, fn in _normalize_hooks(hooks.pre_tool_use)]
+    assert user_pre in [fn for _, fn in _normalize_hooks(hooks.post_tool_use)]

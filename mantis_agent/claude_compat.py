@@ -390,20 +390,23 @@ def _convert_hooks_dict(hooks: dict[str, list[Any]]) -> Any:
         "PermissionRequest": "permission_request",
         "PermissionDenied": "permission_denied",
     }
+    from .hooks import HookMatcher as _HM
+
     for event, matchers in hooks.items():
         field_name = event_to_field.get(event)
         if not field_name:
             continue
-        # Each matcher may be a HookMatcher with .hooks, or a plain callable
+        # Preserve ALL matchers + their callables (with matcher semantics),
+        # not just the first — the dispatcher runs every matching hook in order.
+        collected: list[Any] = []
         for matcher in matchers:
-            callable_fn = None
             if callable(matcher):
-                callable_fn = matcher
+                collected.append(matcher)
             elif hasattr(matcher, "hooks") and matcher.hooks:
-                callable_fn = matcher.hooks[0]
-            if callable_fn is not None:
-                out_kwargs[field_name] = callable_fn
-                break
+                pat = getattr(matcher, "matcher", None)
+                collected.extend(_HM(hook=fn, matcher=pat) for fn in matcher.hooks if callable(fn))
+        if collected:
+            out_kwargs[field_name] = collected
     return Hooks(**out_kwargs)
 
 

@@ -1,26 +1,292 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ============================================================
+   mantis — design tokens
+   Claude's warm editorial palette, flattened into a dense
+   developer-platform surface. Two accents held with discipline:
+   clay (the Claude side) and mantis-green (the open-model side).
+   No borders as decoration — separation comes from tint bands.
+   ============================================================ */
+
+@theme {
+  --color-paper: #f4f1e9; /* main surface — warm ivory */
+  --color-paper-2: #ece8dd; /* recessed band */
+  --color-paper-3: #e4dfd0; /* deeper recess / hover */
+  --color-hair: #ddd7c7; /* the one hairline we allow, used sparingly */
+
+  --color-ink: #1b1813; /* near-black, warm */
+  --color-ink-2: #565045; /* body */
+  --color-ink-3: #8b8577; /* captions / meta */
+
+  --color-clay: #bd5a37; /* primary accent — the Claude side */
+  --color-clay-soft: #d0784f;
+  --color-clay-wash: #f0e4d8;
+
+  --color-mantis: #3f7a4a; /* second accent — the open-model side */
+  --color-mantis-soft: #67a56b;
+  --color-mantis-wash: #e4ecdf;
+
+  --color-code: #1c1a15; /* dark code surface — the platform pop */
+  --color-code-2: #26231d;
+
+  --font-serif: var(--font-serif);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    letter-spacing: -0.006em;
+    font-feature-settings: "cv01", "cv03", "ss01";
+    /* faint warm grain so the ivory never reads as flat #fff */
+    background-image: radial-gradient(
+      transparent 0,
+      transparent 60%,
+      rgba(0, 0, 0, 0.008) 100%
+    );
+  }
+
+  ::selection {
+    background: var(--color-clay);
+    color: #fff;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-clay);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ---- serif display ---- */
+.font-display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 0.98;
+}
+
+/* ---- mono eyebrow / label ---- */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "liga" 0;
+}
+
+/* ---- layout rhythm ---- */
+.wrap {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-inline: 28px;
+}
+.wrap-tight {
+  max-width: 880px;
+}
+
+/* a full-bleed tint band — how we separate sections without borders */
+.band {
+  background: var(--color-paper-2);
+}
+.band-3 {
+  background: var(--color-paper-3);
+}
+
+/* the single hairline, used only where a tint band can't do the job */
+.rule {
+  height: 1px;
+  background: var(--color-hair);
+  border: 0;
+}
+
+/* ---- inline code in prose ---- */
+.prose-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--color-paper-3);
+  color: var(--color-clay);
+  padding: 0.1em 0.36em;
+  border-radius: 4px;
+  letter-spacing: 0;
+}
+
+/* ---- pill (backend chips, status) ---- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-2);
+  background: var(--color-paper-2);
+  padding: 5px 10px;
+  border-radius: 999px;
+  transition: color 0.18s, background 0.18s;
+}
+.pill:hover {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+}
+
+/* ---- links that underline on hover ---- */
+.ul {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size 0.25s ease;
+  padding-bottom: 1px;
+}
+.ul:hover {
+  background-size: 100% 1px;
+}
+
+/* ============================================================
+   Shiki / rehype-pretty-code — dark warm code surface
+   ============================================================ */
+[data-rehype-pretty-code-figure] {
+  margin: 20px 0;
+}
+[data-rehype-pretty-code-figure] pre {
+  background: var(--color-code) !important;
+  border-radius: 10px;
+  padding: 16px 0;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.65;
+}
+[data-rehype-pretty-code-figure] code {
+  font-family: var(--font-mono);
+  display: grid; /* line-by-line for highlight rows */
+  counter-reset: line;
+}
+[data-rehype-pretty-code-figure] code[data-line-numbers] > [data-line]::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 1.2rem;
+  margin-right: 1.1rem;
+  text-align: right;
+  color: #55504533;
+  color: rgba(180, 170, 150, 0.28);
+}
+[data-rehype-pretty-code-figure] [data-line] {
+  padding-inline: 18px;
+  border-left: 2px solid transparent;
+}
+[data-rehype-pretty-code-figure] [data-highlighted-line] {
+  background: rgba(189, 90, 55, 0.13);
+  border-left-color: var(--color-clay-soft);
+}
+[data-rehype-pretty-code-figure] [data-highlighted-chars] {
+  background: rgba(103, 165, 107, 0.2);
+  border-radius: 3px;
+  padding: 0.1em 0.2em;
+}
+[data-rehype-pretty-code-title] {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--color-ink-3);
+  background: var(--color-code-2);
+  padding: 9px 16px;
+  border-radius: 10px 10px 0 0;
+  margin-bottom: -14px;
+  position: relative;
+  z-index: 1;
+}
+[data-rehype-pretty-code-title] + pre {
+  border-radius: 0 0 10px 10px;
+}
+
+/* raw shiki (landing snippets via <Shiki/>) */
+.shiki-card .shiki-pre {
+  background: var(--color-code) !important;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  font-family: var(--font-mono);
+}
+.shiki-card .shiki-pre code {
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   Motion — a single restrained reveal
+   ============================================================ */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+.caret {
+  display: inline-block;
+  width: 8px;
+  height: 1.05em;
+  background: var(--color-mantis-soft);
+  vertical-align: text-bottom;
+  animation: blink 1.1s steps(1) infinite;
 }

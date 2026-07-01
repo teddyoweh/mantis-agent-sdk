@@ -2374,6 +2374,19 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_setup(argv[1:])
 
+    # Apply settings.json `env` into the process environment BEFORE argparse so
+    # the --api-key / --backend / --model defaults (which read os.environ) pick
+    # it up. setdefault → a real shell env var still wins. This is what makes a
+    # key saved by `mantis setup` (self-host, etc.) actually reach the provider.
+    try:
+        from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+        _env = (load_settings(SETTING_SOURCES) or {}).get("env") or {}
+        for _k, _v in _env.items():
+            if isinstance(_k, str) and isinstance(_v, str):
+                os.environ.setdefault(_k, _v)
+    except Exception:  # noqa: BLE001 — missing/broken settings must not block launch
+        pass
+
     p = argparse.ArgumentParser(
         prog="mantis",
         description="Mantis — interactive agent terminal. Run `mantis setup` first to install a model.",
