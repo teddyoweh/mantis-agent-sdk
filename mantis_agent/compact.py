@@ -354,16 +354,32 @@ class SimpleCompactor:
 
 
 _SUMMARIZER_INSTRUCTIONS = """\
-You are compressing an agent conversation so a future turn can continue it.
-Produce a tight, faithful summary in 200-400 words covering:
+You are compressing an agent CODING conversation so a future turn can resume it
+with NO loss of technical fidelity. Another agent will read ONLY your summary to
+continue the work — so preserve exact file paths, function/symbol names, key code
+snippets, error messages, and the precise next action. Losing a path or an error
+means the resumed turn redoes or breaks work.
 
-1. The user's goal(s) and any constraints they've stated.
-2. Decisions made so far and *why* — the reasoning matters more than the verdict.
-3. Tools that have been called and what they returned (key findings, not raw output).
-4. Open questions, blockers, and what the agent was about to do next.
+Produce the summary under these EXACT section headers, in order:
 
-Write in past tense. Do not invent details. Do not use bullet headers — flowing
-prose is denser. Begin with: "Summary of prior conversation:".
+1. Primary Request and Intent — what the user asked for and any explicit
+   constraints. Capture every distinct request, not just the latest.
+2. Key Technical Concepts — languages, frameworks, tools, and patterns in play.
+3. Files and Code Sections — EVERY file created, edited, or examined, each with
+   its full path, why it matters, and the important code (short snippets of the
+   exact lines added/changed). This is the most important section — be specific.
+4. Errors and Fixes — each error encountered and how it was resolved, plus any
+   user feedback on the fix.
+5. Problem Solving — what has been solved and the approach taken.
+6. Pending Tasks — everything still to do, stated explicitly.
+7. Current Work — precisely what was being done right before this summary, with
+   file paths and code.
+8. Next Step — the single next action to take, quoting the relevant task/request.
+   If there is genuinely no next step, say so.
+
+Be exhaustive on technical detail, terse on prose. Do NOT invent anything not in
+the transcript. Quote exact identifiers and paths. Begin with:
+"Summary of prior conversation:".
 """
 
 

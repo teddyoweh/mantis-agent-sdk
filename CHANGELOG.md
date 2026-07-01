@@ -74,6 +74,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.5.0] — 2026-06-30
+
+### Changed
+
+- **Structured compaction summaries** (parity roadmap T1.7). When a long coding
+  session auto-compacts, the summarizer now produces Claude's multi-section
+  format — Primary Request · Key Technical Concepts · Files and Code Sections
+  (with exact paths + snippets) · Errors and Fixes · Problem Solving · Pending
+  Tasks · Current Work · Next Step — instead of 200–400 words of prose. This
+  preserves file paths, symbol names, error messages, and the precise next action
+  across a resumed turn, so the agent doesn't redo or break work after a
+  compaction. The transcript fed to the summarizer already carries tool inputs
+  (file paths) and errors as raw material.
+
 ## [2.4.1] — 2026-06-30
 
 ### Fixed

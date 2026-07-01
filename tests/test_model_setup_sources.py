@@ -242,6 +242,84 @@ def test_run_setup_entry_points_exit_cleanly_on_cancel(monkeypatch, tmp_path) ->
         assert rc in (0, 1), f"{argv} returned {rc!r}"
 
 
+def test_hosted_provider_round_trip_wires_backend_and_key(monkeypatch, tmp_path) -> None:
+    # The common case: an OpenAI-compat hosted provider (DeepSeek/OpenAI/Groq/…)
+    # set up with a key must restore its model + backend + key and build a
+    # NON-anthropic provider pointed at that backend.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    catalog.set_key("deepseek", "sk-deepseek")
+    catalog.set_last_model("deepseek-chat", "https://api.deepseek.com/v1")
+
+    from mantis_agent.providers.anthropic_passthrough import AnthropicPassthroughProvider
+    from mantis_agent.tui import MantisTUI
+
+    try:
+        t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434",
+                      api_key=None, system=None, max_tokens=1, temperature=None, max_turns=1)
+        t._restore_last_model()
+        assert t.model == "deepseek-chat"
+        assert t.backend == "https://api.deepseek.com/v1"
+        assert t.api_key == "sk-deepseek"
+        agent = t._build_agent()
+        assert not isinstance(agent.provider, AnthropicPassthroughProvider)
+    finally:
+        catalog.clear_key("deepseek")
+
+
+def test_oauth_token_round_trip_native_anthropic(monkeypatch, tmp_path) -> None:
+    # Native OAuth-token path: a claude-* model + ANTHROPIC_AUTH_TOKEN (no api
+    # key) must restore via provider_for_model + the token branch, build the
+    # passthrough with Bearer, AND carry the required oauth-beta header.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "oauth-tok")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    catalog.set_last_model("claude-opus-4-8", "https://api.anthropic.com/v1")
+
+    from mantis_agent.providers.anthropic_passthrough import AnthropicPassthroughProvider
+    from mantis_agent.tui import MantisTUI
+
+    t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434",
+                  api_key=None, system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._restore_last_model()
+    assert t.model == "claude-opus-4-8"
+    assert "anthropic.com" in (t.backend or "")
+
+    agent = t._build_agent()
+    assert isinstance(agent.provider, AnthropicPassthroughProvider)
+    h = {k.lower(): v for k, v in dict(agent.provider.client.headers).items()}
+    assert h.get("authorization") == "Bearer oauth-tok"
+    assert h.get("anthropic-beta") == "oauth-2025-04-20"  # native → oauth beta required
+    assert "x-api-key" not in h
+
+
+def test_gateway_round_trip_builds_passthrough_with_bearer(monkeypatch, tmp_path) -> None:
+    # The full gateway round-trip: a saved gateway model+URL + ANTHROPIC_AUTH_TOKEN
+    # must restore and build an anthropic_passthrough provider that authenticates
+    # with Bearer (not x-api-key). This is what makes Bedrock/Vertex/Azure work.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "gw-token")
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    catalog.set_last_model("anthropic.claude-sonnet-4-5-v1:0", "https://gw.example.com/anthropic/v1")
+
+    from mantis_agent.providers.anthropic_passthrough import AnthropicPassthroughProvider
+    from mantis_agent.tui import MantisTUI
+
+    t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434",
+                  api_key=None, system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._restore_last_model()
+    assert t.model == "anthropic.claude-sonnet-4-5-v1:0"
+    assert t.backend == "https://gw.example.com/anthropic/v1"
+
+    agent = t._build_agent()
+    assert isinstance(agent.provider, AnthropicPassthroughProvider)
+    headers = {k.lower(): v for k, v in dict(agent.provider.client.headers).items()}
+    assert headers.get("authorization") == "Bearer gw-token"
+    assert "x-api-key" not in headers
+
+
 def test_anthropic_gateway_urls_route_to_passthrough() -> None:
     # Bedrock/Vertex/Azure Anthropic-Messages gateways (the /anthropic path
     # convention) must use the passthrough (/v1/messages), not OpenAI-compat.
