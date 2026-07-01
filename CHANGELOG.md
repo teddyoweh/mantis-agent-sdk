@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [1.8.1] - 2026-06-30
+
+### Added
+
+- **`mantis` full-screen: a live, navigable slash-command menu.** Typing `/`
+  now shows a real layout window (not a fragile completion float) listing the
+  matching commands with descriptions — arrow ↑/↓ to select, Tab/Enter to fill.
+- **`/models` is a selectable model picker.** It lists only *chat* models from
+  the active backend (embeddings, tts, whisper, moderation, and legacy models
+  are filtered out), navigable with the arrow keys; Enter switches and rebuilds
+  the agent so the change takes effect immediately, and persists the choice.
+  `/model <partial>` filters as you type.
+
+### Fixed
+
+- `/model <id>` in the full-screen UI now rebuilds the live agent (previously it
+  set the model string but the running agent kept the old model).
+
 ## [Unreleased]
 
 ### Added

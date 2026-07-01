@@ -97,31 +97,58 @@ async def run_fullscreen(tui: Any) -> int:
             state["slash_sel"] = 0
     input_buffer.on_text_changed += _on_text
 
-    # -- live slash-command menu (a real layout window, not a fragile float) --
+    # -- live menu: slash commands OR a model picker (a real layout window) ---
 
-    def _slash_matches() -> list[tuple[str, str]]:
+    def _chat_models() -> list[str]:
+        from .tui import _is_chat_model  # noqa: PLC0415
+        avail, _ = tui._available_models()
+        chat = [m for m in (avail or []) if _is_chat_model(m)]
+        return chat or list(avail or [])  # if filtering nukes everything, show all
+
+    def _menu_options() -> list[tuple[str, str, str]]:
+        """Returns ``(kind, value, meta)`` rows. kind is 'cmd' or 'model'."""
         t = input_buffer.text
-        if not t.startswith("/") or " " in t:
+        if not t.startswith("/"):
             return []
-        return [(c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
+        # Model picker: '/models' or '/model <partial>' → selectable chat models.
+        if t == "/models" or t.startswith("/model "):
+            partial = t[7:].strip().lower() if t.startswith("/model ") else ""
+            models = [m for m in _chat_models() if partial in m.lower()]
+            return [("model", m, "← current" if m == tui.model else "") for m in models[:8]]
+        # Command menu (still typing the command name).
+        if " " not in t:
+            return [("cmd", c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
+        return []
 
     def menu_ft() -> Any:
-        matches = _slash_matches()
-        if not matches:
+        opts = _menu_options()
+        if not opts:
             return ANSI("")
-        sel = state["slash_sel"] % len(matches)
+        sel = state["slash_sel"] % len(opts)
         rows = []
-        for i, (cmd, desc) in enumerate(matches[:8]):
+        for i, (_kind, value, meta) in enumerate(opts[:8]):
+            metatxt = f"  {_DIM}{meta}{_RESET}" if meta else ""
             if i == sel:
-                rows.append(f"\033[30;48;5;113m {cmd} \033[0m  {_DIM}{desc}{_RESET}")
+                rows.append(f"\033[30;48;5;113m {value} \033[0m{metatxt}")
             else:
-                rows.append(f"  {_GREEN}{cmd}{_RESET}  {_DIM}{desc}{_RESET}")
+                rows.append(f"  {_GREEN}{value}{_RESET}{metatxt}")
         return ANSI("\n".join(rows))
 
     def _menu_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        n = min(len(_slash_matches()), 8)
+        n = min(len(_menu_options()), 8)
         return Dimension.exact(n) if n else Dimension.exact(0)
+
+    def _switch_model(model_id: str) -> None:
+        tui.model = model_id
+        tui.agent = tui._build_agent()
+        if tui.agent is not None and tui.agent.permissions is not None:
+            tui.agent.permissions.asker = _ask_permission
+        try:
+            from . import catalog  # noqa: PLC0415
+            catalog.set_last_model(model_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _width() -> int:
         return shutil.get_terminal_size((80, 24)).columns
@@ -283,8 +310,35 @@ async def run_fullscreen(tui: Any) -> int:
 
     from prompt_toolkit.filters import Condition  # noqa: PLC0415
 
-    _menu_open = Condition(lambda: bool(_slash_matches()))
+    _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
+
+    async def _announce(msg: str) -> None:
+        await _print(lambda: tui.console.print(f"[ansibrightblack]{msg}[/]"))
+        get_app().invalidate()
+
+    def _accept_menu(event: Any) -> bool:
+        """Act on the highlighted menu row. Returns True if it consumed the key
+        (so the caller shouldn't also submit). Models switch immediately;
+        commands fill into the line (one more Enter submits)."""
+        opts = _menu_options()
+        if not opts:
+            return False
+        kind, value, _meta = opts[state["slash_sel"] % len(opts)]
+        if kind == "model":
+            _switch_model(value)
+            input_buffer.reset()
+            state["slash_sel"] = 0
+            event.app.create_background_task(_announce(f"model → {value}"))
+            return True
+        # command: fill it (unless already exact)
+        if input_buffer.text != value:
+            input_buffer.text = value + " "
+            input_buffer.cursor_position = len(input_buffer.text)
+            state["slash_sel"] = 0
+            event.app.invalidate()
+            return True
+        return False
 
     def _resolve_perm(choice: str) -> None:
         p = state.get("pending_perm")
@@ -329,11 +383,7 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("tab", filter=_menu_open)
     def _(event: Any) -> None:
-        m = _slash_matches()
-        if m:
-            input_buffer.text = m[state["slash_sel"] % len(m)][0] + " "
-            input_buffer.cursor_position = len(input_buffer.text)
-            state["slash_sel"] = 0
+        _accept_menu(event)
 
     @kb.add("enter")
     def _(event: Any) -> None:
@@ -341,17 +391,9 @@ async def run_fullscreen(tui: Any) -> int:
         if state.get("pending_perm") is not None:
             _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
             return
-        # When the menu is open and the line isn't yet the exact command, Enter
-        # fills the highlighted command (one more Enter submits it).
-        m = _slash_matches()
-        if m:
-            cmd = m[state["slash_sel"] % len(m)][0]
-            if input_buffer.text != cmd:
-                input_buffer.text = cmd + " "
-                input_buffer.cursor_position = len(input_buffer.text)
-                state["slash_sel"] = 0
-                event.app.invalidate()
-                return
+        # Menu open → act on the highlighted row (switch model / fill command).
+        if _accept_menu(event):
+            return
         text = input_buffer.text.strip()
         input_buffer.reset()
         if text:
