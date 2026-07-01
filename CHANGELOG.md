@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.49.0] — 2026-06-30
+
+### Added
+
+- **`mantis --continue` (`-c`)** — resume your most recent conversation on launch
+  instead of starting fresh, picking up exactly where you left off (Claude's
+  `--continue`). Loads the newest session's messages and continues writing to the
+  same on-disk session (so it keeps growing, not forking). Prints a one-line
+  "continuing: <first prompt>" confirmation; with no past conversation it starts
+  fresh with a note. Builds on the full-screen persistence added in 2.48. New
+  `MantisTUI.resume_most_recent`.
+
 ## [2.48.0] — 2026-06-30
 
 ### Fixed

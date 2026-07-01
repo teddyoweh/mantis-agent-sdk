@@ -886,6 +886,20 @@ def test_env_only_hosted_model_autowires_provider(monkeypatch) -> None:
     assert t.api_key == "sk-test-autowire"
 
 
+def test_env_only_hosted_model_uses_generic_api_key(monkeypatch) -> None:
+    # MANTIS_AGENT_MODEL=gpt-4o + the generic MANTIS_AGENT_API_KEY (no provider-
+    # specific key) is a natural combo — the auto-wire must use it, not warn.
+    from mantis_agent import paths
+    from mantis_agent.tui import MantisTUI
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setattr("mantis_agent.catalog.api_key_for", lambda *a, **k: None)  # no provider key
+    t = MantisTUI(model="gpt-4o", backend=paths.ollama_base_url(), api_key="sk-generic",
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._resolve_model()
+    assert "openai" in (t.backend or "")
+    assert t.api_key == "sk-generic"
+
+
 def test_env_only_hosted_model_without_key_stays_put(monkeypatch) -> None:
     # Hosted model but no key: don't switch (nothing to switch to) and don't crash —
     # _resolve_model warns and leaves the backend as-is.

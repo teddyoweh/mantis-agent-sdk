@@ -1357,7 +1357,10 @@ class MantisTUI:
             # runs — but never override an explicitly-set MANTIS_AGENT_BASE_URL.
             if (not os.environ.get("MANTIS_AGENT_BASE_URL")
                     and (self.backend or "").rstrip("/") == _paths.ollama_base_url().rstrip("/")):
-                key = catalog.api_key_for(hosted)
+                # Prefer the provider's own env key; fall back to the generic
+                # MANTIS_AGENT_API_KEY (self.api_key) a user may have set alongside
+                # MANTIS_AGENT_MODEL without a provider-specific key.
+                key = catalog.api_key_for(hosted) or self.api_key
                 # Anthropic OAuth/gateway Bearer token: api_key_for returns None, so
                 # wire the backend with api_key=None (passthrough uses env Bearer).
                 bearer = None if key else catalog.anthropic_bearer_backend(hosted, self.backend)
@@ -1828,6 +1831,24 @@ class MantisTUI:
             pass
 
     # -- session commands: /resume /branch /rewind --------------------------
+
+    def resume_most_recent(self) -> str | None:
+        """Load the newest past session into this TUI (messages + transcript) so
+        the conversation continues where it left off — powers ``--continue``.
+        Returns a short label for the resumed session, or None if there is none."""
+        from .session_tree import (  # noqa: PLC0415
+            SessionTranscript,
+            list_sessions,
+            load_for_resume,
+        )
+
+        sessions = list_sessions()
+        if not sessions:
+            return None
+        target = sessions[0]
+        self.messages = load_for_resume(target.session_id)
+        self.transcript = SessionTranscript(target.session_id)
+        return target.title or target.first_prompt or target.session_id[:8]
 
     async def _cmd_resume(self, arg: str) -> None:
         """List past sessions (or load one by number/id). ``/resume`` shows the
@@ -2874,6 +2895,10 @@ def main(argv: list[str] | None = None) -> int:
         "--godmode", action="store_true",
         help="Alias for --dangerously-skip-permissions.",
     )
+    p.add_argument(
+        "--continue", "-c", dest="continue_session", action="store_true",
+        help="Resume your most recent conversation instead of starting fresh.",
+    )
     args = p.parse_args(argv)
 
     # Dependency preflight with a friendly message.
@@ -2905,6 +2930,19 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "\033[31m⏵⏵ bypass permissions on — tools run with NO confirmation "
             "(godmode). Ctrl+C to quit.\033[0m",
+            file=sys.stderr,
+        )
+
+    # --continue: load the most recent conversation before launching, so it picks
+    # up where it left off (the fullscreen setup keeps a transcript we set here).
+    if getattr(args, "continue_session", False):
+        try:
+            label = tui.resume_most_recent()
+        except Exception:  # noqa: BLE001 — never let resume break launch
+            label = None
+        print(
+            f"\033[90m[mantis] continuing: {label}\033[0m" if label
+            else "\033[90m[mantis] --continue: no past conversation found; starting fresh\033[0m",
             file=sys.stderr,
         )
 
