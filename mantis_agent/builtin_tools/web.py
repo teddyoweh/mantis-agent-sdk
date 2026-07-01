@@ -405,8 +405,35 @@ async def _exa_fetch(url: str, *, prompt: str | None) -> str:
     return "\n\n".join(parts) if parts else "(empty)"
 
 
+_DROP_BLOCK_RE = re.compile(
+    r"<(script|style|noscript|head|svg|template|iframe)\b[^>]*>.*?</\1\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_BLOCK_CLOSE_RE = re.compile(
+    r"</(p|div|section|article|h[1-6]|li|tr|table|ul|ol|header|footer|nav|blockquote|pre)\s*>",
+    re.IGNORECASE,
+)
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def _html_to_text(html: str) -> str:
+    """HTML → readable text, stdlib only (no BeautifulSoup). Drops script/style/
+    head blocks, turns block-element closes into newlines, strips remaining tags,
+    unescapes entities, and collapses blank runs."""
+    s = _DROP_BLOCK_RE.sub(" ", html)
+    s = _BR_RE.sub("\n", s)
+    s = _BLOCK_CLOSE_RE.sub("\n", s)
+    s = _TAG_RE.sub("", s)
+    s = html_mod.unescape(s)
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in s.splitlines()]
+    return "\n".join(ln for ln in lines if ln)
+
+
 async def _raw_fetch(url: str) -> str:
-    """Direct HTTP fetch + BeautifulSoup text extraction. Fallback path."""
+    """Direct HTTP fetch + dependency-free text extraction (the default path when
+    Exa isn't configured). HTML is cleaned to readable text; non-HTML bodies
+    (JSON, plain text, markdown, source) are returned verbatim so nothing useful
+    is mangled."""
 
     try:
         r = await _client().get(url)
@@ -414,17 +441,13 @@ async def _raw_fetch(url: str) -> str:
     except httpx.HTTPError as e:
         return f"fetch error: {e!r}"
 
-    try:
-        from bs4 import BeautifulSoup  # type: ignore[import-untyped]
-    except ImportError:
-        # No bs4 — return raw text truncated.
-        return r.text[:5000]
-
-    soup = BeautifulSoup(r.text, "html.parser")
-    for el in soup(["script", "style", "noscript"]):
-        el.decompose()
-    text = " ".join(soup.get_text(" ", strip=True).split())
-    return text[:5000] if text else "(empty page)"
+    ctype = r.headers.get("content-type", "").lower()
+    body = r.text
+    is_html = "html" in ctype or (not ctype and "<html" in body[:2000].lower())
+    if is_html:
+        text = _html_to_text(body)
+        return text[:5000] if text else "(empty page)"
+    return body[:5000] if body else "(empty)"
 
 
 # ---------------------------------------------------------------------------

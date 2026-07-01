@@ -127,6 +127,23 @@ def test_grouped_provider_models_enabled_before_disabled() -> None:
             assert not seen_disabled, "an enabled group appeared after a disabled one"
 
 
+def test_setting_a_key_enables_and_regroups_provider(monkeypatch, tmp_path) -> None:
+    # The inline-enable path relies on this: set_key → is_enabled True → the
+    # provider is grouped under "enabled". clear_key reverses it.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    prov = catalog.BY_ID["deepseek"]
+    assert catalog.is_enabled(prov) is False
+    catalog.set_key("deepseek", "sk-test-key")
+    try:
+        assert catalog.is_enabled(prov) is True
+        enabled_ids = [g["provider_id"] for g in catalog.grouped_provider_models() if g["enabled"]]
+        assert "deepseek" in enabled_ids
+    finally:
+        catalog.clear_key("deepseek")
+    assert catalog.is_enabled(prov) is False
+
+
 def test_grouped_provider_models_are_real_providers_with_lists() -> None:
     for g in catalog.grouped_provider_models():
         assert g["provider_id"] in catalog.BY_ID

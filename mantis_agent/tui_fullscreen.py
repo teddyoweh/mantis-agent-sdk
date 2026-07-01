@@ -451,6 +451,13 @@ async def run_fullscreen(tui: Any) -> int:
             await _announce(f"✗ {prov.label}: {detail} (key not saved)")
             return
         _switch_model(model, provider_id=pid)
+        # Fetch the provider's real /v1/models now (off-thread) so the next
+        # /models shows its full catalog, not just the flagship starter list.
+        try:
+            await asyncio.to_thread(catalog.refresh_live_models, prov)
+            state.pop("model_cache", None)  # invalidate the active-backend cache
+        except Exception:  # noqa: BLE001
+            pass
         await _announce(f"✓ {prov.label} enabled · model → {model}")
 
     def _width() -> int:

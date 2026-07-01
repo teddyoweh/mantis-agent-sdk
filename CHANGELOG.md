@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.2.0] — 2026-06-30
+
+### Fixed
+
+- **`web_fetch` no longer depends on BeautifulSoup.** Its default (non-Exa) path
+  called `bs4` — not a dependency — so a plain `web_fetch(url)` returned raw HTML
+  (tags, `<script>`, CSS) as the model's "readable text". Rewritten with a
+  stdlib HTML→text extractor (drops script/style/head, block-closes → newlines,
+  strips tags, unescapes entities, collapses whitespace). Non-HTML bodies (JSON,
+  plain text, markdown, source) are now returned verbatim by content-type instead
+  of being tag-stripped. Same dependency-free treatment `web_search` got in 1.25.
+
 ## [2.1.0] — 2026-06-30
 
 ### Added

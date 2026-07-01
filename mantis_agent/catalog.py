@@ -200,11 +200,18 @@ def set_key(provider_id: str, key: str) -> None:
 def clear_key(provider_id: str) -> bool:
     data = _load_store()
     keys = data.get("keys") or {}
-    if provider_id in keys:
+    removed = provider_id in keys
+    if removed:
         del keys[provider_id]
         _save_store(data)
-        return True
-    return False
+    # Mirror set_key, which also exports the key into the process env — otherwise
+    # api_key_for() would still find it there and the provider would stay
+    # "enabled" after a /disable. (A shell-exported var reappears next launch,
+    # which is the right behavior — that's the user's standing choice.)
+    prov = BY_ID.get(provider_id)
+    if prov and prov.api_key_env:
+        os.environ.pop(prov.api_key_env, None)
+    return removed
 
 
 def get_last_model() -> dict[str, Any] | None:
