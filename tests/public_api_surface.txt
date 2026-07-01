@@ -9,7 +9,6 @@ BackendCapability
 BudgetExceededError
 CLIConnectionError
 Checkpoint
-ClaudeAgentOptions
 ClaudeHookContext
 ClaudePermissionResult
 ClaudeSDKClient
@@ -25,6 +24,7 @@ InMemorySessionStore
 InMemoryTracer
 InputJsonDelta
 IsolationMode
+MantisAgentOptions
 Message
 MessageDelta
 MessageStart

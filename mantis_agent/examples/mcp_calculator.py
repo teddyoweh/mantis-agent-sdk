@@ -13,7 +13,7 @@ import asyncio
 from typing import Any
 
 from mantis_agent import (
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     create_sdk_mcp_server,
     tool,
 )
@@ -155,7 +155,7 @@ async def main():
 
     # Configure Claude to use the calculator server with allowed tools
     # Pre-approve all calculator MCP tools so they can be used without permission prompts
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         mcp_servers={"calc": calculator},
         allowed_tools=[
             "mcp__calc__add",

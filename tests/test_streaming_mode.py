@@ -28,7 +28,7 @@ import pytest
 from mantis_agent import (
     Agent,
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
     SystemMessage,
@@ -399,7 +399,7 @@ def test_compat_query_streams_assistant_before_next_turn(_force_mock_provider):
 
     async def main():
         gated = _GatedTool()
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model="mock-model",
             tools=[gated.as_tool()],
             max_turns=5,
@@ -472,7 +472,7 @@ def test_compat_query_emits_system_user_assistant_result_in_order(
     async def main():
         async for msg in compat_query(
             prompt="hi",
-            options=ClaudeAgentOptions(
+            options=MantisAgentOptions(
                 model="mock-model",
                 max_turns=1,
                 include_memory=False,
@@ -502,7 +502,7 @@ def test_client_receive_response_yields_assistant_before_result(
     async def main():
         order: list = []
         async with ClaudeSDKClient(
-            options=ClaudeAgentOptions(
+            options=MantisAgentOptions(
                 model="mock-model",
                 max_turns=1,
                 include_memory=False,

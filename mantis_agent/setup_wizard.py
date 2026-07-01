@@ -135,6 +135,7 @@ def run_setup(argv: list[str]) -> int:
     p.add_argument("--hosted", action="store_true", help="Go straight to the hosted-API flow (paste a key).")
     p.add_argument("--free", action="store_true", help="Go straight to the free-hosted-tier flow.")
     p.add_argument("--selfhost", action="store_true", help="Go straight to the self-host (custom URL) flow.")
+    p.add_argument("--status", action="store_true", help="Show the current model + enabled providers and exit.")
     args = p.parse_args(argv)
 
     c = Console()
@@ -142,7 +143,14 @@ def run_setup(argv: list[str]) -> int:
 
     c.print()
     c.print(Text("  🦗  mantis setup", style=f"bold {green}"))
-    c.print(Text("  Let's get you a working model.\n", style=dim))
+
+    if args.status:
+        _print_status(c)
+        return 0
+
+    c.print(Text("  Let's get you a working model.", style=dim))
+    _print_status(c)  # orient the user: what's already configured
+    c.print()
 
     # -- top-level: how do you want to run models? -------------------------
     # Explicit flags / the local-only options skip the menu.
@@ -293,6 +301,30 @@ def _interactive_pick(c: object, budget: float, rec: object) -> str | None:
 # Path chooser + hosted-provider flow (reuses catalog.py — same store the
 # in-app /enable command writes, so a model set up here Just Works on launch).
 # ---------------------------------------------------------------------------
+
+
+def _print_status(c: Any) -> None:
+    """Show the current default model + backend and which hosted providers are
+    enabled, so `mantis setup` orients the user in what's already configured."""
+    from rich.text import Text  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+
+    green, dim = "#7cb342", "bright_black"
+    last = catalog.get_last_model()
+    if last and last.get("model"):
+        backend = last.get("backend") or ""
+        if not backend:  # older saves stored no backend — resolve it from the model
+            prov = catalog.provider_for_model(last["model"])
+            backend = prov.base_url if prov else ""
+        where = ("Ollama (local)" if ("localhost" in backend or "127.0.0.1" in backend)
+                 else (backend or "default backend"))
+        c.print(Text(f"  Current:  {last['model']}  ·  {where}", style="white"))
+    else:
+        c.print(Text("  Current:  nothing configured yet", style=dim))
+    enabled = [p.label for p in catalog.CATALOG if catalog.is_enabled(p)]
+    if enabled:
+        c.print(Text("  Enabled:  " + "  ·  ".join(enabled), style=green))
 
 
 def _arrow_select(title: str, rows: list[tuple[str, str]], *, start: int = 0) -> int | None:
@@ -589,7 +621,7 @@ def _run_anthropic(c: Any, prov: Any) -> int:
     keys = ["apikey", "oauth", "gateway"]
     rows = [
         ("API key      ", "a direct Anthropic key (console.anthropic.com) — x-api-key"),
-        ("OAuth login  ", "sign in with your Claude Pro/Max subscription (browser) — no key"),
+        ("OAuth token  ", "paste a Claude token — or sign in with your Pro/Max subscription"),
         ("Cloud gateway", "Bedrock · Vertex · Azure via a proxy URL + Bearer token"),
     ]
     idx = _arrow_select("How do you authenticate with Claude?", rows)
@@ -675,15 +707,19 @@ def _run_anthropic(c: Any, prov: Any) -> int:
     return 0
 
 
-def _ping_anthropic_bearer(base_url: str, model: str, token: str, *, timeout: float = 10.0) -> tuple[bool, str]:
-    """Like :func:`_ping_anthropic_model` but with an OAuth/gateway Bearer token
-    instead of x-api-key. Returns ``(ok, detail)``; a network blip → (True, "")."""
+def _anthropic_ping(base_url: str, model: str, auth: dict[str, str], *, timeout: float = 10.0) -> tuple[bool, str]:
+    """Core Claude credential check via ``/v1/messages`` with a 1-token request.
+    ``auth`` supplies the credential header (x-api-key OR authorization: Bearer).
+
+    We fail ONLY on a real auth failure (HTTP 401 or an ``authentication_error``)
+    — a model-permission / not-found error means the credential authenticated
+    fine (the account just lacks *that* flagship), so we still let the user pick a
+    model. A network blip → (True, "") so a save is never blocked on a hiccup."""
     try:
         import httpx  # noqa: PLC0415
     except Exception:  # noqa: BLE001
         return True, ""
-    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01",
-               "authorization": f"Bearer {token}"}
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01", **auth}
     payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
     try:
         r = httpx.post(f"{base_url.rstrip('/')}/messages", headers=headers, json=payload, timeout=timeout)
@@ -691,14 +727,23 @@ def _ping_anthropic_bearer(base_url: str, model: str, token: str, *, timeout: fl
         return True, ""
     if r.status_code == 200:
         return True, "ok"
-    detail = f"HTTP {r.status_code}"
+    etype, detail = "", f"HTTP {r.status_code}"
     try:
         err = r.json().get("error", {})
-        if isinstance(err, dict) and err.get("message"):
-            detail = str(err["message"])[:200]
+        if isinstance(err, dict):
+            etype = str(err.get("type", ""))
+            if err.get("message"):
+                detail = str(err["message"])[:200]
     except Exception:  # noqa: BLE001
         pass
-    return False, detail
+    if r.status_code == 401 or etype == "authentication_error":
+        return False, detail
+    return True, f"credential OK ({detail})"  # authenticated; model/quota issue only
+
+
+def _ping_anthropic_bearer(base_url: str, model: str, token: str, *, timeout: float = 10.0) -> tuple[bool, str]:
+    """Claude credential check with an OAuth/gateway Bearer token."""
+    return _anthropic_ping(base_url, model, {"authorization": f"Bearer {token}"}, timeout=timeout)
 
 
 def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10.0) -> tuple[bool, str]:
@@ -732,31 +777,9 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
 
 
 def _ping_anthropic_model(base_url: str, model: str, key: str, *, timeout: float = 10.0) -> tuple[bool, str]:
-    """Ping a Claude model via ``/v1/messages`` — Anthropic's API isn't OpenAI-
-    compatible (x-api-key + anthropic-version, ``/messages`` not
-    ``/chat/completions``). Returns ``(ok, detail)``; a network blip → (True, "")."""
-    try:
-        import httpx  # noqa: PLC0415
-    except Exception:  # noqa: BLE001
-        return True, ""
-    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
-    if key:
-        headers["x-api-key"] = key
-    payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
-    try:
-        r = httpx.post(f"{base_url.rstrip('/')}/messages", headers=headers, json=payload, timeout=timeout)
-    except Exception:  # noqa: BLE001
-        return True, ""
-    if r.status_code == 200:
-        return True, "ok"
-    detail = f"HTTP {r.status_code}"
-    try:
-        err = r.json().get("error", {})
-        if isinstance(err, dict) and err.get("message"):
-            detail = str(err["message"])[:200]
-    except Exception:  # noqa: BLE001
-        pass
-    return False, detail
+    """Claude credential check with a direct x-api-key. Anthropic's API isn't
+    OpenAI-compatible (``/v1/messages``, x-api-key + anthropic-version)."""
+    return _anthropic_ping(base_url, model, {"x-api-key": key} if key else {}, timeout=timeout)
 
 
 def _confirm_model(c: Any, base_url: str, model: str, key: str) -> bool:

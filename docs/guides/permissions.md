@@ -10,7 +10,7 @@ The single hook for permission decisions:
 
 ```python
 from mantis_agent import (
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     PermissionResultAllow,
     PermissionResultDeny,
     ToolPermissionContext,
@@ -25,7 +25,7 @@ async def can_use_tool(
         return PermissionResultDeny(reason="No writes outside the project")
     return PermissionResultAllow()
 
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[write_file, ...],
     can_use_tool=can_use_tool,
@@ -78,7 +78,7 @@ If you don't pass `can_use_tool`, set a default policy via
 | `deny` | All tools refused. Useful for testing without side effects. |
 
 ```python
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[shell, write_file],
     permissions={"default_mode": "ask"},
@@ -90,7 +90,7 @@ options = ClaudeAgentOptions(
 Whitelists / blacklists by tool name:
 
 ```python
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     tools=[fetch, search, shell, write_file],
     allowed_tools=["fetch", "search"],       # only these run
     # disallowed_tools=["shell"],            # everything except these

@@ -11,7 +11,7 @@ from __future__ import annotations
 import anyio
 
 from mantis_agent import (
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     PermissionResultDeny,
     ResultMessage,
     Tool,
@@ -87,7 +87,7 @@ def test_denial_surfaces_in_result_permission_denials() -> None:
         result = None
         async for msg in query(
             prompt="add 2 and 3",
-            options=ClaudeAgentOptions(
+            options=MantisAgentOptions(
                 model="mock-7b",
                 backend="mock",
                 tools=[add],
@@ -124,7 +124,7 @@ def test_clean_run_has_empty_denials_list() -> None:
         result = None
         async for msg in query(
             prompt="add 1 and 1",
-            options=ClaudeAgentOptions(
+            options=MantisAgentOptions(
                 model="mock-7b",
                 backend="mock",
                 tools=[add],

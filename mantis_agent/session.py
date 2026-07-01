@@ -76,6 +76,15 @@ def _encode_messages(messages: list[Message]) -> bytes:
     return _ENCODE_RAW.encode(payload)
 
 
+def strip_context_messages(messages: list[Message]) -> list[Message]:
+    """Return ``messages`` without the synthetic ``isMeta`` context/reminder
+    messages (env/git/memory head, recall, todo). Those are ambient context the
+    agent re-derives each run — replaying an old snapshot on resume would feed
+    the model stale environment/memory. Real user turns (``isMeta`` False) and
+    all assistant/tool messages are kept."""
+    return [m for m in messages if not getattr(m, "isMeta", False)]
+
+
 def _decode_messages(blob: bytes) -> list[Message]:
     """Decode a JSON blob back into typed messages, dispatching on ``role``."""
 
@@ -633,10 +642,22 @@ class Session:
         return sess
 
     @classmethod
-    async def load(cls, store: SessionStore, session_id: str) -> "Session":
-        """Load an existing session from the store."""
+    async def load(
+        cls, store: SessionStore, session_id: str, *, fresh_context: bool = True
+    ) -> "Session":
+        """Load an existing session from the store.
+
+        ``fresh_context`` (default True) drops the synthetic ``isMeta``
+        context/reminder messages (env + git + memory head, recall, todo) so the
+        agent RE-DERIVES current context on the next run instead of replaying a
+        stale snapshot from when the session was first created — the env, git
+        branch, or MANTIS.md may have changed since. Pass False to keep the
+        frozen head verbatim.
+        """
 
         messages, meta = await store.load(session_id)
+        if fresh_context:
+            messages = strip_context_messages(messages)
         return cls(store, session_id, messages=messages, meta=meta)
 
     # -- properties ------------------------------------------------------

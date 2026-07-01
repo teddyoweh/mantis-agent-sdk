@@ -10,7 +10,7 @@ from mantis_agent import (
     # Core
     query,
     ClaudeSDKClient,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     Agent,
 
     # Tools
@@ -86,7 +86,7 @@ from mantis_agent import (
 ## By topic
 
 - [query / ClaudeSDKClient](client.md) — the two entry points.
-- [ClaudeAgentOptions](options.md) — every option, with defaults.
+- [MantisAgentOptions](options.md) — every option, with defaults.
 - [Message types](messages.md) — flat-shape vs. internal shape.
 - [Tools](tools.md) — `@tool`, registries, built-ins.
 - [Errors](errors.md) — full error hierarchy.

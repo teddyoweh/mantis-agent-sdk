@@ -685,10 +685,10 @@ def run_setup_local_llamacpp(
     print()
     print(f"All set. Point your code at http://{host}:{port}/v1:")
     print()
-    print("    from mantis_agent import query, ClaudeAgentOptions")
+    print("    from mantis_agent import query, MantisAgentOptions")
     print("    async for msg in query(")
     print(
-        f"        prompt=\"hi\", options=ClaudeAgentOptions("
+        f"        prompt=\"hi\", options=MantisAgentOptions("
         f"model={m.tag!r}, base_url=\"http://{host}:{port}/v1\"),"
     )
     print("    ):")

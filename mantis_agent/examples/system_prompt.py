@@ -5,7 +5,7 @@ import anyio
 
 from mantis_agent import (
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     TextBlock,
     query,
 )
@@ -27,7 +27,7 @@ async def string_system_prompt():
     """Example with system_prompt as a string."""
     print("=== String System Prompt ===")
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         system_prompt="You are a pirate assistant. Respond in pirate speak.",
     )
 
@@ -43,7 +43,7 @@ async def preset_system_prompt():
     """Example with system_prompt preset (uses default Claude Code prompt)."""
     print("=== Preset System Prompt (Default) ===")
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         system_prompt={"type": "preset", "preset": "claude_code"},
     )
 
@@ -59,7 +59,7 @@ async def preset_with_append():
     """Example with system_prompt preset and append."""
     print("=== Preset System Prompt with Append ===")
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         system_prompt={
             "type": "preset",
             "preset": "claude_code",

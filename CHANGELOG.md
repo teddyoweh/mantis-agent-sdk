@@ -74,6 +74,25 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.0.0] — 2026-06-30
+
+### Changed (BREAKING)
+
+- **`ClaudeAgentOptions` is renamed to `MantisAgentOptions`.** The options class
+  is now natively mantis-branded across the whole codebase, docs, and examples.
+  `ClaudeAgentOptions` is **removed** (no alias) — update imports to
+  `from mantis_agent import MantisAgentOptions`. All other drop-in symbols
+  (`query`, `tool`, `AssistantMessage`, …) are unchanged.
+
+### Added
+
+- **Session-resume context freshness.** `Session.load` (and `resume_session`)
+  now drops the synthetic `isMeta` context/reminder messages (env + git + memory
+  head, recall, todo) by default so a resumed session RE-DERIVES current context
+  instead of replaying a stale snapshot from when it was created. New
+  `strip_context_messages` helper; pass `fresh_context=False` to keep the frozen
+  head.
+
 ## [1.36.0] — 2026-06-30
 
 ### Added

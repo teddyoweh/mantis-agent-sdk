@@ -11,7 +11,7 @@ https://github.com/anthropics/claude-agent-sdk-python/tree/main/examples
 verbatim.
 
 Top-level ``mantis_agent.query`` is wired to this when called with a
-``ClaudeAgentOptions`` (or no options) so the Claude SDK examples just
+``MantisAgentOptions`` (or no options) so the Claude SDK examples just
 work. When called with a dict it falls through to the existing dict-
 options behavior.
 """
@@ -29,7 +29,7 @@ from .budget import lookup_pricing
 from .capabilities import lookup_model
 from .claude_compat import (
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     Message,
     ResultMessage,
     SystemMessage,
@@ -56,11 +56,11 @@ __all__ = ["query"]
 async def query(
     *,
     prompt: str | AsyncIterable[Any],
-    options: ClaudeAgentOptions | dict[str, Any] | None = None,
+    options: MantisAgentOptions | dict[str, Any] | None = None,
 ) -> AsyncIterator[Message]:
     """Drop-in replacement for ``claude_agent_sdk.query``.
 
-    Accepts either a :class:`ClaudeAgentOptions` instance or a plain
+    Accepts either a :class:`MantisAgentOptions` instance or a plain
     dict. Yields flat-shape :class:`AssistantMessage`, :class:`UserMessage`,
     :class:`SystemMessage`, and :class:`ResultMessage` matching the
     Claude Python SDK examples 1:1.
@@ -221,17 +221,17 @@ async def query(
 # ---------------------------------------------------------------------------
 
 
-def _normalize_options(options: ClaudeAgentOptions | dict[str, Any] | None) -> dict[str, Any]:
+def _normalize_options(options: MantisAgentOptions | dict[str, Any] | None) -> dict[str, Any]:
     """Coerce options to a plain snake_case dict for ``_build_agent``."""
 
     if options is None:
         return {}
-    if isinstance(options, ClaudeAgentOptions):
+    if isinstance(options, MantisAgentOptions):
         return options.to_query_options()
     if isinstance(options, dict):
         return options
     raise TypeError(
-        f"query(options): expected ClaudeAgentOptions, dict, or None, got {type(options).__name__}"
+        f"query(options): expected MantisAgentOptions, dict, or None, got {type(options).__name__}"
     )
 
 
@@ -239,9 +239,9 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     """Construct an Agent from the dict-form options with sensible defaults."""
 
     # Apply on-disk settings layered UNDERNEATH the user's options. The
-    # caller's explicit ClaudeAgentOptions field always wins; settings
+    # caller's explicit MantisAgentOptions field always wins; settings
     # only fill the blanks. This is what makes
-    # ``ClaudeAgentOptions(setting_sources=["user", "project"])`` actually
+    # ``MantisAgentOptions(setting_sources=["user", "project"])`` actually
     # affect the agent's model / system prompt / allow lists, instead of
     # the field being merely typed-and-ignored.
     sources = opts.get("setting_sources")
@@ -258,7 +258,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # Auto-route from model name when no backend was passed. Precedence:
     # explicit ``backend=`` > ``$MANTIS_AGENT_BASE_URL`` > shape-based
     # inference > Ollama default. This is what makes
-    # ``ClaudeAgentOptions(model="qwen2.5:7b")`` work with no extra
+    # ``MantisAgentOptions(model="qwen2.5:7b")`` work with no extra
     # kwarg — same two-line drop-in story as the Claude SDK.
     from .routing import resolve_backend
     backend = resolve_backend(model, opts.get("backend"))
@@ -281,7 +281,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # to the model — the model has no idea those tools exist, so it just
     # answers in prose (or, worse, types "Call the multiply tool:" as text).
     #
-    # Note on shape: ClaudeAgentOptions.to_query_options() normalizes
+    # Note on shape: MantisAgentOptions.to_query_options() normalizes
     # `mcp_servers` via `dict.items()`, so what we see here is a list of
     # `(name, config)` tuples — not bare configs. We accept either form.
     mcp_servers_opt = opts.get("mcp_servers") or []

@@ -7,7 +7,7 @@ Coverage map:
   Ollama native ``format``, TGI grammar, mock, anthropic-passthrough rejection).
 * :class:`TestAgentWiring` — ``Agent(response_format=...)`` forwards to the
   provider via ``extra``; bad shapes blow up at construct time.
-* :class:`TestClaudeAgentOptionsWiring` — ``ClaudeAgentOptions(...)`` →
+* :class:`TestMantisAgentOptionsWiring` — ``MantisAgentOptions(...)`` →
   ``to_query_options()`` → ``_agent_from_options`` round-trip.
 * :class:`TestOpenAIWire` — captures the real httpx request body to assert the
   envelope reaches the wire intact.
@@ -25,7 +25,7 @@ import pytest
 
 from mantis_agent import (
     Agent,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ResponseFormatError,
     normalize_response_format,
     translate_response_format,
@@ -391,14 +391,14 @@ class TestAgentWiring:
 
 
 # ---------------------------------------------------------------------------
-# ClaudeAgentOptions → query() round-trip
+# MantisAgentOptions → query() round-trip
 # ---------------------------------------------------------------------------
 
 
-class TestClaudeAgentOptionsWiring:
+class TestMantisAgentOptionsWiring:
 
     def test_dataclass_roundtrip(self) -> None:
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model="qwen2.5-7b-instruct",
             response_format={"type": "json_object"},
         )
@@ -406,7 +406,7 @@ class TestClaudeAgentOptionsWiring:
         assert d["response_format"] == {"type": "json_object"}
 
     def test_dataclass_default_is_none(self) -> None:
-        opts = ClaudeAgentOptions(model="qwen2.5-7b-instruct")
+        opts = MantisAgentOptions(model="qwen2.5-7b-instruct")
         d = opts.to_query_options()
         assert "response_format" not in d
 
@@ -432,7 +432,7 @@ class TestClaudeAgentOptionsWiring:
         assert (a.extra or {}).get("response_format") is None
 
     def test_options_with_existing_extra_dont_get_clobbered(self) -> None:
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model="qwen2.5-7b-instruct",
             response_format={"type": "json_object"},
             extra={"telemetry_id": "abc"},

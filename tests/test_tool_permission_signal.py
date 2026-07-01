@@ -14,7 +14,7 @@ import pytest
 from mantis_agent import (
     Agent,
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
@@ -184,7 +184,7 @@ def test_can_use_tool_receives_ToolPermissionContext() -> None:
         result = None
         async for msg in query(
             prompt="echo hi",
-            options=ClaudeAgentOptions(
+            options=MantisAgentOptions(
                 model="mock-7b",
                 backend="mock",
                 tools=[echo],
@@ -212,7 +212,7 @@ def test_can_use_tool_signal_observed_by_callback() -> None:
     """A can_use_tool callback inspecting ctx.signal can flip its
     decision based on whether the agent was cancelled before this call.
     Drives the lower-level Agent path so we can wire a custom
-    PermissionContext with a pre-fired signal — ClaudeAgentOptions
+    PermissionContext with a pre-fired signal — MantisAgentOptions
     doesn't yet expose a 'permissions' field directly."""
 
     from mantis_agent import UserMessage

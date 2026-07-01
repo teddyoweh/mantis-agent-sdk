@@ -4,7 +4,7 @@ Mirrors the Claude Agent SDK ``setting_sources=["user", "project", "local"]``
 field, but actually does the work: each named source resolves to a
 ``settings.json`` on disk, all enabled sources merge in declared order
 (later overrides earlier), and the result feeds the agent's defaults so
-explicit ``ClaudeAgentOptions`` kwargs still win.
+explicit ``MantisAgentOptions`` kwargs still win.
 
 Source map
 ----------
@@ -31,7 +31,7 @@ Schema (informal)
 
 Any of the following keys can appear in a ``settings.json`` and will be
 applied to the agent if the user didn't explicitly pass them through
-``ClaudeAgentOptions``::
+``MantisAgentOptions``::
 
     {
       "model": "qwen2.5-7b-instruct",

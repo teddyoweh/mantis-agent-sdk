@@ -9,7 +9,7 @@ The two entry points. Use `query()` for one-shot calls; use
 def query(
     *,
     prompt: str | list[Message],
-    options: ClaudeAgentOptions | dict | None = None,
+    options: MantisAgentOptions | dict | None = None,
 ) -> AsyncIterator[SDKMessage]: ...
 ```
 
@@ -19,8 +19,8 @@ Runs a single agent loop and yields every message it produces.
 
 - `prompt` — either a string (sent as the first user turn) or an
   explicit message list (full conversation seed).
-- `options` — either a `ClaudeAgentOptions` instance or a `dict` with
-  the same keys. See [ClaudeAgentOptions](options.md).
+- `options` — either a `MantisAgentOptions` instance or a `dict` with
+  the same keys. See [MantisAgentOptions](options.md).
 
 **Yields**
 
@@ -54,7 +54,7 @@ asyncio.run(main())
 
 ```python
 class ClaudeSDKClient:
-    def __init__(self, options: ClaudeAgentOptions): ...
+    def __init__(self, options: MantisAgentOptions): ...
     async def __aenter__(self) -> "ClaudeSDKClient": ...
     async def __aexit__(self, *args) -> None: ...
 
@@ -77,7 +77,7 @@ Streaming context manager. The session persists across multiple
 
 **Per-call overrides**
 
-`client.query()` accepts a subset of `ClaudeAgentOptions` keys as
+`client.query()` accepts a subset of `MantisAgentOptions` keys as
 keyword arguments, which apply *only* to that call:
 
 - `max_turns`

@@ -4,10 +4,10 @@
 
 ```python
 # Before
-from claude_agent_sdk import query, ClaudeAgentOptions, tool
+from claude_agent_sdk import query, MantisAgentOptions, tool
 
 # After
-from mantis_agent import query, ClaudeAgentOptions, tool
+from mantis_agent import query, MantisAgentOptions, tool
 ```
 
 That's the whole diff. Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, the wire format underneath is OpenAI-compat or Ollama.
@@ -87,7 +87,7 @@ mantis-agent setup-local         # installs Ollama if missing, pulls qwen2.5:1.5
 
 ```python
 import asyncio
-from mantis_agent import query, ClaudeAgentOptions, tool, AssistantMessage
+from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
 
 @tool
 async def get_weather(city: str) -> str:
@@ -97,7 +97,7 @@ async def get_weather(city: str) -> str:
 async def main():
     async for msg in query(
         prompt="What's the weather in SF?",
-        options=ClaudeAgentOptions(
+        options=MantisAgentOptions(
             model="qwen2.5:1.5b",   # routes to local Ollama automatically
             tools=[get_weather],
             max_turns=5,
@@ -114,7 +114,7 @@ asyncio.run(main())
 Same script against Together AI — change one line:
 
 ```python
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="Qwen/Qwen2.5-72B-Instruct-Turbo",  # routes to Together automatically (uses $TOGETHER_API_KEY)
     tools=[get_weather],
     max_turns=5,
@@ -131,7 +131,7 @@ Auto-routing covers the well-known providers from the model name. For everything
 
 ```python
 # Self-hosted vLLM on a private GPU box
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="Qwen/Qwen2.5-72B-Instruct",
     backend="https://gpu-box.internal:8000/v1",
     api_key=os.environ["INTERNAL_KEY"],
@@ -139,21 +139,21 @@ options = ClaudeAgentOptions(
 )
 
 # LM Studio on a non-standard port
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     backend="http://localhost:1234/v1",
     tools=[get_weather],
 )
 
 # Groq (blazing fast llama / mixtral)
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="llama-3.3-70b-versatile",
     backend="https://api.groq.com/openai/v1",
     api_key=os.environ["GROQ_API_KEY"],
 )
 
 # OpenRouter aggregator (200+ models behind one API)
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="anthropic/claude-3.5-sonnet",  # OpenRouter proxies even Anthropic
     backend="https://openrouter.ai/api/v1",
     api_key=os.environ["OPENROUTER_API_KEY"],
@@ -317,7 +317,7 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 
 **Drop-in surface (Claude SDK parity)**
 - [x] `query()` yielding flat-shape `AssistantMessage` / `UserMessage` / `SystemMessage` / `ResultMessage`
-- [x] `ClaudeAgentOptions` with model, backend, tools, system_prompt, max_turns, max_tokens, temperature, hooks, can_use_tool, permissions, mcp_servers, plugins, agents, max_budget_usd, setting_sources, allowed_tools, disallowed_tools, cwd, session_id, persist, stderr
+- [x] `MantisAgentOptions` with model, backend, tools, system_prompt, max_turns, max_tokens, temperature, hooks, can_use_tool, permissions, mcp_servers, plugins, agents, max_budget_usd, setting_sources, allowed_tools, disallowed_tools, cwd, session_id, persist, stderr
 - [x] `ClaudeSDKClient` — streaming async context manager
 - [x] `@tool` decorator (Claude-shaped positional signature)
 - [x] `AgentDefinition` for sub-agents
@@ -421,7 +421,7 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 ```python
 from mantis_agent import (
     # Core
-    query, ClaudeAgentOptions, ClaudeSDKClient,
+    query, MantisAgentOptions, ClaudeSDKClient,
 
     # Messages (flat shape, matches claude_agent_sdk)
     AssistantMessage, UserMessage, SystemMessage, ResultMessage,

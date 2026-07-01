@@ -1,6 +1,6 @@
 """``setting_sources`` actually loads + persists per source.
 
-The Claude Agent SDK exposes ``ClaudeAgentOptions(setting_sources=[...])``
+The Claude Agent SDK exposes ``MantisAgentOptions(setting_sources=[...])``
 to declare which on-disk settings layers should contribute to the run.
 Previously: mantis-agent-sdk accepted the field but did nothing with it.
 Now: each named source resolves to a real path, the layers merge in
@@ -12,7 +12,7 @@ These tests cover:
   * load / save / update on one source
   * merge precedence across multiple sources
   * apply_settings_to_options precedence (explicit user opts always win)
-  * end-to-end wire-through via ``ClaudeAgentOptions.to_query_options``
+  * end-to-end wire-through via ``MantisAgentOptions.to_query_options``
     + ``compat_query._build_agent`` (so the agent actually reads the
     on-disk settings).
 """
@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from mantis_agent import (
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     KNOWN_SETTING_KEYS,
     SETTING_SOURCES,
     apply_settings_to_options,
@@ -374,17 +374,17 @@ def test_known_setting_keys_lists_documented_keys() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: ClaudeAgentOptions(setting_sources=[...]) wires through
+# End-to-end: MantisAgentOptions(setting_sources=[...]) wires through
 # ---------------------------------------------------------------------------
 
 
 def test_options_emit_setting_sources_in_query_opts(tmp_mantis_agent_home: Path) -> None:
-    opts = ClaudeAgentOptions(setting_sources=["user", "project"]).to_query_options()
+    opts = MantisAgentOptions(setting_sources=["user", "project"]).to_query_options()
     assert opts["setting_sources"] == ["user", "project"]
 
 
 def test_options_omit_setting_sources_when_unset() -> None:
-    opts = ClaudeAgentOptions().to_query_options()
+    opts = MantisAgentOptions().to_query_options()
     assert "setting_sources" not in opts
 
 
@@ -401,7 +401,7 @@ def test_build_agent_applies_settings_to_model(
 
     from mantis_agent.compat_query import _build_agent, _normalize_options
 
-    options = ClaudeAgentOptions(setting_sources=["user"])
+    options = MantisAgentOptions(setting_sources=["user"])
     opts = _normalize_options(options)
     agent = _build_agent(opts)
     assert agent.model == "qwen2.5-7b-instruct"
@@ -416,7 +416,7 @@ def test_build_agent_explicit_model_overrides_settings(
 
     from mantis_agent.compat_query import _build_agent, _normalize_options
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         model="from-explicit-arg",
         setting_sources=["user"],
     )
@@ -436,7 +436,7 @@ def test_build_agent_layers_three_sources(
 
     from mantis_agent.compat_query import _build_agent, _normalize_options
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         cwd=str(tmp_project),
         setting_sources=["user", "project", "local"],
     )
@@ -458,7 +458,7 @@ def test_build_agent_no_sources_unchanged(tmp_mantis_agent_home: Path) -> None:
     from mantis_agent.compat_query import _build_agent, _normalize_options
 
     # No setting_sources — file on disk should be ignored.
-    options = ClaudeAgentOptions()
+    options = MantisAgentOptions()
     opts = _normalize_options(options)
     agent = _build_agent(opts)
     # Default fallback model from env (or hardcoded) — not from settings.

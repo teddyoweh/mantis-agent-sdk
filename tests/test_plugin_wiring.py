@@ -1,4 +1,4 @@
-"""``ClaudeAgentOptions(plugins=[Plugin(...)])`` actually wires plugins in.
+"""``MantisAgentOptions(plugins=[Plugin(...)])`` actually wires plugins in.
 
 Previously: ``plugins`` was an accepted field but ignored. Now: each
 plugin's ``tools`` merge into the registry, ``system_prompt_addition``
@@ -8,7 +8,7 @@ Hooks instance.
 
 from __future__ import annotations
 
-from mantis_agent import ClaudeAgentOptions, Plugin, tool
+from mantis_agent import MantisAgentOptions, Plugin, tool
 
 
 @tool
@@ -26,7 +26,7 @@ async def multiply(a: int, b: int) -> str:
 def test_plugin_tools_merge_into_registry() -> None:
     """Tools from each plugin appear in the agent's resolved tool list."""
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         plugins=[
             Plugin(name="math-pack", tools=[add, multiply]),
         ],
@@ -44,7 +44,7 @@ def test_plugin_tools_combine_with_user_tools() -> None:
     async def divide(a: int, b: int) -> str:
         return str(a / b)
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         tools=[divide],
         plugins=[
             Plugin(name="math-pack", tools=[add, multiply]),
@@ -58,7 +58,7 @@ def test_plugin_tools_combine_with_user_tools() -> None:
 def test_plugin_system_prompt_addition_appends() -> None:
     """system_prompt_addition appends to the user's system_prompt with a blank line."""
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         system_prompt="You are an agent.",
         plugins=[
             Plugin(name="terse", system_prompt_addition="Reply in one sentence."),
@@ -75,7 +75,7 @@ def test_plugin_system_prompt_addition_appends() -> None:
 def test_plugin_system_prompt_addition_without_user_system() -> None:
     """When the user passes no system_prompt, plugin additions become the system."""
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         plugins=[Plugin(name="terse", system_prompt_addition="Be brief.")],
     ).to_query_options()
 
@@ -85,7 +85,7 @@ def test_plugin_system_prompt_addition_without_user_system() -> None:
 def test_multiple_plugin_additions_join_with_blank_lines() -> None:
     """Two plugins each adding text → both appended, separated by blank lines."""
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         system_prompt="root",
         plugins=[
             Plugin(name="a", system_prompt_addition="from A"),
@@ -101,7 +101,7 @@ def test_multiple_plugin_additions_join_with_blank_lines() -> None:
 def test_empty_plugins_list_is_noop() -> None:
     """plugins=[] leaves tools / system_prompt untouched."""
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         system_prompt="hi",
         plugins=[],
     ).to_query_options()
@@ -123,7 +123,7 @@ def test_plugin_hooks_merge_into_combined_hooks() -> None:
     async def user_pre(*_a, **_kw):
         return {}
 
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         hooks={"PostToolUse": [HookMatcher(hooks=[user_pre])]},
         plugins=[
             Plugin(

@@ -63,7 +63,7 @@ import pytest
 from mantis_agent import (
     Agent,
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
     TextBlock,
@@ -346,14 +346,14 @@ async def _verify_quickstart(backend_kind: str, model: str, url: str) -> None:
 async def _verify_quick_start(backend_kind: str, model: str, url: str) -> None:
     """quick_start.py — verbatim Claude SDK example (no model in options).
 
-    Run via ClaudeAgentOptions with explicit model+backend so we route
+    Run via MantisAgentOptions with explicit model+backend so we route
     to the matrix backend. The example uses three sub-calls; we
     exercise the most representative (basic Q&A)."""
 
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("4", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             max_turns=1,
@@ -370,7 +370,7 @@ async def _verify_system_prompt(backend_kind: str, model: str, url: str) -> None
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("arrr matey", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             system_prompt="You are a pirate assistant. Respond in pirate speak.",
@@ -388,7 +388,7 @@ async def _verify_tools_option(backend_kind: str, model: str, url: str) -> None:
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("I have Read and Write.", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             allowed_tools=["Read", "Write"],
@@ -423,7 +423,7 @@ async def _verify_max_budget_usd(backend_kind: str, model: str, url: str) -> Non
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("4", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             max_budget_usd=10.0,
@@ -441,7 +441,7 @@ async def _verify_max_budget_usd(backend_kind: str, model: str, url: str) -> Non
     seen_exhausted: list[Any] = []
     exhausted_mock = _ScriptedMock([_stream_text_only("4", model=model)])
     with _install_backend(backend_kind, exhausted_mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             max_budget_usd=0.0000001,  # immediately over budget
@@ -485,7 +485,7 @@ async def _verify_mcp_calculator(backend_kind: str, model: str, url: str) -> Non
     )
     mock = _ScriptedMock([turn1, turn2])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             mcp_servers={"calc": calc},
@@ -510,7 +510,7 @@ async def _verify_mcp_filesystem(backend_kind: str, model: str, url: str) -> Non
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("Files: a.txt b.txt", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             # Realistic config — the SDK lets you pass it even when the
@@ -579,7 +579,7 @@ async def _verify_multi_agent_research(backend_kind: str, model: str, url: str) 
             name="research",
             description="Research a subject and return a summary.",
         )
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             tools=[research_tool],
@@ -653,7 +653,7 @@ async def _verify_research_agent(backend_kind: str, model: str, url: str) -> Non
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("Research stub", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             allowed_tools=["WebSearch", "WebFetch"],
@@ -679,7 +679,7 @@ async def _verify_stderr_callback(backend_kind: str, model: str, url: str) -> No
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("4", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             stderr=cb,
@@ -699,7 +699,7 @@ async def _verify_streaming_mode_ipython(backend_kind: str, model: str, url: str
     seen: list[Any] = []
     mock = _ScriptedMock([_stream_text_only("4", model=model)])
     with _install_backend(backend_kind, mock):
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model=model,
             backend=url,
             max_turns=1,
@@ -833,7 +833,7 @@ async def _verify_with_thinking(backend_kind: str, model: str, url: str) -> None
 
 def _is_result(msg: Any) -> bool:
     """``query()`` returns either Claude-shape ``ResultMessage`` (when
-    options is a ``ClaudeAgentOptions``) OR TS-SDK-shape
+    options is a ``MantisAgentOptions``) OR TS-SDK-shape
     ``SDKResultMessage`` (when options is a plain dict). The matrix
     uses both forms, so the matcher accepts either.
 

@@ -1,6 +1,6 @@
 """Auto-route a model name to a backend URL.
 
-``ClaudeAgentOptions(model="qwen2.5:7b")`` works without a ``backend=``
+``MantisAgentOptions(model="qwen2.5:7b")`` works without a ``backend=``
 kwarg because ``infer_backend`` maps the Ollama-tag shape to
 ``http://localhost:11434``. Same script with ``model="Qwen/Qwen2.5-72B-Instruct-Turbo"``
 goes to Together AI. Explicit ``backend=`` and ``$MANTIS_AGENT_BASE_URL``
@@ -150,12 +150,12 @@ def test_empty_explicit_is_treated_as_unset(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integration — exercising via ClaudeAgentOptions/query() path
+# Integration — exercising via MantisAgentOptions/query() path
 # ---------------------------------------------------------------------------
 
 
 def test_compat_query_routes_hf_model_to_together(monkeypatch) -> None:
-    """``ClaudeAgentOptions(model="Qwen/...")`` flows through
+    """``MantisAgentOptions(model="Qwen/...")`` flows through
     ``_build_agent`` which calls ``resolve_backend`` — the constructed
     Agent ends up with the Together base URL even though no
     ``backend=`` was passed."""

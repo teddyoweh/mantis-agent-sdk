@@ -3,7 +3,7 @@
 There are three layers of configuration, in priority order from highest to
 lowest:
 
-1. **Constructor arguments** — `ClaudeAgentOptions(...)` or the `options=`
+1. **Constructor arguments** — `MantisAgentOptions(...)` or the `options=`
    dict passed to `query()`. Always wins.
 2. **Setting sources** — JSON files on disk loaded via `setting_sources=`.
    Multiple sources merge in declaration order; later sources override
@@ -27,9 +27,9 @@ lowest:
 ## Setting sources
 
 ```python
-from mantis_agent import ClaudeAgentOptions
+from mantis_agent import MantisAgentOptions
 
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     setting_sources=[
         "~/.mantis-agent/settings.json",
         "./.mantis-agent/project.json",
@@ -43,7 +43,7 @@ specified file — settings don't smear across sources on write.
 
 The schema is the same as the constructor arguments — `model`, `tools`,
 `system_prompt`, `max_turns`, `max_tokens`, `temperature`, `permissions`,
-etc. See [ClaudeAgentOptions](../api/options.md) for the full list.
+etc. See [MantisAgentOptions](../api/options.md) for the full list.
 
 ## `~/.mantis-agent/settings.json` (default user source)
 
@@ -77,13 +77,13 @@ s["model"] = "qwen2.5:7b"
 save_setting_source("~/.mantis-agent/settings.json", s)
 ```
 
-Or merge several sources into a fresh `ClaudeAgentOptions`:
+Or merge several sources into a fresh `MantisAgentOptions`:
 
 ```python
-from mantis_agent import load_settings, ClaudeAgentOptions
+from mantis_agent import load_settings, MantisAgentOptions
 
 merged = load_settings(["~/.mantis-agent/settings.json", "./.mantis-agent.json"])
-options = ClaudeAgentOptions(**merged)
+options = MantisAgentOptions(**merged)
 ```
 
 ## Where state lives

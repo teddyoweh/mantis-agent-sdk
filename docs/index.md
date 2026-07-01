@@ -11,11 +11,11 @@ provider, for parity testing).
 If you have working Claude SDK code, you almost always change two lines:
 
 ```python
-# from claude_agent_sdk import query, ClaudeAgentOptions
-from mantis_agent import query, ClaudeAgentOptions
+# from claude_agent_sdk import query, MantisAgentOptions
+from mantis_agent import query, MantisAgentOptions
 ```
 
-The yielded message shapes match. `ClaudeAgentOptions`, `Plugin`,
+The yielded message shapes match. `MantisAgentOptions`, `Plugin`,
 `HookMatcher`, `ToolPermissionContext`, `create_sdk_mcp_server`,
 `PermissionResultAllow(updated_input=...)` — all of it works.
 

@@ -105,7 +105,7 @@ def test_top_level_surface_matches_claude_sdk_python() -> None:
     # from the 16 official examples in the upstream repo (May 2026).
     expected = {
         "AssistantMessage",
-        "ClaudeAgentOptions",
+        "MantisAgentOptions",
         "ClaudeSDKClient",
         "ResultMessage",
         "SystemMessage",
@@ -174,7 +174,7 @@ def test_claude_positional_tool_decorator() -> None:
 
 
 def test_query_yields_claude_shaped_messages() -> None:
-    """query() with ClaudeAgentOptions yields AssistantMessage with flat
+    """query() with MantisAgentOptions yields AssistantMessage with flat
     .content (not nested .message.content), ResultMessage with
     .total_cost_usd directly accessible — same as Claude Python SDK."""
 
@@ -183,7 +183,7 @@ def test_query_yields_claude_shaped_messages() -> None:
     from mantis_agent import (
         Agent,
         AssistantMessage,
-        ClaudeAgentOptions,
+        MantisAgentOptions,
         ResultMessage,
         SystemMessage,
         TextBlock,
@@ -219,7 +219,7 @@ def test_query_yields_claude_shaped_messages() -> None:
     register("mock", lambda: MockProvider(scripted_events=events))
 
     async def main():
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model="mock-test",
             backend="mock",
             system_prompt="be brief",

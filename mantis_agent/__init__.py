@@ -40,7 +40,7 @@ from .events import (
 from .claude_compat import (
     AgentDefinition,
     CLIConnectionError,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ClaudeSDKClient,
     ClaudeSDKError,
     HookContext as ClaudeHookContext,
@@ -224,7 +224,7 @@ __all__ = [
     "TextDelta",
     "ThinkingDelta",
     # Claude SDK parity entry points
-    "ClaudeAgentOptions",
+    "MantisAgentOptions",
     "ClaudeSDKClient",
     "ClaudeSDKError",
     "CLIConnectionError",
@@ -284,7 +284,7 @@ def _detect_version() -> str:
 
         return version("mantis-agent-sdk")
     except Exception:  # pragma: no cover - extremely defensive
-        return "1.36.0"
+        return "2.0.0"
 
 
 __version__ = _detect_version()

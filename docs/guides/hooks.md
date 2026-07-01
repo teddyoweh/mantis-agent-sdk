@@ -7,14 +7,14 @@ or trigger side effects in response to specific events.
 ## The shape
 
 ```python
-from mantis_agent import HookMatcher, ClaudeAgentOptions
+from mantis_agent import HookMatcher, MantisAgentOptions
 
 async def log_tool(hook_input, hook_ctx):
     print(f"[{hook_input.event}] {hook_input.tool_name}")
     return None  # Return None to do nothing; return HookJSONOutput to
                  # mutate the in-flight payload.
 
-options = ClaudeAgentOptions(
+options = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[get_weather],
     hooks=[
@@ -128,7 +128,7 @@ logging_plugin = Plugin(
     ],
 )
 
-options = ClaudeAgentOptions(plugins=[logging_plugin])
+options = MantisAgentOptions(plugins=[logging_plugin])
 ```
 
 See [Plugins](plugins.md).

@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from mantis_agent import (
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     create_sdk_mcp_server,
     tool,
 )
@@ -102,7 +102,7 @@ def test_mcp_server_tools_reach_the_agent_registry() -> None:
     Claude-SDK-style namespace ``mcp__{server}__{tool}``."""
 
     calc = create_sdk_mcp_server(name="calc", version="1.0", tools=[_add, _multiply])
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         model="qwen2.5:1.5b",
         backend="http://localhost:11434",
         mcp_servers={"calc": calc},
@@ -119,7 +119,7 @@ def test_mcp_server_tools_preserve_input_schema_and_fn() -> None:
     agent loop dispatches to ``fn`` when the model calls the tool."""
 
     calc = create_sdk_mcp_server(name="calc", version="1.0", tools=[_add])
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         model="qwen2.5:1.5b",
         backend="http://localhost:11434",
         mcp_servers={"calc": calc},
@@ -139,7 +139,7 @@ def test_allowed_tools_filters_registry() -> None:
     model actually sees — same semantics as the Claude SDK."""
 
     calc = create_sdk_mcp_server(name="calc", version="1.0", tools=[_add, _multiply])
-    opts = ClaudeAgentOptions(
+    opts = MantisAgentOptions(
         model="qwen2.5:1.5b",
         backend="http://localhost:11434",
         mcp_servers={"calc": calc},
@@ -157,7 +157,7 @@ def test_mcp_servers_dict_form_is_supported() -> None:
 
     calc = create_sdk_mcp_server(name="calc", version="1.0", tools=[_add])
 
-    # Dict form (what ClaudeAgentOptions stores)
+    # Dict form (what MantisAgentOptions stores)
     opts_dict_form: dict[str, Any] = {
         "model": "qwen2.5:1.5b",
         "backend": "http://localhost:11434",

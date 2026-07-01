@@ -1541,7 +1541,7 @@ class _AssistantAssembler:
 def _normalize_permission_decision(decision: Any) -> Any:
     """Bridge Claude-shape PermissionResultAllow/Deny → internal Allow/Deny.
 
-    Users passing a ``can_use_tool`` callback via ``ClaudeAgentOptions``
+    Users passing a ``can_use_tool`` callback via ``MantisAgentOptions``
     typically return Claude SDK's dataclasses (``PermissionResultAllow``
     /``PermissionResultDeny``). Our ``check_permission`` returns the
     internal msgspec ``Allow``/``Deny``/``Ask``. This normalizer makes

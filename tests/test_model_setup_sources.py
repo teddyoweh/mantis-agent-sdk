@@ -44,6 +44,34 @@ def test_anthropic_bearer_ping_unreachable_does_not_block() -> None:
     assert ok is True
 
 
+class _Resp:
+    def __init__(self, status_code: int, body: dict) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> dict:
+        return self._body
+
+
+def test_anthropic_ping_rejects_only_real_auth_errors(monkeypatch) -> None:
+    # A valid key that lacks access to the flagship (404/permission) must NOT be
+    # reported as an invalid credential — only 401 / authentication_error does.
+    import httpx
+
+    from mantis_agent import setup_wizard as sw
+
+    monkeypatch.setattr(httpx, "post",
+                        lambda *a, **k: _Resp(401, {"error": {"type": "authentication_error", "message": "bad key"}}))
+    assert sw._ping_anthropic_model("https://api.anthropic.com/v1", "claude-opus-4-8", "k")[0] is False
+
+    monkeypatch.setattr(httpx, "post",
+                        lambda *a, **k: _Resp(404, {"error": {"type": "not_found_error", "message": "model"}}))
+    assert sw._ping_anthropic_model("https://api.anthropic.com/v1", "claude-opus-4-8", "k")[0] is True
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp(200, {}))
+    assert sw._ping_anthropic_model("https://api.anthropic.com/v1", "claude-opus-4-8", "k")[0] is True
+
+
 def test_anthropic_uses_x_api_key_not_bearer() -> None:
     anth = catalog.BY_ID["anthropic"]
     h = catalog._models_headers(anth, "sk-secret")
@@ -78,6 +106,13 @@ def test_selfhost_probe_unreachable_returns_none() -> None:
 
 
 # -- Model ping (validate-before-save) ---------------------------------------
+
+
+def test_print_status_never_crashes() -> None:
+    # `mantis setup --status` must render whatever the config is (or nothing)
+    # without raising — it runs before any provider is even set up.
+    from mantis_agent.setup_wizard import _print_status
+    _print_status(_NullConsole())
 
 
 def test_grouped_provider_models_enabled_before_disabled() -> None:

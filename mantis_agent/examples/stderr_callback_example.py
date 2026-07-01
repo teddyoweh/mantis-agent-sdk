@@ -2,7 +2,7 @@
 
 import asyncio
 
-from mantis_agent import ClaudeAgentOptions, query
+from mantis_agent import MantisAgentOptions, query
 
 
 async def main():
@@ -21,7 +21,7 @@ async def main():
     # Create options with stderr callback. The callback receives any stderr the
     # CLI emits (warnings, errors). For verbose CLI debug logs, pass
     # extra_args={"debug-file": "/path/to/log"} and read that file instead.
-    options = ClaudeAgentOptions(stderr=stderr_callback)
+    options = MantisAgentOptions(stderr=stderr_callback)
 
     # Run a query
     print("Running query with stderr capture...")

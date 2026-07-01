@@ -12,7 +12,7 @@ import anyio
 
 from mantis_agent import (
     Agent,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     PermissionResultDeny,
     ResultMessage,
     TextBlock,
@@ -131,7 +131,7 @@ def test_query_result_message_carries_denials() -> None:
         return PermissionResultDeny(message="protected path")
 
     async def main():
-        opts = ClaudeAgentOptions(
+        opts = MantisAgentOptions(
             model="mock-anything",
             backend="mock",
             tools=[write_file],
@@ -140,7 +140,7 @@ def test_query_result_message_carries_denials() -> None:
             include_memory=False,
         )
         # Wire the can_use_tool via PermissionContext on .extra since
-        # ClaudeAgentOptions stashes it there for the agent loop.
+        # MantisAgentOptions stashes it there for the agent loop.
         opts.extra = {
             **(opts.extra or {}),
         }
@@ -156,7 +156,7 @@ def test_query_result_message_carries_denials() -> None:
         return result
 
     # We can't easily pass `permissions=PermissionContext(...)` through
-    # ClaudeAgentOptions today, so we drive the lower-level Agent path
+    # MantisAgentOptions today, so we drive the lower-level Agent path
     # for the end-to-end denial assertion instead.
     async def main_direct():
         agent = Agent(

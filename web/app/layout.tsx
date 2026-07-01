@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Google_Sans, Geist_Mono, Instrument_Serif } from "next/font/google";
+import { MantisDefs } from "@/components/Logo";
 import "./globals.css";
 
 const googleSans = Google_Sans({
@@ -69,7 +70,10 @@ export default function RootLayout({
       lang="en"
       className={`${googleSans.variable} ${geistMono.variable} ${instrumentSerif.variable} antialiased`}
     >
-      <body>{children}</body>
+      <body>
+        <MantisDefs />
+        {children}
+      </body>
     </html>
   );
 }

@@ -5,7 +5,7 @@ import anyio
 
 from mantis_agent import (
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ResultMessage,
     SystemMessage,
     TextBlock,
@@ -19,7 +19,7 @@ async def tools_array_example():
     print("Setting tools=['Read', 'Glob', 'Grep']")
     print()
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         tools=["Read", "Glob", "Grep"],
         max_turns=1,
     )
@@ -48,7 +48,7 @@ async def tools_empty_array_example():
     print("Setting tools=[] (disables all built-in tools)")
     print()
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         tools=[],
         max_turns=1,
     )
@@ -77,7 +77,7 @@ async def tools_preset_example():
     print("Setting tools={'type': 'preset', 'preset': 'claude_code'}")
     print()
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         tools={"type": "preset", "preset": "claude_code"},
         max_turns=1,
     )

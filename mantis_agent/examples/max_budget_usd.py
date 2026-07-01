@@ -5,7 +5,7 @@ import anyio
 
 from mantis_agent import (
     AssistantMessage,
-    ClaudeAgentOptions,
+    MantisAgentOptions,
     ResultMessage,
     TextBlock,
     query,
@@ -32,7 +32,7 @@ async def with_reasonable_budget():
     """Example with budget that won't be exceeded."""
     print("=== With Reasonable Budget ($0.10) ===")
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         max_budget_usd=0.10,  # 10 cents - plenty for a simple query
     )
 
@@ -52,7 +52,7 @@ async def with_tight_budget():
     """Example with very tight budget that will likely be exceeded."""
     print("=== With Tight Budget ($0.0001) ===")
 
-    options = ClaudeAgentOptions(
+    options = MantisAgentOptions(
         max_budget_usd=0.0001,  # Very small budget - will be exceeded quickly
     )
 

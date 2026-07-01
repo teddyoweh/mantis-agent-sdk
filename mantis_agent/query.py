@@ -497,7 +497,7 @@ async def query(
 
     Two output modes share this entry point:
 
-    1. **Claude Python SDK mode** (default for ``ClaudeAgentOptions`` or
+    1. **Claude Python SDK mode** (default for ``MantisAgentOptions`` or
        ``options=None``): yields flat-shape ``AssistantMessage`` /
        ``UserMessage`` / ``SystemMessage`` / ``ResultMessage`` matching
        https://github.com/anthropics/claude-agent-sdk-python verbatim.
@@ -506,7 +506,7 @@ async def query(
        ``SDKAssistantMessage`` / ``SDKResultMessage`` etc. with nested
        ``.message`` for byte-perfect TS SDK wire compatibility.
 
-    Pass a :class:`~mantis_agent.ClaudeAgentOptions` (preferred) or a
+    Pass a :class:`~mantis_agent.MantisAgentOptions` (preferred) or a
     dict. With no options, default model is ``$MANTIS_AGENT_MODEL`` else
     ``"qwen2.5-7b-instruct"`` and default backend is ``$MANTIS_AGENT_BASE_URL``
     else ``http://localhost:11434``.
@@ -516,7 +516,7 @@ async def query(
     cleanup.
     """
 
-    # Claude Python SDK shape detection — ClaudeAgentOptions OR no options.
+    # Claude Python SDK shape detection — MantisAgentOptions OR no options.
     # When options is a plain dict, fall through to legacy TS-SDK shape so
     # existing dict-shaped callers don't break.
     _is_claude_compat = options is None or not isinstance(options, dict)

@@ -228,7 +228,7 @@ def __getattr__(name: str) -> Any:
         "HookMatcher",
         "ResultMessage",
         "MessageType",
-        "ClaudeAgentOptions",
+        "MantisAgentOptions",
         "PermissionResult",
         "PermissionResultAllow",
         "PermissionResultDeny",
@@ -237,7 +237,7 @@ def __getattr__(name: str) -> Any:
     }:
         from .claude_compat import (  # noqa: PLC0415
             AgentDefinition as _AgentDefinition,
-            ClaudeAgentOptions as _ClaudeAgentOptions,
+            MantisAgentOptions as _MantisAgentOptions,
             HookContext as _HookContext,
             HookInput as _HookInput,
             HookJSONOutput as _HookJSONOutput,
@@ -257,7 +257,7 @@ def __getattr__(name: str) -> Any:
             "HookMatcher": _HookMatcher,
             "ResultMessage": _ResultMessage,
             "MessageType": _MessageType,
-            "ClaudeAgentOptions": _ClaudeAgentOptions,
+            "MantisAgentOptions": _MantisAgentOptions,
             "PermissionResult": _PermissionResult,
             "PermissionResultAllow": _PermissionResultAllow,
             "PermissionResultDeny": _PermissionResultDeny,

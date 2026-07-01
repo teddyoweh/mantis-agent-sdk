@@ -105,7 +105,7 @@ If you compose multiple `query()` calls, set per-call budgets *and* a
 session-level budget:
 
 ```python
-async with ClaudeSDKClient(ClaudeAgentOptions(
+async with ClaudeSDKClient(MantisAgentOptions(
     model="gpt-4o-mini",
     max_usd=1.00,          # cap for the whole client lifetime
 )) as client:
@@ -116,4 +116,4 @@ async with ClaudeSDKClient(ClaudeAgentOptions(
 ```
 
 `max_usd` on `client.query` is the call-level cap; the session-level cap
-on `ClaudeAgentOptions` is the absolute ceiling. Both are enforced.
+on `MantisAgentOptions` is the absolute ceiling. Both are enforced.

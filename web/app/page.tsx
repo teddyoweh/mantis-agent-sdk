@@ -128,12 +128,8 @@ export default function Home() {
         {/* ============ HERO ============ */}
         <section className="wrap pt-16 sm:pt-24 pb-20">
           <div className="max-w-[820px]">
-            <div className="rise eyebrow flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-mantis inline-block" />
-              claude code · claude agent sdk · for open models
-            </div>
             <h1
-              className="rise font-display mt-5 text-[clamp(2.9rem,7.5vw,5.6rem)]"
+              className="rise font-display text-[clamp(2.3rem,5.8vw,4.5rem)]"
               style={{ animationDelay: "0.05s" }}
             >
               Claude Code, for{" "}

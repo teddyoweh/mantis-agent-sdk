@@ -6,7 +6,7 @@ https://github.com/anthropics/claude-agent-sdk-python/tree/main/examples)
 should work verbatim against mantis-agent-sdk with nothing more than:
 
     -from claude_agent_sdk import (AssistantMessage, ClaudeAgentOptions, …)
-    +from mantis_agent import (AssistantMessage, ClaudeAgentOptions, …)
+    +from mantis_agent import (AssistantMessage, MantisAgentOptions, …)
 
 That's the litmus test the user asked for. This file ports the Python
 SDK's public surface — which is *not* the same as the TS-internal
@@ -16,7 +16,7 @@ to mirror the Anthropic API; the Python SDK flattens it).
 Symbols ported here
 -------------------
 
-  * ``ClaudeAgentOptions`` — typed dataclass-style options. Mirrors the
+  * ``MantisAgentOptions`` — typed dataclass-style options. Mirrors the
     fields the Python SDK exposes: ``system_prompt``, ``max_turns``,
     ``tools`` (list[str] of built-in tool names or a preset dict),
     ``allowed_tools``, ``mcp_servers``, ``hooks``, ``cwd``,
@@ -39,7 +39,7 @@ Symbols ported here
 The aliases are re-exported at the top-level ``mantis_agent`` namespace
 so Claude-style imports just work::
 
-    from mantis_agent import AssistantMessage, ClaudeAgentOptions, ...
+    from mantis_agent import AssistantMessage, MantisAgentOptions, ...
 
 Both the new public flat shapes AND the TS-SDK-wire ``SDK*Message``
 shapes are exported. Pick whichever your codebase wants.
@@ -70,7 +70,8 @@ __all__ = [
     "AgentDefinition",
     "AssistantMessage",
     "CLIConnectionError",
-    "ClaudeAgentOptions",
+    "MantisAgentOptions",
+    "MantisAgentOptions",
     "ClaudeSDKClient",
     "ClaudeSDKError",
     "ContentBlock",
@@ -95,13 +96,13 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Options dataclass (matches claude_agent_sdk.ClaudeAgentOptions)
+# Options dataclass (matches claude_agent_sdk.MantisAgentOptions)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
-class ClaudeAgentOptions:
-    """Drop-in replacement for ``claude_agent_sdk.ClaudeAgentOptions``.
+class MantisAgentOptions:
+    """Drop-in replacement for ``claude_agent_sdk.MantisAgentOptions``.
 
     All fields optional. ``model`` defaults to ``MANTIS_AGENT_MODEL`` env
     or ``"qwen2.5-7b-instruct"`` (so ``query(prompt="...")`` with no
@@ -264,7 +265,7 @@ class ClaudeAgentOptions:
             opts["permission_mode"] = self.permission_mode
         # can_use_tool plumbing: build a PermissionContext so the agent
         # loop actually calls the callback at dispatch time. Without
-        # this, ``ClaudeAgentOptions(can_use_tool=...)`` was silently
+        # this, ``MantisAgentOptions(can_use_tool=...)`` was silently
         # ignored — the field was accepted but the agent saw no
         # permissions object.
         if self.can_use_tool is not None or self.permission_mode is not None:
@@ -408,6 +409,13 @@ def _convert_hooks_dict(hooks: dict[str, list[Any]]) -> Any:
         if collected:
             out_kwargs[field_name] = collected
     return Hooks(**out_kwargs)
+
+
+# Mantis-branded alias for the options class. ``MantisAgentOptions`` stays the
+# drop-in name (so ``from claude_agent_sdk import MantisAgentOptions`` →
+# ``from mantis_agent import MantisAgentOptions`` works unchanged);
+# ``MantisAgentOptions`` is the native name — same class, either works.
+MantisAgentOptions = MantisAgentOptions  # drop-in compat alias (Claude SDK litmus test)
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +616,7 @@ class Plugin:
     """Drop-in for ``claude_agent_sdk.Plugin``.
 
     A reusable bundle of (tools, system_prompt_addition, hooks). Pass a
-    list of these to ``ClaudeAgentOptions(plugins=[...])`` and the agent
+    list of these to ``MantisAgentOptions(plugins=[...])`` and the agent
     will merge their contents at session start: every plugin's ``tools``
     join the registry, the ``system_prompt_addition`` text is appended
     to ``system_prompt``, and ``hooks`` are folded into the active
@@ -680,8 +688,8 @@ class ClaudeSDKClient:
     multiple turns sharing the same options.
     """
 
-    def __init__(self, options: ClaudeAgentOptions | None = None) -> None:
-        self.options = options or ClaudeAgentOptions()
+    def __init__(self, options: MantisAgentOptions | None = None) -> None:
+        self.options = options or MantisAgentOptions()
         self._pending_prompt: str | None = None
 
     async def __aenter__(self) -> ClaudeSDKClient:
