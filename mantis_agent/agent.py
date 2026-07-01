@@ -261,6 +261,12 @@ def _final_turn_reminder(reason: str = "turn limit") -> "UserMessage":
 
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
+# Llama-family emit ``<function=NAME>{json args}</function>`` (or with a colon /
+# ``<function_call name="NAME">``) instead of the OpenAI/Anthropic tool-call shape.
+_FUNC_TAG_RE = re.compile(
+    r"<function(?:_call)?[=:\s]+(?:name\s*=\s*[\"']?)?([A-Za-z_][\w.-]*)[\"']?\s*>(.*?)</function(?:_call)?\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseBlock]:
@@ -279,9 +285,22 @@ def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseB
         n += 1
         return ToolUseBlock(id=f"salvage_{n}_{abs(hash(name)) % 100000}", name=name, input=args)
 
+    # 0. Llama-style <function=NAME>{json}</function>. Resolve the name (tolerant
+    #    of Claude-name/case drift) so the salvaged call maps to a real tool.
+    for m in _FUNC_TAG_RE.finditer(s):
+        t = registry.resolve(m.group(1))
+        if t is None:
+            continue
+        body = m.group(2).strip()
+        args = _loads_lenient(body) if body else {}
+        if isinstance(args, dict):
+            calls.append(_mk(t.name, args))
+    if calls:
+        return calls
+
     # 1. JSON tool-call object(s), tolerant of the malformed JSON small models
     #    emit. Accept both "arguments" (OpenAI/Anthropic) and "parameters" (the
-    #    shape llama3.x tends to print).
+    #    shape llama3.x tends to print). Resolve names for Claude-name/case drift.
     cleaned = s.replace("<tool_call>", " ").replace("</tool_call>", " ")
     parsed = _loads_lenient(cleaned)
     candidates = parsed if isinstance(parsed, list) else [parsed]
@@ -292,8 +311,9 @@ def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseB
         args = obj.get("arguments")
         if args is None:
             args = obj.get("parameters")
-        if isinstance(name, str) and registry.get(name) is not None and isinstance(args, dict):
-            calls.append(_mk(name, args))
+        t = registry.resolve(name) if isinstance(name, str) else None
+        if t is not None and isinstance(args, dict):
+            calls.append(_mk(t.name, args))
     if calls:
         return calls
 

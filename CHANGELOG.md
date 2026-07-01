@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.43.0] — 2026-06-30
+
+### Added
+
+- **Salvage Llama-style `<function=NAME>{json}</function>` tool calls.** When a
+  model emits a tool call as text instead of using the structured channel (common
+  on OSS models), mantis recovers it. It already handled JSON objects and shell
+  fences; now it also parses the `<function=name>…</function>` /
+  `<function_call name="…">…</function_call>` shapes Llama-family models produce.
+  Salvaged names go through the tool-name resolver too, so `<function=Read>` maps
+  to `read_file`. Recovers a call that would otherwise be lost as prose.
+
 ## [2.42.0] — 2026-06-30
 
 ### Fixed
