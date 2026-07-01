@@ -716,12 +716,88 @@ async def run_fullscreen(tui: Any) -> int:
                 # /models [partial] → picker overlay, pre-filtered if given.
                 _open_model_picker(arg or "")
             return True
+        if cmd == "/disable":
+            from . import catalog  # noqa: PLC0415
+
+            enabled = [p.id for p in catalog.CATALOG if catalog.is_enabled(p)]
+            pid = arg.strip().lower()
+            if not pid:
+                await _print(lambda e=enabled: tui.console.print(
+                    "[ansibrightblack]usage: [white]/disable <provider>[/]  · enabled: "
+                    f"[white]{', '.join(e) or 'none'}[/][/]"))
+                return True
+            prov = catalog.BY_ID.get(pid)
+            if prov is None:
+                await _print(lambda: tui.console.print(
+                    f"[ansibrightblack](unknown provider [white]{pid}[/] — try one of: "
+                    f"{', '.join(p.id for p in catalog.CATALOG)})[/]"))
+                return True
+            removed = catalog.clear_key(pid)
+            if pid == "anthropic":
+                import os as _os  # noqa: PLC0415
+                _os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+                removed = True
+            state.pop("model_cache", None)  # picker reflects the change
+            await _print(lambda r=removed, lbl=prov.label: tui.console.print(
+                f"[ansibrightblack]({'forgot ' + lbl if r else 'no saved key for ' + lbl})[/]"))
+            return True
+        if cmd == "/enable":
+            from . import catalog  # noqa: PLC0415
+
+            pid = arg.strip().lower()
+            prov = catalog.BY_ID.get(pid)
+            if prov is None:
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack]usage: [white]/enable <provider>[/]  · providers: "
+                    f"[white]{', '.join(p.id for p in catalog.CATALOG)}[/][/]"))
+                return True
+            # Reuse the picker's inline key-entry: prompt (masked) for the key,
+            # then validate + enable + switch to the provider's flagship model.
+            state["awaiting_key"] = {"provider_id": pid, "model": prov.models[0]}
+            input_buffer.reset()
+            await _announce(f"paste your {prov.api_key_env} to enable {pid} · enter to confirm · esc to cancel")
+            return True
+        if cmd == "/connect":
+            parts = arg.split()
+            if not parts or not parts[0].startswith(("http://", "https://")):
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack]usage: [white]/connect <url> [model][/] — e.g. "
+                    "[white]/connect http://localhost:8000/v1 qwen2.5-coder:7b[/][/]"))
+                return True
+            url = parts[0].rstrip("/")
+            model = parts[1] if len(parts) > 1 else tui.model
+            tui.backend, tui.model = url, model
+            tui.agent = tui._build_agent()
+            if tui.agent is not None and tui.agent.permissions is not None:
+                tui.agent.permissions.asker = _ask_permission
+            try:
+                from . import catalog  # noqa: PLC0415
+                catalog.set_last_model(model, url)
+            except Exception:  # noqa: BLE001
+                pass
+            state.pop("model_cache", None)
+            await _print(lambda u=url, m=model: tui.console.print(
+                f"[ansibrightblack](connected · [white]{m}[/] @ [white]{u}[/] · self-hosted)[/]"))
+            return True
         if cmd == "/help":
-            await _print(lambda: tui.console.print(
-                "\n[bold]commands[/]  [white]/model[/] <id> · [white]/clear[/] · "
-                "[white]/cwd[/] · [white]/exit[/]\n"
-                "[ansibrightblack]@file to attach a path · shift+tab cycles mode · esc/Ctrl+C interrupts a "
-                "running reply (Ctrl+C also quits when idle) · Ctrl+D quits[/]\n"))
+            def _help() -> None:
+                w, d = "white", "ansibrightblack"
+                tui.console.print("\n[bold]commands[/]")
+                tui.console.print(
+                    f"  [{d}]models[/]   [{w}]/models[/] [{d}][filter][/] browse & pick (type to filter) · "
+                    f"[{w}]/model[/] <id> switch")
+                tui.console.print(
+                    f"  [{d}]      [/]   [{w}]/enable[/] <provider> · [{w}]/disable[/] <provider> · "
+                    f"[{w}]/connect[/] <url> [model] (self-host)")
+                tui.console.print(
+                    f"  [{d}]session[/]  [{w}]/clear[/] · [{w}]/memory[/] · [{w}]/context[/] · "
+                    f"[{w}]/copy[/] · [{w}]/export[/] · [{w}]/diff[/] · [{w}]/cwd[/]")
+                tui.console.print(
+                    f"  [{d}]quit[/]     [{w}]/exit[/]  (or Ctrl+D · Ctrl+C when idle)")
+                tui.console.print(
+                    f"  [{d}]keys[/]     [{d}]@file to attach a path · shift+tab cycles mode · "
+                    f"esc/Ctrl+C interrupts a running reply[/]\n")
+            await _print(_help)
             return True
         return False  # unknown → treat as a normal prompt
 

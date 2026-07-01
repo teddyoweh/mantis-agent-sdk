@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.3.0] — 2026-06-30
+
+### Added
+
+- **Read-before-write guard** (Claude Code's readFileState). `write_file` now
+  refuses to clobber an existing file the tools haven't *seen* this session, or
+  one that changed on disk since it was read — so unseen or newer content is
+  never silently destroyed by a blind overwrite. The tools (`read_file`,
+  `write_file`, `edit_file`, `multi_edit`) track each file's mtime; new files and
+  read-then-write / write-then-overwrite flows pass freely, and the error tells
+  the model to read first (recoverable in one step).
+
 ## [2.2.0] — 2026-06-30
 
 ### Fixed

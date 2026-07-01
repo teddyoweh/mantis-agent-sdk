@@ -34,6 +34,43 @@ _MAX_LINE = 2000  # chars per line before truncation
 _MAX_MATCHES = 200  # grep/glob hits returned
 
 
+# ---------------------------------------------------------------------------
+# Read-before-write guard (Claude Code's readFileState). Tracks the mtime of
+# every file a tool has *seen* (read or written) this process. write_file then
+# refuses to clobber an existing file the tools haven't seen, or one changed on
+# disk since — so unseen/newer content is never silently destroyed. New files
+# pass freely.
+# ---------------------------------------------------------------------------
+_FILE_READS: dict[str, float] = {}
+
+
+def _record_seen(p: Path) -> None:
+    try:
+        _FILE_READS[str(p.resolve())] = p.stat().st_mtime
+    except OSError:
+        pass
+
+
+def _check_write_guard(p: Path) -> None:
+    if not p.exists() or not p.is_file():
+        return  # new file — nothing to clobber
+    seen = _FILE_READS.get(str(p.resolve()))
+    if seen is None:
+        raise ValueError(
+            f"{p} already exists but hasn't been read this session. Read it first "
+            f"so you don't overwrite content you haven't seen (write_file replaces "
+            f"the ENTIRE file). Use edit_file for a targeted change."
+        )
+    try:
+        if p.stat().st_mtime > seen + 1e-6:
+            raise ValueError(
+                f"{p} was modified on disk since you last read it. Read it again "
+                f"before writing so you don't clobber the newer version."
+            )
+    except OSError:
+        pass
+
+
 def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     if len(text) <= limit:
         return text
@@ -423,6 +460,7 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
     if p.is_dir():
         raise IsADirectoryError(f"{path} is a directory — use ls instead")
 
+    _record_seen(p)  # the agent has now seen this file — write_file may touch it
     suffix = p.suffix.lower()
     if suffix in _IMAGE_READ_EXTS:
         import base64  # noqa: PLC0415
@@ -480,6 +518,7 @@ async def write_file(path: str, content: str) -> str:
         content = str(content)
 
     p = Path(path).expanduser()
+    _check_write_guard(p)  # don't blind-overwrite an unseen / externally-changed file
     old = ""
     if p.exists() and p.is_file():
         old = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
@@ -489,6 +528,7 @@ async def write_file(path: str, content: str) -> str:
         p.write_text(content, "utf-8")
 
     await anyio.to_thread.run_sync(_write)
+    _record_seen(p)  # we just wrote it — subsequent writes/edits are fine
     return _edit_summary("Wrote" if not old else "Updated", str(p), old, content)
 
 
@@ -522,6 +562,7 @@ async def edit_file(
         )
     updated = text.replace(old_string, new_string)
     await anyio.to_thread.run_sync(lambda: p.write_text(updated, "utf-8"))
+    _record_seen(p)
     return _edit_summary("Updated", str(p), text, updated)
 
 
@@ -565,6 +606,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         applied += 1
 
     await anyio.to_thread.run_sync(lambda: p.write_text(text, "utf-8"))
+    _record_seen(p)
     return _edit_summary("Updated", str(p), original, text)
 
 
