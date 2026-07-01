@@ -225,14 +225,24 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         messages_list = list(messages)
         system_text, body_messages = _split_system(system, messages_list)
 
+        encoded = [_encode_message(m) for m in body_messages]
         payload: dict[str, Any] = {
             "model": model,
-            "messages": [_encode_message(m) for m in body_messages],
+            "messages": encoded,
             "max_tokens": int(max_tokens),
             "stream": True,
         }
+        cache = getattr(self, "cache_prompts", True)
         if system_text:
-            payload["system"] = system_text
+            # A cache breakpoint on the (stable) system prompt lets Anthropic
+            # read the whole prefix from cache on every later turn instead of
+            # re-billing it. System becomes a content array carrying the marker.
+            payload["system"] = (
+                [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+                if cache else system_text
+            )
+        if cache and encoded:
+            _mark_cache_breakpoint(encoded[-1])  # cache the conversation so far
         if temperature is not None:
             payload["temperature"] = float(temperature)
         if tools:
@@ -297,6 +307,20 @@ def _system_text(m: SystemMessage) -> str:
     return "\n\n".join(
         block.text for block in m.content if isinstance(block, TextBlock)
     )
+
+
+def _mark_cache_breakpoint(encoded: dict[str, Any]) -> None:
+    """Add ``cache_control: ephemeral`` to the last content block of an already
+    encoded message, so Anthropic caches the conversation prefix up to here.
+    Normalizes string content to a single text block so the marker has a home."""
+    content = encoded.get("content")
+    if isinstance(content, str):
+        encoded["content"] = [
+            {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+        ]
+        return
+    if isinstance(content, list) and content and isinstance(content[-1], dict):
+        content[-1]["cache_control"] = {"type": "ephemeral"}
 
 
 def _encode_message(m: Message) -> dict[str, Any]:

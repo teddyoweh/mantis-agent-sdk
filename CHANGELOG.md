@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.18.0] — 2026-06-30
+
+### Added
+
+- **Prompt caching for the Anthropic backend** (parity roadmap T0.4 — Tier 0
+  complete). The passthrough now sets `cache_control: ephemeral` breakpoints on
+  the system prompt and the last message, so Anthropic reads the stable prefix
+  (system + conversation-so-far) from cache instead of re-billing it every turn
+  — a large cost/latency win on multi-turn sessions. On by default; the provider
+  already tallied `cache_read`/`cache_creation` tokens, now it actually requests
+  the cache. Set `cache_prompts=False` on the provider to opt out.
+
 ## [1.17.0] — 2026-06-30
 
 ### Added

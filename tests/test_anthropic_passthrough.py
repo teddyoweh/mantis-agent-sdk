@@ -667,7 +667,12 @@ class TestStreaming:
             await p.aclose()
 
             body = json.loads(seen[0].content.decode("utf-8"))
-            assert body["system"] == "be brief"
+            # System is hoisted; with prompt caching on (default) it's a content
+            # array carrying an ephemeral cache breakpoint.
+            assert body["system"] == [
+                {"type": "text", "text": "be brief",
+                 "cache_control": {"type": "ephemeral"}}
+            ]
             assert all(m["role"] != "system" for m in body["messages"])
 
         anyio.run(go)
