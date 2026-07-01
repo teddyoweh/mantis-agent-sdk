@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.45.0] — 2026-06-30
+
+### Added
+
+- **`edit_file`/`multi_edit` auto-fix copied line numbers.** `read_file` prints
+  each line as `  42\tcode` — and models constantly copy that numbered output
+  straight into an edit's `old_string`, which then never matches the real file. On
+  a miss, the edit tools now strip the `<num>\t` prefixes and retry; if the
+  stripped form matches, the edit proceeds. So the single most common edit failure
+  on OSS models self-corrects instead of erroring. Normal edits are unaffected;
+  a genuinely-absent string still errors (with the existing "closest line" hint).
+
 ## [2.44.0] — 2026-06-30
 
 ### Fixed

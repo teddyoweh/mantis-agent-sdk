@@ -267,6 +267,23 @@ def is_enabled(provider: Provider) -> bool:
     return False
 
 
+def anthropic_bearer_backend(provider: Provider | None, current_backend: str | None = None) -> str | None:
+    """Backend URL to wire for an Anthropic provider authed by an env OAuth/gateway
+    Bearer token (``ANTHROPIC_AUTH_TOKEN``), which :func:`api_key_for` does not
+    return. The caller must set ``api_key=None`` so the passthrough reads the
+    Bearer token from the environment. Preserves an existing Anthropic backend
+    (e.g. a Bedrock/Vertex gateway) rather than yanking it onto the default API.
+    Returns ``None`` when this doesn't apply (non-Anthropic, or no token)."""
+    if provider is None or provider.id != "anthropic":
+        return None
+    if not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return None
+    from .providers.base import detect_provider  # noqa: PLC0415
+    if current_backend and detect_provider(current_backend) == "anthropic_passthrough":
+        return current_backend
+    return provider.base_url
+
+
 def provider_for_model(model_id: str) -> Provider | None:
     """Best-effort: which hosted provider serves ``model_id`` (exact id, then a
     prefix heuristic). Returns ``None`` for local/self-hosted/unknown ids."""

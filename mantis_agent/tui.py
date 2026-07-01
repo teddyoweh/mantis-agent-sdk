@@ -1328,16 +1328,15 @@ class MantisTUI:
             if (not os.environ.get("MANTIS_AGENT_BASE_URL")
                     and (self.backend or "").rstrip("/") == _paths.ollama_base_url().rstrip("/")):
                 key = catalog.api_key_for(hosted)
+                # Anthropic OAuth/gateway Bearer token: api_key_for returns None, so
+                # wire the backend with api_key=None (passthrough uses env Bearer).
+                bearer = None if key else catalog.anthropic_bearer_backend(hosted, self.backend)
                 if key:
                     self.backend, self.api_key = hosted.base_url, key
                     self.console.print(
                         f"[ansibrightblack]→ using {hosted.label} for [white]{self.model}[/][/]")
-                elif hosted.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-                    # Anthropic OAuth/gateway Bearer token: wire the backend with no
-                    # api_key so the passthrough reads ANTHROPIC_AUTH_TOKEN (Bearer)
-                    # from the env. api_key_for() returns None for it, so this must
-                    # come before the "no key" branch below.
-                    self.backend, self.api_key = hosted.base_url, None
+                elif bearer is not None:
+                    self.backend, self.api_key = bearer, None
                     self.console.print(
                         f"[ansibrightblack]→ using {hosted.label} for [white]{self.model}[/][/]")
                 else:

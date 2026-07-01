@@ -113,6 +113,27 @@ def _missing_file_error(path: str, p: Path) -> FileNotFoundError:
     return FileNotFoundError(f"no such file: {path}{_path_suggestion(p)}")
 
 
+_LINE_NUM_PREFIX_RE = re.compile(r"(?m)^\s*\d+\t")
+
+
+def _strip_line_numbers(s: str) -> str:
+    """Remove ``<num>\\t`` prefixes that ``read_file`` adds to each line — models
+    constantly copy that numbered output straight into an edit's old_string."""
+    return _LINE_NUM_PREFIX_RE.sub("", s)
+
+
+def _reconcile_old_string(old_string: str, text: str) -> str:
+    """If ``old_string`` isn't in ``text`` but its line-number-stripped form is,
+    return the stripped form (auto-fixing the copied-read-output mistake).
+    Otherwise return ``old_string`` unchanged."""
+    if old_string in text:
+        return old_string
+    stripped = _strip_line_numbers(old_string)
+    if stripped != old_string and stripped in text:
+        return stripped
+    return old_string
+
+
 def _not_found_hint(old_string: str, text: str, path: str) -> str:
     """An *actionable* edit-miss error. A model that gets only 'not found' tends
     to retry blindly; pointing it at the likely cause (stale/auto-formatted text,
@@ -643,6 +664,7 @@ async def edit_file(
         raise _missing_file_error(path, p)
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+    old_string = _reconcile_old_string(old_string, text)  # auto-fix copied line numbers
     count = text.count(old_string)
     if count == 0:
         raise ValueError(_not_found_hint(old_string, text, path))
@@ -685,6 +707,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
             raise ValueError(f"edit #{i + 1} must have old_string and new_string")
         old, new = e["old_string"], e["new_string"]
         replace_all = bool(e.get("replace_all", False))
+        old = _reconcile_old_string(old, text)  # auto-fix copied line numbers
         count = text.count(old)
         if count == 0:
             raise ValueError(f"edit #{i + 1}: " + _not_found_hint(old, text, path))

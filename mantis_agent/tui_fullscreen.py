@@ -434,17 +434,13 @@ async def run_fullscreen(tui: Any) -> int:
             key = catalog.api_key_for(prov)
             if key:
                 tui.backend, tui.api_key = prov.base_url, key
-            elif prov.id == "anthropic":
-                import os  # noqa: PLC0415
-                if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-                    # OAuth/gateway Bearer token — api_key_for returns None; switch
-                    # with no api_key so the passthrough authenticates via env Bearer.
-                    # Preserve an existing Anthropic backend (e.g. a Bedrock/Vertex
-                    # gateway); only point at the default API from elsewhere.
-                    from .providers.base import detect_provider  # noqa: PLC0415
-                    if detect_provider(tui.backend or "") != "anthropic_passthrough":
-                        tui.backend = prov.base_url
-                    tui.api_key = None
+            else:
+                # Anthropic OAuth/gateway Bearer token (api_key_for → None): wire the
+                # backend with no api_key so the passthrough uses the env Bearer,
+                # preserving an existing gateway. None → not applicable.
+                wired = catalog.anthropic_bearer_backend(prov, tui.backend)
+                if wired is not None:
+                    tui.backend, tui.api_key = wired, None
         tui.model = model_id
         tui.agent = tui._build_agent()
         if tui.agent is not None and tui.agent.permissions is not None:
