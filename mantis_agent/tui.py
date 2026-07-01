@@ -240,6 +240,28 @@ LEARN_PROMPT = (
 )
 
 
+def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
+    """The footer usage indicator: ``12k/32k 38% · $0.03``. Tokens colour by fill
+    (grey → yellow ≥75% → red ≥90%); the cost tail is shown only when > 0 (so
+    local/free models don't clutter it with ``$0.00``). Empty until first usage."""
+    if not used:
+        return ""
+
+    def _k(n: int) -> str:
+        return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
+
+    if win > 0:
+        pct = min(100, round(used / win * 100))
+        col = "31" if pct >= 90 else ("33" if pct >= 75 else "90")
+        base = f"\033[{col}m{_k(used)}/{_k(win)} {pct}%\033[0m"
+    else:
+        base = f"\033[90m{_k(used)} tok\033[0m"
+    if cost and cost > 0:
+        money = f"${cost:.2f}" if cost >= 0.01 else f"${cost:.4f}"
+        base += f" \033[90m· {money}\033[0m"
+    return base
+
+
 def format_cost(cost: float | None) -> str:
     """Human-readable session cost for the ``/context`` readout. Local/free models
     (cost 0 or None) say so; small costs get 4 decimals, larger ones 2."""

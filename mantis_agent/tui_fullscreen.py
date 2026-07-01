@@ -139,21 +139,11 @@ async def run_fullscreen(tui: Any) -> int:
         return getattr(cap, "context_window", 0) or 0
 
     def _ctx_status() -> str:
-        """A compact 'context fill' indicator for the footer, e.g. '12k/32k 38%'.
-        Empty until we've seen a turn's usage."""
-        used = state.get("ctx_tokens", 0)
-        if not used:
-            return ""
-        win = _ctx_window()
-
-        def _k(n: int) -> str:
-            return f"{n / 1000:.0f}k" if n >= 1000 else str(n)
-
-        if win > 0:
-            pct = min(100, round(used / win * 100))
-            col = "31" if pct >= 90 else ("33" if pct >= 75 else "90")
-            return f"\033[{col}m{_k(used)}/{_k(win)} {pct}%\033[0m"
-        return f"{_GREY}{_k(used)} tok{_RESET}"
+        """The footer 'context fill · session cost' indicator, e.g.
+        '12k/32k 38% · $0.03'. Empty until we've seen a turn's usage."""
+        from .tui import format_ctx_status  # noqa: PLC0415
+        return format_ctx_status(
+            state.get("ctx_tokens", 0), _ctx_window(), state.get("session_cost", 0.0))
 
     def _show_context() -> None:
         """Render the /context breakdown: window fill + estimated composition."""

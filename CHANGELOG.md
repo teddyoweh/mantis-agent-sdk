@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.27.0] — 2026-06-30
+
+### Added
+
+- **Live cost in the footer.** The pinned-input footer's usage indicator now
+  appends the running session cost — `12k/32k 38% · $0.03` — so API users see
+  spend accrue in real time, not only when they open `/context`. The cost tail is
+  shown only when non-zero, so local/free models keep the clean `12k/32k 38%`
+  without a `$0.00` distraction. New pure `tui.format_ctx_status` (token fill
+  colours by threshold: grey → yellow ≥75% → red ≥90%).
+
 ## [2.26.0] — 2026-06-30
 
 ### Added
