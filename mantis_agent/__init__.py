@@ -284,7 +284,7 @@ def _detect_version() -> str:
 
         return version("mantis-agent-sdk")
     except Exception:  # pragma: no cover - extremely defensive
-        return "1.34.0"
+        return "1.35.0"
 
 
 __version__ = _detect_version()

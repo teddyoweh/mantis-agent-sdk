@@ -95,15 +95,63 @@ def find_references(symbol: str, root: str, *, limit: int = 100) -> list[tuple[s
     return sorted(hits)
 
 
+def find_symbols(root: str, *, name_filter: str = "", limit: int = 500) -> list[tuple[str, int, str, str, str | None]]:
+    """Outline of a file / project: ``(relpath, line, kind, name, enclosing_class)``
+    for every class, method, and top-level function. ``name_filter`` (substring,
+    case-insensitive) narrows a big project to the symbols you care about."""
+    out: list[tuple[str, int, str, str, str | None]] = []
+    base = Path(root).expanduser()
+    base_dir = base if base.is_dir() else base.parent
+    nf = name_filter.lower()
+    for f in _py_files(root):
+        try:
+            tree = ast.parse(Path(f).read_text("utf-8", "replace"))
+        except (SyntaxError, OSError, ValueError):
+            continue
+        rel = os.path.relpath(f, base_dir)
+
+        def _visit(node: ast.AST, cls: str | None, rel: str = rel) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    if not nf or nf in child.name.lower():
+                        out.append((rel, child.lineno, "class", child.name, cls))
+                    _visit(child, child.name)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    kind = "method" if cls else "def"
+                    if not nf or nf in child.name.lower():
+                        out.append((rel, child.lineno, kind, child.name, cls))
+
+        _visit(tree, None)
+        if len(out) >= limit:
+            break
+    out.sort(key=lambda s: (s[0], s[1]))
+    return out[:limit]
+
+
+def _render_symbols(syms: list[tuple[str, int, str, str, str | None]]) -> str:
+    lines: list[str] = []
+    cur_file = None
+    for rel, ln, kind, name, cls in syms:
+        if rel != cur_file:
+            lines.append(f"\n{rel}:")
+            cur_file = rel
+        indent = "    " if kind == "method" else "  "
+        label = f"class {name}" if kind == "class" else f"{name}()"
+        lines.append(f"{indent}{label}  (line {ln})")
+    return "\n".join(lines).strip()
+
+
 @tool(name="lsp", is_read_only=True)
-async def lsp(operation: str, symbol: str, path: str = ".") -> str:
+async def lsp(operation: str, symbol: str = "", path: str = ".") -> str:
     """Semantic code navigation for Python (via the stdlib ``ast`` module) —
-    more precise than grep because it distinguishes definitions from mentions.
+    more precise than grep because it understands the code structure.
 
     Args:
-        operation: ``definition`` (where the symbol is defined) or
-            ``references`` (everywhere it's used).
-        symbol: The exact name to look up (function, class, method, variable).
+        operation: ``definition`` (where a symbol is defined), ``references``
+            (everywhere it's used), or ``symbols`` (an outline of the file/dir:
+            classes with their methods + top-level functions).
+        symbol: The name to look up (required for definition/references; an
+            optional substring filter for symbols).
         path: File or directory to search (default: the working directory).
     """
     op = (operation or "").lower()
@@ -118,4 +166,9 @@ async def lsp(operation: str, symbol: str, path: str = ".") -> str:
             return f"no references to {symbol!r} found under {path}"
         head = f"{len(refs)} reference(s) to {symbol!r}:"
         return head + "\n" + "\n".join(f"{r}:{ln}: {t}" for r, ln, t in refs)
-    return "operation must be 'definition' or 'references'"
+    if op in ("symbols", "symbol", "outline", "document_symbol", "workspace_symbol"):
+        syms = find_symbols(path, name_filter=symbol or "")
+        if not syms:
+            return f"no symbols found under {path}"
+        return _render_symbols(syms)
+    return "operation must be 'definition', 'references', or 'symbols'"

@@ -25,7 +25,7 @@ export function Nav() {
     <header
       className="sticky top-0 z-50 transition-colors duration-300"
       style={{
-        background: scrolled ? "rgba(244,241,233,0.82)" : "transparent",
+        background: scrolled ? "rgba(255,255,255,0.85)" : "transparent",
         backdropFilter: scrolled ? "saturate(1.4) blur(12px)" : "none",
         WebkitBackdropFilter: scrolled ? "saturate(1.4) blur(12px)" : "none",
         boxShadow: scrolled ? "0 1px 0 rgba(0,0,0,0.05)" : "none",

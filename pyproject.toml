@@ -1,6 +1,6 @@
 [project]
 name = "mantis-agent-sdk"
-version = "1.34.0"
+version = "1.35.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.11"

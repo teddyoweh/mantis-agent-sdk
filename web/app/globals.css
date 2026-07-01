@@ -9,14 +9,14 @@
    ============================================================ */
 
 @theme {
-  --color-paper: #f4f1e9; /* main surface — warm ivory */
-  --color-paper-2: #ece8dd; /* recessed band */
-  --color-paper-3: #e4dfd0; /* deeper recess / hover */
-  --color-hair: #ddd7c7; /* the one hairline we allow, used sparingly */
+  --color-paper: #ffffff; /* main surface — clean white */
+  --color-paper-2: #f6f6f5; /* recessed band — neutral */
+  --color-paper-3: #ededec; /* deeper recess / hover — neutral */
+  --color-hair: #e6e6e4; /* the one hairline we allow, used sparingly */
 
-  --color-ink: #1b1813; /* near-black, warm */
-  --color-ink-2: #565045; /* body */
-  --color-ink-3: #8b8577; /* captions / meta */
+  --color-ink: #1a1a19; /* near-black, neutral */
+  --color-ink-2: #52514e; /* body */
+  --color-ink-3: #8a8a86; /* captions / meta */
 
   --color-clay: #bd5a37; /* primary accent — the Claude side */
   --color-clay-soft: #d0784f;
@@ -64,13 +64,6 @@
     font-size: 15px;
     line-height: 1.6;
     letter-spacing: -0.006em;
-    font-feature-settings: "cv01", "cv03", "ss01";
-    /* faint warm grain so the ivory never reads as flat #fff */
-    background-image: radial-gradient(
-      transparent 0,
-      transparent 60%,
-      rgba(0, 0, 0, 0.008) 100%
-    );
   }
 
   ::selection {

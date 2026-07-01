@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.35.0] — 2026-06-30
+
+### Added
+
+- **`lsp` gained a `symbols` operation** — a file/project outline: classes with
+  their methods (indented) plus top-level functions, each with a line number.
+  `lsp(operation="symbols", path=...)`, with an optional `symbol` substring to
+  filter a large tree. The fast "show me the structure of this file / where's
+  everything" view, ast-based (async methods and nested scopes handled). New
+  `find_symbols` helper.
+
 ## [1.34.0] — 2026-06-30
 
 ### Added
