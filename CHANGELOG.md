@@ -74,6 +74,18 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [1.22.0] — 2026-06-30
+
+### Added
+
+- **Word-level diff highlighting** (parity roadmap T2). On a modified line the
+  diff renderer now brightens just the characters that actually changed
+  (Claude's `diffAddedWord` / `diffRemovedWord` green/red), so a one-character
+  edit lights up one character instead of the whole line reading as changed.
+  Lines are paired within each change block and char-diffed; a wholesale rewrite
+  skips the emphasis (the row colour already tells that story). New pure
+  `_word_diff_spans` helper.
+
 ## [1.21.0] — 2026-06-30
 
 ### Added

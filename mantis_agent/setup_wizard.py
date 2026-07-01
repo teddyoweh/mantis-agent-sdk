@@ -134,6 +134,7 @@ def run_setup(argv: list[str]) -> int:
     p.add_argument("--local", action="store_true", help="Go straight to the local (Ollama) flow.")
     p.add_argument("--hosted", action="store_true", help="Go straight to the hosted-API flow (paste a key).")
     p.add_argument("--free", action="store_true", help="Go straight to the free-hosted-tier flow.")
+    p.add_argument("--selfhost", action="store_true", help="Go straight to the self-host (custom URL) flow.")
     args = p.parse_args(argv)
 
     c = Console()
@@ -150,6 +151,8 @@ def run_setup(argv: list[str]) -> int:
         return _run_hosted(c, free_only=False)
     if args.free:
         return _run_hosted(c, free_only=True)
+    if args.selfhost:
+        return _run_selfhost(c)
     if not local_flags:
         choice = _choose_path(c)
         if choice is None:
@@ -159,6 +162,8 @@ def run_setup(argv: list[str]) -> int:
             return _run_hosted(c, free_only=False)
         if choice == "free":
             return _run_hosted(c, free_only=True)
+        if choice == "selfhost":
+            return _run_selfhost(c)
         # choice == "local" → fall through to the Ollama flow below
 
     return _run_local(c, args)
@@ -285,11 +290,12 @@ def _choose_path(c: Any) -> str | None:
     c.print(Text("   1  Local        free, on your machine (Ollama) — private, offline", style="white"))
     c.print(Text("   2  Hosted API   OpenAI · DeepSeek · Kimi · Together · … (paste a key)", style="white"))
     c.print(Text("   3  Free hosted  Groq · Cerebras · Gemini · OpenRouter free tiers", style="white"))
+    c.print(Text("   4  Self-host    your own endpoint — vLLM · TGI · llama.cpp · a GPU box", style="white"))
     try:
-        raw = input("\n  Pick [1-3, Enter=1]: ").strip()
+        raw = input("\n  Pick [1-4, Enter=1]: ").strip()
     except (EOFError, KeyboardInterrupt):
         return None
-    return {"": "local", "1": "local", "2": "hosted", "3": "free"}.get(raw)
+    return {"": "local", "1": "local", "2": "hosted", "3": "free", "4": "selfhost"}.get(raw)
 
 
 def _run_hosted(c: Any, *, free_only: bool) -> int:

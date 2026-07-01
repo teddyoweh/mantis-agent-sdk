@@ -119,6 +119,31 @@ def _lang_from_path(path: str | None) -> str | None:
     return _EXT_LANG.get(Path(path).suffix.lower())
 
 
+def _word_diff_spans(old: str, new: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Char-level diff of two lines → (old_changed_spans, new_changed_spans),
+    where each span is a ``(start, end)`` char range that differs. Used to
+    brighten just the changed part of a modified line. Returns empty spans when
+    the lines share too little (a wholesale rewrite — the row colour already
+    tells that story, so word-highlighting adds only noise)."""
+    import difflib  # noqa: PLC0415
+
+    if not old or not new:
+        return [], []
+    sm = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    equal = sum(a2 - a1 for tag, a1, a2, b1, b2 in sm.get_opcodes() if tag == "equal")
+    # Too little in common → treat as unrelated; don't word-highlight.
+    if equal < 0.3 * max(len(old), len(new)):
+        return [], []
+    old_spans: list[tuple[int, int]] = []
+    new_spans: list[tuple[int, int]] = []
+    for op, a1, a2, b1, b2 in sm.get_opcodes():
+        if op in ("replace", "delete") and a2 > a1:
+            old_spans.append((a1, a2))
+        if op in ("replace", "insert") and b2 > b1:
+            new_spans.append((b1, b2))
+    return old_spans, new_spans
+
+
 # Permission-mode footer, cycled with shift+tab. The agent's tools (bash, write,
 # edit) DO execute against the real machine; the footer is still cosmetic for now
 # (no per-tool gating wired up yet) but it matches the Claude Code UX.
@@ -1626,11 +1651,36 @@ class MantisTUI:
         ADD_BG, DEL_BG = "#15331b", "#3a2226"    # row fill (dark green / dark red)
         ADD_NUM, DEL_NUM = "#69db7c", "#ffa8b4"  # bright marker + line number
         ADD_FG, DEL_FG = "#c7e1cb", "#fdd2d8"    # dimmed fallback code fg
+        ADD_WORD, DEL_WORD = "#2f9d44", "#d1454b"  # changed-word emphasis (theme.ts)
         width = max(40, self.console.width)
         indent = 2
         old_ln = new_ln = 0
 
-        def _row(num: int, marker: str, code: str, bg: str, num_col: str, fg: str) -> None:
+        # Precompute changed-char spans for modified line pairs: within a change
+        # block (a run of '-' lines then a run of '+' lines) pair the i-th of
+        # each and word-diff them, so a one-char edit highlights one char.
+        emphasis: dict[int, list[tuple[int, int]]] = {}
+        i = 0
+        while i < len(diff_lines):
+            if diff_lines[i].startswith("-"):
+                dels, j = [], i
+                while j < len(diff_lines) and diff_lines[j].startswith("-"):
+                    dels.append(j)
+                    j += 1
+                adds = []
+                while j < len(diff_lines) and diff_lines[j].startswith("+"):
+                    adds.append(j)
+                    j += 1
+                for di, ai in zip(dels, adds):
+                    os_, ns_ = _word_diff_spans(diff_lines[di][1:], diff_lines[ai][1:])
+                    if os_ or ns_:
+                        emphasis[di], emphasis[ai] = os_, ns_
+                i = j
+            else:
+                i += 1
+
+        def _row(num: int, marker: str, code: str, bg: str, num_col: str, fg: str,
+                 word_bg: str | None = None, spans: list[tuple[int, int]] | None = None) -> None:
             gutter = f"{num:>4}  {marker} "
             avail = max(4, width - indent - len(gutter))
             code = code[:avail]
@@ -1640,23 +1690,27 @@ class MantisTUI:
             if not ct.spans:           # not syntax-highlighted → use the dimmed fg
                 ct.stylize(fg)
             ct.stylize(f"on {bg}")     # layer the row background over the fg
+            if word_bg and spans:      # brighten just the changed characters
+                for s, e in spans:
+                    if s < len(code):
+                        ct.stylize(f"on {word_bg}", s, min(e, len(code)))
             row.append_text(ct)
             filled = indent + len(gutter) + len(ct)
             if filled < width:
                 row.append(" " * (width - filled), style=f"on {bg}")  # fill to edge
             self.console.print(row)
 
-        for ln in diff_lines:
+        for idx, ln in enumerate(diff_lines):
             if ln.startswith("@@"):
                 m = re.match(r"@@ -(\d+)\D.*\+(\d+)", ln) or re.match(r"@@ -(\d+) \+(\d+)", ln)
                 if m:
                     old_ln, new_ln = int(m.group(1)), int(m.group(2))
                 continue
             if ln.startswith("+"):
-                _row(new_ln, "+", ln[1:], ADD_BG, ADD_NUM, ADD_FG)
+                _row(new_ln, "+", ln[1:], ADD_BG, ADD_NUM, ADD_FG, ADD_WORD, emphasis.get(idx))
                 new_ln += 1
             elif ln.startswith("-"):
-                _row(old_ln, "-", ln[1:], DEL_BG, DEL_NUM, DEL_FG)
+                _row(old_ln, "-", ln[1:], DEL_BG, DEL_NUM, DEL_FG, DEL_WORD, emphasis.get(idx))
                 old_ln += 1
             else:  # context line (leading space) — dim, no background block
                 code = ln[1:] if ln.startswith(" ") else ln
