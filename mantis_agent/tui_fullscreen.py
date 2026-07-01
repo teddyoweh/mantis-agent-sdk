@@ -126,6 +126,14 @@ async def run_fullscreen(tui: Any) -> int:
     print_banner(tui.console, tui.model, tui.backend)
     tui.agent = tui._build_agent()
     tui._kick_prewarm()
+    # Start an on-disk session so this conversation is persisted per turn and
+    # /resume, /branch, /rewind have data (the fullscreen path never did this).
+    if getattr(tui, "transcript", None) is None:
+        try:
+            from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
+            tui.transcript = SessionTranscript(new_session_id())
+        except Exception:  # noqa: BLE001 — persistence is best-effort
+            tui.transcript = None
 
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
@@ -638,6 +646,7 @@ async def run_fullscreen(tui: Any) -> int:
                     tui.console.print(f"[ansibrightblack]  → {styled}[/]")
             await _print(_show_err)
         finally:
+            tui._persist_messages(base)  # save this turn for /resume + /branch
             state.update(working=False, task=None)
             get_app().invalidate()
 

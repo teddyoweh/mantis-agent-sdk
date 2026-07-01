@@ -483,6 +483,32 @@ def test_anthropic_apikey_flow_end_to_end(monkeypatch, tmp_path) -> None:
         catalog.clear_key("anthropic")
 
 
+def test_anthropic_oauth_tokenpaste_stores_bearer_not_apikey(monkeypatch, tmp_path) -> None:
+    # The prioritized token-paste path: method #2 (OAuth) + a pasted token must be
+    # persisted as ANTHROPIC_AUTH_TOKEN (Bearer), NOT in the x-api-key store.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    from mantis_agent import setup_wizard as sw
+
+    inputs = iter(["2", "1"])  # auth method #2 (OAuth), then model #1
+    monkeypatch.setattr("builtins.input", lambda *a: next(inputs))
+    monkeypatch.setattr("getpass.getpass", lambda *a: "oauth-tok-pasted")  # quick token-paste
+    monkeypatch.setattr(sw, "_ping_anthropic_bearer", lambda *a, **k: (True, "ok"))
+    captured: dict = {}
+    monkeypatch.setattr("mantis_agent.settings.update_setting_source",
+                        lambda scope, data: captured.update(data))
+
+    try:
+        rc = sw._run_anthropic(_NullConsole(), catalog.BY_ID["anthropic"])
+        assert rc == 0
+        # Stored as Bearer, and NOT as an x-api-key.
+        assert captured.get("env", {}).get("ANTHROPIC_AUTH_TOKEN") == "oauth-tok-pasted"
+        assert catalog.saved_key("anthropic") is None
+    finally:
+        catalog.clear_key("anthropic")
+
+
 def test_local_flow_end_to_end_saves_model(monkeypatch, tmp_path) -> None:
     # Local Ollama flow: ensure server → pull → verify → save as default.
     # Mocks the ollama subprocess/daemon; asserts the tag is persisted @ 11434.

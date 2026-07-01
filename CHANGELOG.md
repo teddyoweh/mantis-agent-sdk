@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.48.0] — 2026-06-30
+
+### Fixed
+
+- **The default (full-screen) TUI now persists conversations.** It never created a
+  session or saved turns to disk — so `/resume`, `/branch`, and `/rewind` (wired in
+  2.15.1) had nothing to work with there; only the classic REPL fallback did. The
+  full-screen path now starts an on-disk session at launch and appends each turn
+  (best-effort, meta/context messages skipped, failed turns not saved), so past
+  conversations actually show up in the `/resume` picker and can be branched.
+
 ## [2.47.0] — 2026-06-30
 
 ### Changed
