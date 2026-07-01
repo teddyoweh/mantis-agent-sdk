@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import shutil
 import sys
 import time
@@ -623,23 +624,11 @@ async def run_fullscreen(tui: Any) -> int:
 
             def _show_err(e: Any = e) -> None:
                 tui.console.print(f"[ansired]error:[/] {e}")
-                # Actionable hints for the two selection failures a user hits most.
-                from .errors import AuthError  # noqa: PLC0415
-                low = str(e).lower()
-                if isinstance(e, AuthError) or "api key" in low or "authentication" in low:
-                    tui.console.print("[ansibrightblack]  → the API key looks invalid. Re-run "
-                                      "[white]mantis setup[/], or [white]/models[/] to switch.[/]")
-                elif any(p in low for p in ("does not exist", "not found", "not supported")):
-                    tui.console.print("[ansibrightblack]  → that model isn't available on this backend. "
-                                      "[white]/models[/] to pick another.[/]")
-                elif any(p in low for p in ("connect", "refused", "timed out", "timeout",
-                                            "unreachable", "all connection attempts failed",
-                                            "name or service", "getaddrinfo")):
-                    local = "localhost" in (tui.backend or "") or "127.0.0.1" in (tui.backend or "")
-                    hint = ("Is Ollama running? [white]ollama serve[/]" if local
-                            else "check the backend URL / your network")
-                    tui.console.print(f"[ansibrightblack]  → can't reach {tui.backend}. {hint} "
-                                      "· [white]mantis setup[/] to switch.[/]")
+                from .tui import error_hint  # noqa: PLC0415
+                hint = error_hint(e, tui.backend)
+                if hint:
+                    styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)  # `cmd` → styled
+                    tui.console.print(f"[ansibrightblack]  → {styled}[/]")
             await _print(_show_err)
         finally:
             state.update(working=False, task=None)

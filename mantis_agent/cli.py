@@ -204,7 +204,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser(
         "run", help="One-shot: send a prompt, print the final assistant response."
     )
-    p_run.add_argument("prompt", help="The user prompt to send.")
+    p_run.add_argument("prompt", help="The user prompt to send. Use '-' to read it from stdin (e.g. cat spec.md | mantis run --tools -).")
     _add_agent_flags(p_run)
     p_run.add_argument(
         "--output-format", choices=["text", "json"], default="text",
@@ -482,6 +482,14 @@ def _print_profile(label: str, profile: BackendCapability) -> None:
     print(f"  prefix cache:  {'yes' if profile.supports_prefix_caching else 'no'}")
 
 
+def _resolve_prompt(prompt: str, read_stdin: Any) -> str:
+    """When the prompt is ``-``, read it from stdin so a file/spec can be piped:
+    ``cat feature.md | mantis run --tools -``. Otherwise return it verbatim."""
+    if prompt.strip() == "-":
+        return read_stdin().strip()
+    return prompt
+
+
 def _result_to_json(result_msg: Any, fallback_text: str = "") -> dict[str, Any]:
     """Serialize an ``SDKResultMessage`` to a JSON-ready dict for ``--json``. Falls
     back to the accumulated assistant text when the result field is empty."""
@@ -503,9 +511,13 @@ async def _cmd_run_async(args: argparse.Namespace) -> int:
     )
 
     options = _build_options(args)
+    prompt = _resolve_prompt(args.prompt, sys.stdin.read)
+    if not prompt.strip():
+        print("[error] empty prompt (nothing on stdin?)", file=sys.stderr)
+        return 1
     json_mode = getattr(args, "output_format", "text") == "json"
     collected: list[str] = []
-    async for msg in query(prompt=args.prompt, options=options):
+    async for msg in query(prompt=prompt, options=options):
         if isinstance(msg, SDKAssistantMessage):
             # SDKAssistantMessage wraps APIAssistantMessage under `.message`,
             # which carries the list of content blocks (TextBlock, ToolUseBlock,

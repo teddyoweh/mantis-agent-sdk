@@ -74,6 +74,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.22.0] — 2026-06-30
+
+### Added
+
+- **`mantis run -` reads the prompt from stdin.** Pipe a file or generated spec
+  straight into the agent — `cat feature.md | mantis run --tools --yes -` — instead
+  of cramming it into a shell argument. When the prompt is `-` it's read from
+  stdin (stripped); an empty result errors clearly. Rounds out the automation
+  surface (`--tools`, `--yes`, `--json`, stdin).
+
 ## [2.21.0] — 2026-06-30
 
 ### Added
