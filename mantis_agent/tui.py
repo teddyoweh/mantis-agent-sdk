@@ -262,6 +262,35 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
     return base
 
 
+_HELP_CATEGORIES: list[tuple[str, list[str]]] = [
+    ("model", ["/models", "/model", "/enable", "/disable", "/connect"]),
+    ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
+    ("project", ["/init", "/memory", "/learn", "/context"]),
+    ("review", ["/diff", "/copy", "/export", "/cwd"]),
+    ("editor", ["/vim"]),
+]
+
+
+def build_help_lines(slash_commands: dict[str, str]) -> list[tuple[str, str, str]]:
+    """Rows ``(category, command, description)`` for ``/help``, generated FROM
+    ``slash_commands`` so it can never drift out of sync with what's registered.
+    Categorized commands come first in order; anything uncategorized (a
+    newly-added command) falls into ``more`` automatically. ``/help``/``/exit``/
+    ``/quit`` are omitted (self-evident)."""
+    skip = {"/help", "/exit", "/quit"}
+    placed: set[str] = set()
+    rows: list[tuple[str, str, str]] = []
+    for cat, cmds in _HELP_CATEGORIES:
+        for c in cmds:
+            if c in slash_commands and c not in skip:
+                rows.append((cat, c, slash_commands[c]))
+                placed.add(c)
+    for c, desc in slash_commands.items():
+        if c not in placed and c not in skip:
+            rows.append(("more", c, desc))
+    return rows
+
+
 def format_cost(cost: float | None) -> str:
     """Human-readable session cost for the ``/context`` readout. Local/free models
     (cost 0 or None) say so; small costs get 4 decimals, larger ones 2."""

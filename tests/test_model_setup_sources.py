@@ -386,6 +386,21 @@ def test_selfhost_probe_unreachable_returns_none() -> None:
     assert _probe_openai_models("http://127.0.0.1:59999/v1", "") is None
 
 
+def test_selfhost_probe_url_construction_enables_v1_autodetect() -> None:
+    # _probe GETs {url}/models verbatim (no magic /v1). The bare-host case 404s so
+    # _run_selfhost's retry can adopt /v1 — this locks that URL contract.
+    import httpx
+
+    import respx as _respx
+
+    with _respx.mock:
+        _respx.get("http://localhost:8000/models").mock(return_value=httpx.Response(404))
+        _respx.get("http://localhost:8000/v1/models").mock(
+            return_value=httpx.Response(200, json={"data": [{"id": "m1"}]}))
+        assert _probe_openai_models("http://localhost:8000", "") is None      # → triggers /v1 retry
+        assert _probe_openai_models("http://localhost:8000/v1", "") == ["m1"]  # → adopted
+
+
 # -- Model ping (validate-before-save) ---------------------------------------
 
 

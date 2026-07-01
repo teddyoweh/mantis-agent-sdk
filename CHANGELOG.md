@@ -74,6 +74,17 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Three new public exports: `ResponseFormatError`,
   `normalize_response_format`, `translate_response_format`.
 
+## [2.39.0] — 2026-06-30
+
+### Fixed
+
+- **`/help` no longer drifts.** It was a hardcoded list that had fallen out of
+  date — `/compact`, `/init`, `/learn`, `/resume`, `/branch`, `/rewind`, and
+  `/vim` were all missing. `/help` is now generated from the registered
+  `SLASH_COMMANDS` (with categories: model · session · project · review · editor),
+  so every command — including any added later — is listed automatically with its
+  real description. A test asserts full coverage so it can't drift again.
+
 ## [2.38.0] — 2026-06-30
 
 ### Added

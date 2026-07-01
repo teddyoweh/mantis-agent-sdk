@@ -860,22 +860,19 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if cmd == "/help":
             def _help() -> None:
+                from .tui import build_help_lines  # noqa: PLC0415
                 w, d = "white", "ansibrightblack"
                 tui.console.print("\n[bold]commands[/]")
+                last_cat = None
+                for cat, command, desc in build_help_lines(SLASH_COMMANDS):
+                    label = cat if cat != last_cat else ""
+                    last_cat = cat
+                    tui.console.print(f"  [{d}]{label:<8}[/] [{w}]{command}[/]  [{d}]{desc}[/]")
                 tui.console.print(
-                    f"  [{d}]models[/]   [{w}]/models[/] [{d}][filter][/] browse & pick (type to filter) · "
-                    f"[{w}]/model[/] <id> switch")
+                    f"  [{d}]quit    [/] [{w}]/exit[/]  [{d}](or Ctrl+D · Ctrl+C when idle)[/]")
                 tui.console.print(
-                    f"  [{d}]      [/]   [{w}]/enable[/] <provider> · [{w}]/disable[/] <provider> · "
-                    f"[{w}]/connect[/] <url> [model] (self-host)")
-                tui.console.print(
-                    f"  [{d}]session[/]  [{w}]/clear[/] · [{w}]/memory[/] · [{w}]/context[/] · "
-                    f"[{w}]/copy[/] · [{w}]/export[/] · [{w}]/diff[/] · [{w}]/cwd[/]")
-                tui.console.print(
-                    f"  [{d}]quit[/]     [{w}]/exit[/]  (or Ctrl+D · Ctrl+C when idle)")
-                tui.console.print(
-                    f"  [{d}]keys[/]     [{d}]@file to attach a path · shift+tab cycles mode · "
-                    f"esc/Ctrl+C interrupts a running reply[/]\n")
+                    f"  [{d}]keys    [/] [{d}]@file/@dir attaches its content · shift+tab cycles mode "
+                    f"· esc/Ctrl+C interrupts a running reply[/]\n")
             await _print(_help)
             return True
         return False  # unknown → treat as a normal prompt
