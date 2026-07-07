@@ -98,10 +98,12 @@
     scroll-behavior: smooth;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    overflow-x: hidden;
+    /* clip (not hidden): prevents sideways scroll without creating a
+       scroll container, which would break position: sticky descendants */
+    overflow-x: clip;
   }
   body {
-    overflow-x: hidden;
+    overflow-x: clip;
   }
   @media (prefers-reduced-motion: reduce) {
     html {
@@ -489,6 +491,285 @@
 }
 .rise {
   animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ---- the hunt scene ---- */
+.fly {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity 0.4s;
+  will-change: left, top;
+}
+.fly-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-mantis-soft);
+  box-shadow: 0 0 10px 2px rgba(103, 165, 107, 0.55);
+  animation: firefly 2.2s ease-in-out infinite;
+}
+.fly-label {
+  font-size: 11px;
+  color: #8b8577;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* real fireflies: long dark spells broken by irregular double-flashes */
+@keyframes firefly {
+  0%,
+  100% {
+    opacity: 0.22;
+    box-shadow: 0 0 4px 1px rgba(103, 165, 107, 0.18);
+  }
+  6% {
+    opacity: 1;
+    box-shadow: 0 0 16px 4px rgba(140, 200, 140, 0.75);
+  }
+  10% {
+    opacity: 0.35;
+    box-shadow: 0 0 6px 1px rgba(103, 165, 107, 0.25);
+  }
+  14% {
+    opacity: 0.95;
+    box-shadow: 0 0 13px 3px rgba(140, 200, 140, 0.6);
+  }
+  20%,
+  92% {
+    opacity: 0.25;
+    box-shadow: 0 0 4px 1px rgba(103, 165, 107, 0.2);
+  }
+}
+
+/* stars */
+.star {
+  position: absolute;
+  border-radius: 999px;
+  background: #e9ecd9;
+  opacity: 0.25;
+  animation: twinkle 4s ease-in-out infinite;
+}
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* dust motes drifting up through the moonlight */
+.mote {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(220, 228, 200, 0.35);
+  animation: mote-drift 18s linear infinite;
+}
+@keyframes mote-drift {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.5;
+  }
+  85% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate(14px, -52px);
+    opacity: 0;
+  }
+}
+
+/* ground mist, two depths */
+.mist {
+  position: absolute;
+  left: -10%;
+  width: 120%;
+  pointer-events: none;
+  filter: blur(14px);
+}
+.mist-a {
+  bottom: 6%;
+  height: 54px;
+  background: radial-gradient(50% 100% at 30% 100%, rgba(190, 205, 175, 0.07), transparent 70%),
+    radial-gradient(40% 100% at 75% 100%, rgba(190, 205, 175, 0.05), transparent 70%);
+  animation: mist-drift 26s ease-in-out infinite alternate;
+}
+.mist-b {
+  bottom: 20%;
+  height: 40px;
+  background: radial-gradient(45% 100% at 60% 100%, rgba(190, 205, 175, 0.045), transparent 70%);
+  animation: mist-drift 40s ease-in-out infinite alternate-reverse;
+}
+@keyframes mist-drift {
+  from {
+    transform: translateX(-3%);
+  }
+  to {
+    transform: translateX(3%);
+  }
+}
+
+/* wind through the grass */
+.grass-sway-a {
+  animation: grass-wind 6.5s ease-in-out infinite;
+  transform-origin: bottom;
+}
+.grass-sway-b {
+  animation: grass-wind 9s ease-in-out infinite reverse;
+  transform-origin: bottom;
+}
+@keyframes grass-wind {
+  0%,
+  100% {
+    transform: skewX(0deg);
+  }
+  50% {
+    transform: skewX(2.4deg);
+  }
+}
+
+/* mantis anatomy */
+.hm-antennae {
+  animation: ant-sway 3.6s ease-in-out infinite;
+  transform-box: view-box;
+  transform-origin: 35px 29px;
+}
+@keyframes ant-sway {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  35% {
+    transform: rotate(-4deg);
+  }
+  65% {
+    transform: rotate(2.5deg);
+  }
+}
+.hm-breathe {
+  animation: hm-breathe 4.4s ease-in-out infinite;
+  transform-box: view-box;
+  transform-origin: 78px 86px;
+}
+@keyframes hm-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.015, 1.03);
+  }
+}
+.hm-pupil {
+  transition: transform 0.25s ease-out;
+  transform-box: view-box;
+}
+.hm-arm {
+  transform-box: view-box;
+  transform-origin: 53px 60px;
+  transition: transform 0.45s ease-out;
+}
+.hm-svg.hm-cock {
+  transform: translateY(6px) rotate(2deg) scale(0.985);
+  transition: transform 0.26s ease-in;
+  transform-origin: 70% 90%;
+}
+.hm-svg.hm-cock .hm-arm {
+  transform: rotate(-16deg);
+  transition: transform 0.24s ease-in;
+}
+.hm-svg.mantis-strike .hm-arm {
+  transform: rotate(14deg);
+  transition: transform 0.11s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.fly-caught {
+  animation: caught 0.5s ease-out both;
+}
+@keyframes caught {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    filter: none;
+  }
+  30% {
+    transform: scale(1.6);
+    opacity: 1;
+    filter: brightness(2) hue-rotate(-10deg);
+  }
+  100% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+}
+.strike-arc {
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: arc-whip 0.45s ease-out both;
+  filter: drop-shadow(0 0 4px rgba(103, 165, 107, 0.7));
+}
+@keyframes arc-whip {
+  0% {
+    stroke-dashoffset: 600;
+    opacity: 1;
+  }
+  45% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+.strike-tip {
+  animation: tip-flash 0.45s ease-out both;
+}
+@keyframes tip-flash {
+  0%,
+  35% {
+    opacity: 0;
+    r: 2;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.mantis-idle {
+  animation: mantis-sway 5s ease-in-out infinite;
+  transform-origin: 70% 90%;
+}
+@keyframes mantis-sway {
+  0%,
+  100% {
+    transform: rotate(0deg) translateY(0);
+  }
+  50% {
+    transform: rotate(-2.5deg) translateY(-6px);
+  }
+}
+.mantis-strike {
+  animation: mantis-lunge 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  transform-origin: 70% 90%;
+}
+@keyframes mantis-lunge {
+  0% {
+    transform: rotate(0deg) translateX(0);
+  }
+  35% {
+    transform: rotate(-9deg) translateX(-34px) translateY(-10px);
+  }
+  100% {
+    transform: rotate(0deg) translateX(0);
+  }
 }
 
 @keyframes blink {

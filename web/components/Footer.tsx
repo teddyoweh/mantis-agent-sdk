@@ -33,6 +33,7 @@ const COLS: { title: string; links: { label: string; href: string; external?: bo
   {
     title: "Project",
     links: [
+      { label: "SKILL.md — for agents", href: "/skill" },
       { label: "GitHub", href: "https://github.com/teddyoweh/mantis-agent-sdk", external: true },
       { label: "PyPI", href: "https://pypi.org/project/mantis-agent-sdk/", external: true },
       { label: "Changelog", href: "https://github.com/teddyoweh/mantis-agent-sdk/blob/main/CHANGELOG.md", external: true },

@@ -1,14 +1,16 @@
 # Getting started
 
-Three short pages, and you've got the whole loop in your head:
+Four short pages take you from nothing to a working agent:
 
-1. [Installation](installation.md) — `pip install`, optional extras.
-2. [Quickstart](quickstart.md) — your first 30-line program with tool use.
-3. [Local setup](local-setup.md) — `mantis-agent setup-local` for offline / CPU
-   runs with Ollama or llama.cpp.
-4. [Configuration](configuration.md) — env vars, `setting_sources`, where
-   state lives.
+1. [Installation](installation.md) — one `pip install`, what you get.
+2. [Quickstart](quickstart.md) — your first agent with tool use, in five
+   minutes.
+3. [Local setup](local-setup.md) — run models on your own machine, free,
+   no API key.
+4. [Configuration](configuration.md) — where settings live and which one
+   wins.
 
-The whole SDK fits in your head in about 15 minutes. The shape is the same
-as the Claude Agent SDK; the implementation makes any open model behave
-like Anthropic's.
+If you've used Anthropic's Claude Agent SDK, you already know this
+library — same functions, same message shapes, same options. The only new
+idea is that the model can live anywhere: your laptop, your GPU server, or
+any provider with an API.

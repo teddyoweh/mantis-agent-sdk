@@ -9,6 +9,7 @@ export const DOCS_NAV: NavSection[] = [
       { title: "Overview", slug: "getting-started" },
       { title: "Installation", slug: "getting-started/installation" },
       { title: "Quickstart", slug: "getting-started/quickstart" },
+      { title: "Examples", slug: "examples" },
       { title: "Local setup", slug: "getting-started/local-setup" },
       { title: "Configuration", slug: "getting-started/configuration" },
     ],
@@ -49,7 +50,6 @@ export const DOCS_NAV: NavSection[] = [
     title: "More",
     label: "more",
     items: [
-      { title: "Examples", slug: "examples" },
       { title: "Upstream comparison", slug: "development/upstream-comparison" },
       { title: "Parity roadmap", slug: "development/parity-roadmap" },
     ],

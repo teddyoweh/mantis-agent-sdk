@@ -1,123 +1,162 @@
 # Models and backends
 
-`mantis-agent-sdk` ships seven backends. You almost never pick one by name —
-the SDK auto-routes from the model string.
+You name a model; mantis works out where it runs and how to talk to it.
+That's the whole mental model. This page covers what the name resolves to,
+how to point at any provider, and what to do when you want to override the
+guess.
 
-## Backends at a glance
+## How routing works
 
-| Backend | Use when | Routes from |
+mantis reads the *shape* of the model name:
+
+| You write | It runs on | Why |
 |---|---|---|
-| `ollama` | You're running Ollama locally (or remote). | Model names with a tag form: `llama3.2:3b`, `qwen2.5:7b`, `deepseek-r1:1.5b`. |
-| `openai_compat` | Hosted OpenAI-compatible endpoints: vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras. | `MANTIS_AGENT_BASE_URL` set; or org-prefixed names like `Qwen/Qwen2.5-72B-Instruct`. |
-| `openai` | OpenAI proper. | `gpt-4*`, `gpt-3.5*`, `o1*`, `o3*`, `o4*`. |
-| `gemini` | Google Gemini via the OpenAI-compat endpoint. | `gemini-*`. |
-| `llamacpp` | Local llama.cpp `llama-server`. | `--backend llamacpp` or `base_url=http://localhost:8080/v1`. |
-| `tgi` | HuggingFace text-generation-inference. | `--backend tgi`. |
-| `modal` | Modal serverless GPUs. | `--backend modal` with a `MODAL_*` env. |
-| `anthropic_passthrough` | Parity testing against real Claude. | `claude-*` model names (only when `ANTHROPIC_API_KEY` is set). |
-| `mock` | Tests / smoke runs. | `MANTIS_AGENT_MOCK=1` env. |
+| `qwen2.5:7b`, `llama3.2:3b` | Local Ollama | `name:tag` is Ollama's naming form |
+| `gpt-4o-mini`, `o3-mini` | OpenAI | OpenAI's prefixes |
+| `gemini-2.0-flash` | Google Gemini | `gemini-` prefix |
+| `Qwen/Qwen2.5-72B-Instruct` | Your OpenAI-compat provider | `org/model` form + your `MANTIS_AGENT_BASE_URL` |
+| `claude-*` | Anthropic (parity testing only) | Requires `ANTHROPIC_API_KEY` |
 
-## Auto-routing rules
+Two overrides always win over the guess:
 
-The `routing` module maps model names to backends in priority order:
+1. `backend=` in options (or `MANTIS_AGENT_BACKEND` in the env)
+2. `MANTIS_AGENT_MOCK=1` — forces the mock provider for tests and CI
 
-1. Explicit `backend=` or `MANTIS_AGENT_BACKEND` env wins.
-2. `MANTIS_AGENT_MOCK=1` → `mock`.
-3. Ollama tag form (`name:tag`) → `ollama`.
-4. `gpt-*` / `o[134]*` → `openai`.
-5. `gemini-*` → `gemini`.
-6. `claude-*` with `ANTHROPIC_API_KEY` → `anthropic_passthrough`.
-7. Org-prefixed (`Qwen/...`, `meta-llama/...`) → `openai_compat`
-   (needs `MANTIS_AGENT_BASE_URL`).
-8. Otherwise → error with a hint about which env vars to set.
-
-If you're unsure what a name will route to:
+Not sure where a name will land? Ask:
 
 ```python
 from mantis_agent.routing import resolve_backend
-print(resolve_backend("qwen2.5:7b"))         # → 'ollama'
-print(resolve_backend("gpt-4o-mini"))        # → 'openai'
-print(resolve_backend("Qwen/Qwen2.5-72B"))   # → 'openai_compat'
+resolve_backend("qwen2.5:7b")        # 'ollama'
+resolve_backend("gpt-4o-mini")       # 'openai'
+resolve_backend("Qwen/Qwen2.5-72B")  # 'openai_compat'
 ```
 
-## Forcing a backend
+## Hosted providers — copy-paste setup
 
-```python
-options = {
-    "model": "Qwen/Qwen2.5-72B-Instruct",
-    "backend": "openai_compat",
-    "base_url": "https://api.together.xyz/v1",
-    "api_key": os.environ["TOGETHER_API_KEY"],
-}
+Every hosted provider below speaks the same OpenAI-compatible protocol.
+Setup is always the same two env vars — URL and key — then you use the
+provider's model names.
+
+**Together**
+
+```bash
+export MANTIS_AGENT_BASE_URL=https://api.together.xyz/v1
+export MANTIS_AGENT_API_KEY=$TOGETHER_API_KEY
+# model="Qwen/Qwen2.5-72B-Instruct-Turbo"
 ```
 
-Or set `MANTIS_AGENT_BACKEND=openai_compat`, `MANTIS_AGENT_BASE_URL=…`,
-`MANTIS_AGENT_API_KEY=…` and skip the explicit fields.
+**Fireworks**
 
-## Capabilities
+```bash
+export MANTIS_AGENT_BASE_URL=https://api.fireworks.ai/inference/v1
+export MANTIS_AGENT_API_KEY=$FIREWORKS_API_KEY
+# model="accounts/fireworks/models/llama-v3p1-70b-instruct"
+```
 
-Every model also carries a `ModelCapability` row that tells the runtime
-*how* to drive tool use. The capability table currently covers 30+ models:
+**Groq**
+
+```bash
+export MANTIS_AGENT_BASE_URL=https://api.groq.com/openai/v1
+export MANTIS_AGENT_API_KEY=$GROQ_API_KEY
+# model="llama-3.3-70b-versatile"
+```
+
+**OpenRouter** (200+ models behind one key)
+
+```bash
+export MANTIS_AGENT_BASE_URL=https://openrouter.ai/api/v1
+export MANTIS_AGENT_API_KEY=$OPENROUTER_API_KEY
+# model="deepseek/deepseek-chat"
+```
+
+**Cerebras**
+
+```bash
+export MANTIS_AGENT_BASE_URL=https://api.cerebras.ai/v1
+export MANTIS_AGENT_API_KEY=$CEREBRAS_API_KEY
+# model="llama-3.3-70b"
+```
+
+Prefer keeping it in code instead of the env? Same thing, per-agent:
 
 ```python
-from mantis_agent import lookup_model, resolve_tool_use_path
+options = MantisAgentOptions(
+    model="llama-3.3-70b-versatile",
+    backend="https://api.groq.com/openai/v1",
+    api_key=os.environ["GROQ_API_KEY"],
+)
+```
+
+## Self-hosted
+
+**Ollama** — found automatically on `localhost:11434`. Remote box? Set
+`MANTIS_AGENT_BASE_URL=http://gpu-box:11434`.
+
+**vLLM** — start `vllm serve`, then point at it like any provider:
+
+```bash
+export MANTIS_AGENT_BASE_URL=http://localhost:8000/v1
+```
+
+**llama.cpp** — run `llama-server` with `--jinja` for native tool use
+(`mantis-agent setup-local-llamacpp` does all of this for you):
+
+```bash
+export MANTIS_AGENT_BASE_URL=http://localhost:8080/v1
+```
+
+**TGI** (Hugging Face text-generation-inference) — pass `backend="tgi"`.
+
+**Modal** — deploy a model on Modal's serverless GPUs and point mantis at
+the Modal URL. The adapter absorbs cold-start delays for you.
+
+## Closed models
+
+The same harness drives closed models when you want them:
+
+```python
+options = MantisAgentOptions(model="gpt-4o-mini")        # OpenAI
+options = MantisAgentOptions(model="gemini-2.0-flash")   # Google
+```
+
+Just set `OPENAI_API_KEY` / `GEMINI_API_KEY`. Your tools, sessions,
+permissions, and budgets work identically — switching between an open and
+a closed model is still a one-line change.
+
+## How tool use adapts per model
+
+Not every model learned function calling. mantis keeps a capability table
+(30+ models) and picks the right strategy for each:
+
+- **Native** — the model supports `tools[]`; use it directly. Qwen 2.5+,
+  Llama 3.1+, gpt-oss, all closed models.
+- **Prompted** — teach the schema in the prompt and parse the reply.
+  Rescues Llama 2, Mistral 7B, and older models.
+- **Grammar-constrained** — where the server can enforce a JSON grammar
+  (llama.cpp, vLLM), the model *cannot* emit a malformed call.
+
+You never pick this by hand — but you can peek, or override:
+
+```python
+from mantis_agent import lookup_model
 
 cap = lookup_model("deepseek-r1:1.5b")
-print(cap.tool_use_path)   # ToolUsePath.XML_PROMPT_ENGINEERED
-print(cap.supports_thinking)  # True
-print(cap.context_window)  # 128_000
+cap.tool_use_path       # ToolUsePath.XML_PROMPT_ENGINEERED
+cap.supports_thinking   # True
+cap.context_window      # 128_000
 ```
-
-`resolve_tool_use_path()` chooses between three strategies:
-
-- `NATIVE_TOOLS` — pass `tools[]` in the request body. Modern OpenAI, Claude,
-  most Qwens, llama 3.1+.
-- `XML_PROMPT_ENGINEERED` — inject `<tool_call>` XML into the system prompt
-  and parse it back out of completions. Llama 2, Mistral 7B, older Qwens.
-- `GRAMMAR_CONSTRAINED_JSON` — use a JSON-schema grammar (llama.cpp,
-  vLLM) to force valid tool-call JSON.
-
-You don't normally pick this manually — the routing module handles it. But
-you can override if a specific model needs a different path:
 
 ```python
-options = {
-    "model": "qwen2.5:0.5b",
-    "tool_use_path": "xml_prompt_engineered",
-}
+# force a specific path for one model
+options = {"model": "qwen2.5:0.5b", "tool_use_path": "xml_prompt_engineered"}
 ```
 
-## Per-backend notes
+## Good to know
 
-### Ollama
-
-- Auto-discovered on `http://localhost:11434` unless overridden by
-  `MANTIS_AGENT_BASE_URL`.
-- Native tool use supported for Llama 3.1+ and Qwen 2.5+.
-- `setup-local` writes a startup-on-first-run launcher for the Ollama
-  daemon — see [Local setup](../getting-started/local-setup.md).
-
-### OpenAI-compat (vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras)
-
-- Set `MANTIS_AGENT_BASE_URL` and `MANTIS_AGENT_API_KEY`.
-- Tool use goes via native `tools[]`.
-- Some providers (Cerebras, Groq) have stricter context windows; the
-  capability table tracks these.
-
-### llama.cpp
-
-- Use `--jinja` to enable native tool-use templates. `mantis-agent-sdk` does
-  this for you when starting via `setup-local-llamacpp`.
-- Without `--jinja`, falls back to `GRAMMAR_CONSTRAINED_JSON`.
-
-### Modal serverless
-
-- For multi-hour or GPU runs: launch a model on Modal, point the SDK at
-  the Modal URL. The Modal adapter handles cold-start delays and
-  per-request keepalives.
-
-### Anthropic passthrough
-
-- **Only for parity testing**. Pins to the real Anthropic API so you can
-  compare mantis-agent-sdk's behaviour against the source.
-- Not part of the 1.0 public surface — don't build production code on it.
+- **Ollama** supports native tool use for Llama 3.1+ and Qwen 2.5+; older
+  models fall back to the prompted path automatically.
+- **Groq and Cerebras** have tighter context windows than the model cards
+  suggest; the capability table accounts for it.
+- **Anthropic passthrough** (`claude-*` names) exists so we can test parity
+  against the real thing. Don't build on it — if you want Claude in
+  production, use Anthropic's own SDK.

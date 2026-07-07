@@ -86,9 +86,9 @@ export function DiffHero() {
         </div>
       </div>
       <p className="mt-3 text-[13px] text-ink-3">
-        <span className="mono text-mantis">↑</span> That&apos;s the whole diff. Every canonical Claude
-        SDK example runs verbatim — the surface is Anthropic-shaped, the wire format underneath is
-        OpenAI-compat or Ollama.
+        <span className="mono text-mantis">↑</span> That&apos;s the whole diff. Code written for
+        Anthropic&apos;s SDK runs as-is — mantis keeps the surface you know and swaps what&apos;s
+        underneath.
       </p>
     </div>
   );

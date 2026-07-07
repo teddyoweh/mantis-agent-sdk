@@ -31,6 +31,7 @@ export function getDoc(slug: string): Doc | null {
     const m = content.match(/^#\s+(.+)$/m);
     title = m ? m[1].trim() : slug.split("/").pop()!;
   }
+  title = title.replace(/`/g, "");
 
   // Strip a leading H1 that duplicates the title we render in the header.
   const body = content.replace(/^#\s+.+\n+/, "");

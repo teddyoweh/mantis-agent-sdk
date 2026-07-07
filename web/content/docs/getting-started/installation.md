@@ -1,61 +1,55 @@
 # Installation
 
-`mantis-agent-sdk` is a normal Python package. No build tools, no native
-extensions, no required system dependencies.
-
-## Requirements
-
-- **Python ≥ 3.11**
-- **One of:** a hosted backend you can reach over HTTPS (OpenAI, Together,
-  Fireworks, Groq, OpenRouter, …), a local Ollama install, or a local
-  llama.cpp install.
-
-## Install
+One `pip install`. No build tools, no native extensions, no system
+dependencies.
 
 ```bash
 pip install mantis-agent-sdk
 ```
 
-That covers the hosted-backends path: `query`, `ClaudeSDKClient`, tools,
-MCP, sessions, sub-agents, hooks, budget — all of it.
+That's everything: the full SDK (`query`, `ClaudeSDKClient`, tools, MCP,
+sessions, sub-agents, hooks, budgets) **and** the `mantis` terminal — a
+Claude-Code-style coding agent you can run in any directory.
+
+## Requirements
+
+- **Python 3.11 or newer**
+- **Somewhere to run a model.** Any one of these: a local
+  [Ollama](local-setup.md) install (free, works on a laptop), a hosted
+  provider key (Together, Fireworks, Groq, OpenRouter, …), or an OpenAI /
+  Gemini key.
+
+Don't have any of those yet? `mantis-agent setup-local` gets you a working
+local model in one command — see [Local setup](local-setup.md).
+
+## What gets installed
+
+Two commands land on your PATH:
+
+- **`mantis`** — the terminal coding agent. Run it in a project directory
+  and start typing.
+- **`mantis-agent`** — the utility CLI: `setup-local`, `probe`,
+  `list-models`, `run`, `chat`.
 
 ## Optional extras
 
-The package has no required optional groups, but a few extras pull in
-provider-specific clients for convenience:
+You almost certainly don't need these. Every backend — Ollama, vLLM,
+Together, Fireworks, Groq, OpenRouter, Cerebras, llama.cpp, TGI, OpenAI,
+Gemini — works with the base install.
 
-| Extra | What it adds |
+| Extra | When you'd want it |
 |---|---|
-| `mantis-agent-sdk[bedrock]` | `boto3` for the AWS Bedrock runtime adapter |
-| `mantis-agent-sdk[all]` | Every backend's optional client (currently just `bedrock`) |
-| `mantis-agent-sdk[dev]` | `pytest`, `pytest-anyio`, `ruff`, `respx` for tests |
+| `mantis-agent-sdk[bedrock]` | Running models through AWS Bedrock (adds `boto3`) |
+| `mantis-agent-sdk[dev]` | Contributing — test and lint tooling |
 
-For Anthropic (`anthropic_passthrough`), OpenAI, Gemini, vLLM, Ollama,
-Together, Fireworks, Groq, OpenRouter, Cerebras, llama.cpp, and TGI — no
-extras are required. The provider uses `httpx` directly.
-
-## Verify
-
-```python
-import mantis_agent
-print(mantis_agent.__version__)
-```
-
-You should see something like `0.1.0`.
-
-## CLI
-
-The package installs a single console script:
+## Verify it worked
 
 ```bash
-mantis-agent --help
+python -c "import mantis_agent; print(mantis_agent.__version__)"
 ```
 
-Subcommands:
+Prints the installed version (e.g. `1.21.0`). Then head to the
+[Quickstart](quickstart.md).
 
-- `mantis-agent setup-local` — install Ollama, pull a CPU-friendly model, run a
-  smoke test. Supports Linux, macOS, and Windows.
-- `mantis-agent setup-local-llamacpp` — same idea, but builds llama.cpp from
-  source and pulls a GGUF model.
-
-See [Local setup](local-setup.md) for details.
+> Want `mantis` available everywhere, isolated from your projects?
+> `uv tool install mantis-agent-sdk` or `pipx install mantis-agent-sdk`.

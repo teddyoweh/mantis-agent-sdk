@@ -2,14 +2,11 @@ import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { DiffHero } from "@/components/landing/DiffHero";
+import { BackendPills } from "@/components/landing/BackendPills";
+import { HuntScene } from "@/components/landing/HuntScene";
 import { Terminal } from "@/components/landing/Terminal";
 import { Shiki } from "@/components/Shiki";
 import { CopyLine } from "@/components/CopyLine";
-
-const BACKENDS = [
-  "Ollama", "vLLM", "llama.cpp", "TGI", "Together", "Fireworks",
-  "Groq", "OpenRouter", "Cerebras", "OpenAI", "Gemini", "Modal",
-];
 
 const QUICKSTART = `import asyncio
 from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
@@ -56,34 +53,34 @@ agent = Agent(model="qwen2.5:7b", tracer=OTelTracer(service_name="my-agent"))`;
 
 const FEATURES = [
   {
-    k: "one api, many backends",
-    t: "Route from the model name",
-    d: "qwen3:8b → Ollama. Qwen/… → Together. gpt-4o-mini → OpenAI. The URL is inferred from the model name shape; pass backend= to override.",
+    k: "any backend",
+    t: "Name the model and go",
+    d: "A local Ollama, your own GPU server, a hosted provider — even closed models like GPT and Gemini. mantis works out where the model lives and speaks its dialect. Moving is a one-line change, not a rewrite.",
   },
   {
-    k: "real tool use",
-    t: "Native, prompted, or grammar-constrained",
-    d: "Native tools[] where supported, prompt-engineered <tool_call> XML where not, grammar-constrained JSON where the server enforces it. Chosen per model, automatically.",
+    k: "tools",
+    t: "Write a function. It becomes a tool.",
+    d: "Decorate any Python function and every model can call it — even the ones that never learned function calling. mantis finds a way, and you never think about it.",
   },
   {
-    k: "full mcp",
-    t: "Four transports, both directions",
-    d: "In-process via create_sdk_mcp_server, plus stdio / sse / http. Elicitation lets servers prompt the user; sampling lets them call back into the model.",
+    k: "mcp",
+    t: "Plug into the MCP ecosystem",
+    d: "Connect the same MCP servers Claude Code uses — filesystems, browsers, databases — or expose your own tools as one. Your open model gets the whole ecosystem.",
   },
   {
     k: "sessions",
-    t: "Survive restarts, fork, resume",
-    d: "JSONL transcript persistence, fork from any checkpoint, resume from an arbitrary one, auto-compaction at a token threshold.",
+    t: "Pick up where you left off",
+    d: "Every conversation is saved as it happens. Close the laptop, come back tomorrow, resume — or fork a session and try a different approach. Long chats compact themselves.",
   },
   {
-    k: "sub-agents + plugins",
-    t: "Compose agents as tools",
-    d: "Plugin(tools=, system_prompt_addition=, hooks=) merges at session start. Rewrite tool args before dispatch with PermissionResultAllow(updated_input=…).",
+    k: "sub-agents",
+    t: "Build teams, not monoliths",
+    d: "Hand an agent smaller agents as tools — a researcher, a reviewer, a fixer — and set rules for what each one may touch. Approve, deny, or rewrite any call before it runs.",
   },
   {
     k: "budget",
-    t: "A ceiling on every run",
-    d: "Per-model pricing table, max_usd and max_turns ceilings, BudgetExceededError, total_cost_usd on every ResultMessage.",
+    t: "Spend with a ceiling",
+    d: "Cap any run in dollars or turns. Every response tells you what it cost, and the run stops cleanly before it overspends — no surprise bills from a runaway loop.",
   },
 ];
 
@@ -91,17 +88,17 @@ const PATHS = [
   {
     n: "A",
     t: "Native",
-    d: "OpenAI-compat tools[]. The fast path for anything that speaks function-calling — Qwen 2.5+, Llama 3.1+, gpt-oss.",
+    d: "Models that speak function calling — Qwen, Llama 3, gpt-oss — get called directly. The fast path.",
   },
   {
     n: "B",
     t: "Prompted",
-    d: "Prompt-engineered <tool_call> XML, parsed back out. Brings tool use to Llama 2, Mistral 7B, and older Qwens that never learned the schema.",
+    d: "Older models never learned the schema, so mantis teaches it in the prompt and parses the reply. Tool use for models that “can't do tools.”",
   },
   {
     n: "C",
     t: "Constrained",
-    d: "Grammar-constrained JSON when the server can enforce it. The model physically cannot emit an invalid call.",
+    d: "Where the server can enforce a grammar, the model physically cannot produce a malformed call. The strict path.",
   },
 ];
 
@@ -140,10 +137,9 @@ export default function Home() {
               className="rise mt-6 text-[17px] sm:text-[18px] text-ink-2 leading-relaxed max-w-[620px]"
               style={{ animationDelay: "0.1s" }}
             >
-              A Claude-Code-style coding agent in your terminal, and Anthropic&apos;s{" "}
-              <span className="mono text-ink">claude-agent-sdk</span> surface as a library — both
-              running on Llama, Qwen, DeepSeek, GLM, or anything behind Ollama, vLLM, Groq, or your
-              own GPU box. The migration is one import.
+              A Claude-Code-style agent in your terminal, and Anthropic&apos;s{" "}
+              <span className="mono text-ink">claude-agent-sdk</span> surface as a library — on any
+              model you can serve, open or closed. The migration is one import.
             </p>
           </div>
 
@@ -169,13 +165,6 @@ export default function Home() {
                 The <span className="mono text-ink-2">mantis</span> terminal ships in the same install
                 — a Claude-Code-style coding agent driving the open model you choose.
               </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {["831 tests", "Python 3.11–3.13", "Apache-2.0", "v1.21.0"].map((t) => (
-                  <span key={t} className="pill">
-                    {t}
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
         </section>
@@ -187,13 +176,7 @@ export default function Home() {
               <p className="mono text-[12px] text-ink-3 shrink-0 md:w-[160px] uppercase tracking-wider">
                 One kwarg between
               </p>
-              <div className="flex flex-wrap gap-2">
-                {BACKENDS.map((b) => (
-                  <span key={b} className="pill">
-                    {b}
-                  </span>
-                ))}
-              </div>
+              <BackendPills />
             </div>
           </div>
         </section>
@@ -201,7 +184,7 @@ export default function Home() {
         {/* ============ TWO WAYS IN ============ */}
         <section className="wrap py-24">
           <SectionLabel>two ways in · one pip install</SectionLabel>
-          <h2 className="font-display text-[clamp(2rem,4.5vw,3.2rem)] max-w-[720px]">
+          <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[720px]">
             A terminal to code in, and a library to build with.
           </h2>
           <div className="mt-14 grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
@@ -242,9 +225,8 @@ export default function Home() {
         <section className="band">
           <div className="wrap py-24">
             <SectionLabel>the whole surface</SectionLabel>
-            <h2 className="font-display text-[clamp(2rem,4.5vw,3.2rem)] max-w-[760px]">
-              Streaming dispatch, hooks, permissions, MCP, sub-agents, sessions. None of the OSS
-              alternatives ship the whole set.
+            <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[760px]">
+              Everything that makes Claude Code feel finished — on models you choose.
             </h2>
             <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-10 gap-y-12">
               {FEATURES.map((f) => (
@@ -261,13 +243,12 @@ export default function Home() {
         {/* ============ TOOL-USE PATHS ============ */}
         <section className="wrap py-24">
           <SectionLabel>universal tool use</SectionLabel>
-          <h2 className="font-display text-[clamp(2rem,4.5vw,3.2rem)] max-w-[680px]">
-            Every model gets tool use — through whichever path it can actually take.
+          <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[680px]">
+            Every model gets tool use.
           </h2>
           <p className="mt-5 text-[15px] text-ink-2 max-w-[560px] leading-relaxed">
-            A capability table (30+ models) picks the path per model, automatically. You write one
-            <span className="prose-inline-code mx-1">@tool</span>; the library figures out how the model
-            in front of it can call it.
+            Not every open model knows how to call functions. mantis meets each one where it is — you
+            write the tool once, and it picks the right way in for whatever model is in front of it.
           </p>
           <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: "var(--color-hair)" }}>
             {PATHS.map((p) => (
@@ -291,7 +272,7 @@ export default function Home() {
         <section className="band">
           <div className="wrap py-24">
             <SectionLabel>ranked · picked by where they run</SectionLabel>
-            <h2 className="font-display text-[clamp(2rem,4.5vw,3.2rem)] max-w-[640px]">
+            <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[640px]">
               Pick the highest-ranked model that fits your hardware.
             </h2>
             <div className="mt-12 overflow-x-auto">
@@ -337,16 +318,15 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
             <div>
               <SectionLabel>observability, shipped</SectionLabel>
-              <h2 className="font-display text-[clamp(1.9rem,4vw,2.9rem)] leading-[1.05]">
-                A full span tree of every run — tokens and cost on the root.
+              <h2 className="font-display text-[clamp(1.45rem,2.6vw,2rem)] leading-[1.05]">
+                See what every run did — and what it cost.
               </h2>
               <p className="mt-5 text-[14.5px] text-ink-2 leading-relaxed max-w-[460px]">
-                <span className="mono text-ink">agent.run → agent.turn → llm.call + tool.call</span>,
-                with per-model usage on the root span. Swap{" "}
-                <span className="mono text-ink">InMemoryTracer</span> for{" "}
-                <span className="mono text-ink">OTelTracer</span> to ship the same spans to your
-                pipeline. Tool spans record input <em>keys</em>, never values — the safe choice is the
-                only choice.
+                Every run produces a full trace: each turn, each model call, each tool call, with
+                tokens and dollars totalled at the top. Keep it in memory while you develop, or ship
+                the same trace to Datadog, Honeycomb, or any OpenTelemetry pipeline with one line.
+                And traces record which fields a tool was given — never their values — so nothing
+                sensitive leaves the house.
               </p>
             </div>
             <Shiki code={TRACING} lang="python" title="tracing.py" />
@@ -357,7 +337,7 @@ export default function Home() {
         <section className="band-3">
           <div className="wrap py-24 text-center">
             <SectionLabel>does it actually work?</SectionLabel>
-            <h2 className="font-display text-[clamp(2.2rem,5vw,3.6rem)] max-w-[720px] mx-auto">
+            <h2 className="font-display text-[clamp(1.6rem,3vw,2.3rem)] max-w-[720px] mx-auto">
               On a fresh machine, no GPU. Works on the first try.
             </h2>
             <div className="mt-10 max-w-[560px] mx-auto text-left">
@@ -389,6 +369,9 @@ python my_agent.py           # two tools, a 5-turn task — first try`}
             </div>
           </div>
         </section>
+
+        {/* ============ THE HUNT ============ */}
+        <HuntScene />
       </main>
       <Footer />
     </>

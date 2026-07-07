@@ -1,29 +1,22 @@
 # Local setup
 
-If you don't have GPU access, `mantis-agent setup-local` is the fastest path to
-a working agent. It runs CPU-friendly models locally so you can develop,
-test, and run examples without an API key.
-
-## `mantis-agent setup-local` (Ollama)
+Run models on your own machine — free, offline, no API key. One command
+sets up everything, and it works on a plain laptop with no GPU.
 
 ```bash
 mantis-agent setup-local
 ```
 
-What this does, in order:
+## What that command does
 
-1. **Detects your OS** — Linux, macOS, or Windows.
-2. **Installs Ollama** if it isn't already on `PATH`:
-   - Linux / macOS: runs the official `curl | sh` installer.
-   - Windows: downloads `OllamaSetup.exe`, runs it with Inno Setup silent
-     flags (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`), then
-     prepends `%LOCALAPPDATA%\Programs\Ollama` to the running process's
-     `PATH` so the rest of the command can find it.
-3. **Starts `ollama serve`** if the daemon isn't already running.
-4. **Pulls a CPU-friendly model** from a curated 12-entry catalog
-   (135M → 8B params). Default is `qwen2.5:0.5b`. Override with
-   `--model llama3.2:3b` or any entry from the catalog.
-5. **Smoke-tests** the model with a one-shot `query()` call.
+1. **Installs Ollama** if you don't have it (official installer; Linux,
+   macOS, and Windows all supported).
+2. **Starts it** if it isn't already running.
+3. **Pulls a model that fits your machine** from a curated catalog of
+   CPU-friendly models (135M–8B parameters). Default is `qwen2.5:0.5b`;
+   pick another with `--model llama3.2:3b`.
+4. **Smoke-tests it** with a real `query()` call, so you know the whole
+   path works before you write any code.
 
 ### Picking a model
 

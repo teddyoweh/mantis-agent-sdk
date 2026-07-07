@@ -1,14 +1,16 @@
 # Configuration
 
-There are three layers of configuration, in priority order from highest to
-lowest:
+mantis reads settings from three places. When they disagree, the more
+specific one wins:
 
-1. **Constructor arguments** — `MantisAgentOptions(...)` or the `options=`
-   dict passed to `query()`. Always wins.
-2. **Setting sources** — JSON files on disk loaded via `setting_sources=`.
-   Multiple sources merge in declaration order; later sources override
-   earlier ones for the same key.
-3. **Environment variables** — read at process start.
+1. **Code** — whatever you pass to `MantisAgentOptions(...)` or
+   `query(options=...)`. Always wins.
+2. **Settings files** — JSON files loaded via `setting_sources=`. Later
+   files override earlier ones, key by key.
+3. **Environment variables** — the defaults for everything else.
+
+Set your model once in `~/.mantis-agent/settings.json` and forget about
+it; override per-agent in code when you need to.
 
 ## Environment variables
 

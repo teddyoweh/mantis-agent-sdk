@@ -42,8 +42,8 @@ const SECTIONS: {
     links: [
       { title: "Installation", href: "/docs/getting-started/installation", desc: "pip install, extras, hosted vs local" },
       { title: "Quickstart", href: "/docs/getting-started/quickstart", desc: "Up and running in five minutes" },
+      { title: "Examples", href: "/docs/examples", desc: "Runnable scripts for every feature" },
       { title: "Local setup", href: "/docs/getting-started/local-setup", desc: "Ollama / llama.cpp, CPU-friendly models" },
-      { title: "Configuration", href: "/docs/getting-started/configuration", desc: "Env vars, backends, precedence" },
     ],
   },
   {

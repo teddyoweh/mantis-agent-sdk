@@ -1,6 +1,8 @@
 # Quickstart
 
-Five minutes from a clean Python env to a streaming agent with tool use.
+Five minutes from an empty folder to an agent that calls your Python
+functions. You need Python 3.11+ and one place to run a model — your own
+laptop counts.
 
 ## 1. Install
 
@@ -8,71 +10,66 @@ Five minutes from a clean Python env to a streaming agent with tool use.
 pip install mantis-agent-sdk
 ```
 
-## 2. Choose a backend
+## 2. Give it a model
 
-Any of these works. Pick whichever you have credentials for.
+Pick **one** of these. If you're not sure, pick the first — it's free and
+runs on any laptop.
 
-=== "Ollama (local)"
+**On your laptop (Ollama)**
 
-    ```bash
-    ollama pull qwen2.5:7b
-    ```
+```bash
+mantis-agent setup-local        # installs Ollama + pulls a small model
+# or, if you already have Ollama:
+ollama pull qwen2.5:7b
+```
 
-    No env vars. `mantis-agent-sdk` will auto-discover Ollama on
-    `http://localhost:11434`.
+No keys, no env vars. mantis finds Ollama on `localhost:11434` by itself.
 
-=== "Together / Fireworks / Groq / vLLM (hosted OpenAI-compat)"
+**On a hosted provider (Together, Fireworks, Groq, …)**
 
-    ```bash
-    export MANTIS_AGENT_BASE_URL=https://api.together.xyz/v1
-    export MANTIS_AGENT_API_KEY=$TOGETHER_API_KEY
-    export MANTIS_AGENT_MODEL=Qwen/Qwen2.5-72B-Instruct
-    ```
+```bash
+export MANTIS_AGENT_BASE_URL=https://api.together.xyz/v1
+export MANTIS_AGENT_API_KEY=$TOGETHER_API_KEY
+```
 
-=== "OpenAI"
+Any provider with an OpenAI-compatible endpoint works the same way — set
+its URL and key. Full recipes per provider are in
+[Models and backends](../guides/models-and-backends.md).
 
-    ```bash
-    export OPENAI_API_KEY=sk-...
-    ```
+**OpenAI**
 
-=== "Anthropic (parity testing)"
+```bash
+export OPENAI_API_KEY=sk-...
+```
 
-    ```bash
-    export ANTHROPIC_API_KEY=sk-ant-...
-    ```
+Use a model name like `gpt-4o-mini` and mantis routes to OpenAI directly.
 
-## 3. Your first agent
+## 3. Write your first agent
 
-`quickstart.py`:
+Save this as `quickstart.py`:
 
 ```python
 import asyncio
-from mantis_agent import query, tool
-
+from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
 
 @tool
 async def get_weather(city: str) -> str:
-    """Get the current weather for a city. Returns a one-line summary."""
-    return f"{city}: 67°F, partly cloudy, wind 8 mph NW"
-
+    """Get the current weather for a city."""
+    return f"{city}: 67°F, partly cloudy"
 
 async def main():
     async for msg in query(
         prompt="What's the weather in Lagos?",
-        options={
-            "model": "qwen2.5:7b",       # or "gpt-4o-mini", or
-                                          # "Qwen/Qwen2.5-72B-Instruct"
-            "tools": [get_weather],
-            "max_turns": 4,
-        },
+        options=MantisAgentOptions(
+            model="qwen2.5:7b",   # swap for "gpt-4o-mini" or any model you set up
+            tools=[get_weather],
+            max_turns=4,
+        ),
     ):
-        if msg.type == "assistant":
-            for block in msg.message["content"]:
-                if block["type"] == "text":
-                    print(block["text"])
-        elif msg.type == "result":
-            print(f"\n[done — cost ${msg.total_cost_usd:.4f}]")
-
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if hasattr(block, "text"):
+                    print(block.text)
 
 asyncio.run(main())
 ```
@@ -81,47 +78,50 @@ asyncio.run(main())
 python quickstart.py
 ```
 
-You should see the assistant pick `get_weather`, run it, then narrate the
-result in plain English.
+The model reads your question, decides to call `get_weather("Lagos")`,
+gets the result back, and answers in plain English. That round-trip —
+model → your function → model — is the agent loop, and it's the whole
+foundation of the SDK.
 
-## What just happened
+## What each piece does
 
-- `query()` is the same function the Claude Agent SDK ships. It returns an
-  async iterator of `SDKMessage` objects (assistant / user / system /
-  result).
-- `@tool` decorates an async Python function. The signature becomes the
-  JSON schema sent to the model.
-- `options={"model": "qwen2.5:7b"}` — `mantis-agent-sdk` auto-routes from
-  the model name. `qwen2.5:7b` → Ollama. No `backend=` argument needed.
-- `max_turns=4` puts a hard ceiling on the agent loop. Pair it with
-  `max_usd=0.10` for cost limits — see [Budget](../guides/budget.md).
+- **`@tool`** turns an async Python function into something the model can
+  call. The function signature and docstring become the schema the model
+  sees — no separate JSON to write.
+- **`query()`** runs the agent loop and streams back messages as they
+  happen: what the assistant said, which tools it called, and a final
+  result with the cost.
+- **`model="qwen2.5:7b"`** is the only routing you do. mantis reads the
+  name and works out where the model lives — this one goes to your local
+  Ollama. `gpt-4o-mini` would go to OpenAI. Nothing else changes.
+- **`max_turns=4`** caps the loop so it can't run away. Add
+  `max_usd=0.10` to cap spend too — see [Budget](../guides/budget.md).
 
-## Streaming with `ClaudeSDKClient`
+## Keep a conversation going
 
-For a session that survives multiple `query()` calls:
+`query()` is one-shot. For a conversation the model remembers, use
+`ClaudeSDKClient`:
 
 ```python
 from mantis_agent import ClaudeSDKClient, MantisAgentOptions
 
 async def main():
-    options = MantisAgentOptions(
-        model="qwen2.5:7b",
-        tools=[get_weather],
-    )
+    options = MantisAgentOptions(model="qwen2.5:7b", tools=[get_weather])
     async with ClaudeSDKClient(options) as client:
         async for msg in client.query("What's the weather in Lagos?"):
             ...
         async for msg in client.query("Now compare it to Lisbon."):
-            ...
+            ...   # the model remembers Lagos from the previous turn
 ```
 
-The transcript is persisted to `~/.mantis-agent/sessions/{session_id}.jsonl`
-between calls and can be [forked or resumed](../guides/sessions.md) later.
+Every conversation is saved to `~/.mantis-agent/sessions/` as it happens,
+so you can [resume or fork it](../guides/sessions.md) later — even after a
+restart.
 
-## Next steps
+## Where to go next
 
-- [Pick the right backend](../guides/models-and-backends.md) for your model
-- [Write more tools](../guides/tools.md), including parallel-safe ones
-- [Plug in MCP servers](../guides/mcp.md)
-- [Stream and dispatch tools mid-response](../guides/streaming.md)
-- [Look up the full API](../api/index.md)
+- [Models and backends](../guides/models-and-backends.md) — every provider, with copy-paste setup
+- [Tools](../guides/tools.md) — more tools, parallel calls, error handling
+- [MCP servers](../guides/mcp.md) — plug in the same servers Claude Code uses
+- [Streaming](../guides/streaming.md) — render tokens as they arrive
+- [API reference](../api/index.md) — every symbol, typed

@@ -8,7 +8,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <nav className="text-[13.5px]">
+    <nav className="text-[12.5px]">
       <Link
         href="/docs"
         onClick={onNavigate}
@@ -30,16 +30,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                   <Link
                     href={href}
                     onClick={onNavigate}
-                    className="block py-1 -ml-3 pl-3 rounded-md transition-colors"
-                    style={
+                    className={`block py-[5px] px-2.5 -mx-2.5 rounded-md transition-colors ${
                       active
-                        ? { background: "var(--color-clay-wash)", color: "var(--color-clay)", fontWeight: 500 }
-                        : undefined
-                    }
+                        ? "bg-paper-2 text-clay font-medium"
+                        : "text-ink-2 hover:text-ink hover:bg-paper-2/60"
+                    }`}
                   >
-                    <span className={active ? "" : "text-ink-2 hover:text-ink transition-colors"}>
-                      {item.title}
-                    </span>
+                    {item.title}
                   </Link>
                 </li>
               );
