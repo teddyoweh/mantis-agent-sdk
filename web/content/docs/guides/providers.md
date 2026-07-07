@@ -22,12 +22,12 @@ export DEEPSEEK_API_KEY=sk-...       # env — survives via your shell profile
 |---|---|---|---|
 | **DeepSeek** | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` | dirt-cheap V3/R1, official host |
 | **Moonshot (Kimi)** | [platform.moonshot.ai](https://platform.moonshot.ai/console/api-keys) | `MOONSHOT_API_KEY` | kimi-k2 — top-tier tool calling |
-| **Z.ai (GLM)** | [z.ai/model-api](https://z.ai/model-api) | `GLM_API_KEY` (or `ZAI_API_KEY`/`ZHIPU_API_KEY`) | glm-4.7 official host |
+| **Z.ai (GLM)** | [z.ai/model-api](https://z.ai/model-api) | `ZHIPUAI_API_KEY` (or `ZAI_API_KEY`/`ZHIPU_API_KEY`) | glm-4.7 official host |
 | **Alibaba (Qwen)** | [Model Studio](https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key) | `DASHSCOPE_API_KEY` (or `QWEN_API_KEY`) | qwen-max / qwen3 international endpoint |
 | **Groq** | [console.groq.com/keys](https://console.groq.com/keys) | `GROQ_API_KEY` | free tier; absurdly fast gpt-oss + kimi |
 | **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/settings/keys) | `OPENROUTER_API_KEY` | one key, ~every model; `:free` variants |
 | **Together** | [api.together.xyz](https://api.together.xyz/settings/api-keys) | `TOGETHER_API_KEY` | broad OSS menu |
-| **Fireworks** | [fireworks.ai](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` | fast OSS serving |
+| **Fireworks** | [fireworks.ai](https://app.fireworks.ai/settings/users/api-keys) | `FIREWORKS_API_KEY` | fast OSS serving |
 | **Cerebras** | [cloud.cerebras.ai](https://cloud.cerebras.ai/platform/) | `CEREBRAS_API_KEY` | free tier; fastest tokens/s anywhere |
 
 ## Closed models
