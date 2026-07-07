@@ -28,6 +28,25 @@ export const DOCS_NAV: NavSection[] = [
     ],
   },
   {
+    title: "Providers",
+    label: "providers",
+    items: [
+      { title: "Overview — getting access", slug: "guides/providers" },
+      { title: "OpenRouter", slug: "providers/openrouter" },
+      { title: "DeepSeek", slug: "providers/deepseek" },
+      { title: "Kimi (Moonshot)", slug: "providers/moonshot" },
+      { title: "GLM (Zhipu)", slug: "providers/glm" },
+      { title: "Qwen (DashScope)", slug: "providers/qwen" },
+      { title: "Groq", slug: "providers/groq" },
+      { title: "Together", slug: "providers/together" },
+      { title: "Fireworks", slug: "providers/fireworks" },
+      { title: "Cerebras", slug: "providers/cerebras" },
+      { title: "OpenAI", slug: "providers/openai" },
+      { title: "Claude (Anthropic)", slug: "providers/anthropic" },
+      { title: "Gemini", slug: "providers/gemini" },
+    ],
+  },
+  {
     title: "Guides",
     label: "guides",
     items: [

@@ -14,15 +14,11 @@ options = MantisAgentOptions(model="<model-id>", backend="<your-url>/v1")   # SD
 
 ## Where you can self-host — the full map
 
-### On your own hardware (free)
+### On your own hardware — automated, no guide needed
 
-| option | what it is | credentials | best for |
-|---|---|---|---|
-| **[Ollama](https://ollama.com)** | one-command local runtime, GGUF quants | none | laptop daily driver; mantis's default backend |
-| **[llama.cpp](https://github.com/ggml-org/llama.cpp)** | the engine under Ollama, raw `llama-server` | none | CPU boxes, edge, maximum control |
-| **[LM Studio](https://lmstudio.ai)** | GUI local runtime with an OpenAI server | none | point-and-click local (`http://localhost:1234/v1`) |
-| **[vLLM](https://docs.vllm.ai)** | the production serving engine | none | any GPU box you own — highest throughput |
-| **[SGLang](https://docs.sglang.ai)** | vLLM alternative, very fast | none | same, different trade-offs |
+Local runtimes (Ollama, llama.cpp, LM Studio) need no manual setup: **`mantis
+setup` does it for you** — detects your machine, picks a fitting model, pulls
+it, and verifies a real completion. This page is about hosting in a *cloud*.
 
 ### Serverless GPU clouds (pay per second, scale to zero)
 
@@ -65,7 +61,7 @@ code* safely, not for serving 100B weights. Pair them with any endpoint above.
 
 ---
 
-## Deep dive 1 — Modal + vLLM (serverless GPU)
+## Deep dive — Modal + vLLM (serverless GPU)
 
 The best "I don't own a GPU" option: per-second billing, scales to zero when
 idle, and mantis has **native Modal auth** (it detects `*.modal.run` URLs and
@@ -136,7 +132,7 @@ retry layer shows a spinner note and rides it out.
 Qwen, `llama3_json` for Llama, `deepseek_v3` for DeepSeek. Wrong/missing
 parser → mantis falls back to text-parsed tool calls automatically.
 
-## Deep dive 2 — vLLM on any GPU box (rentals included)
+## Deep dive — vLLM on any GPU box (rentals included)
 
 Works identically on your basement server, a RunPod pod, Lambda, or Vast:
 
@@ -154,31 +150,6 @@ vllm serve Qwen/Qwen3-32B \
 Off-LAN: `cloudflared tunnel --url http://localhost:8000`, Tailscale, or the
 rental's port proxy (RunPod exposes `https://<pod-id>-8000.proxy.runpod.net`).
 If you gate it (`--api-key sk-mine`), pass the key to mantis.
-
-## Deep dive 3 — llama.cpp (CPU or small GPU, GGUF)
-
-```bash
-brew install llama.cpp
-llama-server -hf unsloth/Qwen3-8B-GGUF:Q4_K_M --port 8080 --jinja
-```
-
-```
-/connect http://localhost:8080/v1 qwen3-8b
-```
-
-`--jinja` enables tool support; mantis knows llama.cpp's grammar-constrained
-tool mode. (`mantis setup llamacpp` is a guided version of this.)
-
-## Deep dive 4 — Ollama, local or remote
-
-Local is zero-config (the default backend). Remote box:
-
-```bash
-# on the GPU box
-OLLAMA_HOST=0.0.0.0 ollama serve && ollama pull qwen3:8b
-# on your laptop
-export OLLAMA_HOST=gpu-box:11434     # mantis honors this
-```
 
 ## Sizing cheat sheet
 
