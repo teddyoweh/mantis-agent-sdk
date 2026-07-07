@@ -49,6 +49,23 @@ export default async function SkillPage() {
           <CopyLine text="curl -o ~/.claude/skills/mantis-agent-sdk/SKILL.md https://mantisagent.cc/skill.md" />
         </div>
 
+        <h2 className="mt-10 text-[15px] font-semibold text-ink">
+          Bonus: the self-hosting skill
+        </h2>
+        <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2 max-w-[620px]">
+          Give your agent{" "}
+          <a className="ul text-clay" href="/selfhost.md">
+            /selfhost.md
+          </a>{" "}
+          and say <span className="mono text-ink">&quot;host GLM-4-9B for me&quot;</span> — it
+          writes the Modal vLLM app, deploys it, waits for the health check, and hands
+          back the URL plus the exact <span className="mono text-ink">/connect</span> line.
+        </p>
+        <div className="mt-4 max-w-[560px] flex flex-col gap-2.5">
+          <CopyLine text="mkdir -p ~/.claude/skills/selfhost-model" />
+          <CopyLine text="curl -o ~/.claude/skills/selfhost-model/SKILL.md https://mantisagent.cc/selfhost.md" />
+        </div>
+
         <hr className="rule my-10" />
 
         <div className="mono text-[12px] text-ink-3 mb-6">

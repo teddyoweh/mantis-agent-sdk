@@ -20,6 +20,8 @@ export const DOCS_NAV: NavSection[] = [
     items: [
       { title: "Overview", slug: "guides" },
       { title: "Models & backends", slug: "guides/models-and-backends" },
+      { title: "Self-hosting models", slug: "guides/self-hosting" },
+      { title: "Provider access", slug: "guides/providers" },
       { title: "The mantis terminal", slug: "guides/terminal" },
       { title: "Headless & CI", slug: "guides/headless" },
       { title: "Tools", slug: "guides/tools" },
