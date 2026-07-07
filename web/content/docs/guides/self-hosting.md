@@ -32,12 +32,31 @@ idle, and mantis has **native Modal auth** (it detects `*.modal.run` URLs and
 sends your `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` as `Modal-Key`/`Modal-Secret`
 headers automatically).
 
-**1. Setup (once):**
+**1. Get your Modal credentials (once):**
 
 ```bash
 pip install modal
-modal setup          # opens browser, writes ~/.modal.toml
+modal setup          # opens the browser, authenticates, writes ~/.modal.toml
 ```
+
+That's usually all you need. What it actually does — and the manual routes:
+
+- Sign up at [modal.com](https://modal.com) (free tier includes **$30/month
+  of compute** — enough for a lot of L4 hours).
+- Tokens live at **modal.com → Settings → API Tokens** (or mint one from the
+  CLI: `modal token new`). A token is an ID + secret pair.
+- For CI / servers / a box without a browser, set them as env vars instead of
+  the toml file:
+
+```bash
+export MODAL_TOKEN_ID=ak-...
+export MODAL_TOKEN_SECRET=as-...
+```
+
+mantis reads the same two vars to authenticate requests to your
+`*.modal.run` endpoint (sent as `Modal-Key` / `Modal-Secret` headers) — so
+once `modal setup` has run, **the endpoint is private to you with zero extra
+key management**.
 
 **2. Deploy — save as `serve_glm.py`:**
 
@@ -160,6 +179,23 @@ or explicitly: `/connect http://gpu-box:11434/v1 qwen3:8b`.
 
 Rule of thumb: **params × 2 GB (bf16)** or **params × 0.6 GB (4-bit)**, plus
 ~20% for KV cache.
+
+## Other compute platforms
+
+Any box that can run vLLM works — the pattern is always *get credentials →
+get a machine → `vllm serve` → `/connect`*:
+
+| platform | credentials | what it's good for |
+|---|---|---|
+| **RunPod** | [runpod.io → Settings → API Keys](https://www.runpod.io/console/user/settings) (`RUNPOD_API_KEY`) | cheap spot GPUs; use their vLLM template, expose port 8000, connect to the pod's proxy URL |
+| **Daytona** | [app.daytona.io → Keys](https://app.daytona.io/dashboard/keys) (`DAYTONA_API_KEY`) | agent **sandboxes** — great for running agent workloads/code-exec next to your model, not for serving 100B weights |
+| **Lambda / Vast.ai** | dashboard API keys | raw GPU rentals — SSH in, `pip install vllm`, serve, tunnel |
+| **Hugging Face endpoints** | [hf.co → Access Tokens](https://huggingface.co/settings/tokens) (`HF_TOKEN`) | one-click dedicated endpoints, OpenAI-compat URL out of the box |
+
+Wherever it runs, the finish line is identical:
+`/connect https://<endpoint>/v1 <model-id>` — and if the platform gates the
+endpoint with a bearer key, pass it (`mantis --api-key ...` or the setup
+wizard's self-host flow).
 
 ## Troubleshooting
 

@@ -17,7 +17,14 @@ write the file, deploy it, verify it answers — don't describe steps.
 
 ## 0. Choose the path (ask only if genuinely unclear)
 
-- User has Modal (check: `modal --version` and `~/.modal.toml`) → **Modal + vLLM** (default).
+- User has Modal (check: `modal --version` and `~/.modal.toml`, or
+  `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` in env) → **Modal + vLLM** (default).
+- Modal installed but no credentials → run `modal setup` for them (opens a
+  browser). Headless box: have them mint a token at modal.com → Settings →
+  API Tokens (or `modal token new` elsewhere) and export
+  `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`. No Modal account at all → tell them
+  signup at modal.com includes $30/mo free compute, or fall back to a box
+  they own.
 - User names a GPU box/server → **vLLM on that box**.
 - CPU-only / tiny model → **llama.cpp** or **Ollama**.
 
@@ -119,6 +126,10 @@ or Tailscale if they need it off-LAN. CPU-only → `llama-server -hf <gguf-repo>
 
 ## Failure modes you must handle
 
+- **No/expired Modal credentials** (`modal deploy` → auth error) → `modal
+  setup`, or token from modal.com → Settings → API Tokens exported as
+  `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`. Never paste tokens into files —
+  env or `modal setup` only.
 - **OOM on start** → smaller GPU picked: bump GPU (`L4`→`A100-80GB`→`H100`) or
   add `--max-model-len 16384`; MoE 100B+ on one GPU never fits — say so.
 - **401 from HF** → gated model, get token + secret (step 2 note).
