@@ -29,7 +29,7 @@ Starter menu (once enabled, `/models` fetches the provider's full live list):
 - `deepseek-chat`
 - `deepseek-reasoner`
 
-Switch anytime — `/model deepseek-cha` fuzzy-matches; context carries over.
+Switch anytime — `/model deepseek-chat` fuzzy-matches; context carries over.
 
 ## SDK
 

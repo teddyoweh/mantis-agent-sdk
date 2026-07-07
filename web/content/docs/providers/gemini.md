@@ -30,7 +30,7 @@ Starter menu (once enabled, `/models` fetches the provider's full live list):
 - `gemini-2.5-flash`
 - `gemini-2.0-flash`
 
-Switch anytime — `/model gemini-2.5-p` fuzzy-matches; context carries over.
+Switch anytime — `/model gemini-2.5` fuzzy-matches; context carries over.
 
 ## SDK
 

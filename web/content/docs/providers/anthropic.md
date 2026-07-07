@@ -31,7 +31,7 @@ Starter menu (once enabled, `/models` fetches the provider's full live list):
 - `claude-haiku-4-5-20251001`
 - `claude-fable-5`
 
-Switch anytime — `/model claude-opus-` fuzzy-matches; context carries over.
+Switch anytime — `/model claude-opus-4` fuzzy-matches; context carries over.
 
 ## SDK
 
