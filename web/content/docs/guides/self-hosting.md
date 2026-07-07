@@ -28,8 +28,8 @@ options = MantisAgentOptions(model="<model-id>", backend="<your-url>/v1")   # SD
 
 | option | credentials | feel |
 |---|---|---|
-| **[Modal](https://modal.com)** | `modal setup` → tokens at Settings → API Tokens (`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`) | deploy a Python file; **$30/mo free**; mantis auths `*.modal.run` natively — the deep-dive below |
-| **[RunPod Serverless](https://www.runpod.io/serverless-gpu)** | [Settings → API Keys](https://www.runpod.io/console/user/settings) (`RUNPOD_API_KEY`) | vLLM worker template; cheap spot pricing |
+| **[Modal](https://modal.com)** ([guide](/docs/selfhost/modal)) | `modal setup` → tokens at Settings → API Tokens (`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`) | deploy a Python file; **$30/mo free**; mantis auths `*.modal.run` natively — the deep-dive below |
+| **[RunPod Serverless](https://www.runpod.io/serverless-gpu)** ([guide](/docs/selfhost/runpod)) | [Settings → API Keys](https://www.runpod.io/console/user/settings) (`RUNPOD_API_KEY`) | vLLM worker template; cheap spot pricing |
 | **[Replicate](https://replicate.com)** | [account → API tokens](https://replicate.com/account/api-tokens) (`REPLICATE_API_TOKEN`) | push a model, get an endpoint; pay per second |
 | **[Baseten](https://www.baseten.co)** | [API keys](https://app.baseten.co/settings/api_keys) (`BASETEN_API_KEY`) | Truss deploys, OpenAI-compat endpoints |
 | **[Beam](https://www.beam.cloud)** | dashboard token (`BEAM_TOKEN`) | Modal-style Python deploys |
@@ -38,9 +38,9 @@ options = MantisAgentOptions(model="<model-id>", backend="<your-url>/v1")   # SD
 
 | option | credentials | feel |
 |---|---|---|
-| **[RunPod Pods](https://www.runpod.io)** | same key as above | on-demand or spot; web terminal; expose port 8000 via their proxy |
-| **[Lambda](https://cloud.lambda.ai)** | [API keys](https://cloud.lambda.ai/api-keys) (`LAMBDA_API_KEY`) | clean per-hour H100s/B200s |
-| **[Vast.ai](https://vast.ai)** | [account keys](https://cloud.vast.ai/manage-keys/) (`VAST_API_KEY`) | marketplace — cheapest GPUs anywhere, variable reliability |
+| **[RunPod Pods](https://www.runpod.io)** ([guide](/docs/selfhost/runpod)) | same key as above | on-demand or spot; web terminal; expose port 8000 via their proxy |
+| **[Lambda](https://cloud.lambda.ai)** ([guide](/docs/selfhost/lambda)) | [API keys](https://cloud.lambda.ai/api-keys) (`LAMBDA_API_KEY`) | clean per-hour H100s/B200s |
+| **[Vast.ai](https://vast.ai)** ([guide](/docs/selfhost/vastai)) | [account keys](https://cloud.vast.ai/manage-keys/) (`VAST_API_KEY`) | marketplace — cheapest GPUs anywhere, variable reliability |
 | **[Paperspace](https://www.paperspace.com)** | console API keys | DigitalOcean-owned, simple |
 | **[CoreWeave](https://coreweave.com)** | enterprise onboarding | serious scale, k8s-native |
 
@@ -48,7 +48,7 @@ options = MantisAgentOptions(model="<model-id>", backend="<your-url>/v1")   # SD
 
 | option | credentials | feel |
 |---|---|---|
-| **[HF Inference Endpoints](https://huggingface.co/inference-endpoints)** | [hf.co → Access Tokens](https://huggingface.co/settings/tokens) (`HF_TOKEN`) | one click on any HF model → OpenAI-compat URL |
+| **[HF Inference Endpoints](https://huggingface.co/inference-endpoints)** ([guide](/docs/selfhost/hf-endpoints)) | [hf.co → Access Tokens](https://huggingface.co/settings/tokens) (`HF_TOKEN`) | one click on any HF model → OpenAI-compat URL |
 | **[Together Dedicated](https://www.together.ai/products#dedicated)** / **[Fireworks On-Demand](https://fireworks.ai)** | their normal API keys | your own capacity behind their API shape |
 
 ### Hyperscalers (when compliance says so)

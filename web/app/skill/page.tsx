@@ -66,6 +66,21 @@ export default async function SkillPage() {
           <CopyLine text="curl -o ~/.claude/skills/selfhost-model/SKILL.md https://mantisagent.cc/selfhost.md" />
         </div>
 
+        <h2 className="mt-10 text-[15px] font-semibold text-ink">
+          Per-platform hosting skills
+        </h2>
+        <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2 max-w-[620px]">
+          One skill per compute platform — each knows that platform&apos;s credentials,
+          deploy flow, verification, and teardown:
+        </p>
+        <div className="mt-3 mono text-[12.5px] text-ink-2 flex flex-col gap-1">
+          {["modal", "runpod", "lambda", "vastai", "hf-endpoints"].map((s) => (
+            <a key={s} className="ul text-clay" href={`/skills/${s}.md`}>
+              /skills/{s}.md
+            </a>
+          ))}
+        </div>
+
         <hr className="rule my-10" />
 
         <div className="mono text-[12px] text-ink-3 mb-6">

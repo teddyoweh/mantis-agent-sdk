@@ -15,12 +15,24 @@ export const DOCS_NAV: NavSection[] = [
     ],
   },
   {
+    title: "Self-host",
+    label: "selfhost",
+    items: [
+      { title: "Overview — the full map", slug: "guides/self-hosting" },
+      { title: "Modal", slug: "selfhost/modal" },
+      { title: "RunPod", slug: "selfhost/runpod" },
+      { title: "Lambda", slug: "selfhost/lambda" },
+      { title: "Vast.ai", slug: "selfhost/vastai" },
+      { title: "HF Endpoints", slug: "selfhost/hf-endpoints" },
+      { title: "Other platforms", slug: "selfhost/others" },
+    ],
+  },
+  {
     title: "Guides",
     label: "guides",
     items: [
       { title: "Overview", slug: "guides" },
       { title: "Models & backends", slug: "guides/models-and-backends" },
-      { title: "Self-hosting models", slug: "guides/self-hosting" },
       { title: "Provider access", slug: "guides/providers" },
       { title: "The mantis terminal", slug: "guides/terminal" },
       { title: "Headless & CI", slug: "guides/headless" },
