@@ -146,7 +146,7 @@ def test_env_context_injected_exactly_once(monkeypatch) -> None:
     monkeypatch.delenv("MANTIS_AGENT_NO_CONTEXT", raising=False)  # enable injection
     monkeypatch.setattr(
         sr, "render_environment_context",
-        lambda cwd=None, now=None: "<env>\nWorking directory: /x\n</env>",
+        lambda cwd=None, now=None, **kw: "<env>\nWorking directory: /x\n</env>",
     )
 
     async def main():
@@ -178,7 +178,7 @@ def test_env_context_injected_exactly_once(monkeypatch) -> None:
 def test_env_context_memoized_on_agent(monkeypatch) -> None:
     calls = {"n": 0}
 
-    def counting(cwd=None, now=None):
+    def counting(cwd=None, now=None, **kw):
         calls["n"] += 1
         return "<env>\nWorking directory: /x\n</env>"
 

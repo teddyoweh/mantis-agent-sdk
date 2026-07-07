@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [2.56.0] - 2026-07-07
+
+### Added
+
+- **Subagent types** for the `task` tool — `explore`, `plan`, `general-purpose`,
+  plus user-defined agents from `~/.mantis-agent/agents/*.md` / `.mantis/agents/*.md`
+  (frontmatter: name/description/tools/model/max_steps). Parent permissions are
+  inherited; parallel fan-out is preserved. `/agents` lists them.
+- **`pair` — twins.** Persistent same-model peers the agent converses with across
+  turns (`peer=`, `persona=`, `reset`). Grounded in read tools. `/twin` lets the
+  USER join the same conversations.
+- **Full MCP integration.** `.mcp.json` / `~/.mantis-agent/mcp.json` /
+  `settings.mcpServers` discovery, `MCPManager` lifecycle with per-request
+  timeouts, `mcp__server__tool` namespacing, `/mcp` status. External stdio/sse/http
+  servers now also work through the SDK's `options.mcp_servers` (previously
+  dropped), and `options.agents` AgentDefinitions register as delegatable tools.
+- **`monitor` tool** — wait for a background shell pattern/exit, a file, or a port
+  in one call.
+- **Autonomy:** `/goal` autopilot (plan → execute → adversarial verify → reflect,
+  cycle-capped, esc stops), `/watch` sentinel (agent wakes when a command starts
+  failing), `/loop` intervals.
+- **Terminal parity wave:** `!` bash prefix, `#` memory notes, custom slash
+  commands with `$ARGUMENTS`, skills as slash commands, persistent input history,
+  message queueing while a turn runs, esc-esc rewind picker, file-state rewind
+  (write tools checkpoint; `/rewind` restores code), session auto-titles + terminal
+  tab titles, next-prompt ghost suggestions, resume picker with replay + time-ago,
+  Ctrl+V image paste in the fullscreen UI, `/status` `/cost` `/doctor`
+  `/permissions` `/mcp` `/skills` `/update` `/release-notes`, `--resume` CLI.
+- **Small-model mode:** 7B-class local models get a slim 10-tool belt, compact
+  system prompt, and stable prompt prefix (Ollama KV-cache reuse — follow-up
+  turns drop from ~19s to ~1s).
+
+### Fixed
+
+- MCP stdio transport crashed on spawn (`anyio.subprocess` does not exist);
+  `MCPTool.to_mantis_agent_tool` passed an invalid kwarg — the stdio path had
+  never been exercised.
+- Streaming executor parameter cache was keyed by `id(fn)` — a GC'd tool
+  closure's recycled address could silently DROP a new tool's arguments.
+- Retry noise: transport + model-level retries now surface as one in-place
+  spinner note in the TUI (headless keeps WARNING logs); slash-command errors
+  can no longer escape as raw tracebacks; offline DNS errors get a clear hint.
+- Unknown-tool errors now name the closest real tool and tell the model it may
+  answer in text (small models invent tool names).
+- `/model` resolves numbers / ids / provider names / tier words / fuzzy
+  fragments and never persists an unresolvable string; live-model caches and
+  the saved model store reject implausible ids and self-heal.
+- MCP client task-group lifetimes confined to one task (`MCPManager.start/stop`)
+  — teardown from async generators / other tasks no longer misnests cancel scopes.
+
 ## [1.8.1] - 2026-06-30
 
 ### Added

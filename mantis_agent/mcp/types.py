@@ -166,7 +166,9 @@ class MCPTool(msgspec.Struct, frozen=True, omit_defaults=True):
             description=self.description,
             input_schema=self.input_schema,
             fn=_invoke,
-            parallel_safe=True,
+            # ``parallel_safe`` is the deprecated alias — a property, not an
+            # init field, so it must be spelled the real way here.
+            is_concurrency_safe=True,
         )
 
 

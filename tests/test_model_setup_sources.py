@@ -5,6 +5,8 @@ in the wiring the /loop built so a regression can't silently drop a source.
 
 from __future__ import annotations
 
+import pytest
+
 import mantis_agent.catalog as catalog
 from mantis_agent.setup_wizard import (
     FREE_PROVIDER_IDS,
@@ -12,6 +14,19 @@ from mantis_agent.setup_wizard import (
     _ping_chat_model,
     _probe_openai_models,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_mantis_home(tmp_path, monkeypatch):
+    """Redirect ~/.mantis-agent to a throwaway dir for EVERY test here.
+
+    Several tests exercise state writers (``set_key``, ``set_last_model``,
+    ``refresh_live_models`` → ``store_live_models``). Without this, they wrote to
+    the user's *real* config — which is exactly how a bogus 'newest' id leaked
+    into the live-model cache and later got restored as the active model. Home is
+    resolved from ``$MANTIS_AGENT_HOME`` on every call, so this fully isolates."""
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    yield
 
 
 # -- Anthropic / Claude ------------------------------------------------------
@@ -243,6 +258,61 @@ def test_pro_filter_excludes_only_openai_responses_models() -> None:
         assert _is_chat_model(m) is True, m
     for m in ("gpt-5.4-pro", "gpt-5-pro", "o1-pro", "o3-pro", "o4-pro"):
         assert _is_chat_model(m) is False, m
+
+
+def test_normalize_base_url_recovers_base_from_pasted_endpoint() -> None:
+    # Users often paste a full endpoint URL (from a curl example) as the base;
+    # strip the trailing endpoint path so {base}/chat/completions doesn't double up.
+    from mantis_agent.paths import normalize_base_url
+    assert normalize_base_url("http://localhost:8000/v1/chat/completions") == "http://localhost:8000/v1"
+    assert normalize_base_url("https://api.anthropic.com/v1/messages") == "https://api.anthropic.com/v1"
+    assert normalize_base_url("https://x/v1/embeddings") == "https://x/v1"
+    # A proper base is untouched; trailing slash + whitespace are cleaned.
+    assert normalize_base_url("https://api.openai.com/v1") == "https://api.openai.com/v1"
+    assert normalize_base_url("  https://x/v1/chat/completions\n") == "https://x/v1"
+    assert normalize_base_url("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+
+
+def test_restore_normalizes_stale_selfhost_backend(monkeypatch, tmp_path) -> None:
+    # A self-host backend saved before URL-normalization (or hand-edited) must be
+    # normalized on restore, not restored broken.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    from mantis_agent.tui import MantisTUI
+    catalog.set_last_model("my-model", "http://localhost:8000/v1/chat/completions")
+    t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434", api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._restore_last_model()
+    assert t.model == "my-model"
+    assert t.backend == "http://localhost:8000/v1"
+
+
+def test_apply_normalizes_runtime_backend_model_key() -> None:
+    # The classic UI's runtime setter (_apply, used by the self-host prompt) must
+    # sanitize just like the constructor — not only startup values.
+    import anyio
+
+    from mantis_agent.tui import MantisTUI
+    t = MantisTUI(model="gpt-4o", backend="http://localhost:11434", api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+
+    async def go() -> None:
+        try:
+            await t._apply("  m\n", "http://localhost:8000/v1/chat/completions ", "  sk\n", "")
+        except Exception:  # noqa: BLE001 — agent rebuild may fail w/o a server; assert sanitation
+            pass
+
+    anyio.run(go)
+    assert t.model == "m"
+    assert t.backend == "http://localhost:8000/v1"
+    assert t.api_key == "sk"
+
+
+def test_tui_constructor_normalizes_pasted_endpoint_backend() -> None:
+    from mantis_agent.tui import MantisTUI
+    t = MantisTUI(model="gpt-4o", backend="https://api.openai.com/v1/chat/completions ", api_key="k",
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    assert t.backend == "https://api.openai.com/v1"
 
 
 def test_tui_constructor_strips_model_backend_key() -> None:
@@ -1084,3 +1154,150 @@ def test_pick_model_id_accepts_typed_exact_id(monkeypatch) -> None:
     from mantis_agent import setup_wizard as sw
     monkeypatch.setattr("builtins.input", lambda *a: "org/my-custom-model")
     assert sw._pick_model_id(_NullConsole(), ["m-a"]) == "org/my-custom-model"
+
+
+# -- /model query resolution (the "/model <x>" brain) ------------------------
+#
+# `/model <query>` must turn a number / id / provider / alias / fuzzy fragment
+# into a REAL model — and never send a raw unmatched string to a backend (the
+# "newest" → 404 bug). These lock that resolver + its sanitation in place.
+
+_ACTIVE = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"]
+
+
+def test_resolve_numeric_index_into_active_list() -> None:
+    r = catalog.resolve_model_query("2", _ACTIVE)
+    assert r.model == "gpt-5.4-mini" and r.reason == "index"
+
+
+def test_resolve_exact_id_case_insensitive() -> None:
+    assert catalog.resolve_model_query("gpt-5.4", _ACTIVE).model == "gpt-5.4"
+    r = catalog.resolve_model_query("GPT-5.4", _ACTIVE)
+    assert r.model == "gpt-5.4" and r.reason == "exact"
+
+
+def test_resolve_newest_alias_picks_first_active() -> None:
+    # active list is passed newest-first, so "newest"/"latest" == active[0].
+    for q in ("newest", "latest"):
+        r = catalog.resolve_model_query(q, _ACTIVE)
+        assert r.model == "gpt-5.4" and r.reason == "newest", q
+
+
+def test_resolve_provider_name_jumps_to_flagship() -> None:
+    r = catalog.resolve_model_query("claude", _ACTIVE)
+    assert r.provider_id == "anthropic" and r.reason == "provider"
+    assert r.model.startswith("claude-")
+    assert catalog.resolve_model_query("gpt", _ACTIVE).provider_id == "openai"
+    assert catalog.resolve_model_query("gemini", _ACTIVE).provider_id == "gemini"
+
+
+def test_resolve_tier_word_via_fuzzy_targets_specific_model() -> None:
+    # "opus"/"sonnet"/"haiku" aren't provider names but uniquely match one id.
+    assert catalog.resolve_model_query("opus", _ACTIVE).model == "claude-opus-4-8"
+    assert catalog.resolve_model_query("sonnet", _ACTIVE).model == "claude-sonnet-5"
+
+
+def test_resolve_fuzzy_unique_fragment() -> None:
+    r = catalog.resolve_model_query("5.4-mini", _ACTIVE)
+    assert r.model == "gpt-5.4-mini" and r.reason == "fuzzy"
+
+
+def test_resolve_prefers_active_backend_on_fuzzy_collision(monkeypatch) -> None:
+    # A fragment that hits both an active id and a provider-group id resolves to
+    # the active one (you're already on that backend) rather than nagging.
+    r = catalog.resolve_model_query("nano", _ACTIVE)
+    assert r.model == "gpt-5.4-nano" and r.provider_id is None
+
+
+def test_resolve_unknown_query_returns_none_not_literal() -> None:
+    # The core of the bug: an unmatched query must NOT become the model.
+    r = catalog.resolve_model_query("totally-not-a-model-xyz", _ACTIVE)
+    assert r.model is None and r.reason == "none"
+
+
+def test_resolve_blank_query_is_none() -> None:
+    assert catalog.resolve_model_query("   ", _ACTIVE).model is None
+    assert catalog.resolve_model_query("", None).model is None
+
+
+def test_looks_like_model_id_rejects_whitespace_and_empties() -> None:
+    assert catalog.looks_like_model_id("gpt-5.4")
+    assert catalog.looks_like_model_id("org/model:free")
+    assert catalog.looks_like_model_id("  gpt-5.4  ")  # strips
+    assert not catalog.looks_like_model_id("")
+    assert not catalog.looks_like_model_id("   ")
+    assert not catalog.looks_like_model_id("a b")   # internal space
+    assert not catalog.looks_like_model_id(None)
+    assert not catalog.looks_like_model_id("x" * 201)
+
+
+def test_set_last_model_ignores_garbage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    catalog.set_last_model("gpt-5.4", "https://api.openai.com/v1")
+    catalog.set_last_model("bad id with spaces", "https://x")  # ignored
+    assert catalog.get_last_model()["model"] == "gpt-5.4"
+
+
+def test_set_last_model_strips_before_persisting(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    catalog.set_last_model("  gpt-5.4\n", "  https://api.openai.com/v1 \n")
+    last = catalog.get_last_model()
+    assert last["model"] == "gpt-5.4" and last["backend"] == "https://api.openai.com/v1"
+
+
+def test_recent_models_self_heal_drops_junk(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    catalog._save_store({"recent": ["  m\n", "gpt-5.4", "a b", "", "gpt-5.4"]})
+    # whitespace stripped, internal-space + empties dropped, deduped.
+    assert catalog.get_recent_models() == ["m", "gpt-5.4"]
+
+
+def test_push_recent_ignores_garbage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    catalog.push_recent_model("gpt-5.4")
+    catalog.push_recent_model("bad id\nwith space")  # ignored
+    catalog.push_recent_model("  claude-opus-4-8\n")  # stripped + kept
+    assert catalog.get_recent_models() == ["claude-opus-4-8", "gpt-5.4"]
+
+
+def test_restore_reresolves_persisted_alias_word(monkeypatch, tmp_path) -> None:
+    # THE bug: an older build persisted the literal `/model newest` arg as the
+    # model. On restore that must NOT be wired to OpenAI (every request 404s) —
+    # it re-resolves to a real model for the matched provider.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    from mantis_agent.tui import MantisTUI
+    catalog._save_store({"keys": {}, "last": {"model": "newest",
+                         "backend": "https://api.openai.com/v1"}})
+    t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434", api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._restore_last_model()
+    assert t.model != "newest"
+    assert t.model in catalog.BY_ID["openai"].models or t.model.startswith("gpt-")
+    assert t.backend == "https://api.openai.com/v1"
+
+
+def test_restore_keeps_exotic_but_real_model_id(monkeypatch, tmp_path) -> None:
+    # The alias guard must not touch a genuine (non-flagship) id like an
+    # OpenRouter ":free" variant — only bare alias words get re-resolved.
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.delenv("MANTIS_AGENT_MODEL", raising=False)
+    from mantis_agent.tui import MantisTUI
+    exotic = "meta-llama/llama-3.3-70b:free"
+    catalog._save_store({"keys": {}, "last": {"model": exotic,
+                         "backend": catalog.BY_ID["openrouter"].base_url}})
+    t = MantisTUI(model="qwen2.5-7b-instruct", backend="http://localhost:11434", api_key=None,
+                  system=None, max_tokens=1, temperature=None, max_turns=1)
+    t._restore_last_model()
+    assert t.model == exotic
+
+
+def test_resolver_alias_words_cover_providers_and_newest() -> None:
+    # The restore guard keys off this set — it must include every provider alias
+    # plus the newest-aliases, or a persisted alias could slip through.
+    assert "newest" in catalog.RESOLVER_ALIAS_WORDS
+    assert "claude" in catalog.RESOLVER_ALIAS_WORDS
+    assert "gpt" in catalog.RESOLVER_ALIAS_WORDS
+    assert "gpt-5.4" not in catalog.RESOLVER_ALIAS_WORDS  # a real id, never an alias

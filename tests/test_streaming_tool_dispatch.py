@@ -386,11 +386,13 @@ def test_pretooluse_hook_mutates_input_mid_stream():
     input must be the one the tool body sees."""
 
     seen_inputs: list = []
+    fired = anyio.Event()
 
     @tool
     async def record(a: int, b: int) -> str:
         """Record the input the tool body actually saw."""
         seen_inputs.append({"a": a, "b": b})
+        fired.set()  # signal the body ran (so the test needn't race a sleep)
         return str(a + b)
 
     async def pre(ctx: HookContext) -> HookResult:
@@ -432,9 +434,12 @@ def test_pretooluse_hook_mutates_input_mid_stream():
 
             async with anyio.create_task_group() as tg:
                 tg.start_soon(consumer)
-                # Wait briefly to make sure the dispatch loop has had time
-                # to fire the tool. Then release the rest of the stream.
-                await anyio.sleep(0.05)
+                # Deterministic sync: wait until the tool body has ACTUALLY
+                # fired mid-stream (proving dispatch happened before the stream
+                # completed), then release the rest. Replaces a flaky fixed
+                # sleep that raced the dispatch loop under CPU load.
+                with anyio.fail_after(2.0):
+                    await fired.wait()
                 provider.gate("after_stop").set()
         finally:
             await agent.aclose()
@@ -686,7 +691,7 @@ def test_unknown_tool_dispatches_to_not_found_result():
         assert isinstance(result_msg, InternalUserMessage)
         result = result_msg.content[0]
         assert result.is_error is True
-        assert "not found" in result.content
+        assert "does not exist" in result.content
 
     anyio.run(main)
 

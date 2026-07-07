@@ -27,6 +27,10 @@ from .client import (
     MCPError,
     MCPProtocolError,
 )
+from .manager import (
+    MCPManager,
+    load_mcp_server_configs,
+)
 from .server import (
     ElicitationNotSupportedError,
     SamplingNotSupportedError,
@@ -63,6 +67,7 @@ __all__ = [
     "MCPClient",
     "MCPElicitationRequest",
     "MCPError",
+    "MCPManager",
     "MCPProtocolError",
     "MCPPrompt",
     "MCPResource",
@@ -72,6 +77,7 @@ __all__ = [
     "SamplingNotSupportedError",
     "SamplingRequest",
     "SamplingResult",
+    "load_mcp_server_configs",
     "SdkServer",
     "SdkServerConfig",
     "ServerConfig",

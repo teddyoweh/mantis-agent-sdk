@@ -60,6 +60,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Optional
 
@@ -69,6 +70,7 @@ import msgspec
 
 from ..errors import ToolExecutionError
 from ..tools import Tool, ToolRegistry
+from ..tools import unknown_tool_message as _unknown_tool_message
 from ..types import ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
 __all__ = ["CanUseToolFn", "StreamingToolExecutor"]
@@ -151,26 +153,39 @@ _TOOL_RESULT_CAPS = {
 }
 
 
-_ACCEPTED_PARAMS_CACHE: dict[int, frozenset[str] | None] = {}
+# WEAK-keyed: an ``id(fn)``-keyed dict poisoned this cache — when a tool
+# closure was GC'd (mantis rebuilds tool closures on every model switch), a
+# NEW function allocated at the recycled address inherited the OLD signature,
+# and the executor then silently dropped the new tool's real arguments. A weak
+# key dies with its function, so a recycled address can never alias.
+_ACCEPTED_PARAMS_CACHE: "weakref.WeakKeyDictionary[Any, frozenset[str] | None]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _accepted_params(fn: Any) -> frozenset[str] | None:
     """Parameter names ``fn`` accepts, or ``None`` if it takes ``**kwargs`` (=
-    accept anything). Cached by function id."""
+    accept anything). Weakly cached on the function object itself."""
     import inspect  # noqa: PLC0415
 
-    key = id(fn)
-    if key not in _ACCEPTED_PARAMS_CACHE:
-        try:
-            params = inspect.signature(fn).parameters
-        except (ValueError, TypeError):
-            _ACCEPTED_PARAMS_CACHE[key] = None
+    try:
+        return _ACCEPTED_PARAMS_CACHE[fn]
+    except (KeyError, TypeError):  # TypeError: unhashable/unweakrefable fn
+        pass
+    try:
+        params = inspect.signature(fn).parameters
+    except (ValueError, TypeError):
+        result: frozenset[str] | None = None
+    else:
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            result = None
         else:
-            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-                _ACCEPTED_PARAMS_CACHE[key] = None
-            else:
-                _ACCEPTED_PARAMS_CACHE[key] = frozenset(params)
-    return _ACCEPTED_PARAMS_CACHE[key]
+            result = frozenset(params)
+    try:
+        _ACCEPTED_PARAMS_CACHE[fn] = result
+    except TypeError:
+        pass  # can't weakref this callable — just recompute next time
+    return result
 
 
 _TRUE_STRS = frozenset({"true", "yes", "1", "on", "y", "t"})
@@ -779,7 +794,7 @@ class StreamingToolExecutor:
                 idx,
                 ToolResultBlock(
                     tool_use_id=block.id,
-                    content=f"tool {block.name!r} not found",
+                    content=_unknown_tool_message(block.name, self._registry),
                     is_error=True,
                 ),
             )

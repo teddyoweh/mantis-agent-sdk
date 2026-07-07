@@ -81,8 +81,14 @@ def test_build_agent_registers_web_tools() -> None:
 
 
 def test_remember_tool_registered() -> None:
-    names = {t.name for t in _tui()._build_agent().tools}
+    # remember is a big-model tool — small local models get the slim belt
+    # (7B-class models were saving junk memories), so build with a big model.
+    big = MantisTUI(model="gpt-5.4", backend="https://api.openai.com/v1", api_key="k",
+                    system=None, max_tokens=64, temperature=0.2, max_turns=4)
+    names = {t.name for t in big._build_agent().tools}
     assert "remember" in names
+    slim_names = {t.name for t in _tui()._build_agent().tools}
+    assert "remember" not in slim_names
 
 
 def test_godmode_allows_dangerous_without_prompt() -> None:

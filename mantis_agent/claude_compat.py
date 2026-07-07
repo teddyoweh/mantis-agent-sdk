@@ -260,6 +260,10 @@ class MantisAgentOptions:
             opts.setdefault("extra", {})["disallowed_tools"] = self.disallowed_tools
         if self.mcp_servers:
             opts["mcp_servers"] = list(_normalize_mcp_servers(self.mcp_servers))
+        if self.agents:
+            # subagent definitions — consumed by compat_query, which registers
+            # each as a delegatable tool (previously accepted but dropped here)
+            opts["agents"] = dict(self.agents)
 
         if self.permission_mode is not None:
             opts["permission_mode"] = self.permission_mode

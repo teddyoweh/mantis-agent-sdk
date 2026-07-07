@@ -126,11 +126,15 @@ from .transcripts import (
     read_transcript,
 )
 from .subagent import (
+    BUILTIN_AGENT_TYPES,
+    AgentType,
     IsolationMode,
     SubAgentSpec,
     SubAgentTool,
     WrappedAgentTool,
     as_subagent_tool,
+    discover_agent_types,
+    make_pair_tool,
     make_task_tool,
 )
 from .response_format import (
@@ -176,11 +180,15 @@ __all__ = [
     "web_search",
     # Sub-agents
     "AgentDefinition",
+    "AgentType",
+    "BUILTIN_AGENT_TYPES",
     "IsolationMode",
     "SubAgentSpec",
     "SubAgentTool",
     "WrappedAgentTool",
     "as_subagent_tool",
+    "discover_agent_types",
+    "make_pair_tool",
     "make_task_tool",
     # Capabilities / routing
     "BackendCapability",

@@ -103,6 +103,7 @@ async def run_fullscreen(tui: Any) -> int:
         FormattedTextControl,
     )
     from prompt_toolkit.layout.processors import (  # noqa: PLC0415
+        AppendAutoSuggestion,
         ConditionalProcessor,
         PasswordProcessor,
     )
@@ -124,6 +125,17 @@ async def run_fullscreen(tui: Any) -> int:
     except Exception:  # noqa: BLE001
         pass
     print_banner(tui.console, tui.model, tui.backend)
+    from .tui import set_terminal_title  # noqa: PLC0415
+    if not tui.messages:  # a resumed session already set its own title
+        import os as _os  # noqa: PLC0415
+        set_terminal_title(f"mantis · {_os.path.basename(_os.getcwd()) or 'home'}")
+    if tui.messages:
+        # --continue / --resume preloaded a conversation: replay it under the
+        # banner so the user sees exactly what they're resuming.
+        try:
+            tui._replay_transcript()
+        except Exception:  # noqa: BLE001 — replay is cosmetic, never fatal
+            pass
     tui.agent = tui._build_agent()
     tui._kick_prewarm()
     # Start an on-disk session so this conversation is persisted per turn and
@@ -205,10 +217,12 @@ async def run_fullscreen(tui: Any) -> int:
     # the agent's questions, one in-pane picker at a time.
     async def _ask_questions(questions: list[dict]) -> list[dict]:
         results: list[dict] = []
-        for q in questions:
+        total = len(questions)
+        for n, q in enumerate(questions, 1):
             fut: asyncio.Future = asyncio.get_event_loop().create_future()
             state["pending_question"] = {"q": q, "sel": 0, "selected": set(),
-                                         "typing": False, "future": fut}
+                                         "typing": False, "future": fut,
+                                         "index": n, "total": total}
             get_app().invalidate()
             try:
                 answers = await fut
@@ -217,6 +231,11 @@ async def run_fullscreen(tui: Any) -> int:
             finally:
                 state["pending_question"] = None
                 get_app().invalidate()
+            # Echo the pick into scrollback so the decision stays visible after
+            # the overlay closes (the tool-result line alone is easy to miss).
+            picked = ", ".join(answers) if answers else "(skipped)"
+            await _print(lambda h=q["header"], pk=picked: tui.console.print(
+                f"[ansigreen]?[/] [ansibrightblack]{h} →[/] [white]{pk}[/]"))
             results.append({"question": q["question"], "header": q["header"],
                             "answers": answers})
         return results
@@ -254,7 +273,35 @@ async def run_fullscreen(tui: Any) -> int:
 
     tui._fs_plan = _fs_plan
 
-    input_buffer = Buffer(multiline=False)
+    # Prompt history persists across sessions (~/.mantis-agent/history) — up/down
+    # recall past prompts, exactly like a shell. Best-effort: an unwritable home
+    # falls back to in-memory history rather than breaking the input.
+    try:
+        from prompt_toolkit.history import FileHistory  # noqa: PLC0415
+
+        from .paths import ensure_dir as _ensure_dir  # noqa: PLC0415
+        from .paths import get_mantis_agent_dir as _home  # noqa: PLC0415
+        _ensure_dir(_home())
+        _hist: Any = FileHistory(str(_home() / "history"))
+    except Exception:  # noqa: BLE001
+        _hist = None
+
+    # Next-prompt ghost text: after each turn a tiny model call proposes the
+    # likely follow-up; it renders dim after the cursor and tab/→ accepts it.
+    from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion  # noqa: PLC0415
+
+    class _NextPromptSuggest(AutoSuggest):
+        def get_suggestion(self, buffer: Any, document: Any) -> Any:
+            s = state.get("suggested_prompt") or ""
+            t = document.text
+            if s and len(t) < len(s) and s.lower().startswith(t.lower()):
+                return Suggestion(s[len(t):])
+            return None
+
+    _kw: dict[str, Any] = {"multiline": False, "auto_suggest": _NextPromptSuggest()}
+    if _hist:
+        _kw["history"] = _hist
+    input_buffer = Buffer(**_kw)
 
     # Reset the slash-menu selection whenever the line stops being a slash cmd.
     def _on_text(_buf: Any) -> None:
@@ -294,11 +341,41 @@ async def run_fullscreen(tui: Any) -> int:
             return [("file", p, "") for p in _file_matches(word[1:])]
         if not t.startswith("/") or " " in t:
             return []
-        return [("cmd", c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(t)]
+        # Built-ins + user/project .mantis/commands/*.md, cached per session —
+        # discovery hits the filesystem and this runs every keystroke.
+        cmds = state.get("all_commands")
+        if cmds is None:
+            from .tui import all_slash_commands  # noqa: PLC0415
+            try:
+                cmds = all_slash_commands()
+            except Exception:  # noqa: BLE001
+                cmds = dict(SLASH_COMMANDS)
+            state["all_commands"] = cmds
+        return [("cmd", c, d) for c, d in cmds.items() if c.startswith(t)]
 
     # -- model picker overlay (state-driven, like the permission prompt) ------
 
     _PICKER_ROWS = 11  # visible model/header rows in the picker window
+
+    def _ollama_models() -> list[str]:
+        """Installed local Ollama models (free). Cached ~60s so the picker's
+        per-keystroke refilter never re-probes; one 1.5s probe max on open."""
+        cache = state.get("ollama_models")
+        if cache is not None and time.monotonic() - cache[0] < 60:
+            return cache[1]
+        models: list[str] = []
+        try:
+            import httpx  # noqa: PLC0415
+
+            from . import paths as _pp  # noqa: PLC0415
+            r = httpx.get(f"{_pp.ollama_base_url()}/api/tags", timeout=1.5)
+            if r.status_code == 200:
+                models = [m.get("name", "") for m in r.json().get("models", [])
+                          if m.get("name")]
+        except Exception:  # noqa: BLE001 — Ollama not running: just no group
+            pass
+        state["ollama_models"] = (time.monotonic(), models)
+        return models
 
     def _build_picker_items(flt: str) -> list[dict]:
         # GROUPED items: active backend first, then other ENABLED providers, then
@@ -334,6 +411,20 @@ async def run_fullscreen(tui: Any) -> int:
             for m in active:
                 items.append({"kind": "model", "model": m, "enabled": True,
                               "provider_id": None, "ctx": ctxlab(m)})
+        # Local Ollama models (FREE, open-source) — always shown when Ollama is
+        # running, even while the active backend is a hosted API. Selecting one
+        # switches the backend to localhost with no key.
+        back_now = (tui.backend or "").rstrip("/")
+        if "localhost" not in back_now and "127.0.0.1" not in back_now:
+            from . import paths as _pp  # noqa: PLC0415
+            local = [m for m in _ollama_models()
+                     if _is_chat_model(m) and m not in active_set and keep(m)]
+            if local:
+                items.append({"kind": "header", "label": "Ollama · local · free"})
+                for m in local:
+                    items.append({"kind": "model", "model": m, "enabled": True,
+                                  "provider_id": None, "ctx": ctxlab(m),
+                                  "backend": _pp.ollama_base_url()})
         try:
             for g in catalog.grouped_provider_models():
                 models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set and keep(m)]
@@ -357,14 +448,80 @@ async def run_fullscreen(tui: Any) -> int:
         state["picking_model"] = {"items": items, "sel": sel, "filter": flt}
         get_app().invalidate()
 
+    # -- session picker (same overlay, mode="session") ------------------------
+
+    def _build_session_items(flt: str) -> list[dict]:
+        from .tui import ellipsize, time_ago  # noqa: PLC0415
+        from .session_tree import list_sessions  # noqa: PLC0415
+        fl = flt.lower().strip()
+        cur = tui.transcript.session_id if getattr(tui, "transcript", None) else None
+        items: list[dict] = [{"kind": "header", "label": "Resume a conversation"}]
+        for s in list_sessions()[:50]:
+            if s.session_id == cur:
+                continue
+            title = ellipsize(s.title or s.first_prompt or "(untitled)", 48)
+            label = f"{title} · {s.message_count} msgs · {time_ago(s.modified_at)}"
+            if fl and fl not in label.lower():
+                continue
+            items.append({"kind": "session", "model": label, "enabled": True,
+                          "provider_id": None, "ctx": "", "session_id": s.session_id})
+        return items
+
+    def _build_rewind_items(flt: str) -> list[dict]:
+        """Past user messages, newest last — esc-esc opens this to jump back,
+        restore the code state, and edit the message you jumped to."""
+        from .tui import ellipsize  # noqa: PLC0415
+        from .types import TextBlock as _TB, UserMessage as _UM  # noqa: PLC0415
+        fl = flt.lower().strip()
+        items: list[dict] = [{"kind": "header", "label": "Rewind to (edits + files restored)"}]
+        for i, m in enumerate(tui.messages):
+            if not isinstance(m, _UM) or getattr(m, "isMeta", False):
+                continue
+            text = m.content if isinstance(m.content, str) else next(
+                (b.text for b in m.content if isinstance(b, _TB)), "")
+            if not text.strip():
+                continue
+            label = ellipsize(text, 60)
+            if fl and fl not in label.lower():
+                continue
+            items.append({"kind": "rewind", "model": label, "enabled": True,
+                          "provider_id": None, "ctx": "", "msg_index": i,
+                          "text": text})
+        return items
+
+    def _open_rewind_picker() -> None:
+        items = _build_rewind_items("")
+        rows = [i for i, it in enumerate(items) if it["kind"] == "rewind"]
+        if not rows:
+            get_app().create_background_task(_announce("nothing to rewind to"))
+            return
+        state["picking_model"] = {"items": items, "sel": rows[-1], "filter": "",
+                                  "mode": "rewind"}
+        get_app().invalidate()
+
+    def _open_session_picker(flt: str = "") -> None:
+        items = _build_session_items(flt)
+        if len(items) <= 1:
+            get_app().create_background_task(_announce("no past conversations to resume"))
+            return
+        sel = next((i for i, it in enumerate(items) if it["kind"] == "session"), 0)
+        state["picking_model"] = {"items": items, "sel": sel, "filter": flt,
+                                  "mode": "session"}
+        get_app().invalidate()
+
+    _SELECTABLE_KINDS = ("model", "session", "rewind")
+
     def _refilter_picker() -> None:
         p = state.get("picking_model")
         if not p:
             return
-        items = _build_picker_items(p.get("filter", ""))
+        build = {"session": _build_session_items,
+                 "rewind": _build_rewind_items}.get(p.get("mode"), _build_picker_items)
+        items = build(p.get("filter", ""))
         p["items"] = items
-        if not (0 <= p["sel"] < len(items) and items[p["sel"]]["kind"] == "model"):
-            p["sel"] = next((i for i, it in enumerate(items) if it["kind"] == "model"), 0)
+        if not (0 <= p["sel"] < len(items) and items[p["sel"]]["kind"] in _SELECTABLE_KINDS):
+            p["sel"] = next((i for i, it in enumerate(items)
+                             if it["kind"] in _SELECTABLE_KINDS), 0)
 
     def picker_ft() -> Any:
         p = state.get("picking_model")
@@ -374,7 +531,9 @@ async def run_fullscreen(tui: Any) -> int:
         n = len(items)
         lo = max(0, min(sel - _PICKER_ROWS // 2, n - _PICKER_ROWS))
         flt = p.get("filter", "")
-        _hdr = f"{_GREEN}Pick a model{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
+        title = {"session": "Resume a conversation",
+                 "rewind": "Rewind to"}.get(p.get("mode"), "Pick a model")
+        _hdr = f"{_GREEN}{title}{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
         if flt:
             _hdr += f"   {_DIM}filter: {flt}{_RESET}"
 
@@ -427,9 +586,29 @@ async def run_fullscreen(tui: Any) -> int:
         n = min(len(_menu_options()), 8)
         return Dimension.exact(n) if n else Dimension.exact(0)
 
-    def _switch_model(model_id: str, *, provider_id: str | None = None) -> None:
+    def _switch_model(model_id: str, *, provider_id: str | None = None,
+                      backend: str | None = None) -> None:
         from . import catalog  # noqa: PLC0415
 
+        # Sanitize first: a picker filter / pasted id can carry whitespace or a
+        # trailing newline, and a blank id must never blow away the active model.
+        model_id = (model_id or "").strip()
+        if not model_id:
+            return
+        if backend:
+            # Explicit backend from the picker item (a local Ollama model while
+            # on a hosted API): point straight at it, no key needed.
+            tui.backend, tui.api_key = backend, None
+            tui.model = model_id
+            tui.agent = tui._build_agent()
+            if tui.agent is not None and tui.agent.permissions is not None:
+                tui.agent.permissions.asker = _ask_permission
+            try:
+                catalog.set_last_model(model_id, backend)
+                catalog.push_recent_model(model_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return
         # Cross-provider switch: if this model belongs to a *different* enabled
         # provider (e.g. a Claude model while on OpenAI), re-wire the backend +
         # key too — otherwise the new model would be sent to the old endpoint
@@ -459,6 +638,7 @@ async def run_fullscreen(tui: Any) -> int:
             tui.agent.permissions.asker = _ask_permission
         try:
             catalog.set_last_model(model_id, tui.backend)
+            catalog.push_recent_model(model_id)
         except Exception:  # noqa: BLE001
             pass
 
@@ -505,9 +685,18 @@ async def run_fullscreen(tui: Any) -> int:
         if state["working"]:
             el = int(time.monotonic() - state["started"])
             frame = SPINNER_FRAMES[state["frame"] % len(SPINNER_FRAMES)]
+            # A transient connection problem shows as ONE in-place note on the
+            # spinner line (set by the retry hook) — not printed lines tearing
+            # through the frame. It disappears once its window passes.
+            note = state.get("retry_note")
+            extra = ""
+            if note and time.monotonic() < note[1]:
+                extra = f"  \033[33m{note[0]}\033[0m"
+            nq = len(state.get("queue") or [])
+            queued = f" {_DIM}· {nq} queued{_RESET}" if nq else ""
             return ANSI(
                 f"{_GREEN}{frame} {state['word']}…{_RESET} "
-                f"{_DIM}({el}s · esc to interrupt){_RESET}"
+                f"{_DIM}({el}s · esc to interrupt){_RESET}{queued}{extra}"
             )
         label, symbol, color = MODES[tui.mode_idx]
         left = "" if tui.mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
@@ -515,6 +704,25 @@ async def run_fullscreen(tui: Any) -> int:
         ctx = _ctx_status()
         ctx_seg = f"   {ctx}" if ctx else ""
         return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}{ctx_seg}")
+
+    _LIVE_TODO_ROWS = 8
+
+    def live_todos_ft() -> Any:
+        """The checklist pinned under the spinner while the agent works —
+        Claude Code's `⎿ □ current task / ✔ struck-done` block. Collapses to
+        nothing when idle (the scrollback render covers history)."""
+        if not (state["working"] and tui.todos):
+            return ANSI("")
+        from .tui import format_live_todo_rows  # noqa: PLC0415
+        width = shutil.get_terminal_size((80, 24)).columns
+        return ANSI("\n".join(format_live_todo_rows(tui.todos, width, max_rows=_LIVE_TODO_ROWS)))
+
+    def _live_todos_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        if not (state["working"] and tui.todos):
+            return Dimension.exact(0)
+        n = min(len(tui.todos), _LIVE_TODO_ROWS)
+        return Dimension.exact(n + (1 if len(tui.todos) > _LIVE_TODO_ROWS else 0))
 
     _PERM_OPTS = ["allow once", "allow for session", "deny"]
     _PERM_OPTS_VALUES = ["allow_once", "allow_session", "deny"]
@@ -540,22 +748,11 @@ async def run_fullscreen(tui: Any) -> int:
         p = state.get("pending_question")
         if not p:
             return ANSI("")
-        q = p["q"]
-        opts = q["options"]
-        multi = bool(q.get("multiSelect"))
-        sel, selset = p["sel"], p["selected"]
-        rows = [f"{_GREEN}?{_RESET} {q['question']}  {_DIM}[{q['header']}]{_RESET}"]
-        for i, o in enumerate(opts):
-            box = (("● " if i in selset else "○ ") if multi else "")
-            line = f" {i + 1} {box}{o['label']}  {_DIM}{o['description']}{_RESET}"
-            rows.append(f"\033[30;48;5;113m{line} \033[0m" if i == sel else f" {line}")
-        other = " o  Other…"
-        rows.append(f"\033[30;48;5;113m{other} \033[0m" if sel == len(opts) else f" {other}")
-        if p["typing"]:
-            rows.append(f"{_GREY}type your answer in the input line, then Enter{_RESET}")
-        else:
-            hint = "space toggles · enter confirms" if multi else "number or o · enter"
-            rows.append(f"{_GREY}({hint}){_RESET}")
+        from .tui import format_question_rows  # noqa: PLC0415
+        width = shutil.get_terminal_size((80, 24)).columns
+        rows = format_question_rows(
+            p["q"], p["sel"], p["selected"], p["typing"], width,
+            index=p.get("index", 1), total=p.get("total", 1))
         return ANSI("\n".join(rows))
 
     def _question_height() -> Any:
@@ -573,7 +770,8 @@ async def run_fullscreen(tui: Any) -> int:
     # EXCEPT a tool call — which prints none, so its result hugs it directly.
 
     def _echo(t: str) -> None:
-        tui.console.print(f"[ansibrightblack]❯[/] {_esc(t)}")
+        from .tui import echo_user_message  # noqa: PLC0415
+        echo_user_message(tui.console, t)  # grey bar, Claude-Code style
         tui.console.print()
 
     def _assist(m: Any) -> None:
@@ -586,18 +784,60 @@ async def run_fullscreen(tui: Any) -> int:
         tui.console.print()
 
     async def _handle(text: str) -> None:
+        state["suggested_prompt"] = None  # a submitted turn invalidates the ghost
+        input_buffer.suggestion = None
         await _print(lambda: _echo(text))
+
+        # ``!cmd`` → run the shell command NOW, print its output, and inject it
+        # into context as a meta message (Claude Code's ! prefix). No model turn.
+        if text.startswith("!") and len(text) > 1:
+            from rich.markup import escape as _resc  # noqa: PLC0415
+
+            from .tui import bang_context_block, run_bang_command  # noqa: PLC0415
+            cmd = text[1:].strip()
+            out = await asyncio.to_thread(run_bang_command, cmd)
+            await _print(lambda o=out: tui.console.print(
+                f"[ansibrightblack]{_resc(o)}[/]"))
+            tui.messages.append(UserMessage(content=bang_context_block(cmd, out), isMeta=True))
+            get_app().invalidate()
+            return
+        # ``# note`` → quick-save to persistent memory (Claude Code's # prefix).
+        if text.startswith("#") and text.lstrip("#").strip():
+            from .tui import quick_memory_note  # noqa: PLC0415
+            p = quick_memory_note(text.lstrip("#").strip())
+            await _announce(f"saved to memory → {p.name}")
+            return
 
         from .tui import expand_slash_prompt  # noqa: PLC0415
         expanded = expand_slash_prompt(text)
         if expanded is not None:
             text = expanded  # e.g. /init → canned prompt; runs as a normal turn
-        elif text.startswith("/") and await _slash(text):
-            get_app().invalidate()
-            return
+        elif text.startswith("/"):
+            # A command that throws (e.g. /twin with the network down) must end
+            # in ONE clean error line + hint — never a raw traceback screen.
+            try:
+                handled = await _slash(text)
+            except Exception as e:  # noqa: BLE001
+                state.update(working=False, task=None)  # a command may have set it
+
+                def _show_cmd_err(e: Any = e) -> None:
+                    tui.console.print(f"[ansired]error:[/] {e}")
+                    from .tui import error_hint  # noqa: PLC0415
+                    hint = error_hint(e, tui.backend)
+                    if hint:
+                        styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
+                        tui.console.print(f"[ansibrightblack]  → {styled}[/]")
+                    tui.console.print()
+                await _print(_show_cmd_err)
+                handled = True
+            if handled:
+                get_app().invalidate()
+                return
 
         base = len(tui.messages)
-        tui.messages.append(UserMessage(content=text))
+        # _build_user_content flushes pending Ctrl+V attachments (images/files)
+        # into real content blocks; plain turns stay plain strings.
+        tui.messages.append(UserMessage(content=tui._build_user_content(text)))
         # @-file-mentions → inject the referenced files' contents so the model
         # has them inline (no extra read_file round-trip). isMeta, so the visible
         # transcript keeps the user's clean message.
@@ -617,6 +857,10 @@ async def run_fullscreen(tui: Any) -> int:
         try:
             async for msg in tui.agent.run_iter(tui.messages):
                 if isinstance(msg, AssistantMessage):
+                    _txt = "".join(getattr(b, "text", "") for b in msg.content
+                                   if type(b).__name__ == "TextBlock")
+                    if _txt.strip():
+                        state["last_text"] = _txt  # goal engine reads markers
                     if getattr(msg, "usage", None) is not None:
                         # input+output of the latest turn ≈ current context fill.
                         state["ctx_tokens"] = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
@@ -633,11 +877,20 @@ async def run_fullscreen(tui: Any) -> int:
         except asyncio.CancelledError:
             # Keep the work done so far; just close any tool_use left unanswered
             # by the interrupt so the next turn's request stays well-formed and
-            # the user can redirect or continue.
+            # the user can redirect or continue. An interrupt also drops any
+            # queued messages — the user is taking the wheel back.
+            dropped = len(state.get("queue") or [])
+            state.get("queue", []).clear()
+            goal_note = ""
+            if state.get("goal"):
+                state["goal"] = None  # interrupt = the human takes the wheel
+                goal_note = " · autopilot stopped"
             from .agent import close_open_tool_calls  # noqa: PLC0415
             close_open_tool_calls(tui.messages)
-            await _print(lambda: tui.console.print(
-                "[ansibrightblack](interrupted — you can continue or redirect)[/]"))
+            await _print(lambda d=dropped, gn=goal_note: tui.console.print(
+                "[ansibrightblack](interrupted — you can continue or redirect"
+                + (f" · {d} queued message{'s' if d != 1 else ''} dropped" if d else "")
+                + gn + ")[/]"))
         except Exception as e:  # noqa: BLE001
             del tui.messages[base:]
 
@@ -651,12 +904,125 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(_show_err)
         finally:
             tui._persist_messages(base)  # save this turn for /resume + /branch
+            elapsed = time.monotonic() - state.get("started", time.monotonic())
             state.update(working=False, task=None)
+            from .tui import notify_turn_done  # noqa: PLC0415
+            notify_turn_done(elapsed)  # bell after a long turn (settings: notifChannel)
             get_app().invalidate()
+            # Session title after the first completed turn (cheap, background).
+            get_app().create_background_task(tui._maybe_autotitle())
+            # Fire the next queued message, if any (one at a time, in order).
+            q = state.get("queue") or []
+            if q:
+                nxt = q.pop(0)
+                get_app().create_background_task(_handle(nxt))
+            elif state.get("goal"):
+                _advance_goal()
+            else:
+                # Idle again → propose the next prompt as ghost text (tab/→).
+                async def _ghost() -> None:
+                    s = await tui._suggest_next_prompt()
+                    if s and not state["working"] and not input_buffer.text:
+                        from prompt_toolkit.auto_suggest import Suggestion as _S  # noqa: PLC0415
+                        state["suggested_prompt"] = s
+                        input_buffer.suggestion = _S(s)
+                        get_app().invalidate()
+                get_app().create_background_task(_ghost())
+
+    def _advance_goal() -> None:
+        """The autopilot state machine, called after each idle turn end:
+        work → (todos all done) → verify → (GOAL COMPLETE) → reflect → finish.
+        Blocked/complete markers and the cycle cap are the exits; esc clears."""
+        from .tui import (  # noqa: PLC0415
+            GOAL_BLOCKED_MARKER,
+            GOAL_COMPLETE_MARKER,
+            goal_continue_prompt,
+            goal_reflect_prompt,
+            goal_verify_prompt,
+        )
+        g = state.get("goal")
+        if not g or state["working"]:
+            return
+        last = state.get("last_text") or ""
+
+        def fire(prompt: str) -> None:
+            get_app().create_background_task(_handle(prompt))
+
+        def note(msg: str) -> None:
+            get_app().create_background_task(_announce(msg))
+
+        if GOAL_BLOCKED_MARKER in last:
+            state["goal"] = None
+            note("⦿ autopilot: goal blocked — stopped")
+            return
+        if g.get("phase") == "reflect":
+            state["goal"] = None
+            note(f"⦿ autopilot: goal complete after {g['cycles']} cycles ✓")
+            return
+        if g.get("phase") == "verify" and GOAL_COMPLETE_MARKER in last:
+            g["phase"] = "reflect"
+            fire(goal_reflect_prompt(g["text"]))
+            return
+        todos = tui.todos
+        all_done = bool(todos) and all(t.get("status") == "completed" for t in todos)
+        if all_done and g.get("phase") != "verify":
+            g["phase"] = "verify"
+            note("⦿ autopilot: plan finished — verifying adversarially…")
+            fire(goal_verify_prompt(g["text"]))
+            return
+        g["cycles"] += 1
+        if g["cycles"] > g["max"]:
+            state["goal"] = None
+            note(f"⦿ autopilot: cycle cap ({g['max']}) reached — stopped. "
+                 "Re-issue /goal to keep going.")
+            return
+        g["phase"] = "work"
+        fire(goal_continue_prompt(g["text"], g["cycles"], g["max"]))
+
+    async def _watch_loop(wid: int, cmdline: str, interval: float, rec: dict) -> None:
+        """Sentinel: run ``cmdline`` every ``interval``s. Edge-triggered — the
+        ok→FAIL transition wakes the agent with the failure output; FAIL→ok just
+        announces green. Never fires while a turn/overlay is active."""
+        import subprocess  # noqa: PLC0415
+        prev_ok: bool | None = None
+        while not rec["stopped"].is_set():
+            def run() -> tuple[bool, str]:
+                try:
+                    r = subprocess.run(cmdline, shell=True, capture_output=True,
+                                       text=True, timeout=300)
+                    return r.returncode == 0, ((r.stdout or "") + (r.stderr or ""))[-4000:]
+                except Exception as e:  # noqa: BLE001
+                    return False, f"(watch runner error: {e})"
+            ok, out = await asyncio.to_thread(run)
+            rec["state"] = "green" if ok else "red"
+            rec["runs"] = rec.get("runs", 0) + 1
+            if prev_ok is True and not ok:
+                await _announce(f"⦿ watch #{wid} went RED — waking the agent")
+                while ((state["working"] or state.get("pending_perm")
+                        or state.get("pending_question")) and not rec["stopped"].is_set()):
+                    await asyncio.sleep(1.0)
+                if rec["stopped"].is_set():
+                    return
+                await _handle(
+                    f"[watch #{wid}] `{cmdline}` just started FAILING:\n{out}\n\n"
+                    "Diagnose and fix the root cause, then rerun the command to "
+                    "confirm it passes.")
+            elif prev_ok is False and ok:
+                await _announce(f"⦿ watch #{wid} green again ✓")
+            prev_ok = ok
+            waited = 0.0
+            while waited < interval and not rec["stopped"].is_set():
+                await asyncio.sleep(min(1.0, interval - waited))
+                waited += 1.0
 
     async def _slash(text: str) -> bool:
         cmd, _, arg = text.partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
+        if cmd == "/resume" and not arg:
+            # Arrow-key picker overlay (like /models) — type to filter, enter
+            # to resume, esc to close. `/resume <n|id>` still loads directly.
+            _open_session_picker()
+            return True
         if cmd in ("/resume", "/branch", "/rewind"):
             # Session commands live on MantisTUI (shared with the classic REPL);
             # they print via self.console, so run them inside in_terminal so the
@@ -802,18 +1168,199 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if cmd in ("/model", "/models"):
             if arg and cmd == "/model":
-                # /model <id|number> → direct switch (exact).
-                models = _chat_models()
-                if arg.isdigit() and models and 1 <= int(arg) <= len(models):
-                    picked = models[int(arg) - 1]
+                # /model <query> → resolve a number / id / provider / alias /
+                # fuzzy fragment to a REAL model. Never send a raw string to the
+                # backend: an unrecognized or ambiguous query opens the picker,
+                # pre-filtered, so the user lands on something that exists.
+                from . import catalog  # noqa: PLC0415
+                res = catalog.resolve_model_query(arg, _chat_models())
+                if res.model:
+                    _switch_model(res.model, provider_id=res.provider_id)
+                    await _print(lambda m=res.model: tui.console.print(
+                        f"[ansibrightblack](model → [white]{m}[/])[/]"))
+                elif res.candidates:
+                    await _print(lambda n=len(res.candidates): tui.console.print(
+                        f"[ansibrightblack]{n} models match [white]{arg}[/] — pick one:[/]"))
+                    _open_model_picker(arg)
                 else:
-                    picked = arg
-                _switch_model(picked)
-                await _print(lambda p=picked: tui.console.print(
-                    f"[ansibrightblack](model → [white]{p}[/])[/]"))
+                    await _print(lambda: tui.console.print(
+                        f"[ansiyellow]![/] [ansibrightblack]no model matches "
+                        f"[white]{arg}[/] — showing the full list[/]"))
+                    _open_model_picker(arg)
             else:
                 # /models [partial] → picker overlay, pre-filtered if given.
                 _open_model_picker(arg or "")
+            return True
+        if cmd == "/agents":
+            await _print(lambda: tui._show_agents())
+            return True
+        if cmd == "/twin":
+            if tui._pair_tool is None:
+                await _announce("no agent yet — send a message first")
+                return True
+            if not arg.strip() or arg.split()[0] in ("list", "reset"):
+                await _print(lambda: tui._twin_admin(arg))  # no LLM — inline
+                return True
+            # A real exchange runs the twin's full agent loop (LLM + read
+            # tools) — drive the spinner so the wait reads as work, not a hang.
+            from .tui import MantisTUI as _M  # noqa: PLC0415
+            peer, msg = _M.parse_twin_arg(arg)
+            state.update(working=True, started=time.monotonic(),
+                         word="Conferring", task=asyncio.current_task())
+            get_app().invalidate()
+            try:
+                body = await tui._twin_talk(peer, msg)
+            finally:
+                state.update(working=False, task=None)
+            await _print(lambda: tui._twin_render(peer, body))
+            get_app().invalidate()
+            return True
+        if cmd == "/goal":
+            from .tui import GOAL_MAX_CYCLES, goal_kickoff_prompt  # noqa: PLC0415
+            sub = arg.strip()
+            g = state.get("goal")
+            if not sub or sub == "status":
+                if g:
+                    await _announce(f"⦿ autopilot · cycle {g['cycles']}/{g['max']} · "
+                                    f"{g['phase']} · {g['text'][:60]}")
+                else:
+                    await _announce("no active goal — /goal <what you want done>")
+                return True
+            if sub == "stop":
+                state["goal"] = None
+                await _announce("⦿ autopilot stopped" if g else "no active goal")
+                return True
+            tui.todos.clear()  # fresh plan; the todo tool mutates this list in place
+            state["goal"] = {"text": sub, "cycles": 0, "max": GOAL_MAX_CYCLES,
+                             "phase": "work"}
+            await _announce(f"⦿ autopilot engaged · up to {GOAL_MAX_CYCLES} cycles · "
+                            "esc stops it")
+            get_app().create_background_task(_handle(goal_kickoff_prompt(sub)))
+            return True
+        if cmd == "/watch":
+            import asyncio as _aio  # noqa: PLC0415
+
+            from .tui import format_loop_interval, parse_loop_command  # noqa: PLC0415
+            watches: dict[int, dict] = state.setdefault("watches", {})
+            sub = arg.strip()
+            if not sub or sub == "list":
+                if not watches:
+                    await _announce("no watches — /watch [interval] <command> "
+                                    "(fires the agent when it starts failing)")
+                for wid, w in watches.items():
+                    await _announce(f"watch #{wid} · every {format_loop_interval(w['interval'])} "
+                                    f"· {w.get('state', '?')} · {w['cmd'][:50]}")
+                return True
+            if sub.split()[0] == "stop":
+                which = sub.split()[1] if len(sub.split()) > 1 else "all"
+                targets = list(watches) if which == "all" else \
+                    [int(which)] if which.isdigit() and int(which) in watches else []
+                for wid in targets:
+                    watches[wid]["stopped"].set()
+                    watches.pop(wid, None)
+                await _announce(f"stopped {len(targets)} watch(es)" if targets
+                                else f"no watch {which!r}")
+                return True
+            parsed = parse_loop_command(sub)
+            interval, cmdline = parsed if isinstance(parsed, tuple) else (30.0, sub)
+            wid = state["watch_counter"] = state.get("watch_counter", 0) + 1
+            rec = {"cmd": cmdline, "interval": interval, "stopped": _aio.Event(),
+                   "state": "?"}
+            watches[wid] = rec
+            rec["task"] = _aio.ensure_future(_watch_loop(wid, cmdline, interval, rec))
+            await _announce(f"⦿ watch #{wid} armed · `{cmdline[:50]}` every "
+                            f"{format_loop_interval(interval)} — /watch stop {wid} to end")
+            return True
+        if cmd == "/loop":
+            import asyncio as _aio  # noqa: PLC0415
+
+            from .tui import (  # noqa: PLC0415
+                format_loop_interval,
+                parse_loop_command,
+                run_prompt_loop,
+            )
+            loops: dict[int, dict] = state.setdefault("loops", {})
+            sub = arg.strip()
+            if not sub or sub == "list":
+                if not loops:
+                    await _announce("no active loops — /loop <interval> <prompt> to start one")
+                else:
+                    for lid, l in loops.items():
+                        await _announce(
+                            f"loop #{lid} · every {format_loop_interval(l['interval'])} · "
+                            f"{l['fires']} fires · {l['prompt'][:60]}")
+                    await _announce("stop with /loop stop <id> (or /loop stop all)")
+                return True
+            if sub.split()[0] == "stop":
+                which = sub.split()[1] if len(sub.split()) > 1 else "all"
+                targets = list(loops) if which == "all" else \
+                    [int(which)] if which.isdigit() and int(which) in loops else []
+                if not targets:
+                    await _announce(f"no loop {which!r} — active: {', '.join(map(str, loops)) or 'none'}")
+                    return True
+                for lid in targets:
+                    loops[lid]["stopped"].set()
+                    loops.pop(lid, None)
+                await _announce(f"stopped loop{'s' if len(targets) > 1 else ''} "
+                                f"{', '.join(f'#{t}' for t in targets)}")
+                return True
+            parsed = parse_loop_command(sub)
+            if isinstance(parsed, str):
+                await _announce(parsed)
+                return True
+            interval, prompt = parsed
+            lid = state["loop_counter"] = state.get("loop_counter", 0) + 1
+            stopped = _aio.Event()
+            rec = {"interval": interval, "prompt": prompt, "fires": 0, "stopped": stopped}
+            loops[lid] = rec
+
+            async def _fire(rec: dict = rec, lid: int = lid) -> None:
+                rec["fires"] += 1
+                await _announce(f"loop #{lid} · fire {rec['fires']}")
+                await _handle(rec["prompt"])
+
+            def _busy() -> bool:
+                return bool(state["working"] or state.get("pending_perm")
+                            or state.get("pending_question") or state.get("awaiting_key"))
+
+            def _on_error(e: Exception, lid: int = lid) -> None:
+                get_app().create_background_task(_announce(f"loop #{lid} fire failed: {e}"))
+
+            task = _aio.ensure_future(run_prompt_loop(
+                interval, _fire, is_busy=_busy, stopped=stopped, on_error=_on_error))
+            rec["task"] = task
+            await _announce(
+                f"loop #{lid} started · every {format_loop_interval(interval)} · "
+                f"{prompt[:60]} — /loop stop {lid} to end")
+            return True
+        if cmd == "/mcp":
+            await _print(lambda: tui._show_mcp())
+            return True
+        if cmd == "/skills":
+            await _print(lambda: tui._show_skills())
+            return True
+        if cmd == "/status":
+            await _print(lambda: tui._show_status(state["ctx_tokens"], state["session_cost"]))
+            return True
+        if cmd == "/cost":
+            await _print(lambda: tui._show_cost(state["ctx_tokens"], state["session_cost"]))
+            return True
+        if cmd == "/doctor":
+            # Has short network probes (2s cap each) — render inside the
+            # terminal handoff like every other block so output can't interleave
+            # with the prompt_toolkit frame.
+            await _print(tui._show_doctor)
+            return True
+        if cmd == "/permissions":
+            await _print(lambda: tui._show_permissions())
+            return True
+        if cmd == "/release-notes":
+            await _print(lambda: tui._show_release_notes())
+            return True
+        if cmd == "/update":
+            await _announce("checking for updates…")
+            msg = await asyncio.to_thread(tui._run_update)
+            await _announce(msg)
             return True
         if cmd == "/disable":
             from . import catalog  # noqa: PLC0415
@@ -880,11 +1427,11 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if cmd == "/help":
             def _help() -> None:
-                from .tui import build_help_lines  # noqa: PLC0415
+                from .tui import all_slash_commands, build_help_lines  # noqa: PLC0415
                 w, d = "white", "ansibrightblack"
                 tui.console.print("\n[bold]commands[/]")
                 last_cat = None
-                for cat, command, desc in build_help_lines(SLASH_COMMANDS):
+                for cat, command, desc in build_help_lines(all_slash_commands()):
                     label = cat if cat != last_cat else ""
                     last_cat = cat
                     tui.console.print(f"  [{d}]{label:<8}[/] [{w}]{command}[/]  [{d}]{desc}[/]")
@@ -963,9 +1510,9 @@ async def run_fullscreen(tui: Any) -> int:
         items = p["items"]
         n = len(items)
         i = p["sel"]
-        for _ in range(n):  # step over header rows to the next model
+        for _ in range(n):  # step over header rows to the next selectable row
             i = (i + delta) % n
-            if items[i]["kind"] == "model":
+            if items[i]["kind"] in _SELECTABLE_KINDS:
                 p["sel"] = i
                 return
 
@@ -1128,10 +1675,43 @@ async def run_fullscreen(tui: Any) -> int:
             items = p["items"]
             it = items[p["sel"]] if 0 <= p["sel"] < len(items) else None
             state["picking_model"] = None
+            if it and it["kind"] == "rewind":
+                idx = it["msg_index"]
+                tui.messages = tui.messages[:idx]
+                restored = tui._restore_checkpoints(idx)
+                # Put the chosen message back in the input for editing — the
+                # esc-esc flow is "go back and say it differently".
+                input_buffer.text = it["text"]
+                input_buffer.cursor_position = len(it["text"])
+                note = f"rewound · {len(tui.messages)} messages kept"
+                if restored:
+                    note += f" · {restored} file{'s' if restored != 1 else ''} restored"
+                event.app.create_background_task(_announce(note))
+                event.app.invalidate()
+                return
+            if it and it["kind"] == "session":
+                from .session_tree import SessionTranscript, load_for_resume  # noqa: PLC0415
+                try:
+                    tui.messages = load_for_resume(it["session_id"])
+                    tui.transcript = SessionTranscript(it["session_id"])
+
+                    async def _show_resumed(label: str = it["model"]) -> None:
+                        from .tui import set_terminal_title  # noqa: PLC0415
+                        set_terminal_title(f"✳ {label.split(' · ')[0]}")
+                        await _print(lambda: tui._replay_transcript())
+                        await _announce(f"resumed · {label} ({len(tui.messages)} messages)")
+                    event.app.create_background_task(_show_resumed())
+                except Exception as e:  # noqa: BLE001
+                    event.app.create_background_task(_announce(f"resume failed: {e}"))
+                event.app.invalidate()
+                return
             if it and it["kind"] == "model":
                 if it["enabled"]:
-                    _switch_model(it["model"], provider_id=it.get("provider_id"))
-                    event.app.create_background_task(_announce(f"model → {it['model']}"))
+                    _switch_model(it["model"], provider_id=it.get("provider_id"),
+                                  backend=it.get("backend"))
+                    where = " · local (free)" if it.get("backend") else ""
+                    event.app.create_background_task(
+                        _announce(f"model → {it['model']}{where}"))
                 else:
                     # Locked provider → ask for its key inline, then enable+switch.
                     pid = it.get("provider_id")
@@ -1149,9 +1729,21 @@ async def run_fullscreen(tui: Any) -> int:
         if _accept_menu(event):
             return
         text = input_buffer.text.strip()
-        input_buffer.reset()
-        if text:
-            event.app.create_background_task(_handle(text))
+        # Record the submitted line in the persistent history (up-arrow recall
+        # across sessions). The API-key path above resets WITHOUT this — a
+        # pasted secret must never land in ~/.mantis-agent/history.
+        input_buffer.reset(append_to_history=True)
+        if not text:
+            return
+        if state["working"]:
+            # A turn is running: QUEUE the message (Claude Code behavior) —
+            # it fires the moment this turn finishes. Esc-interrupt clears it.
+            q = state.setdefault("queue", [])
+            q.append(text)
+            event.app.create_background_task(_announce(
+                f"⧉ queued ({len(q)}) — sends when this turn finishes · esc clears"))
+            return
+        event.app.create_background_task(_handle(text))
 
     @kb.add("c-c")
     def _(event: Any) -> None:
@@ -1171,6 +1763,17 @@ async def run_fullscreen(tui: Any) -> int:
     def _(event: Any) -> None:
         from .tui import esc_action  # noqa: PLC0415
         pq = state.get("pending_question")
+        # Esc-Esc while idle (no overlays, nothing running) → the rewind picker:
+        # jump back to an earlier message, restore files, edit and resend.
+        now = time.monotonic()
+        last = state.get("last_esc", 0.0)
+        state["last_esc"] = now
+        if (now - last < 0.6 and not state["working"]
+                and state.get("picking_model") is None
+                and state.get("pending_perm") is None and pq is None
+                and state.get("awaiting_key") is None and tui.messages):
+            _open_rewind_picker()
+            return
         action = esc_action(
             awaiting_key=state.get("awaiting_key") is not None,
             picking_model=state.get("picking_model") is not None,
@@ -1210,6 +1813,24 @@ async def run_fullscreen(tui: Any) -> int:
         tui.mode_idx = (tui.mode_idx + 1) % len(MODES)
         event.app.invalidate()
 
+    # Accept the next-prompt ghost text. Tab (menu closed) or → at end-of-line.
+    _has_ghost = Condition(lambda: bool(
+        input_buffer.suggestion and input_buffer.suggestion.text
+        and not _menu_options()))
+
+    @kb.add("tab", filter=_has_ghost & ~_picker_open)
+    def _(event: Any) -> None:
+        input_buffer.insert_text(input_buffer.suggestion.text)
+        event.app.invalidate()
+
+    @kb.add("right", filter=_has_ghost & ~_picker_open)
+    def _(event: Any) -> None:
+        if input_buffer.cursor_position == len(input_buffer.text):
+            input_buffer.insert_text(input_buffer.suggestion.text)
+        else:
+            input_buffer.cursor_right()
+        event.app.invalidate()
+
     @kb.add("c-x", "c-e")
     def _(event: Any) -> None:
         # Compose a long / multi-line prompt in $EDITOR (like the shell's C-x C-e).
@@ -1218,15 +1839,33 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001 — no editor / spawn failed: ignore
             pass
 
+    @kb.add("c-v")
+    def _(event: Any) -> None:
+        # Ctrl+V: attach an image (or copied file) from the system clipboard to
+        # the next message — [Image #N] placeholder in the line, real content
+        # block flushed on submit. (Was classic-REPL-only; now both UIs.)
+        placeholder = tui._capture_clipboard_attachment()
+        if placeholder:
+            input_buffer.insert_text(placeholder + " ")
+            event.app.create_background_task(_announce(
+                f"attached {placeholder} — sends with your next message"))
+        else:
+            event.app.create_background_task(_announce(
+                "no image or file on the clipboard"))
+        event.app.invalidate()
+
     input_window = Window(
         BufferControl(
             buffer=input_buffer,
             # Mask the line (••••) ONLY while pasting an API key for a locked
             # provider — normal chat input stays visible.
-            input_processors=[ConditionalProcessor(
-                PasswordProcessor(),
-                Condition(lambda: state.get("awaiting_key") is not None),
-            )],
+            input_processors=[
+                ConditionalProcessor(
+                    PasswordProcessor(),
+                    Condition(lambda: state.get("awaiting_key") is not None),
+                ),
+                AppendAutoSuggestion(),  # dim next-prompt ghost text
+            ],
         ),
         height=1, wrap_lines=False,
     )
@@ -1245,6 +1884,9 @@ async def run_fullscreen(tui: Any) -> int:
             # Model picker overlay — height 0 unless /models opened it.
             Window(FormattedTextControl(picker_ft), height=_picker_height),
             Window(FormattedTextControl(footer_ft), height=1),
+            # Live task checklist — pinned under the spinner while working
+            # (Claude Code's ⎿ □/✔ block); height 0 when idle.
+            Window(FormattedTextControl(live_todos_ft), height=_live_todos_height),
         ]),
         focused_element=input_window,
     )
@@ -1261,11 +1903,54 @@ async def run_fullscreen(tui: Any) -> int:
                 app.invalidate()
             await asyncio.sleep(0.12)
 
+    async def _mcp_startup() -> None:
+        # Connect configured MCP servers in the background so a slow server
+        # never delays the first prompt. Tools land mid-session via
+        # _connect_mcp (which also folds them into the live agent's registry).
+        try:
+            summary = await tui._connect_mcp()
+        except Exception:  # noqa: BLE001 — MCP must never take the UI down
+            return
+        if summary:
+            await _announce(f"mcp: {summary}")
+
+    # Route HTTP-retry notices into the spinner line instead of raw log lines
+    # (which tear through the prompt frame). The note self-expires.
+    from . import retry as _retry  # noqa: PLC0415
+
+    def _on_retry(info: dict) -> None:
+        note = (f"⚠ {info['reason']} — retry {info['attempt']}/{info['attempts']} "
+                f"in {info['sleep_s']:.1f}s")
+        state["retry_note"] = (note, time.monotonic() + info["sleep_s"] + 15.0)
+        try:
+            get_app().invalidate()
+        except Exception:  # noqa: BLE001
+            pass
+
+    _retry.notify = _on_retry
+
     anim = asyncio.ensure_future(_animate())
+    mcp_boot = asyncio.ensure_future(_mcp_startup())
     try:
         await app.run_async()
     finally:
+        _retry.notify = None
         anim.cancel()
+        mcp_boot.cancel()
+        for l in (state.get("loops") or {}).values():  # stop /loop timers
+            l["stopped"].set()
+            t = l.get("task")
+            if t is not None:
+                t.cancel()
+        for w in (state.get("watches") or {}).values():  # stop /watch sentinels
+            w["stopped"].set()
+            t = w.get("task")
+            if t is not None:
+                t.cancel()
+        try:
+            await tui._close_mcp()
+        except Exception:  # noqa: BLE001
+            pass
         if tui.agent is not None:
             await tui.agent.aclose()
     tui.console.print("[ansibrightblack]bye 👋[/]")

@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,12 +71,25 @@ EXAMPLE_PROMPTS = [
 SLASH_COMMANDS = {
     "/models": "browse & pick a model (local · API · self-host)",
     "/model": "switch / pick a model",
+    "/goal": "autopilot: plan → execute → verify until done",
+    "/watch": "watch a command; agent wakes + fixes when it breaks",
+    "/loop": "re-run a prompt on an interval (/loop 5m <prompt>)",
     "/resume": "resume a past conversation",
     "/branch": "fork this conversation into a new session",
     "/rewind": "rewind the conversation to an earlier message",
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
+    "/agents": "list subagent types (built-in + your agents/*.md)",
+    "/twin": "talk to the agent's twin yourself (/twin skeptic: <msg>)",
+    "/mcp": "MCP server status (.mcp.json)",
+    "/skills": "list skills — run one with /<name>",
+    "/status": "version · model · auth · session at a glance",
+    "/cost": "token + dollar spend this session",
+    "/doctor": "health-check the install and backend",
+    "/permissions": "view permission mode + rules",
+    "/update": "update mantis to the latest version",
+    "/release-notes": "what changed in recent versions",
     "/context": "show context-window usage",
     "/compact": "compress the conversation now (optional focus)",
     "/copy": "copy the last reply to the clipboard",
@@ -115,6 +130,8 @@ TOOL_VERBS = {
     "exit_plan_mode": ("Present plan", ()),
     "bash_output": ("Check output", ("bash_id", "id")),
     "bash_kill": ("Kill", ("bash_id",)),
+    "monitor": ("Wait for", ("until_pattern", "path", "port", "bash_id")),
+    "pair": ("Confer with", ("peer",)),
 }
 
 # File extension → pygments lexer name, for syntax-highlighting diff bodies.
@@ -316,7 +333,9 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
     ("model", ["/models", "/model", "/enable", "/disable", "/connect"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
-    ("project", ["/init", "/memory", "/learn", "/context"]),
+    ("autonomy", ["/goal", "/watch", "/loop"]),
+    ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
+    ("info", ["/status", "/cost", "/doctor", "/permissions", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/export", "/cwd"]),
     ("editor", ["/vim"]),
 ]
@@ -361,7 +380,499 @@ def expand_slash_prompt(text: str) -> str | None:
     if t == "/learn" or t.startswith("/learn "):
         focus = t[len("/learn"):].strip()
         return LEARN_PROMPT + (f"\n\nFocus especially on: {focus}" if focus else "")
-    return None
+    expanded = expand_custom_command(t)
+    if expanded is not None:
+        return expanded
+    return expand_skill_command(t)
+
+
+# -- custom slash commands (.mantis/commands/*.md) ----------------------------
+#
+# Claude Code's user-defined commands, mirrored: a markdown file per command,
+# ``~/.mantis-agent/commands/foo.md`` (user) or ``./.mantis/commands/foo.md``
+# (project, wins on collision) becomes ``/foo``. Optional frontmatter
+# ``description:`` feeds the menu; the body is the prompt template, with
+# ``$ARGUMENTS`` replaced by whatever follows the command name.
+
+
+def discover_custom_commands(cwd: str | Path | None = None) -> dict[str, tuple[str, str]]:
+    """``{name: (description, template)}`` from the user + project command dirs.
+    Best-effort: unreadable files are skipped; empty bodies are ignored. Names
+    that collide with a built-in slash command are dropped (built-ins win —
+    a project file must not shadow e.g. /model)."""
+    from .paths import get_mantis_agent_dir  # noqa: PLC0415
+    from .skills import _parse_skill_md  # noqa: PLC0415 — same frontmatter format
+
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    out: dict[str, tuple[str, str]] = {}
+    for d in (get_mantis_agent_dir() / "commands", base / ".mantis" / "commands"):
+        if not d.is_dir():
+            continue
+        for md in sorted(d.glob("*.md")):
+            try:
+                meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+            name = (meta.get("name") or md.stem).strip().lstrip("/")
+            if not name or not body.strip() or f"/{name}" in SLASH_COMMANDS:
+                continue
+            out[name] = (meta.get("description", "").strip() or "custom command", body.strip())
+    return out
+
+
+def expand_custom_command(text: str, cwd: str | Path | None = None) -> str | None:
+    """``/name args`` → the command's template with ``$ARGUMENTS`` substituted
+    (appended when the template never mentions it but args were given).
+    Returns None when ``text`` isn't a known custom command."""
+    t = text.strip()
+    if not t.startswith("/"):
+        return None
+    head, _, args = t[1:].partition(" ")
+    cmds = discover_custom_commands(cwd)
+    if head not in cmds:
+        return None
+    _, template = cmds[head]
+    args = args.strip()
+    if "$ARGUMENTS" in template:
+        return template.replace("$ARGUMENTS", args)
+    return f"{template}\n\n{args}" if args else template
+
+
+def expand_skill_command(text: str, cwd: str | Path | None = None) -> str | None:
+    """``/skill-name args`` → the skill's full instructions as this turn's
+    prompt (Claude Code's direct skill invocation). Custom commands are checked
+    before this, so a command and a skill sharing a name resolve to the command.
+    Returns None when ``text`` isn't a known skill."""
+    t = text.strip()
+    if not t.startswith("/"):
+        return None
+    head, _, args = t[1:].partition(" ")
+    if not head or f"/{head}" in SLASH_COMMANDS:
+        return None
+    from .skills import load_skill_body  # noqa: PLC0415
+    body = load_skill_body(head, cwd)
+    if body is None:
+        return None
+    args = args.strip()
+    return f"{body}\n\nTask: {args}" if args else body
+
+
+def all_slash_commands(cwd: str | Path | None = None) -> dict[str, str]:
+    """Built-in + custom commands + skills, for menus/completion/help. Non-built-in
+    entries are suffixed so the user can tell them apart at a glance. Precedence
+    on a name collision: built-in > custom command > skill."""
+    merged = dict(SLASH_COMMANDS)
+    for name, (desc, _) in discover_custom_commands(cwd).items():
+        merged[f"/{name}"] = f"{desc} (custom)"
+    try:
+        from .skills import discover_skills  # noqa: PLC0415
+        for s in discover_skills(cwd):
+            key = f"/{s.name}"
+            if key not in merged:
+                merged[key] = f"{s.description or 'skill'} (skill)"
+    except Exception:  # noqa: BLE001 — a broken SKILL.md must not kill the menu
+        pass
+    return merged
+
+
+# -- AskUserQuestion rendering (fullscreen overlay rows) -----------------------
+
+
+def format_question_rows(
+    q: dict,
+    sel: int,
+    selected: set,
+    typing: bool,
+    width: int,
+    *,
+    index: int = 1,
+    total: int = 1,
+) -> list[str]:
+    """ANSI rows for one AskUserQuestion — pure, width-safe, testable.
+
+    Every row is truncated to ``width`` so the exact-height overlay window can
+    NEVER wrap/cut off (long option descriptions used to overflow it). Layout:
+
+        ? Which library?  [Library · 2/3]
+          1 ● httpx  async, modern            ← highlighted row inverted
+          2 ○ requests  sync, battle-tested
+          o Other…
+        (space toggles · enter confirms · 1 selected · esc skips)
+    """
+    grey, dim, green, reset = "\033[90m", "\033[90m", "\033[92m", "\033[0m"
+    opts = q["options"]
+    multi = bool(q.get("multiSelect"))
+    rows: list[str] = []
+
+    chip = q.get("header", "")
+    if total > 1:
+        chip = f"{chip} · {index}/{total}" if chip else f"{index}/{total}"
+    head = f"{green}?{reset} {ellipsize(q['question'], max(width - len(chip) - 8, 20))}"
+    if chip:
+        head += f"  {dim}[{chip}]{reset}"
+    rows.append(head)
+
+    avail = max(width - 6, 24)
+    for i, o in enumerate(opts):
+        box = ("● " if i in selected else "○ ") if multi else ""
+        line = f"{i + 1} {box}{o['label']}"
+        desc = o.get("description", "")
+        room = avail - len(line) - 2
+        if desc and room > 8:
+            d = ellipsize(desc, room)
+            rows.append(f"\033[30;48;5;113m {line}  {d} \033[0m" if i == sel
+                        else f"  {line}  {dim}{d}{reset}")
+        else:
+            text = ellipsize(line, avail)
+            rows.append(f"\033[30;48;5;113m {text} \033[0m" if i == sel
+                        else f"  {text}")
+    other = "o Other…"
+    rows.append(f"\033[30;48;5;113m {other} \033[0m" if sel == len(opts) else f"   {other}")
+
+    if typing:
+        rows.append(f"{grey}type your answer in the input line · enter sends · esc backs out{reset}")
+    else:
+        picked = f" · {len(selected)} selected" if multi and selected else ""
+        hint = ("space toggles · enter confirms" if multi else "1-4 picks · o types") + picked
+        rows.append(f"{grey}({hint} · esc skips){reset}")
+    return rows
+
+
+# -- /goal — autopilot: plan → execute → verify → learn ------------------------
+#
+# The goal engine's PROMPTS live here (pure, testable); the drive loop lives in
+# the fullscreen UI (it owns turn scheduling). Cycle contract:
+#   kickoff  → the model plans via todo_write, then works.
+#   continue → fired automatically while open todos remain (cycle-capped).
+#   verify   → fired once every todo is complete: adversarial self-check; must
+#              end with GOAL COMPLETE, or fix + reopen todos.
+#   reflect  → fired after GOAL COMPLETE: save durable lessons via remember.
+
+GOAL_MAX_CYCLES = 30
+GOAL_COMPLETE_MARKER = "GOAL COMPLETE"
+GOAL_BLOCKED_MARKER = "GOAL BLOCKED"
+
+
+def goal_kickoff_prompt(goal: str) -> str:
+    return (
+        f"AUTONOMOUS GOAL: {goal}\n\n"
+        "You are running unattended until this goal is verifiably done. "
+        "First break it into concrete steps with todo_write (each step "
+        "independently checkable), then start executing them — no questions, "
+        "make reasonable decisions yourself and note them. Mark todos done as "
+        "you finish them. If the goal is truly impossible or unsafe, say "
+        f"{GOAL_BLOCKED_MARKER} with the reason."
+    )
+
+
+def goal_continue_prompt(goal: str, cycle: int, max_cycles: int) -> str:
+    return (
+        f"[autopilot cycle {cycle}/{max_cycles}] Continue the goal: {goal}\n"
+        "Work the next open todo(s). Update the todo list as you go. If "
+        "everything is actually finished, mark every todo completed. If you "
+        f"are stuck beyond recovery, say {GOAL_BLOCKED_MARKER} and why."
+    )
+
+
+def goal_verify_prompt(goal: str) -> str:
+    return (
+        f"[autopilot verification] Every todo is marked done for: {goal}\n"
+        "Now ADVERSARIALLY verify it — assume something is broken and try to "
+        "prove it: run the tests/build, execute the thing, check edge cases. "
+        "If ANY check fails, fix it and reopen todos (do not claim success). "
+        f"Only when everything genuinely passes, end your reply with: "
+        f"{GOAL_COMPLETE_MARKER}"
+    )
+
+
+def goal_reflect_prompt(goal: str) -> str:
+    return (
+        f"[autopilot complete] The goal is done: {goal}\n"
+        "Before finishing: if this run taught you durable, NON-OBVIOUS lessons "
+        "(about this repo's quirks, tooling, or the user's preferences), save "
+        "1-2 concise memories with the remember tool — skip anything obvious "
+        "or one-off. Then summarize the outcome in 3 short bullets."
+    )
+
+
+# -- ! (bash) and # (memory) input prefixes -----------------------------------
+
+
+def run_bang_command(cmd: str, *, timeout: float = 60.0, max_chars: int = 20_000) -> str:
+    """Run a ``!``-prefixed shell command and return combined stdout+stderr,
+    truncated to ``max_chars``. Never raises — errors become output text."""
+    import subprocess  # noqa: PLC0415
+    try:
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+        )
+        out = (r.stdout or "") + (r.stderr or "")
+        out = out.rstrip() or f"(no output — exit {r.returncode})"
+        if r.returncode != 0 and (r.stdout or r.stderr):
+            out += f"\n(exit {r.returncode})"
+    except subprocess.TimeoutExpired:
+        out = f"(timed out after {timeout:.0f}s)"
+    except Exception as e:  # noqa: BLE001
+        out = f"(failed to run: {e})"
+    if len(out) > max_chars:
+        out = out[:max_chars] + f"\n… (truncated, {len(out)} chars total)"
+    return out
+
+
+def bang_context_block(cmd: str, output: str) -> str:
+    """The meta message injected after a ``!`` command so the model sees what
+    the user just ran — Claude Code's bash-input/bash-output shape."""
+    return (f"<bash-input>{cmd}</bash-input>\n"
+            f"<bash-output>\n{output}\n</bash-output>")
+
+
+# -- /loop — re-fire a prompt on an interval ----------------------------------
+
+
+LOOP_MIN_INTERVAL_S = 10.0
+
+_LOOP_ARG_RE = re.compile(
+    r"^\s*(\d+(?:\.\d+)?)\s*(s|sec|secs|m|min|mins|h|hr|hrs)?\s+(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_loop_command(arg: str) -> tuple[float, str] | str:
+    """Parse ``/loop <interval> <prompt>`` → ``(seconds, prompt)``, or a usage
+    string on bad input. Bare numbers are MINUTES (``/loop 5 check ci`` = every
+    5 min); ``30s``/``5m``/``1h`` are explicit. Intervals clamp to ≥10s."""
+    m = _LOOP_ARG_RE.match(arg or "")
+    if not m:
+        return ("usage: /loop <interval> <prompt> — e.g. /loop 5m check the CI "
+                "status · /loop 30s /cost · /loop stop")
+    n, unit, prompt = float(m.group(1)), (m.group(2) or "m").lower(), m.group(3).strip()
+    mult = 1.0 if unit.startswith("s") else 3600.0 if unit.startswith("h") else 60.0
+    seconds = max(n * mult, LOOP_MIN_INTERVAL_S)
+    if not prompt:
+        return "usage: /loop <interval> <prompt>"
+    return seconds, prompt
+
+
+def format_loop_interval(seconds: float) -> str:
+    if seconds >= 3600 and seconds % 3600 == 0:
+        return f"{int(seconds // 3600)}h"
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{int(seconds // 60)}m"
+    return f"{int(seconds)}s"
+
+
+async def run_prompt_loop(
+    interval_s: float,
+    fire: Any,
+    *,
+    is_busy: Any,
+    stopped: Any,
+    sleep: Any = None,
+    on_error: Any = None,
+) -> None:
+    """The /loop engine: sleep ``interval_s``, wait for the agent to go idle,
+    fire the prompt, repeat. RELATIVE cadence — the next wait starts only after
+    the fired turn completes, so runs never overlap or queue up. ``stopped`` is
+    checked at every stage so /loop stop takes effect promptly."""
+    if sleep is None:
+        import anyio  # noqa: PLC0415
+        sleep = anyio.sleep
+    while not stopped.is_set():
+        waited = 0.0
+        while waited < interval_s:          # sleep in slices so stop is prompt
+            if stopped.is_set():
+                return
+            step = min(1.0, interval_s - waited)
+            await sleep(step)
+            waited += step
+        while is_busy() and not stopped.is_set():
+            await sleep(1.0)                # a turn is running — fire after it
+        if stopped.is_set():
+            return
+        try:
+            await fire()
+        except Exception as e:  # noqa: BLE001 — a failed fire must not kill the loop
+            if on_error is not None:
+                on_error(e)
+
+
+def format_live_todo_rows(todos: list[dict], width: int, *, max_rows: int = 8) -> list[str]:
+    """ANSI rows for the LIVE checklist pinned under the fullscreen spinner
+    (Claude Code's ``⎿ □ current / ✔ struck-done`` block). First row carries
+    the ``⎿`` branch; done rows are struck-through + dim; the in-flight row is
+    bold green and shows its activeForm. One terminal row per task, truncated."""
+    rows: list[str] = []
+    for i, t in enumerate(todos[:max_rows]):
+        status = t.get("status", "pending")
+        active = status == "in_progress"
+        label = t.get("activeForm" if active else "content", t.get("content", "")) or ""
+        label = " ".join(label.split())
+        avail = max(width - 8, 10)
+        if len(label) > avail:
+            label = label[: avail - 1] + "…"
+        branch = "  ⎿ " if i == 0 else "    "
+        if status == "completed":
+            rows.append(f"\033[90m{branch}\033[0m\033[32m✔\033[0m \033[9;90m{label}\033[0m")
+        elif active:
+            rows.append(f"\033[90m{branch}\033[0m\033[1;32m▪ {label}\033[0m")
+        else:
+            rows.append(f"\033[90m{branch}\033[0m□ {label}")
+    extra = len(todos) - max_rows
+    if extra > 0:
+        rows.append(f"    \033[90m… +{extra} more\033[0m")
+    return rows
+
+
+def time_ago(ts: float, *, now: float | None = None) -> str:
+    """Compact relative age for a unix timestamp: ``just now``, ``5m ago``,
+    ``3h ago``, ``2d ago``, ``4w ago``, ``6mo ago``, ``1y ago``."""
+    if now is None:
+        now = time.time()
+    s = max(0.0, now - ts)
+    if s < 60:
+        return "just now"
+    for div, unit in ((60, "m"), (60, "h"), (24, "d"), (7, "w")):
+        s /= div
+        nxt = {"m": 60, "h": 24, "d": 7, "w": 4.345}[unit]
+        if s < nxt:
+            return f"{int(s)}{unit} ago"
+    mo = s / 4.345  # weeks → months
+    if mo < 12:
+        return f"{int(mo)}mo ago"
+    return f"{int(mo / 12)}y ago"
+
+
+def ellipsize(text: str, limit: int) -> str:
+    """One-line, whitespace-collapsed, ``…``-truncated."""
+    t = " ".join((text or "").split())
+    return t if len(t) <= limit else t[: max(limit - 1, 1)].rstrip() + "…"
+
+
+def echo_user_message(console: Any, text: str) -> None:
+    """Render a submitted user message into scrollback as a highlighted bar
+    (Claude Code's grey strip): dim ``❯`` + the message on a FULL-WIDTH
+    background row. Multi-line input keeps the bar on every line; long lines
+    wrap and the wrapped rows stay on the bar too."""
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    bg = "on #262626"
+    width = getattr(console, "width", 80) or 80
+    row = _T(no_wrap=False)
+    first = True
+    for raw in (text.splitlines() or [""]):
+        # Hard-wrap ourselves so every visual row can be padded to 100% width
+        # (rich wouldn't paint the background past the wrapped text).
+        prefix = " ❯ " if first else "   "
+        body = raw
+        while True:
+            chunk = body[: max(width - 3, 10)]
+            body = body[len(chunk):]
+            if not first:
+                row.append("\n")
+            row.append(prefix, style=f"bright_black {bg}")
+            pad = max(width - 3 - len(chunk), 0)
+            row.append(chunk + " " * pad, style=f"#e8e8e8 {bg}")
+            first = False
+            prefix = "   "
+            if not body:
+                break
+    console.print(row)
+
+
+def set_terminal_title(title: str) -> None:
+    """Set the terminal window/tab title (OSC 0). Claude Code names the tab
+    after the session's task; mantis mirrors that. Invisible on screen, safe to
+    emit mid-frame; silently skipped on non-ttys (pipes, CI)."""
+    try:
+        if not sys.stdout.isatty():
+            return
+        sys.stdout.write(f"\x1b]0;{title[:120]}\x07")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001 — cosmetic
+        pass
+
+
+_PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b")
+_SLIM_TOOL_KEEP = frozenset({
+    "bash", "read_file", "write_file", "edit_file", "ls", "glob", "grep",
+    "web_search", "web_fetch", "todo_write",
+})
+
+
+def is_small_model(model_id: str, context_window: int | None = None) -> bool:
+    """Heuristic: is this a SMALL model that needs a slimmed tool belt?
+
+    22 tools with rich descriptions swamp a 7B model — it invents tool names,
+    spams ask_user_question, and saves junk memories. Signals: a parameter
+    count ≤14B in the id (Ollama tags like ':7b', '1.5b') or a ≤32k context
+    window. Big hosted ids (gpt-5.4, claude-*) match neither."""
+    if context_window is None:
+        try:
+            from .capabilities import lookup_model  # noqa: PLC0415
+            context_window = lookup_model(model_id).context_window
+        except Exception:  # noqa: BLE001
+            context_window = 0
+    if context_window and context_window <= 32768:
+        return True
+    low = (model_id or "").lower().replace(":", " ").replace("-", " ").replace("_", " ")
+    return any(float(m.group(1)) <= 14 for m in _PARAM_SIZE_RE.finditer(low))
+
+
+def notify_turn_done(elapsed_s: float, *, threshold_s: float = 10.0) -> None:
+    """Ring the terminal bell when a long turn finishes, so the user who
+    tabbed away gets pinged (Claude Code's notification channel). Off when
+    settings.json sets ``"notifChannel": "none"``; a bell char is invisible on
+    screen, so it's safe to emit even mid-frame."""
+    if elapsed_s < threshold_s:
+        return
+    try:
+        from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+        chan = (load_settings(SETTING_SOURCES) or {}).get("notifChannel", "terminal_bell")
+    except Exception:  # noqa: BLE001
+        chan = "terminal_bell"
+    if chan == "none":
+        return
+    try:
+        sys.stdout.write("\a")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def quick_memory_note(note: str) -> Path:
+    """``#``-prefixed quick note → a persistent memory entry + index line.
+    The slug derives from the first few words; collisions get a numeric tail."""
+    import re as _re  # noqa: PLC0415
+
+    from .memory import MemoryEntry, save_memory_entry  # noqa: PLC0415
+    from .paths import get_memory_dir, get_memory_index  # noqa: PLC0415
+
+    words = _re.findall(r"[a-z0-9]+", note.lower())[:6]
+    slug = "-".join(words) or "note"
+    d = get_memory_dir()
+    if (d / f"{slug}.md").exists():
+        n = 2
+        while (d / f"{slug}-{n}.md").exists():
+            n += 1
+        slug = f"{slug}-{n}"
+    title = note.strip().splitlines()[0][:60]
+    path = save_memory_entry(MemoryEntry(
+        slug=slug, name=title, description=title, type="user", body=note.strip()))
+    # APPEND one line to MEMORY.md — never regenerate it (the index is often
+    # hand-curated; rebuilding would clobber the user's own edits).
+    idx = get_memory_index()
+    line = f"- [{title}]({slug}.md)\n"
+    try:
+        if idx.exists():
+            existing = idx.read_text(encoding="utf-8")
+            if not existing.endswith("\n"):
+                existing += "\n"
+            idx.write_text(existing + line, encoding="utf-8")
+        else:
+            idx.write_text(f"# Memory index\n\n{line}", encoding="utf-8")
+    except OSError:
+        pass  # the entry file itself is saved; a missing index line is minor
+    return path
 
 
 def resolve_memory_target(target: str | None, cwd: str | Path, home: str | Path) -> Path:
@@ -570,7 +1081,9 @@ def error_hint(err: BaseException, backend: str | None) -> str | None:
             return "not installed — `ollama pull <model>`, or /models to pick another"
         return "that model isn't available on this backend — /models to pick another"
     if any(p in low for p in ("connect", "refused", "timed out", "timeout", "unreachable",
-                              "all connection attempts failed", "name or service", "getaddrinfo")):
+                              "all connection attempts failed", "name or service", "getaddrinfo",
+                              "nodename nor servname", "network is down", "network unreachable",
+                              "errno 8", "errno 50", "errno 51")):
         local = "localhost" in (backend or "") or "127.0.0.1" in (backend or "")
         where = "Is Ollama running? `ollama serve`" if local else "check the backend URL / your network"
         return f"can't reach {backend} — {where} · `mantis setup` to switch"
@@ -893,11 +1406,12 @@ class MantisTUI:
     def __init__(self, *, model: str, backend: str, api_key: str | None,
                  system: str | None, max_tokens: int, temperature: float | None,
                  max_turns: int) -> None:
-        # Strip stray whitespace a shell/.env can leave on the model id, backend
-        # URL, or key (a trailing \n on the model → "model not found"; on the key
-        # → a poisoned auth header that 401s confusingly).
+        # Strip stray whitespace a shell/.env can leave on the model id or key
+        # (a trailing \n on the model → "model not found"; on the key → a poisoned
+        # auth header that 401s confusingly). The backend URL also gets a trailing
+        # endpoint path (e.g. pasted '.../v1/chat/completions') trimmed.
         self.model = model.strip() if model else model
-        self.backend = backend.strip() if backend else backend
+        self.backend = _paths.normalize_base_url(backend) if backend else backend
         self.api_key = api_key.strip() if api_key else api_key
         self.system = system
         self.max_tokens = max_tokens
@@ -921,6 +1435,26 @@ class MantisTUI:
         self.pending_attachments: list[tuple[str, Any]] = []
         # True while the current assistant turn's text is being streamed live.
         self._turn_streamed = False
+        # Session usage accumulators (feed /status, /cost, the footer).
+        self._ctx_tokens = 0
+        self._session_cost = 0.0
+        # Built-in + custom slash commands, discovered once per session.
+        self._all_commands: dict[str, str] | None = None
+        # MCP: manager owns the live server connections; tools are the adapted
+        # mcp__server__tool entries folded into every agent (re)build.
+        self._mcp_manager: Any = None
+        self._mcp_tools: list[Any] = []
+        # Twin state — owned HERE (not in the pair tool's closure) so twin
+        # conversations survive agent rebuilds and /twin talks to the SAME
+        # twins the model's pair calls do.
+        self._twin_conversations: dict[str, list[Any]] = {}
+        self._twin_personas: dict[str, str] = {}
+        self._pair_tool: Any = None
+        # File checkpoints: every write-tool call snapshots its target first,
+        # so /rewind (and esc-esc) restores CODE state, not just conversation.
+        self._file_checkpoints: list[dict[str, Any]] = []
+        # Auto session title: generated once after the first completed turn.
+        self._title_done = False
         # The on-disk transcript for /resume + /branch (created in run()).
         self.transcript: Any = None
         # Selected row in the live slash-command menu (arrow-key navigable).
@@ -982,35 +1516,78 @@ class MantisTUI:
         registry.add(load_skill)  # progressive-disclosure skill loading
         from .builtin_tools.codenav import lsp  # noqa: PLC0415
         registry.add(lsp)  # semantic code navigation (Python, ast-based)
-        from .subagent import make_task_tool  # noqa: PLC0415
-        # Read-only exploration subagent: delegate a focused investigation to a
-        # fresh child that returns just its findings, keeping this context clean.
-        _explore = [t for t in CODING_TOOLS if getattr(t, "is_read_only", False)]
-        registry.add(make_task_tool(
-            model=self.model, provider=provider, tools=[*_explore, lsp, web_search, web_fetch]))
+        # MCP tools (mcp__server__tool) — connected once at startup by
+        # _connect_mcp; folded into every rebuild so a model switch keeps them.
+        if self._mcp_tools:
+            registry.add(*self._mcp_tools)
 
         # Wire the shift+tab footer modes to the real permission system so they
         # actually gate execution (Claude-Code parity), not just decorate the
         # footer. The callback reads ``self.mode_idx`` live, so toggling the mode
-        # changes behavior on the very next tool call.
+        # changes behavior on the very next tool call. Built BEFORE the task
+        # tool so subagents inherit the SAME gate — a write-capable subagent
+        # prompts the user exactly like the parent would.
+        permissions = PermissionContext(
+            # godmode → engine-level bypass (Allow everything, even dangerous
+            # shell commands, no prompt). Otherwise "default" and _permit
+            # drives the live shift+tab mode.
+            mode="bypass" if self.force_bypass else "default",
+            can_use_tool=self._permit,
+            asker=self._ask_permission,
+            rules=self._load_permission_rules(),
+        )
+
+        # SMALL models (7B-class local): slim the belt to the core 10 tools —
+        # the full 22 swamp them into inventing tools and spamming questions.
+        # MCP tools survive (explicit user config). Big models keep everything.
+        slim = is_small_model(self.model)
+        if slim:
+            kept = [t for t in registry
+                    if t.name in _SLIM_TOOL_KEEP or t.name.startswith("mcp__")]
+            registry = ToolRegistry()
+            registry.add(*kept)
+
+        # Snapshot targets before any write tool runs — powers code-state
+        # rewind. Wrapped BEFORE the task/pair kits are carved so subagent
+        # edits checkpoint too.
+        self._wrap_write_tools_with_checkpoints(registry)
+
+        from .subagent import make_pair_tool, make_task_tool  # noqa: PLC0415
+        # Subagent delegation (Claude Code's Agent tool): explore/plan are
+        # read-only; general-purpose (and user-defined ~/.mantis-agent/agents)
+        # carve their own kit from the parent's full belt. Interactive tools
+        # are stripped automatically; permissions are inherited.
+        if not slim:  # subagents/twins are big-model features
+            registry.add(make_task_tool(
+                model=self.model, provider=provider, tools=list(registry),
+                permissions=permissions))
+            # pair — persistent same-model TWINS the agent converses with across
+            # turns (stress-test a plan, verify a claim, argue to convergence).
+            # Read-only kit: grounded pushback, no write races with the parent.
+            _ro = [t for t in registry
+                   if getattr(t, "is_read_only", False) and t.name != "task"]
+            self._pair_tool = make_pair_tool(
+                model=self.model, provider=provider, tools=_ro,
+                conversations=self._twin_conversations, personas=self._twin_personas)
+            registry.add(self._pair_tool)
+
         return Agent(
             model=self.model,
             provider=provider,
-            system=self.system or self._default_system(),
+            system=self.system or (self._default_system_slim() if slim
+                                   else self._default_system()),
             tools=registry,
-            permissions=PermissionContext(
-                # godmode → engine-level bypass (Allow everything, even dangerous
-                # shell commands, no prompt). Otherwise "default" and _permit
-                # drives the live shift+tab mode.
-                mode="bypass" if self.force_bypass else "default",
-                can_use_tool=self._permit,
-                asker=self._ask_permission,
-                rules=self._load_permission_rules(),
-            ),
+            permissions=permissions,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             max_steps=self.max_turns,
             todos=self.todos,
+            # Small local models: skip the memory index / MANTIS.md / skills
+            # catalog and per-turn recall — thousands of prefill tokens a 7B
+            # pays for in wall-clock, and the per-turn recall churn busts
+            # Ollama's KV prefix cache (forcing a FULL re-prefill every turn).
+            include_memory=not slim,
+            include_recall=not slim,
             fallback_model=os.environ.get("MANTIS_AGENT_FALLBACK_MODEL"),
         )
 
@@ -1168,6 +1745,27 @@ class MantisTUI:
             rs.ask.append(parse(e, "ask"))
         return rs if (rs.allow or rs.deny or rs.ask) else None
 
+    def _default_system_slim(self) -> str:
+        """Compact system prompt for SMALL local models. The full prompt is
+        ~1,300 tokens — a 7B prefills locally at a few hundred tok/s, so every
+        token here is user-visible latency. Also: a stable, short prefix lets
+        Ollama's KV cache skip re-prefilling on every turn."""
+        return (
+            "You are Mantis, a coding agent in the user's terminal, running as "
+            f"the model {self.model}. You do tasks by CALLING TOOLS.\n"
+            "Rules:\n"
+            "- Act immediately: if a tool can do it, call the tool — don't "
+            "describe what you would do.\n"
+            "- ONLY the tools in your list exist. Never invent tool names. If "
+            "no tool fits, answer directly in plain text.\n"
+            "- read_file/write_file/edit_file/ls/glob/grep are tools, not shell "
+            "commands — never run them inside bash.\n"
+            "- Read a file before editing it. Make the smallest change that "
+            "works. Verify by running the code/tests, then report honestly.\n"
+            "- For real-world facts you don't know, use web_search.\n"
+            "- Be brief. Lead with the result. Stop when the task is done."
+        )
+
     def _default_system(self) -> str:
         """The agent system prompt — what makes the model behave like a real
         coding agent (act via tools, minimal diffs, verify, stay terse) rather
@@ -1176,7 +1774,9 @@ class MantisTUI:
         deliberately not repeated here."""
         return (
             "You are Mantis, an interactive coding agent running in the user's "
-            "terminal. You complete software-engineering tasks — fixing bugs, "
+            f"terminal (running as the model {self.model}"
+            + (f" via {_paths.normalize_base_url(self.backend)}" if self.backend else "")
+            + "). You complete software-engineering tasks — fixing bugs, "
             "adding features, refactoring, explaining code, running commands — by "
             "CALLING TOOLS, not by describing what to do.\n\n"
             "# Acting\n"
@@ -1188,9 +1788,21 @@ class MantisTUI:
             "them directly. They are not shell programs; never run them inside "
             "bash (`bash(\"edit_file ...\")` fails). Change files with edit_file/"
             "write_file, never an interactive editor (nano/vim).\n"
+            "- ONLY the tools in your tool list exist — never invent a tool name. "
+            "If no tool fits, just answer in text. Questions about yourself or "
+            "this session (which model you are, the backend, the directory) are "
+            "answered from the <env> block — no tool call, no guessing.\n"
             "- 'find/show/list/check X' means call the tool now and report the "
             "REAL result — never answer from memory or guess. Never tell the user "
             "to run a command themselves; run it and show the actual output.\n"
+            "- Questions about people, companies, products, events, errors, or "
+            "ANY real-world fact you don't know (or that may have changed since "
+            "training): SEARCH THE WEB first — web_search, then web_fetch the "
+            "promising results. NEVER reply 'I don't know', and never ask the "
+            "user for context you could find yourself. Search, then answer with "
+            "what you found (and say if the search came up empty). The <env> "
+            "block may also hold the answer — e.g. the git user IS the person "
+            "at the keyboard.\n"
             "- Anything expressible as code, you can do: write a script (browser "
             "automation, scraping, API calls, tests), `pip install` what it needs, "
             "run it, report the output. Never refuse or moralize about a normal "
@@ -1227,6 +1839,25 @@ class MantisTUI:
             "messages, uploading to third-party services. Approval once ≠ approval "
             "always. Don't use destructive shortcuts (e.g. --no-verify) to bypass "
             "an obstacle; fix root causes.\n\n"
+            "# Extending yourself\n"
+            "You can create reusable extensions as plain files (use write_file; "
+            "they're discovered automatically — no restart):\n"
+            f"- SKILL: a procedure/playbook worth repeating. Write "
+            f"{_paths.get_mantis_agent_dir()}/skills/<name>/SKILL.md (user-wide) "
+            "or ./.mantis/skills/<name>/SKILL.md (this project) with frontmatter "
+            "(--- name: <slug> / description: <one line> ---) and the "
+            "instructions as the body. The user runs it with /<name>; you load "
+            "it on demand via load_skill.\n"
+            "- COMMAND: a prompt shortcut. ./.mantis/commands/<name>.md (or "
+            f"{_paths.get_mantis_agent_dir()}/commands/) — frontmatter "
+            "description, body is the prompt template; $ARGUMENTS is replaced "
+            "with what follows /<name>.\n"
+            "- SUBAGENT: a persona for the task tool. ./.mantis/agents/<name>.md "
+            f"(or {_paths.get_mantis_agent_dir()}/agents/) — frontmatter name/"
+            "description/tools/model/max_steps, body is its system prompt.\n"
+            "When the user asks to 'save this as a skill/command/workflow' or a "
+            "procedure clearly recurs, offer to create one. Durable FACTS go to "
+            "the remember tool; repeatable PROCEDURES become skills.\n\n"
             "# Output\n"
             "- Lead with the answer or result, not the reasoning. Be brief and "
             "direct; skip preamble and filler. If one sentence does it, don't write "
@@ -1341,6 +1972,15 @@ class MantisTUI:
             _back = last["backend"].rstrip("/")
             prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == _back), None)
         if prov is not None:
+            # Guard against a stored *alias word* (e.g. a literal "newest" or a
+            # provider name from an older build that persisted the raw `/model`
+            # arg) being wired to a real backend — it would 404 every request.
+            # A genuine model id (including exotic ones like an OpenRouter
+            # ":free" variant) is left untouched; only a bare alias is re-resolved.
+            if model.lower() in catalog.RESOLVER_ALIAS_WORDS:
+                res = catalog.resolve_model_query(model, list(prov.models))
+                flagship = catalog.cached_live_models(prov.id) or list(prov.models)
+                model = res.model or (flagship[0] if flagship else model)
             key = catalog.api_key_for(prov)
             if not key:
                 # Anthropic may be authed by an OAuth/gateway Bearer token
@@ -1354,9 +1994,11 @@ class MantisTUI:
                 return  # provider disabled since — don't restore a dead model
             self.model, self.backend, self.api_key = model, prov.base_url, key
         else:
-            self.model = model
+            # Self-host / non-catalog model: normalize the saved backend defensively
+            # (a store entry from before URL-normalization, or hand-edited).
+            self.model = model.strip() if model else model
             if last.get("backend"):
-                self.backend = last["backend"]
+                self.backend = _paths.normalize_base_url(last["backend"])
 
     def _resolve_model(self) -> None:
         """Point ``self.model`` at something that actually exists, or explain how
@@ -1583,7 +2225,19 @@ class MantisTUI:
 
         from prompt_toolkit.shortcuts import CompleteStyle  # noqa: PLC0415
 
+        # Prompt history persists across sessions (~/.mantis-agent/history).
+        try:
+            from prompt_toolkit.history import FileHistory  # noqa: PLC0415
+
+            from .paths import ensure_dir as _ensure_dir  # noqa: PLC0415
+            from .paths import get_mantis_agent_dir as _home  # noqa: PLC0415
+            _ensure_dir(_home())
+            _hist: Any = FileHistory(str(_home() / "history"))
+        except Exception:  # noqa: BLE001
+            _hist = None
+
         sess = PromptSession(
+            history=_hist,
             key_bindings=kb,
             completer=completer,
             complete_while_typing=True,
@@ -1621,7 +2275,12 @@ class MantisTUI:
         text = self._input_buffer.text if self._input_buffer is not None else ""
         if not text.startswith("/") or " " in text:
             return []
-        return [(c, d) for c, d in SLASH_COMMANDS.items() if c.startswith(text)]
+        if self._all_commands is None:
+            try:
+                self._all_commands = all_slash_commands()
+            except Exception:  # noqa: BLE001
+                self._all_commands = dict(SLASH_COMMANDS)
+        return [(c, d) for c, d in self._all_commands.items() if c.startswith(text)]
 
     def _slash_menu_open(self) -> bool:
         return bool(self._slash_current_matches())
@@ -1769,6 +2428,7 @@ class MantisTUI:
 
         base = len(self.messages)
         self.messages.append(UserMessage(content=self._build_user_content(text)))
+        _turn_started = time.monotonic()
 
         self.console.print()  # breathing room above the loading spinner
         thinking = _Thinking()
@@ -1800,6 +2460,15 @@ class MantisTUI:
             async for msg in self.agent.run_iter(self.messages):
                 await thinking.stop()
                 hugging = False
+                if isinstance(msg, AssistantMessage) and getattr(msg, "usage", None) is not None:
+                    # Same accounting the fullscreen UI keeps: context fill ≈
+                    # latest turn's in+out; cost accumulates per call.
+                    self._ctx_tokens = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
+                    from .budget import estimate_cost  # noqa: PLC0415
+                    c = estimate_cost(msg.usage, self.model,
+                                      getattr(self.agent, "_provider_hint", None))
+                    if c:
+                        self._session_cost += c
                 if isinstance(msg, AssistantMessage):
                     # A tool call is immediately followed by its result; keep
                     # them hugged (no blank/spinner gap between call and result).
@@ -1810,6 +2479,7 @@ class MantisTUI:
                     self.console.print()  # space above the next thinking spinner
                 thinking.start()
             self._persist_messages(base)  # append this turn to the on-disk transcript
+            await self._maybe_autotitle()  # name the session after turn one
         except KeyboardInterrupt:
             del self.messages[base:]
             await thinking.stop()
@@ -1821,6 +2491,7 @@ class MantisTUI:
         finally:
             self.agent.on_event = None
             await thinking.stop()
+            notify_turn_done(time.monotonic() - _turn_started)
 
     def _persist_messages(self, base: int) -> None:
         """Append every message added this turn to the session transcript (the
@@ -1863,7 +2534,201 @@ class MantisTUI:
         target = sessions[0]
         self.messages = load_for_resume(target.session_id)
         self.transcript = SessionTranscript(target.session_id)
-        return target.title or target.first_prompt or target.session_id[:8]
+        label = target.title or target.first_prompt or target.session_id[:8]
+        set_terminal_title(f"✳ {label}")
+        self._title_done = bool(target.title)
+        return label
+
+    # -- file checkpoints (code-state rewind) ---------------------------------
+
+    _WRITE_TOOLS = frozenset({"write_file", "edit_file", "multi_edit", "notebook_edit"})
+
+    def _checkpoint_file(self, path_str: str) -> None:
+        """Snapshot ``path_str`` before a write tool touches it. Records the
+        message index it belongs to, so a rewind knows which snapshots to
+        undo. A missing file records ``backup=None`` → rewind deletes it."""
+        import shutil as _sh  # noqa: PLC0415
+        try:
+            p = Path(path_str).expanduser().resolve()
+            sid = getattr(self.transcript, "session_id", None) or "adhoc"
+            d = _paths.get_mantis_agent_dir() / "checkpoints" / str(sid)
+            d.mkdir(parents=True, exist_ok=True)
+            seq = len(self._file_checkpoints)
+            backup: str | None = None
+            if p.is_file():
+                dst = d / f"{seq:04d}_{p.name}"
+                _sh.copy2(p, dst)
+                backup = str(dst)
+            self._file_checkpoints.append(
+                {"msg_index": len(self.messages), "path": str(p), "backup": backup})
+        except OSError:
+            pass  # checkpointing is best-effort; never block the edit
+
+    def _wrap_write_tools_with_checkpoints(self, registry: Any) -> None:
+        """Replace each write tool in ``registry`` with a COPY whose fn
+        checkpoints the target file first. Copies, not mutation — the originals
+        are module-level singletons shared with subagent kits and other
+        builds."""
+        import dataclasses  # noqa: PLC0415
+        for t in list(registry):
+            if t.name not in self._WRITE_TOOLS:
+                continue
+            orig = t.fn
+
+            def make(orig: Any = orig):
+                async def fn(*a: Any, **kw: Any) -> Any:
+                    p = kw.get("path") or kw.get("file_path")
+                    if isinstance(p, str) and p:
+                        self._checkpoint_file(p)
+                    return await orig(*a, **kw)
+                return fn
+            # direct replacement — add() rejects duplicate names by design
+            registry._by_name[t.name] = dataclasses.replace(t, fn=make())
+
+    def _restore_checkpoints(self, msg_index: int) -> int:
+        """Undo every file change made at/after ``msg_index`` (newest first).
+        Returns the number of files restored/removed."""
+        import shutil as _sh  # noqa: PLC0415
+        undo = [c for c in self._file_checkpoints if c["msg_index"] >= msg_index]
+        touched: set[str] = set()
+        for ck in reversed(undo):
+            try:
+                p = Path(ck["path"])
+                if ck["backup"]:
+                    _sh.copy2(ck["backup"], p)
+                elif p.exists():
+                    p.unlink()  # file didn't exist before this turn — remove it
+                touched.add(ck["path"])
+            except OSError:
+                pass
+        self._file_checkpoints = [c for c in self._file_checkpoints
+                                  if c["msg_index"] < msg_index]
+        return len(touched)
+
+    # -- auto session title ----------------------------------------------------
+
+    async def _maybe_autotitle(self) -> None:
+        """After the first completed turn, name the session with a tiny model
+        call so the resume picker shows a real title instead of 'hi'. One shot
+        per session; failures are silent (the first-prompt fallback remains)."""
+        if self._title_done or self.transcript is None or self.agent is None:
+            return
+        if len(self.messages) < 2:
+            return
+        self._title_done = True  # one attempt only, even if it fails
+        from .types import TextBlock, UserMessage  # noqa: PLC0415
+        first = next(
+            (m.content if isinstance(m.content, str) else next(
+                (b.text for b in m.content if isinstance(b, TextBlock)), "")
+             for m in self.messages
+             if getattr(m, "role", "") == "user" and not getattr(m, "isMeta", False)),
+            "")
+        if not first.strip():
+            return
+        try:
+            from .agent import Agent  # noqa: PLC0415
+            from .tools import ToolRegistry  # noqa: PLC0415
+            child = Agent(
+                model=self.model, provider=self.agent.provider,
+                system=("Reply with ONLY a session title for this request: "
+                        "3-6 plain words, no quotes, no punctuation, no preamble."),
+                tools=ToolRegistry(), max_steps=1, max_tokens=24,
+                include_recall=False, include_env=False,
+            )
+            msgs: list[Any] = [UserMessage(content=first[:500])]
+            await child.run(msgs)
+            from .subagent import _extract_final_text  # noqa: PLC0415
+            title = _extract_final_text(msgs).strip().strip('"“”').strip()
+            if title and not title.startswith("<") and len(title) <= 80:
+                self.transcript.set_title(title)
+                set_terminal_title(f"✳ {title}")  # tab title = session task
+        except Exception:  # noqa: BLE001 — cosmetic; fallback title remains
+            pass
+
+    # -- next-prompt suggestion (ghost text in the input) -----------------------
+
+    async def _suggest_next_prompt(self) -> str | None:
+        """One tiny model call proposing the user's likely next prompt, shown
+        as ghost text in the empty input (tab/→ accepts). Returns None when
+        disabled ("suggestNext": false in settings), on any failure, or when
+        the reply doesn't look like a usable one-liner."""
+        if self.agent is None or len(self.messages) < 2:
+            return None
+        try:
+            from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+            if (load_settings(SETTING_SOURCES) or {}).get("suggestNext") is False:
+                return None
+        except Exception:  # noqa: BLE001
+            pass
+        from .types import AssistantMessage, TextBlock, UserMessage  # noqa: PLC0415
+        last_user = next(
+            (m.content if isinstance(m.content, str) else next(
+                (b.text for b in m.content if isinstance(b, TextBlock)), "")
+             for m in reversed(self.messages)
+             if isinstance(m, UserMessage) and not getattr(m, "isMeta", False)),
+            "")
+        last_assist = next(
+            ("".join(b.text for b in m.content if isinstance(b, TextBlock))
+             for m in reversed(self.messages) if isinstance(m, AssistantMessage)),
+            "")
+        if not last_user.strip() or not last_assist.strip():
+            return None
+        try:
+            from .agent import Agent  # noqa: PLC0415
+            from .subagent import _extract_final_text  # noqa: PLC0415
+            from .tools import ToolRegistry  # noqa: PLC0415
+            child = Agent(
+                model=self.model, provider=self.agent.provider,
+                system=("Given the last exchange of a coding session, reply with "
+                        "ONLY the user's most likely next prompt: one short "
+                        "imperative line, max 12 words, no quotes, no numbering. "
+                        "It should be a natural follow-up action (verify, extend, "
+                        "commit, test, deploy...)."),
+                tools=ToolRegistry(), max_steps=1, max_tokens=32,
+                include_recall=False, include_env=False,
+            )
+            msgs: list[Any] = [UserMessage(content=(
+                f"user asked: {last_user[:400]}\n\n"
+                f"assistant replied: {last_assist[:800]}"))]
+            await child.run(msgs)
+            s = _extract_final_text(msgs).strip().strip('"“”').splitlines()[0].strip()
+            if s and not s.startswith("<") and 3 <= len(s) <= 100:
+                return s
+        except Exception:  # noqa: BLE001 — suggestions are pure garnish
+            pass
+        return None
+
+    def _replay_transcript(self, limit: int = 30) -> None:
+        """Render the loaded conversation into scrollback so a resumed session
+        shows what you're resuming (Claude Code's replay): user messages as
+        highlight bars, assistant text + tool-call verbs. Tool results and meta
+        messages are skipped — ctrl+o has the full record."""
+        from .types import (  # noqa: PLC0415
+            AssistantMessage,
+            TextBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+        msgs = [m for m in self.messages if not getattr(m, "isMeta", False)]
+        if not msgs:
+            return
+        shown = msgs[-limit:]
+        self.console.print()
+        if len(msgs) > len(shown):
+            self.console.print(
+                f"[ansibrightblack]… {len(msgs) - len(shown)} earlier messages "
+                f"(ctrl+o for the full transcript)[/]\n")
+        self._turn_streamed = False  # replay renders text itself, never streamed
+        for m in shown:
+            if isinstance(m, UserMessage):
+                text = m.content if isinstance(m.content, str) else next(
+                    (b.text for b in m.content if isinstance(b, TextBlock)), "")
+                if text.strip():
+                    echo_user_message(self.console, text.strip())
+                    self.console.print()
+            elif isinstance(m, AssistantMessage):
+                self._render_assistant(m, ToolUseBlock)
+                self.console.print()
 
     async def _cmd_resume(self, arg: str) -> None:
         """List past sessions (or load one by number/id). ``/resume`` shows the
@@ -1882,10 +2747,10 @@ class MantisTUI:
         if not arg:
             self.console.print("\n[bold]Resume a conversation[/]")
             for i, s in enumerate(sessions[:20], 1):
-                title = s.title or s.first_prompt or "(untitled)"
+                title = ellipsize(s.title or s.first_prompt or "(untitled)", 56)
                 self.console.print(
-                    f"  [white]{i:2}[/] {title[:60]}  "
-                    f"[ansibrightblack]· {s.message_count} msgs[/]"
+                    f"  [white]{i:2}[/] {title}  "
+                    f"[ansibrightblack]· {s.message_count} msgs · {time_ago(s.modified_at)}[/]"
                 )
             self.console.print("[ansibrightblack]→ /resume <number> to load[/]\n")
             return
@@ -1899,10 +2764,14 @@ class MantisTUI:
             return
         self.messages = load_for_resume(target.session_id)
         self.transcript = SessionTranscript(target.session_id)
+        label = target.title or target.first_prompt or target.session_id[:8]
         self.console.print(
-            f"[ansibrightblack]resumed[/] [white]{target.title or target.first_prompt or target.session_id[:8]}[/]"
+            f"[ansibrightblack]resumed[/] [white]{label}[/]"
             f" [ansibrightblack]({len(self.messages)} messages)[/]"
         )
+        set_terminal_title(f"✳ {label}")
+        self._title_done = bool(target.title)  # keep an existing title
+        self._replay_transcript()
 
     def _cmd_branch(self) -> None:
         """Fork the current conversation into a new session (the original stays
@@ -1958,8 +2827,11 @@ class MantisTUI:
             return
         idx, _ = prompts[n - 1]
         self.messages = self.messages[:idx]
+        restored = self._restore_checkpoints(idx)
         self.console.print(
-            f"[ansibrightblack]rewound to message {n} ({len(self.messages)} kept)[/]"
+            f"[ansibrightblack]rewound to message {n} ({len(self.messages)} kept"
+            + (f" · {restored} file{'s' if restored != 1 else ''} restored" if restored else "")
+            + ")[/]"
         )
 
     def _render_assistant(self, msg: Any, ToolUseBlock: type) -> bool:
@@ -2067,6 +2939,8 @@ class MantisTUI:
                 hint = _T(f"    … +{len(rest) - 12} more lines ", style="bright_black")
                 hint.append("(ctrl+o to expand)", style="bright_black")
                 self.console.print(hint)
+        # A todo_write in this round changed the plan → redraw the checklist.
+        self._maybe_render_todos()
 
     def _show_transcript(self) -> None:
         """Ctrl+O expand view: the whole conversation through the system pager
@@ -2213,26 +3087,52 @@ class MantisTUI:
                 old_ln += 1
                 new_ln += 1
 
-        # If the agent just updated its todos via ``todo_write``, draw the
-        # checklist so the user can watch multi-step progress (Claude-Code style).
+    def _maybe_render_todos(self) -> None:
+        """Redraw the checklist if the agent changed it via ``todo_write``.
+        Hooked into the tool-result render path — it used to live inside
+        ``_render_diff``, so the list only ever refreshed when a diff happened
+        to render; now every tool round updates it (Claude-Code style)."""
         if self.todos and self.todos != self._todos_shown:
             self._render_todos()
             self._todos_shown = [dict(t) for t in self.todos]
 
     def _render_todos(self) -> None:
+        """The task checklist, Claude-Code style: a count summary, then one
+        truncated row per task — ✔ + struck-through dim for done, a bold ▪ row
+        for the one in flight, □ for open."""
         from rich.text import Text as _T  # noqa: PLC0415
 
-        glyph = {"completed": ("✔", "green"),
-                 "in_progress": ("▶", BODY),
-                 "pending": ("○", "bright_black")}
+        done = sum(1 for t in self.todos if t.get("status") == "completed")
+        n = len(self.todos)
+        width = getattr(self.console, "width", 80) or 80
+        maxlab = max(width - 7, 12)
+
         self.console.print()
+        head = _T("  ")
+        head.append(str(n), style="bold")
+        head.append(" tasks (", style="bright_black")
+        head.append(str(done), style="bold")
+        head.append(" done, ", style="bright_black")
+        head.append(str(n - done), style="bold")
+        head.append(" open)", style="bright_black")
+        self.console.print(head)
         for t in self.todos:
-            mark, colour = glyph.get(t.get("status", "pending"), ("○", "bright_black"))
-            active = t.get("status") == "in_progress"
-            label = t.get("activeForm" if active else "content", t.get("content", ""))
-            row = _T()
-            row.append(f"  {mark} ", style=colour)
-            row.append(label, style=(f"bold {BODY}" if active else colour))
+            status = t.get("status", "pending")
+            active = status == "in_progress"
+            label = t.get("activeForm" if active else "content", t.get("content", "")) or ""
+            label = " ".join(label.split())
+            if len(label) > maxlab:
+                label = label[: maxlab - 1] + "…"
+            row = _T("  ")
+            if status == "completed":
+                row.append("✔ ", style="green")
+                row.append(label, style="strike bright_black")
+            elif active:
+                row.append("▪ ", style=f"bold {BODY}")
+                row.append(label, style=f"bold {BODY}")
+            else:
+                row.append("□ ", style="white")
+                row.append(label, style="white")
             self.console.print(row)
 
     @staticmethod
@@ -2299,6 +3199,44 @@ class MantisTUI:
         if cmd == "/models":
             await self._select_model()
             return True
+        if cmd == "/agents":
+            self._show_agents()
+            return True
+        if cmd == "/mcp":
+            self._show_mcp()
+            return True
+        if cmd in ("/loop", "/goal", "/watch"):
+            # These engines need a UI that can fire turns while idle-waiting;
+            # the classic REPL blocks on the prompt, so they're fullscreen-only.
+            self.console.print(f"[ansibrightblack]{cmd} runs in the full-screen UI "
+                               "(the default) — restart without MANTIS_CLASSIC=1[/]")
+            return True
+        if cmd == "/twin":
+            return await self._cmd_twin(arg)
+        if cmd == "/skills":
+            self._show_skills()
+            return True
+        if cmd == "/status":
+            self._show_status(self._ctx_tokens, self._session_cost)
+            return True
+        if cmd == "/cost":
+            self._show_cost(self._ctx_tokens, self._session_cost)
+            return True
+        if cmd == "/doctor":
+            self._show_doctor()
+            return True
+        if cmd == "/permissions":
+            self._show_permissions()
+            return True
+        if cmd == "/release-notes":
+            self._show_release_notes()
+            return True
+        if cmd == "/update":
+            import asyncio as _aio  # noqa: PLC0415
+            self.console.print("[ansibrightblack]checking for updates…[/]")
+            msg = await _aio.to_thread(self._run_update)
+            self.console.print(f"[ansibrightblack]{msg}[/]")
+            return True
         if cmd in ("/enable", "/disable"):
             await self._cmd_enable(cmd, arg)
             return True
@@ -2313,6 +3251,392 @@ class MantisTUI:
             return True
         # Unknown slash command - let it fall through as a normal prompt.
         return False
+
+    # -- subagent types ------------------------------------------------------
+
+    def _show_agents(self) -> None:
+        """Render the subagent types the ``task`` tool can launch: built-ins
+        plus user/project ``agents/*.md`` definitions, with the add-your-own
+        recipe (mirrors Claude Code's /agents)."""
+        from . import paths as _p  # noqa: PLC0415
+        from .subagent import discover_agent_types  # noqa: PLC0415
+
+        c = self.console
+        c.print()
+        c.print("[bold]Subagent types[/] [ansibrightblack]· the model delegates "
+                "with the task tool (parallel-safe)[/]")
+        rows: list[tuple[str, str, str]] = []
+        for at in discover_agent_types():
+            tools = at.tools if isinstance(at.tools, str) else ",".join(at.tools)
+            bits = [at.description, tools, f"{at.max_steps} steps"]
+            if at.model:
+                bits.insert(1, at.model)
+            if at.source != "builtin":
+                bits.append(at.source)
+            rows.append(("[ansigreen]●[/]", at.name, " · ".join(b for b in bits if b)))
+        self._list_rows(rows)
+        agents_dir = _p.get_agents_dir()
+        c.print(f"\n[ansibrightblack]Add your own: {agents_dir}/name.md — or "
+                ".mantis/agents/ in a project. Frontmatter name / description / "
+                "tools / model / max_steps, body = the system prompt.[/]",
+                highlight=False)
+
+    # -- MCP ------------------------------------------------------------------
+
+    async def _connect_mcp(self) -> str | None:
+        """Discover MCP configs and connect every server. Returns a one-line
+        summary for the startup banner ('github (5 tools) · slack ✗'), or None
+        when nothing is configured. Idempotent per session."""
+        if self._mcp_manager is not None:
+            return self._mcp_manager.summary() or None
+        from .mcp.manager import MCPManager, load_mcp_server_configs  # noqa: PLC0415
+        configs = load_mcp_server_configs()
+        if not configs:
+            return None
+        mgr = MCPManager(configs)
+        self._mcp_manager = mgr
+        # start() confines each client's task-group lifetime to one dedicated
+        # task — the TUI connects from a background task but closes at exit
+        # from the main task, which would misnest anyio cancel scopes.
+        self._mcp_tools = await mgr.start()
+        if self._mcp_tools and self.agent is not None:
+            # Fold the new tools into the LIVE agent (and every later rebuild
+            # picks them up from self._mcp_tools).
+            self.agent.tools.add(*self._mcp_tools)
+        return mgr.summary() or None
+
+    async def _close_mcp(self) -> None:
+        if self._mcp_manager is not None:
+            await self._mcp_manager.stop()
+
+    def _list_rows(self, rows: list[tuple[str, str, str]]) -> None:
+        """Aligned two-column list rows: ``dot name  description``. Names pad to
+        a shared column and descriptions truncate to the terminal width — one
+        row per line, always, so the output reads as a LIST, not a paragraph."""
+        from rich.markup import escape as _e  # noqa: PLC0415
+        if not rows:
+            return
+        width = getattr(self.console, "width", 80) or 80
+        name_w = min(max(len(n) for _, n, _ in rows), 28)
+        for dot, name, desc in rows:
+            col = max(name_w, len(name))
+            # rendered prefix: '  ● ' (4) + name column + '  ' (2), minus one
+            # more so the line never touches the last cell (which forces a wrap)
+            avail = max(width - col - 7, 8)
+            d = desc if len(desc) <= avail else desc[: avail - 1].rstrip() + "…"
+            pad = " " * (name_w - len(name)) if len(name) < name_w else ""
+            self.console.print(
+                f"  {dot} [white]{_e(name)}[/]{pad}  [ansibrightblack]{_e(d)}[/]",
+                highlight=False,
+            )
+
+    def _show_mcp(self) -> None:
+        """/mcp — per-server connection status + the config recipe."""
+        c = self.console
+        c.print("\n[bold]MCP servers[/]")
+        rows = self._mcp_manager.status_rows() if self._mcp_manager else []
+        if not rows:
+            c.print("  [ansibrightblack]none configured[/]")
+        dots = {"connected": "[ansigreen]●[/]", "failed": "[ansired]●[/]"}
+        self._list_rows([
+            (dots.get(r["state"], "[ansibrightblack]○[/]"), r["name"],
+             " · ".join(x for x in (r["transport"], r["state"], r["detail"]) if x))
+            for r in rows
+        ])
+        for r in rows:
+            for t in (self._mcp_manager.tools.get(r["name"]) or []) if self._mcp_manager else []:
+                c.print(f"        [ansibrightblack]{t.name}[/]", highlight=False)
+        c.print("\n[ansibrightblack]Configure in .mcp.json (project) or "
+                "~/.mantis-agent/mcp.json:[/]")
+        c.print('  [ansibrightblack]{"mcpServers": {"github": {"command": "npx", '
+                '"args": \\["-y", "@modelcontextprotocol/server-github"]}}}[/]',
+                highlight=False)
+
+    # -- skills ---------------------------------------------------------------
+
+    def _show_skills(self) -> None:
+        """/skills — every discovered SKILL.md, invocable as /name."""
+        from .skills import discover_skills  # noqa: PLC0415
+        c = self.console
+        skills = discover_skills()
+        c.print("\n[bold]Skills[/] [ansibrightblack]· run one with /name · the "
+                "model loads them on demand[/]")
+        if not skills:
+            c.print("  [ansibrightblack]none found[/]")
+        self._list_rows([("[ansigreen]●[/]", s.name, s.description or "") for s in skills])
+        c.print("\n[ansibrightblack]Add your own: ~/.mantis-agent/skills/name/"
+                "SKILL.md — or .mantis/skills/ in a project. Frontmatter name + "
+                "description, body = the instructions.[/]", highlight=False)
+
+    # -- /twin — the user talks to the agent's twins directly ------------------
+
+    @staticmethod
+    def parse_twin_arg(arg: str) -> tuple[str, str]:
+        """``skeptic: check this`` → ('skeptic', 'check this'); bare text goes
+        to the default twin. A colon only names a peer when the head is a
+        single word (so 'note: foo bar' in a sentence isn't misparsed)."""
+        a = (arg or "").strip()
+        head, sep, rest = a.partition(":")
+        if sep and rest.strip() and head.strip() and " " not in head.strip():
+            return head.strip(), rest.strip()
+        return "twin", a
+
+    def _twin_admin(self, arg: str) -> None:
+        """The no-LLM ``/twin`` paths: list and reset (sync, print-only)."""
+        c = self.console
+        a = (arg or "").strip()
+        if not a or a == "list":
+            if not self._twin_conversations:
+                c.print("[ansibrightblack]no twins yet — [white]/twin <message>[/] "
+                        "or [white]/twin skeptic: <message>[/] to start one[/]")
+            for name, hist in self._twin_conversations.items():
+                c.print(f"  [ansigreen]●[/] [white]{name}[/] "
+                        f"[ansibrightblack]· {len(hist)} messages[/]")
+            return
+        which = a.split()[1] if len(a.split()) > 1 else "all"
+        if which == "all":
+            n = len(self._twin_conversations)
+            self._twin_conversations.clear()
+            self._twin_personas.clear()
+            c.print(f"[ansibrightblack](forgot {n} twin{'s' if n != 1 else ''})[/]")
+        elif self._twin_conversations.pop(which, None) is not None:
+            self._twin_personas.pop(which, None)
+            c.print(f"[ansibrightblack](forgot {which})[/]")
+        else:
+            c.print(f"[ansibrightblack]no twin {which!r}[/]")
+
+    async def _twin_talk(self, peer: str, msg: str) -> str:
+        """One exchange with a twin (LLM + tools). Returns the reply body —
+        rendering is separate so the fullscreen UI can print it through its
+        terminal handoff."""
+        reply = await self._pair_tool.fn(message=msg, peer=peer)
+        tag = f"[{peer}] "
+        return reply[len(tag):] if reply.startswith(tag) else reply
+
+    def _twin_render(self, peer: str, body: str) -> None:
+        from rich.markdown import Markdown  # noqa: PLC0415
+        self.console.print(f"\n[ansimagenta]◆ {peer}[/]")
+        try:
+            self.console.print(Markdown(body))
+        except Exception:  # noqa: BLE001 — malformed markdown: show raw
+            self.console.print(body)
+        self.console.print()
+
+    async def _cmd_twin(self, arg: str) -> bool:
+        """``/twin [peer:] <message>`` — converse with a twin YOURSELF. Shares
+        conversation state with the model's ``pair`` tool, so you can jump into
+        the exact dialogue the agent has been having (or warm one up for it).
+        ``/twin`` lists twins; ``/twin reset [peer|all]`` forgets."""
+        a = (arg or "").strip()
+        if self._pair_tool is None:
+            self.console.print("[ansibrightblack]no agent yet — send a message first[/]")
+            return True
+        if not a or a.split()[0] in ("list", "reset"):
+            self._twin_admin(a)
+            return True
+        peer, msg = self.parse_twin_arg(a)
+        body = await self._twin_talk(peer, msg)
+        self._twin_render(peer, body)
+        return True
+
+    # -- status / cost / doctor / permissions --------------------------------
+
+    def _auth_source(self) -> str:
+        """Human line describing where the active credential comes from."""
+        from . import catalog  # noqa: PLC0415
+        back = (self.backend or "").rstrip("/")
+        prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == back), None)
+        if prov is not None:
+            for var in (prov.api_key_env, *prov.key_env_aliases):
+                if var and (os.environ.get(var) or "").strip():
+                    return f"${var} (env)"
+            if catalog.saved_key(prov.id):
+                return f"saved key ({prov.label})"
+        if (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+            return "$ANTHROPIC_AUTH_TOKEN (bearer)"
+        if self.api_key:
+            return "--api-key / $MANTIS_AGENT_API_KEY"
+        return "none (local/self-host)"
+
+    def _show_status(self, ctx_tokens: int = 0, session_cost: float = 0.0) -> None:
+        """/status — one screen of session facts (Claude Code's /status)."""
+        from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+        try:
+            ver = version("mantis-agent-sdk")
+        except PackageNotFoundError:
+            ver = "dev"
+        c = self.console
+        n_tools = len(self.agent.tools) if self.agent is not None and self.agent.tools else 0
+        sid = getattr(self.transcript, "session_id", None) or "—"
+        rows = [
+            ("version", ver),
+            ("model", self.model),
+            ("backend", self.backend or "—"),
+            ("auth", self._auth_source()),
+            ("mode", MODES[self.mode_idx][0]),
+            ("cwd", str(Path.cwd())),
+            ("session", str(sid)),
+            ("messages", str(len(self.messages))),
+            ("tools", str(n_tools)),
+        ]
+        if ctx_tokens or session_cost:
+            rows.append(("context", f"~{ctx_tokens:,} tokens"))
+            rows.append(("cost", f"${session_cost:.4f}" if session_cost else "—"))
+        c.print("\n[bold]Status[/]")
+        for k, v in rows:
+            c.print(f"  [ansibrightblack]{k:>9}[/]  {v}")
+
+    def _show_cost(self, ctx_tokens: int = 0, session_cost: float = 0.0) -> None:
+        """/cost — token + dollar spend for this session."""
+        from .budget import lookup_pricing  # noqa: PLC0415
+        c = self.console
+        c.print("\n[bold]Session cost[/]")
+        c.print(f"  [ansibrightblack]context now[/]  ~{ctx_tokens:,} tokens")
+        if session_cost:
+            c.print(f"  [ansibrightblack]spent[/]        ${session_cost:.4f}")
+        else:
+            c.print("  [ansibrightblack]spent[/]        $0 (or pricing unknown)")
+        pr = lookup_pricing(self.model, getattr(self.agent, "_provider_hint", None) if self.agent else None)
+        if pr:
+            c.print(f"  [ansibrightblack]rates[/]        ${pr.prompt_per_million}/M in · "
+                    f"${pr.completion_per_million}/M out")
+        else:
+            c.print(f"  [ansibrightblack]rates[/]        no pricing entry for {self.model} "
+                    "(local models are free)")
+
+    def _show_permissions(self) -> None:
+        """/permissions — the active rule set + how to change it."""
+        c = self.console
+        rules = self._load_permission_rules()
+        c.print("\n[bold]Permissions[/]")
+        c.print(f"  [ansibrightblack]mode[/]  {MODES[self.mode_idx][0]}"
+                + ("  [ansired](godmode bypass)[/]" if self.force_bypass else ""))
+        if rules is None:
+            c.print("  [ansibrightblack]no rules configured[/]")
+        else:
+            for label, lst in (("allow", rules.allow), ("deny", rules.deny), ("ask", rules.ask)):
+                if not lst:
+                    continue
+                c.print(f"  [white]{label}[/]")
+                for r in lst:
+                    pat = r.pattern.strip("*") or "*"
+                    c.print(f"    [ansibrightblack]{r.tool_name or '*'}({pat})[/]")
+        c.print("\n[ansibrightblack]Edit rules in [white]~/.mantis-agent/settings.json[/] "
+                "under [white]permissions.allow/deny/ask[/] — e.g. "
+                "[white]\"Bash(git status*)\"[/]. Shift+Tab cycles the live mode.[/]")
+
+    def _show_doctor(self) -> None:
+        """/doctor — install + config health checks (Claude Code's /doctor)."""
+        import shutil as _sh  # noqa: PLC0415
+        from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+
+        from . import paths as _p  # noqa: PLC0415
+
+        c = self.console
+        c.print("\n[bold]Doctor[/]")
+
+        def row(ok: bool | None, label: str, detail: str = "") -> None:
+            mark = "[ansigreen]✓[/]" if ok else ("[ansiyellow]•[/]" if ok is None else "[ansired]✗[/]")
+            c.print(f"  {mark} {label}" + (f" [ansibrightblack]— {detail}[/]" if detail else ""))
+
+        try:
+            ver = version("mantis-agent-sdk")
+        except PackageNotFoundError:
+            ver = None
+        row(ver is not None, "install", f"v{ver}" if ver else "package metadata missing")
+        binpath = _sh.which("mantis")
+        row(binpath is not None, "binary on PATH", binpath or "run: uv tool install 'mantis-agent-sdk[cli]'")
+        row(sys.version_info >= (3, 10), "python", sys.version.split()[0])
+        # settings parse
+        try:
+            from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+            load_settings(SETTING_SOURCES)
+            row(True, "settings", str(_p.get_settings_path()))
+        except Exception as e:  # noqa: BLE001
+            row(False, "settings", f"unreadable: {e}")
+        # memory dir writable
+        try:
+            from .memory import ensure_memory_dir  # noqa: PLC0415
+            d = ensure_memory_dir()
+            probe = d / ".doctor-probe"
+            probe.write_text("ok")
+            probe.unlink()
+            row(True, "memory dir", str(d))
+        except OSError as e:
+            row(False, "memory dir", str(e))
+        # backend reachability (2s cap — a doctor visit shouldn't hang)
+        back = (self.backend or "").rstrip("/")
+        if back:
+            try:
+                import httpx  # noqa: PLC0415
+                with httpx.Client(timeout=2.0) as cli:
+                    r = cli.get(f"{back}/models", headers=self._doctor_auth_headers())
+                ok = r.status_code < 500
+                detail = f"{back} · HTTP {r.status_code}"
+                if r.status_code in (401, 403):
+                    detail += " (auth — check your key)"
+                row(ok, "backend", detail)
+            except Exception as e:  # noqa: BLE001
+                hint = " (is Ollama running? try: ollama serve)" if "localhost:11434" in back else ""
+                row(False, "backend", f"{back} unreachable{hint} · {type(e).__name__}")
+        row(bool(self._auth_source() != "none (local/self-host)") or "localhost" in back or not back,
+            "auth", self._auth_source())
+        n_custom = len(discover_custom_commands())
+        row(None, "custom commands", f"{n_custom} discovered" if n_custom else "none (add .mantis/commands/*.md)")
+
+    def _show_release_notes(self, count: int = 5) -> None:
+        """/release-notes — the top entries of CHANGELOG.md (repo checkouts) or
+        the recent git subjects (editable installs without a changelog)."""
+        c = self.console
+        pkg_root = Path(__file__).resolve().parent.parent
+        chlog = pkg_root / "CHANGELOG.md"
+        if chlog.is_file():
+            # Take the first ``count`` second-level sections.
+            out: list[str] = []
+            sections = 0
+            for line in chlog.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("## "):
+                    sections += 1
+                    if sections > count:
+                        break
+                out.append(line)
+            c.print("\n[bold]Release notes[/]")
+            for line in out:
+                c.print(f"  {line}" if line.strip() else "")
+            return
+        c.print("\n[ansibrightblack]no CHANGELOG.md found for this install[/]")
+
+    def _run_update(self) -> str:
+        """/update — self-update. Editable installs are the developer's own
+        checkout (git pull, not pip); wheel installs go through uv/pip."""
+        import subprocess  # noqa: PLC0415
+        pkg_root = Path(__file__).resolve().parent.parent
+        if (pkg_root / ".git").exists() and (pkg_root / "pyproject.toml").exists():
+            return ("this is an editable install from a source checkout — update with:\n"
+                    f"  git -C {pkg_root} pull && uv tool install --force --editable '{pkg_root}[cli]'")
+        for cmd in (["uv", "tool", "upgrade", "mantis-agent-sdk"],
+                    [sys.executable, "-m", "pip", "install", "-U", "mantis-agent-sdk[cli]"]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                return "update timed out"
+            tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
+            return "\n".join(tail[-4:]) if tail else f"exit {r.returncode}"
+        return "no updater found — install uv or pip"
+
+    def _doctor_auth_headers(self) -> dict[str, str]:
+        """Best-effort auth for the doctor's backend probe."""
+        from . import catalog  # noqa: PLC0415
+        back = (self.backend or "").rstrip("/")
+        prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == back), None)
+        key = catalog.api_key_for(prov) if prov else self.api_key
+        if not key:
+            return {}
+        if prov is not None and prov.id == "anthropic":
+            return {"x-api-key": key, "anthropic-version": "2023-06-01"}
+        return {"Authorization": f"Bearer {key}"}
 
     # -- model catalog -------------------------------------------------------
 
@@ -2682,9 +4006,11 @@ class MantisTUI:
         """Point the live agent at (model, backend, key) and rebuild it."""
         from . import catalog  # noqa: PLC0415
 
-        self.model = model
-        self.backend = backend
-        self.api_key = api_key
+        # Same sanitation as the constructor — a runtime self-host URL / pasted key
+        # can carry whitespace or a full-endpoint path.
+        self.model = model.strip() if model else model
+        self.backend = _paths.normalize_base_url(backend) if backend else backend
+        self.api_key = api_key.strip() if api_key else api_key
         if self.agent is not None:
             await self.agent.aclose()
         self.agent = self._build_agent()
@@ -2757,11 +4083,28 @@ class MantisTUI:
                           " [ansibrightblack]· self-hosted[/]")
 
     async def _switch_model(self, model_id: str) -> None:
-        """`/model <id>` — switch, auto-wiring backend + key from the catalog."""
+        """`/model <query>` — resolve a number / id / provider / alias / fuzzy
+        fragment to a real model, then switch (auto-wiring backend + key). An
+        unrecognized or ambiguous query opens the picker instead of switching to
+        a literal string that would just 404."""
         from . import catalog  # noqa: PLC0415
 
-        prov = catalog.provider_for_model(model_id)
-        await self._activate(model_id, prov)
+        avail, _ = self._available_models()
+        res = catalog.resolve_model_query(model_id, avail)
+        if res.model is None:
+            if res.candidates:
+                self.console.print(
+                    f"[ansibrightblack]{len(res.candidates)} models match "
+                    f"[white]{model_id}[/] — opening the picker[/]")
+            else:
+                self.console.print(
+                    f"[ansiyellow]![/] [ansibrightblack]no model matches "
+                    f"[white]{model_id}[/][/]")
+            await self._select_model()
+            return
+        prov = catalog.BY_ID.get(res.provider_id) if res.provider_id else \
+            catalog.provider_for_model(res.model)
+        await self._activate(res.model, prov)
 
     # -- main loop -----------------------------------------------------------
 
@@ -2781,6 +4124,13 @@ class MantisTUI:
         except Exception:  # noqa: BLE001 - non-tty / dumb terminal
             pass
         banner_h = print_banner(self.console, self.model, self.backend)
+        if not self.messages:  # a resumed session already set its own title
+            set_terminal_title(f"mantis · {Path.cwd().name or 'home'}")
+        if self.messages:
+            try:
+                self._replay_transcript()  # --continue/--resume: show the history
+            except Exception:  # noqa: BLE001 — cosmetic
+                pass
         # Push the first input toward the bottom so its framing rules + footer
         # hug it instead of the toolbar floating to the screen floor. Safe now
         # that erase_when_done wipes the frame and we echo "› message" in place,
@@ -2797,6 +4147,12 @@ class MantisTUI:
             from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
             self.transcript = SessionTranscript(new_session_id())
         self._kick_prewarm()
+        try:
+            _mcp = await self._connect_mcp()
+            if _mcp:
+                self.console.print(f"[ansibrightblack]mcp: {_mcp}[/]")
+        except Exception:  # noqa: BLE001 — MCP must never block launch
+            pass
 
         from prompt_toolkit.formatted_text import HTML  # noqa: PLC0415
         from rich.markup import escape as _esc  # noqa: PLC0415
@@ -2825,10 +4181,43 @@ class MantisTUI:
                 if not line:
                     continue
                 # Echo the submitted line into the transcript (the framed input
-                # itself was erased).
-                self.console.print(f"[ansibrightblack]›[/] {_esc(line)}")
-                if line.startswith("/") and await self._handle_slash(line):
+                # itself was erased) — highlighted bar, Claude-Code style.
+                echo_user_message(self.console, line)
+                # ``!cmd`` → run it now, show output, and drop it into context
+                # as a meta message so the model knows what the user just ran.
+                if line.startswith("!") and len(line) > 1:
+                    import asyncio as _aio  # noqa: PLC0415
+                    cmd = line[1:].strip()
+                    out = await _aio.to_thread(run_bang_command, cmd)
+                    self.console.print(f"[ansibrightblack]{_esc(out)}[/]")
+                    from .types import UserMessage as _UM  # noqa: PLC0415
+                    self.messages.append(_UM(content=bang_context_block(cmd, out), isMeta=True))
                     continue
+                # ``# note`` → quick-save to persistent memory.
+                if line.startswith("#") and line.lstrip("#").strip():
+                    p = quick_memory_note(line.lstrip("#").strip())
+                    self.console.print(f"[ansibrightblack](saved to memory → [white]{p.name}[/])[/]")
+                    continue
+                if line.startswith("/"):
+                    try:
+                        handled = await self._handle_slash(line)
+                    except (EOFError, KeyboardInterrupt):
+                        raise
+                    except Exception as e:  # noqa: BLE001 — one clean line, no traceback
+                        self.console.print(f"[ansired]error:[/] {e}")
+                        hint = error_hint(e, self.backend)
+                        if hint:
+                            import re as _re  # noqa: PLC0415
+                            styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
+                            self.console.print(f"[ansibrightblack]→ {styled}[/]")
+                        handled = True
+                    if handled:
+                        continue
+                    # Not a built-in: /init, /learn, and user-defined
+                    # .mantis/commands/*.md expand into a prompt for this turn.
+                    expanded = expand_slash_prompt(line)
+                    if expanded is not None:
+                        line = expanded
 
                 try:
                     # _run_turn already rewinds self.messages on interrupt/error,
@@ -2849,6 +4238,10 @@ class MantisTUI:
                             f"{self.model}[/]  [ansibrightblack]or pick another with[/] "
                             f"[white]/model <name>[/]")
         finally:
+            try:
+                await self._close_mcp()
+            except Exception:  # noqa: BLE001
+                pass
             if self.agent is not None:
                 await self.agent.aclose()
         return 0
@@ -2899,7 +4292,10 @@ def main(argv: list[str] | None = None) -> int:
     # content → the model loops). 8192 lets it write a real file in one shot.
     p.add_argument("--max-tokens", type=int, default=8192)
     p.add_argument("--temperature", type=float, default=None)
-    p.add_argument("--max-turns", type=int, default=20)
+    # Steps (tool rounds) per turn. Interactive default is a runaway BACKSTOP,
+    # not a working budget — a real multi-step task (or a /loop fire) must never
+    # die at step 20 mid-flight; the user can always Esc-interrupt.
+    p.add_argument("--max-turns", type=int, default=200)
     # Start in bypass-permissions mode: every tool runs with NO confirmation
     # prompt (including dangerous shell commands). --godmode is a friendly alias.
     p.add_argument(
@@ -2913,6 +4309,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--continue", "-c", dest="continue_session", action="store_true",
         help="Resume your most recent conversation instead of starting fresh.",
+    )
+    p.add_argument(
+        "--resume", "-r", dest="resume_id", nargs="?", const="", default=None,
+        metavar="SESSION",
+        help="Resume a specific past session by id (or prefix). With no value, "
+             "list recent sessions and exit so you can pick one.",
     )
     args = p.parse_args(argv)
 
@@ -2947,6 +4349,32 @@ def main(argv: list[str] | None = None) -> int:
             "(godmode). Ctrl+C to quit.\033[0m",
             file=sys.stderr,
         )
+
+    # --resume: reopen a specific session by id/prefix; bare --resume lists the
+    # recent sessions and exits (the shell-side picker, Claude Code style).
+    if args.resume_id is not None:
+        from .session_tree import SessionTranscript, list_sessions, load_for_resume  # noqa: PLC0415
+        sessions = list_sessions()
+        if args.resume_id == "":
+            if not sessions:
+                print("no past conversations found", file=sys.stderr)
+                return 1
+            print("Recent sessions — relaunch with `mantis --resume <id>`:")
+            for s in sessions[:20]:
+                title = ellipsize(s.title or s.first_prompt or "(untitled)", 56)
+                print(f"  {s.session_id[:8]}  {title}  · {s.message_count} msgs "
+                      f"· {time_ago(s.modified_at)}")
+            return 0
+        target = next((s for s in sessions if s.session_id.startswith(args.resume_id)), None)
+        if target is None:
+            print(f"no session matching {args.resume_id!r} — run `mantis --resume` "
+                  f"to list them", file=sys.stderr)
+            return 1
+        tui.messages = load_for_resume(target.session_id)
+        tui.transcript = SessionTranscript(target.session_id)
+        print(f"\033[90m[mantis] resumed: "
+              f"{target.title or target.first_prompt or target.session_id[:8]}\033[0m",
+              file=sys.stderr)
 
     # --continue: load the most recent conversation before launching, so it picks
     # up where it left off (the fullscreen setup keeps a transcript we set here).

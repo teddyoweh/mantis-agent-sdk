@@ -18,6 +18,7 @@ Implementation notes
 from __future__ import annotations
 
 import os
+import subprocess
 from typing import Any
 
 import anyio
@@ -76,9 +77,12 @@ class StdioTransport:
 
         self._proc = await anyio.open_process(
             [self.command, *self.args],
-            stdin=anyio.subprocess.PIPE,
-            stdout=anyio.subprocess.PIPE,
-            stderr=anyio.subprocess.PIPE,
+            # stdlib subprocess constants — anyio re-exports no PIPE of its own
+            # (`anyio.subprocess` does not exist; this raised AttributeError on
+            # the first real stdio server).
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=merged_env,
         )
         assert self._proc.stdout is not None

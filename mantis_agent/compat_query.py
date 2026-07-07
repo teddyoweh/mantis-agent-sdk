@@ -73,6 +73,21 @@ async def query(
 
     opts = _normalize_options(options)
     agent = _build_agent(opts)
+    # Claude-SDK parity that used to be silently dropped:
+    #   * options.agents={"name": AgentDefinition(...)} → each becomes a real
+    #     delegatable subagent tool (named after the agent).
+    #   * options.mcp_servers external transports (stdio/sse/http dicts or
+    #     typed configs) → connected via MCPManager; tools land namespaced.
+    _register_agent_definitions(agent, opts)
+    _mcp_mgr = await _connect_external_mcp(agent, opts)
+
+    async def _shutdown() -> None:
+        if _mcp_mgr is not None:
+            try:
+                await _mcp_mgr.stop()
+            except Exception:  # noqa: BLE001 — teardown is best-effort
+                pass
+        await agent.aclose()
 
     session_id = opts.get("session_id") or _new_uuid()
 
@@ -104,7 +119,7 @@ async def query(
     if not seed_messages:
         # Empty prompt — emit a no-op result and bail.
         yield _build_result(session_id=session_id, num_turns=0, usage=Usage(), backend_hint=None, model=agent.model, started_at=time.monotonic(), final_text="", error_subtype="error_during_execution", is_error=True, total_cost_usd=0.0, last_stop_reason=None, errors=["empty prompt"])
-        await agent.aclose()
+        await _shutdown()
         return
 
     # 3) Run the agent loop and translate each internal message.
@@ -182,7 +197,7 @@ async def query(
         error_subtype = "error_during_execution"
         error_strings.append(f"{type(e).__name__}: {e}")
     finally:
-        await agent.aclose()
+        await _shutdown()
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
 
@@ -363,6 +378,73 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         kw["extra"] = extra
 
     return Agent(**kw)
+
+
+def _register_agent_definitions(agent: Agent, opts: dict[str, Any]) -> None:
+    """``options.agents={"reviewer": AgentDefinition(...)}`` → register each as
+    a delegatable subagent TOOL named after the agent (Claude SDK parity — this
+    field was previously accepted and silently ignored). ``defn.tools`` narrows
+    the child's kit by name; empty means the parent's full kit (minus other
+    agents, to prevent recursion)."""
+    agents_opt = opts.get("agents") or {}
+    if not isinstance(agents_opt, dict) or not agents_opt:
+        return
+    from .subagent import SubAgentSpec, as_subagent_tool  # noqa: PLC0415
+
+    names = set(agents_opt)
+    base_kit = [t for t in agent.tools if t.name not in names]
+    for name, defn in agents_opt.items():
+        wanted = set(getattr(defn, "tools", None) or [])
+        kit = [t for t in base_kit if not wanted or t.name in wanted]
+        spec = SubAgentSpec(
+            name=str(name),
+            system_prompt=getattr(defn, "prompt", "") or "",
+            model=getattr(defn, "model", None) or agent.model,
+            tools=kit,
+            description=getattr(defn, "description", None),
+        )
+        agent.tools.add(as_subagent_tool(spec, parent_provider=agent.provider))
+
+
+async def _connect_external_mcp(agent: Agent, opts: dict[str, Any]) -> Any:
+    """Connect EXTERNAL MCP servers from ``options.mcp_servers`` (stdio/sse/
+    http — Claude Code config dicts or typed configs) and fold their tools into
+    the agent as ``mcp__{server}__{tool}``. In-process SdkServerConfig entries
+    are bridged synchronously in ``_build_agent``; external transports were
+    previously dropped on the floor. Returns the manager (caller closes it),
+    or None when nothing external is configured."""
+    entries = opts.get("mcp_servers") or []
+    if isinstance(entries, dict):
+        entries = list(entries.items())
+    from .mcp.manager import MCPManager, parse_server_entry  # noqa: PLC0415
+    from .mcp.types import (  # noqa: PLC0415
+        HttpServerConfig,
+        SseServerConfig,
+        StdioServerConfig,
+    )
+    configs: dict[str, Any] = {}
+    for i, entry in enumerate(entries):
+        if isinstance(entry, tuple) and len(entry) == 2:
+            name, cfg = entry
+        else:
+            name, cfg = getattr(entry, "name", None) or f"server{i + 1}", entry
+        if cfg is None or getattr(cfg, "server", None) is not None:
+            continue  # in-process SDK server — already bridged
+        if isinstance(cfg, dict):
+            parsed = parse_server_entry(cfg)
+        elif isinstance(cfg, (StdioServerConfig, SseServerConfig, HttpServerConfig)):
+            parsed = cfg
+        else:
+            parsed = None
+        if parsed is not None and name:
+            configs[str(name)] = parsed
+    if not configs:
+        return None
+    mgr = MCPManager(configs)
+    tools = await mgr.start()   # dedicated-task lifetime — generator-safe
+    if tools:
+        agent.tools.add(*tools)
+    return mgr
 
 
 def _system_tools_list(agent: Agent, opts: dict[str, Any]) -> list[str]:

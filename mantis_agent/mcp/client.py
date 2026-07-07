@@ -149,6 +149,7 @@ class MCPClient:
         "server_capabilities",
         "elicitation_handler",
         "sampling_handler",
+        "request_timeout_s",
         "_transport",
         "_id_counter",
         "_pending",
@@ -164,6 +165,7 @@ class MCPClient:
         server_id: str | None = None,
         elicitation_handler: ElicitationHandler | None = None,
         sampling_handler: SamplingHandler | None = None,
+        request_timeout_s: float | None = 60.0,
     ) -> None:
         self.config = config
         # Stable id used by MCPTool.server_id. Falls back to a synthetic
@@ -181,6 +183,11 @@ class MCPClient:
         # registered rule as elicitation: a polite server won't ask
         # unless we said we could answer.
         self.sampling_handler: SamplingHandler | None = sampling_handler
+        # Cap on how long ONE request may wait for its response — covers the
+        # initialize handshake, tools/list, and every tools/call. ``None`` waits
+        # forever (pre-existing behavior). Scoped around the response event only,
+        # so it never crosses the client's task-group boundary.
+        self.request_timeout_s = request_timeout_s
         self._transport: Transport | None = None
         self._id_counter = itertools.count(1)
         self._pending: dict[int, _PendingRequest] = {}
@@ -439,7 +446,18 @@ class MCPClient:
         await self._send(
             {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
         )
-        await pending.event.wait()
+        try:
+            if self.request_timeout_s is not None:
+                with anyio.fail_after(self.request_timeout_s):
+                    await pending.event.wait()
+            else:
+                await pending.event.wait()
+        except TimeoutError:
+            self._pending.pop(request_id, None)
+            raise MCPProtocolError(
+                f"MCP server did not answer {method!r} within "
+                f"{self.request_timeout_s:.0f}s"
+            ) from None
         self._pending.pop(request_id, None)
         if pending.error is not None:
             raise pending.error

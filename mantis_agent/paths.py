@@ -53,6 +53,8 @@ __all__ = [
     "get_sessions_dir",
     "get_settings_path",
     "iter_sessions",
+    "normalize_base_url",
+    "ollama_base_url",
     "sanitize_session_id",
 ]
 
@@ -184,3 +186,25 @@ def ollama_base_url() -> str:
     # interfaces); as a client connect target it's unroutable, so rewrite it to
     # loopback — exactly what Ollama's own client does.
     return host.replace("://0.0.0.0", "://127.0.0.1")
+
+
+# Endpoint paths a user might paste onto the *base* URL by mistake (copying from
+# a curl example). We build these ourselves, so strip a trailing one to recover
+# the real base — e.g. '.../v1/chat/completions' → '.../v1'.
+_ENDPOINT_SUFFIXES = (
+    "/chat/completions", "/completions", "/messages", "/responses", "/embeddings",
+)
+
+
+def normalize_base_url(url: str) -> str:
+    """Clean a user-entered base URL: strip whitespace and a trailing OpenAI/
+    Anthropic endpoint path pasted by mistake, so ``{base}/chat/completions``
+    resolves correctly instead of doubling up. Leaves a proper base untouched."""
+    if not url:
+        return url
+    u = url.strip().rstrip("/")
+    low = u.lower()
+    for suffix in _ENDPOINT_SUFFIXES:
+        if low.endswith(suffix):
+            return u[: -len(suffix)]
+    return u

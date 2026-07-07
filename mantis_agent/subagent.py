@@ -304,7 +304,46 @@ def as_subagent_tool(
 # ---------------------------------------------------------------------------
 
 
-_TASK_SUBAGENT_SYSTEM = (
+# ---------------------------------------------------------------------------
+# Agent types — selectable personas for the ``task`` tool
+# ---------------------------------------------------------------------------
+#
+# Claude Code's Agent tool takes a ``subagent_type``; mantis mirrors that. A
+# type bundles a system prompt + a tool policy + step budget. Three built-ins
+# ship (explore / plan / general-purpose), and users add their own as markdown
+# files in ``~/.mantis-agent/agents/*.md`` (user) or ``./.mantis/agents/*.md``
+# (project, wins on name collision):
+#
+#     ---
+#     name: code-reviewer
+#     description: Reviews a diff for bugs and style problems.
+#     tools: read_file, grep, glob        # or "read-only" / "all" (default)
+#     model: gpt-5.4-mini                 # optional; default inherits parent
+#     max_steps: 30                       # optional
+#     ---
+#     You are a meticulous code reviewer... (the system prompt)
+
+
+@dataclass(frozen=True, slots=True)
+class AgentType:
+    """A selectable subagent persona for the ``task`` tool.
+
+    ``tools`` is a *policy*, resolved against the parent's kit at spawn time:
+    ``"read-only"`` (only ``is_read_only`` tools), ``"all"`` (everything except
+    the excluded interactive/recursive tools), or an explicit tuple of tool
+    names. ``model`` of ``None`` (or ``"inherit"`` in frontmatter) uses the
+    parent's model."""
+
+    name: str
+    description: str
+    system_prompt: str
+    tools: str | tuple[str, ...] = "read-only"
+    model: str | None = None
+    max_steps: int = 20
+    source: str = "builtin"  # "builtin" | "user" | "project"
+
+
+_EXPLORE_SYSTEM = (
     "You are a read-only exploration subagent, launched by a parent coding agent "
     "to investigate a focused question autonomously. You have search/read tools "
     "(read_file, grep, glob, ls, lsp, web) but CANNOT edit files, run shell "
@@ -314,24 +353,191 @@ _TASK_SUBAGENT_SYSTEM = (
     "preamble — return only the findings."
 )
 
-_TASK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "description": {
-            "type": "string",
-            "description": "A short (3-5 word) description of the task.",
+_PLAN_SYSTEM = (
+    "You are a software-architect subagent, launched by a parent coding agent to "
+    "design an implementation plan. You have read-only tools — read the relevant "
+    "code first; never guess at what exists. You CANNOT edit files or run shell "
+    "commands, and you never implement — you design. Return ONE plan: the "
+    "recommended approach, concrete step-by-step changes with exact file:line "
+    "targets, critical files to touch, trade-offs you weighed, and risks. Be "
+    "decisive — pick an approach rather than listing options. No preamble."
+)
+
+_GENERAL_SYSTEM = (
+    "You are a general-purpose subagent, launched by a parent coding agent to "
+    "complete a focused multi-step task autonomously. You have the parent's real "
+    "tool belt — shell, file edits, search, web — but you CANNOT ask the user "
+    "anything: make reasonable decisions yourself and note them in your report. "
+    "Verify your work (run tests/commands where applicable) before finishing. "
+    "Then return ONE concise report: what you did, files you changed, how you "
+    "verified it, and anything the parent must know. No preamble."
+)
+
+BUILTIN_AGENT_TYPES: tuple[AgentType, ...] = (
+    AgentType(
+        name="explore",
+        description=(
+            "Read-only investigation: find code/files/facts and report back "
+            "with file:line references. Cannot edit or run commands."
+        ),
+        system_prompt=_EXPLORE_SYSTEM,
+        tools="read-only",
+        max_steps=20,
+    ),
+    AgentType(
+        name="plan",
+        description=(
+            "Software architect: reads the code and returns a step-by-step "
+            "implementation plan with file targets and trade-offs. Read-only."
+        ),
+        system_prompt=_PLAN_SYSTEM,
+        tools="read-only",
+        max_steps=25,
+    ),
+    AgentType(
+        name="general-purpose",
+        description=(
+            "Autonomous multi-step execution with the full tool belt (shell, "
+            "edits, web). Use for self-contained subtasks; it cannot ask the "
+            "user questions."
+        ),
+        system_prompt=_GENERAL_SYSTEM,
+        tools="all",
+        max_steps=100,
+    ),
+)
+
+
+# Tools a subagent must never receive, regardless of policy: recursion
+# (``task``), user interaction (a child can't own the input prompt), and
+# plan-mode/todo handoffs that belong to the parent session.
+_SUBAGENT_EXCLUDED_TOOLS = frozenset({
+    "task", "ask_user_question", "exit_plan_mode", "todo_write",
+})
+
+
+def _agent_dirs(cwd: Any = None) -> list[tuple[str, Any]]:
+    """``(source_label, dir)`` pairs: user-level then project-level (project
+    wins on name). Missing dirs are dropped."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from .paths import get_agents_dir  # noqa: PLC0415
+
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    pairs = [("user", get_agents_dir()), ("project", base / ".mantis" / "agents")]
+    return [(label, d) for label, d in pairs if d.is_dir()]
+
+
+def _parse_agent_md(text: str, fallback_name: str) -> AgentType | None:
+    """One ``agents/*.md`` file → an :class:`AgentType`. Frontmatter keys:
+    name, description, tools, model, max_steps; body = system prompt.
+    Returns ``None`` for files with no usable body (bad frontmatter is fine —
+    defaults kick in — but an empty system prompt is not an agent)."""
+    from .skills import _parse_skill_md  # noqa: PLC0415 — same format, one parser
+
+    meta, body = _parse_skill_md(text)
+    if not body.strip():
+        return None
+    name = (meta.get("name") or fallback_name).strip()
+    if not name:
+        return None
+    raw_tools = (meta.get("tools") or "all").strip()
+    tools: str | tuple[str, ...]
+    if raw_tools.lower() in ("all", "read-only", "readonly"):
+        tools = "read-only" if raw_tools.lower().startswith("read") else "all"
+    else:
+        tools = tuple(t.strip() for t in raw_tools.split(",") if t.strip()) or "all"
+    model = (meta.get("model") or "").strip() or None
+    if model and model.lower() == "inherit":
+        model = None
+    try:
+        max_steps = max(1, min(int(meta.get("max_steps", 20)), 100))
+    except (TypeError, ValueError):
+        max_steps = 20
+    return AgentType(
+        name=name,
+        description=meta.get("description", "").strip() or f"User-defined {name} agent.",
+        system_prompt=body.strip(),
+        tools=tools,
+        model=model,
+        max_steps=max_steps,
+    )
+
+
+def discover_agent_types(cwd: Any = None) -> list[AgentType]:
+    """Built-in agent types + user/project ``agents/*.md`` definitions.
+
+    Later sources win by name (project > user > builtin), so a user can
+    override e.g. ``explore``'s prompt. Best-effort: unreadable or malformed
+    files are skipped, never fatal."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    found: dict[str, AgentType] = {t.name: t for t in BUILTIN_AGENT_TYPES}
+    for source, d in _agent_dirs(cwd):
+        for md in sorted(d.glob("*.md")):
+            try:
+                at = _parse_agent_md(md.read_text(encoding="utf-8", errors="replace"), md.stem)
+            except OSError:
+                continue
+            if at is not None:
+                found[at.name] = replace(at, source=source)
+    return list(found.values())
+
+
+def resolve_agent_tools(agent_type: AgentType, available: list[Tool]) -> list[Tool]:
+    """Apply an agent type's tool policy to the parent's kit. Interactive /
+    recursive tools are always excluded (see ``_SUBAGENT_EXCLUDED_TOOLS``)."""
+    pool = [t for t in available if t.name not in _SUBAGENT_EXCLUDED_TOOLS]
+    if agent_type.tools == "all":
+        return pool
+    if agent_type.tools == "read-only":
+        return [t for t in pool if getattr(t, "is_read_only", False)]
+    wanted = set(agent_type.tools)
+    return [t for t in pool if t.name in wanted]
+
+
+def _task_tool_description(types: list[AgentType]) -> str:
+    """The ``task`` tool description shown to the parent model — lists every
+    available agent type inline (Claude Code style) so the model can pick."""
+    lines = [
+        "Delegate a focused task to a fresh subagent that runs to completion "
+        "and returns only its final report — keeping this context clean. The "
+        "subagent starts with NO memory of this conversation: include every "
+        "path, name, and constraint in the prompt. Launch multiple task calls "
+        "in one message to run them in parallel.",
+        "",
+        "Available agent types (pass as subagent_type):",
+    ]
+    for t in types:
+        lines.append(f"- {t.name}: {t.description}")
+    return "\n".join(lines)
+
+
+def _task_schema(types: list[AgentType]) -> dict[str, Any]:
+    names = [t.name for t in types]
+    return {
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "A short (3-5 word) description of the task.",
+            },
+            "prompt": {
+                "type": "string",
+                "description": (
+                    "The task for the subagent to perform. Be detailed and "
+                    "self-contained — it starts fresh with NO memory of this "
+                    "conversation, so include every path, name, and constraint it needs."
+                ),
+            },
+            "subagent_type": {
+                "type": "string",
+                "enum": names,
+                "description": "Which agent type to launch (default: explore).",
+            },
         },
-        "prompt": {
-            "type": "string",
-            "description": (
-                "The investigation for the subagent to perform. Be detailed and "
-                "self-contained — it starts fresh with NO memory of this "
-                "conversation, so include every path, name, and constraint it needs."
-            ),
-        },
-    },
-    "required": ["prompt"],
-}
+        "required": ["prompt"],
+    }
 
 
 def make_task_tool(
@@ -341,28 +547,52 @@ def make_task_tool(
     provider: Provider | None = None,
     backend: str | None = None,
     max_steps: int = 20,
+    permissions: Any = None,
+    agent_types: list[AgentType] | None = None,
 ) -> Tool:
-    """Build the general-purpose ``task`` tool: the parent delegates a focused,
-    multi-step investigation to a fresh read-only subagent that runs to completion
-    and returns just its findings — keeping the parent's context clean. The
-    subagent shares the parent's provider/model but gets only ``tools`` (a
-    read-only kit) and cannot recurse, edit, or prompt the user."""
+    """Build the ``task`` tool: the parent delegates a focused, multi-step task
+    to a fresh subagent that runs to completion and returns just its findings.
 
-    @tool(name="task", is_read_only=True, is_concurrency_safe=True, input_schema=_TASK_SCHEMA)
+    ``tools`` is the parent's FULL kit — each agent type carves its own subset
+    via its tool policy (read-only for explore/plan, everything-but-interactive
+    for general-purpose, an explicit list for user-defined agents). Interactive
+    and recursive tools are always stripped. ``permissions`` (the parent's
+    PermissionContext) is inherited by the child so a write-capable subagent
+    still routes mutating calls through the same gate as the parent — without
+    it a general-purpose child would edit/execute unchecked.
+
+    ``max_steps`` is a floor for backward compatibility: an agent type's own
+    budget wins when larger."""
+    types = agent_types if agent_types is not None else discover_agent_types()
+    by_name = {t.name: t for t in types}
+
+    @tool(name="task", is_read_only=True, is_concurrency_safe=True,
+          input_schema=_task_schema(types))
     async def task(args: dict) -> str:
         prompt = (args or {}).get("prompt", "")
         if not isinstance(prompt, str) or not prompt.strip():
             return "task: a non-empty 'prompt' is required."
+        type_name = str((args or {}).get("subagent_type") or "explore").strip()
+        at = by_name.get(type_name)
+        if at is None:
+            return (f"task: unknown subagent_type {type_name!r} — available: "
+                    f"{', '.join(sorted(by_name))}")
+        kit = resolve_agent_tools(at, tools)
         registry = ToolRegistry()
-        if tools:
-            registry.add(*tools)
+        if kit:
+            registry.add(*kit)
+        # A type-level model override still uses the PARENT's provider/backend:
+        # the common case is a cheaper sibling on the same endpoint (gpt-5.4 →
+        # gpt-5.4-mini). A cross-provider override would need its own key wiring
+        # — that's the parent agent's job to set up, not a spawn-time guess.
         child = Agent(
-            model=model,
+            model=at.model or model,
             provider=provider,
             backend=backend,
-            system=_TASK_SUBAGENT_SYSTEM,
+            system=at.system_prompt,
             tools=registry,
-            max_steps=max_steps,
+            max_steps=max(max_steps, at.max_steps),
+            permissions=permissions,
             include_recall=False,   # subagent is stateless; no session memory
             include_env=False,
         )
@@ -370,7 +600,145 @@ def make_task_tool(
         await child.run(messages)
         return _extract_final_text(messages) or "(subagent produced no output)"
 
+    task.description = _task_tool_description(types)
     return task
+
+
+# ---------------------------------------------------------------------------
+# pair — talk WITH a twin, not just delegate TO a worker
+# ---------------------------------------------------------------------------
+#
+# ``task`` is fire-and-forget: prompt in, report out, child forgotten. ``pair``
+# is a CONVERSATION: each named peer ("twin") keeps its own running message
+# history across calls, so the main agent can propose → get pushback → revise →
+# converge over several exchanges — and can keep several twins with different
+# stances going at once (a skeptic, a security reviewer, a performance nut).
+
+_TWIN_SYSTEM = (
+    "You are {peer}, a twin of the main coding agent — same model, working the "
+    "same repo, equal partner in an ongoing conversation. The main agent talks "
+    "with you across multiple exchanges; you remember the whole dialogue.\n"
+    "Your job is to make the WORK better, not to agree:\n"
+    "- Challenge assumptions and look for what the main agent missed.\n"
+    "- Verify claims against the actual code with your read tools — never take "
+    "an assertion on faith when you can check it.\n"
+    "- Propose concrete alternatives with trade-offs; cite file:line.\n"
+    "- When you disagree, say exactly why, with evidence. When you're "
+    "convinced, say so plainly and move the plan forward.\n"
+    "Be direct and concise — this is a working session between peers, not a "
+    "report.{persona}"
+)
+
+_PAIR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "message": {
+            "type": "string",
+            "description": (
+                "What to say to the twin — a proposal to stress-test, a claim "
+                "to verify, a question, or a reply in the ongoing exchange. The "
+                "twin remembers your whole conversation; don't re-explain."
+            ),
+        },
+        "peer": {
+            "type": "string",
+            "description": (
+                "Which twin to talk to (default 'twin'). Different names are "
+                "independent twins with separate memories — e.g. 'skeptic', "
+                "'security', 'perf'."
+            ),
+        },
+        "persona": {
+            "type": "string",
+            "description": (
+                "Optional stance for a NEW twin, e.g. 'argue against every "
+                "design choice' or 'care only about security'. Ignored once "
+                "the twin exists."
+            ),
+        },
+        "reset": {
+            "type": "boolean",
+            "description": "Forget this twin's conversation and start fresh.",
+        },
+    },
+    "required": ["message"],
+}
+
+
+def make_pair_tool(
+    *,
+    model: str,
+    tools: list[Tool],
+    provider: Provider | None = None,
+    backend: str | None = None,
+    max_steps: int = 15,
+    max_history: int = 60,
+    conversations: dict[str, list[Message]] | None = None,
+    personas: dict[str, str] | None = None,
+) -> Tool:
+    """Build the ``pair`` tool: converse with persistent same-model twins.
+
+    Each peer's history lives for the session (trimmed to ``max_history``
+    messages, oldest exchanges dropped first). Twins get ``tools`` — hand them
+    a READ-ONLY kit so their pushback is grounded in the real code but they
+    can't race the main agent on writes.
+
+    Pass ``conversations``/``personas`` to own the twin state externally — the
+    TUI does this so twins survive agent rebuilds AND so the user's ``/twin``
+    command talks to the SAME twins the model's ``pair`` calls do."""
+    conversations = conversations if conversations is not None else {}
+    personas = personas if personas is not None else {}
+
+    registry = ToolRegistry()
+    if tools:
+        registry.add(*tools)
+
+    @tool(name="pair", is_read_only=True, is_concurrency_safe=False,
+          input_schema=_PAIR_SCHEMA)
+    async def pair(args: dict) -> str:
+        message = (args or {}).get("message", "")
+        if not isinstance(message, str) or not message.strip():
+            return "pair: a non-empty 'message' is required."
+        peer = str((args or {}).get("peer") or "twin").strip() or "twin"
+        if (args or {}).get("reset"):
+            conversations.pop(peer, None)
+            personas.pop(peer, None)
+        history = conversations.setdefault(peer, [])
+        if peer not in personas:
+            extra = str((args or {}).get("persona") or "").strip()
+            personas[peer] = f"\nYour stance: {extra}" if extra else ""
+        child = Agent(
+            model=model,
+            provider=provider,  # share the parent's HTTP pool
+            backend=backend,
+            system=_TWIN_SYSTEM.format(peer=peer, persona=personas[peer]),
+            tools=registry,
+            max_steps=max_steps,
+            include_recall=False,
+            include_env=False,
+        )
+        history.append(UserMessage(content=message))
+        await child.run(history)
+        # Trim from the FRONT (oldest exchanges) so the twin's memory is a
+        # sliding window; never split a user/assistant pair.
+        while len(history) > max_history:
+            history.pop(0)
+            while history and isinstance(history[0], AssistantMessage):
+                history.pop(0)
+        reply = _extract_final_text(history)
+        return f"[{peer}] {reply}" if reply else f"[{peer}] (no reply)"
+
+    pair.description = (
+        "Talk with a TWIN — a persistent same-model peer that remembers your "
+        "whole conversation with it. Unlike task (one-shot delegation), pair is "
+        "a dialogue: float a plan and get it stress-tested, have a claim "
+        "verified against the code, argue until you converge. Name multiple "
+        "peers to keep several twins with different stances (peer='skeptic', "
+        "peer='security'). Twins have read tools, so their pushback is grounded "
+        "in the actual repo. Use it BEFORE committing to a risky design, and "
+        "whenever a second pair of eyes would catch what you can't see."
+    )
+    return pair
 
 
 def _extract_final_text(messages: list[Message]) -> str:

@@ -219,21 +219,41 @@ def clear_key(provider_id: str) -> bool:
     return removed
 
 
+def looks_like_model_id(s: Any) -> bool:
+    """Is ``s`` a syntactically plausible model id? Real ids are a single token of
+    ``[A-Za-z0-9._:+/-]`` — no whitespace, no newlines, no empties. This is the
+    gate that stops half-typed picker filters ('  m\\n', 'my-model\\n') and stray
+    paste noise from being persisted as a 'model' and then blindly sent to a
+    backend next launch (a silent 404). It is a *syntax* check, not a claim the
+    model exists — 'newest' passes here but is caught by real resolution."""
+    if not isinstance(s, str):
+        return False
+    t = s.strip()
+    if not t or len(t) > 200:
+        return False
+    return all(c.isalnum() or c in "._:+/-@" for c in t)
+
+
 def get_last_model() -> dict[str, Any] | None:
     """The model used at the end of the last session, if recorded:
     ``{"model": str, "backend": str | None}``. Lets ``mantis`` reopen on the
-    model you left off with instead of always reverting to the default."""
+    model you left off with instead of always reverting to the default. A stored
+    id that isn't a plausible model token (legacy garbage) is ignored."""
     rec = _load_store().get("last")
-    if isinstance(rec, dict) and rec.get("model"):
-        return rec
+    if isinstance(rec, dict) and looks_like_model_id(rec.get("model")):
+        return {**rec, "model": rec["model"].strip()}
     return None
 
 
 def set_last_model(model: str, backend: str | None = None) -> None:
     """Remember the active model + backend for next launch (no key is stored
-    here — hosted keys live under ``keys`` and are looked up by provider)."""
+    here — hosted keys live under ``keys`` and are looked up by provider).
+    Silently ignores an implausible id so garbage can never be persisted."""
+    if not looks_like_model_id(model):
+        return
     data = _load_store()
-    data["last"] = {"model": model, "backend": backend}
+    data["last"] = {"model": model.strip(),
+                    "backend": backend.strip() if isinstance(backend, str) else backend}
     _save_store(data)
 
 
@@ -241,15 +261,27 @@ RECENT_MAX = 8
 
 
 def get_recent_models() -> list[str]:
-    """Most-recently-used model ids, newest first (for a 'Recent' shortcut)."""
+    """Most-recently-used model ids, newest first (for a 'Recent' shortcut).
+    Self-heals: strips and drops any implausible legacy entries."""
     rec = _load_store().get("recent")
-    return [m for m in rec if isinstance(m, str)] if isinstance(rec, list) else []
+    if not isinstance(rec, list):
+        return []
+    out: list[str] = []
+    for m in rec:
+        if looks_like_model_id(m) and m.strip() not in out:
+            out.append(m.strip())
+    return out
 
 
 def push_recent_model(model: str) -> None:
-    """Move ``model`` to the front of the MRU list (deduped, capped)."""
+    """Move ``model`` to the front of the MRU list (deduped, capped). Ignores an
+    implausible id (so a stray picker filter never pollutes the recents)."""
+    if not looks_like_model_id(model):
+        return
+    model = model.strip()
     data = _load_store()
-    recent = [m for m in (data.get("recent") or []) if isinstance(m, str) and m != model]
+    recent = [m for m in (data.get("recent") or [])
+              if isinstance(m, str) and m.strip() and m.strip() != model]
     recent.insert(0, model)
     data["recent"] = recent[:RECENT_MAX]
     _save_store(data)
@@ -368,6 +400,156 @@ def grouped_provider_models() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Model-query resolution — turn a user's `/model <query>` into a real model
+# ---------------------------------------------------------------------------
+#
+# The single brain behind `/model <x>` and the picker's type-to-jump. It makes
+# the command forgiving the way Claude Code's model switch is: a number, an
+# exact id, a provider name, a tier word, an alias, or a fuzzy fragment all
+# land on a *real* model — and anything it can't pin down is reported, never
+# silently sent to a backend as-is (that was the "newest"/404 bug).
+
+
+# Words that name a whole provider → jump to that provider's flagship (models[0]).
+# A provider word is friendlier than a substring match (e.g. "gpt" would be
+# ambiguous across gpt-5.4 / -mini / -nano / gpt-oss; the user means "OpenAI").
+_PROVIDER_ALIASES: dict[str, str] = {
+    "openai": "openai", "gpt": "openai", "chatgpt": "openai",
+    "anthropic": "anthropic", "claude": "anthropic",
+    "gemini": "gemini", "google": "gemini",
+    "deepseek": "deepseek",
+    "moonshot": "moonshot", "kimi": "moonshot",
+    "qwen": "qwen", "alibaba": "qwen", "dashscope": "qwen",
+    "glm": "glm", "zai": "glm", "z-ai": "glm", "zhipu": "glm",
+    "groq": "groq",
+    "openrouter": "openrouter",
+    "together": "together",
+    "fireworks": "fireworks",
+    "cerebras": "cerebras",
+}
+
+# Aliases meaning "the freshest model" — resolved against the active list first
+# (the caller passes it newest-first), then the most recent model.
+_NEWEST_ALIASES = frozenset({"newest", "latest", "new", "recent", "flagship"})
+
+# Every word that is a *query alias* rather than a real model id. If one of these
+# ever ends up persisted as "the model" (a legacy build that stored the raw
+# `/model` arg), restore re-resolves it instead of sending it to a backend.
+RESOLVER_ALIAS_WORDS: frozenset[str] = _NEWEST_ALIASES | frozenset(_PROVIDER_ALIASES)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelResolution:
+    """Outcome of :func:`resolve_model_query`.
+
+    * ``model`` set  → a concrete id to switch to (with ``provider_id`` when the
+      provider is known, so the caller wires the right backend/key).
+    * ``model`` None + ``candidates`` non-empty → ambiguous; the caller should
+      open the picker filtered by ``query`` so the user disambiguates.
+    * ``model`` None + no candidates → nothing matched at all.
+    """
+    model: str | None
+    provider_id: str | None
+    reason: str  # "index" | "exact" | "newest" | "provider" | "fuzzy" | "none"
+    candidates: tuple[str, ...] = ()
+
+
+def _model_universe(active_models: list[str] | None) -> list[tuple[str, str | None]]:
+    """Every id we could resolve to, as ``(model_id, provider_id | None)``:
+    the active backend's models first (provider_id None → keep current backend),
+    then every catalog provider's live/flagship models. Order matters — earlier
+    entries win ties so a fuzzy fragment prefers the model you're already on."""
+    universe: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
+
+    def add(m: str, pid: str | None) -> None:
+        m = m.strip()
+        if m and (m, pid) not in seen:
+            seen.add((m, pid))
+            universe.append((m, pid))
+
+    for m in active_models or []:
+        if isinstance(m, str):
+            add(m, None)
+    for p in CATALOG:
+        for m in (cached_live_models(p.id) or p.models):
+            add(m, p.id)
+    return universe
+
+
+def resolve_model_query(query: str, active_models: list[str] | None = None) -> ModelResolution:
+    """Resolve a free-form ``/model`` argument to a concrete model.
+
+    Resolution order (first hit wins):
+      1. **number** — 1-based index into ``active_models`` (the on-screen list).
+      2. **exact id** — case-sensitive, then case-insensitive.
+      3. **newest/latest** alias — freshest active (or most-recent) model.
+      4. **provider name** — 'openai', 'claude', 'gemini'… → that provider's flagship.
+      5. **fuzzy** — case-insensitive substring of an id; unique → that model,
+         several → ambiguous (caller opens the filtered picker).
+    Returns a :class:`ModelResolution`; ``.model is None`` means "couldn't pin
+    it down" — never guess a literal string onto the backend."""
+    q = (query or "").strip()
+    if not q:
+        return ModelResolution(None, None, "none")
+    ql = q.lower()
+    active = [m.strip() for m in (active_models or []) if isinstance(m, str) and m.strip()]
+
+    # 1. numeric index into the visible list
+    if q.isdigit() and active:
+        i = int(q)
+        if 1 <= i <= len(active):
+            return ModelResolution(active[i - 1], None, "index")
+
+    universe = _model_universe(active)
+
+    # 2. exact id (case-sensitive wins, then case-insensitive)
+    for m, pid in universe:
+        if m == q:
+            return ModelResolution(m, pid, "exact")
+    for m, pid in universe:
+        if m.lower() == ql:
+            return ModelResolution(m, pid, "exact")
+
+    # 3. "newest" / "latest" → freshest we know of
+    if ql in _NEWEST_ALIASES:
+        if active:
+            return ModelResolution(active[0], None, "newest")
+        for m in get_recent_models():
+            prov = provider_for_model(m)
+            return ModelResolution(m, prov.id if prov else None, "newest")
+
+    # 4. provider name → that provider's flagship (first live/flagship id)
+    pid = _PROVIDER_ALIASES.get(ql)
+    if pid:
+        p = BY_ID.get(pid)
+        if p:
+            models = cached_live_models(p.id) or list(p.models)
+            if models:
+                return ModelResolution(models[0].strip(), p.id, "provider")
+
+    # 5. fuzzy substring — unique match resolves, several → let the user choose
+    subs = [(m, mpid) for m, mpid in universe if ql in m.lower()]
+    if len(subs) == 1:
+        return ModelResolution(subs[0][0], subs[0][1], "fuzzy")
+    if len(subs) > 1:
+        # An active-backend hit is unambiguous even if the same id also lives
+        # under a provider group — prefer it and resolve rather than nag.
+        active_hit = next((x for x in subs if x[1] is None), None)
+        if active_hit is not None:
+            return ModelResolution(active_hit[0], None, "fuzzy")
+        uniq: list[str] = []
+        for m, _ in subs:
+            if m not in uniq:
+                uniq.append(m)
+        if len(uniq) == 1:
+            return ModelResolution(subs[0][0], subs[0][1], "fuzzy")
+        return ModelResolution(None, None, "fuzzy", tuple(uniq[:20]))
+
+    return ModelResolution(None, None, "none")
+
+
+# ---------------------------------------------------------------------------
 # Live-model cache (~/.mantis-agent/live_models.json)
 #
 # A provider's /v1/models is a network call (slow, sometimes 2.5s). Persisting
@@ -399,12 +581,28 @@ def cached_live_models(provider_id: str, *, ttl_s: float = LIVE_TTL_S) -> list[s
     if time.time() - float(rec.get("ts", 0)) > ttl_s:
         return None
     models = rec.get("models")
-    return models if isinstance(models, list) else None
+    if not isinstance(models, list):
+        return None
+    # Filter on read too, so a cache written by an older build (or hand-edited)
+    # can't surface a bogus id as a real model.
+    clean = [m for m in models if _is_cacheable_model_id(m)]
+    return clean or None
+
+
+def _is_cacheable_model_id(m: Any) -> bool:
+    """A live-cache entry must be a plausible id AND not a bare query alias — no
+    provider ships a model literally named 'newest' or 'claude', and caching one
+    would make it win the resolver's exact-match step over the real alias."""
+    return looks_like_model_id(m) and m.strip().lower() not in RESOLVER_ALIAS_WORDS
 
 
 def store_live_models(provider_id: str, models: list[str]) -> None:
+    # Only persist plausible ids: a flaky /v1/models response (or an id colliding
+    # with a query alias like "newest") must never poison the cache and later
+    # resolve as a real model.
+    clean = [m.strip() for m in models if _is_cacheable_model_id(m)]
     data = _load_live()
-    data[provider_id] = {"models": models, "ts": time.time()}
+    data[provider_id] = {"models": clean, "ts": time.time()}
     p = _live_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2))
@@ -488,6 +686,10 @@ __all__ = [
     "api_key_for",
     "is_enabled",
     "provider_for_model",
+    "looks_like_model_id",
+    "ModelResolution",
+    "resolve_model_query",
+    "RESOLVER_ALIAS_WORDS",
     "get_last_model",
     "set_last_model",
     "get_recent_models",

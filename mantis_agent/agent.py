@@ -677,7 +677,10 @@ class Agent:
             try:
                 if self._env_context is None:
                     from .system_reminder import render_environment_context
-                    self._env_context = render_environment_context().strip()
+                    self._env_context = render_environment_context(
+                        model=self.model,
+                        backend=getattr(self.provider, "name", None) or self.backend,
+                    ).strip()
                 if self._env_context:
                     ctx["environment"] = self._env_context
             except Exception:  # noqa: BLE001 — subprocess / I/O can fail
@@ -1610,10 +1613,26 @@ class Agent:
                 # Same-model retry on a transient error, with backoff.
                 if _is_transient(err) and attempt < self.max_retries:
                     delay = _retry_delay(err, attempt)
-                    _log.warning(
-                        "transient model error (%r); retry %d/%d in %.1fs",
-                        err, attempt + 1, self.max_retries, delay,
-                    )
+                    # Same UI treatment as the transport layer: with a TUI hook
+                    # installed, surface as an in-place spinner note instead of
+                    # a raw WARNING line torn through the prompt frame.
+                    from . import retry as _retry_mod  # noqa: PLC0415
+                    _cb = _retry_mod.notify
+                    if _cb is not None:
+                        try:
+                            _cb({"host": self.model,
+                                 "reason": f"model error ({type(err).__name__})",
+                                 "attempt": attempt + 1,
+                                 "attempts": self.max_retries, "sleep_s": delay})
+                        except Exception:  # noqa: BLE001
+                            pass
+                        _log.debug("transient model error (%r); retry %d/%d in %.1fs",
+                                   err, attempt + 1, self.max_retries, delay)
+                    else:
+                        _log.warning(
+                            "transient model error (%r); retry %d/%d in %.1fs",
+                            err, attempt + 1, self.max_retries, delay,
+                        )
                     await anyio.sleep(delay)
                     attempt += 1
                     continue

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -377,6 +378,122 @@ async def bash_kill(bash_id: str) -> str:
             pass
     _BG_SHELLS.pop(bash_id, None)
     return f"terminated background shell {bash_id} ({entry['cmd']})"
+
+
+@tool(name="monitor", is_read_only=True, is_concurrency_safe=True, timeout_s=630.0)
+async def monitor(
+    bash_id: str | None = None,
+    until_pattern: str | None = None,
+    path: str | None = None,
+    port: int | None = None,
+    timeout_s: float = 120.0,
+    poll_s: float = 0.5,
+) -> str:
+    """Wait efficiently for a condition instead of looping sleep + check calls.
+    Blocks (up to ``timeout_s``) until the FIRST of the given conditions fires,
+    then reports what happened. Give at least one of:
+
+    * ``bash_id`` + ``until_pattern`` — a background shell's output matches the
+      regex (also returns early if the shell exits first).
+    * ``bash_id`` alone — the background shell exits; reports its exit code.
+    * ``path`` — the file/dir appears (or, if it already exists, changes).
+    * ``port`` — localhost:port starts accepting TCP connections.
+
+    Use after ``bash(run_in_background=True)`` to wait for "server started",
+    a build to finish, a log line, a file to be produced, or a port to open.
+
+    Args:
+        bash_id: Background shell to watch (from bash(run_in_background=True)).
+        until_pattern: Regex to wait for in the shell's output (needs bash_id).
+        path: File or directory to wait on (appear, or change if it exists).
+        port: TCP port on localhost to wait on.
+        timeout_s: Give up after this many seconds (1–600, default 120).
+        poll_s: Poll interval in seconds (0.1–10, default 0.5).
+    """
+    timeout_s = max(1.0, min(float(timeout_s or 120.0), 600.0))
+    poll_s = max(0.1, min(float(poll_s or 0.5), 10.0))
+
+    entry = None
+    if bash_id is not None:
+        entry = _BG_SHELLS.get(bash_id)
+        if entry is None:
+            running = ", ".join(_BG_SHELLS) or "none"
+            return f"no background shell {bash_id!r} (running: {running})"
+    if until_pattern and entry is None:
+        return "monitor: until_pattern needs a bash_id to watch."
+    if entry is None and path is None and port is None:
+        return "monitor: give bash_id, path, or port — nothing to watch."
+
+    rx = None
+    if until_pattern:
+        try:
+            rx = re.compile(until_pattern)
+        except re.error:
+            rx = re.compile(re.escape(until_pattern))  # bad regex → literal
+
+    p = Path(path).expanduser() if path else None
+    existed = p.exists() if p is not None else False
+    baseline = (p.stat().st_mtime_ns, p.stat().st_size) if (p is not None and existed and p.is_file()) else None
+    # Scan from the log's start on the first monitor of this shell — a line
+    # that already arrived counts as matched. Separate from bash_output's
+    # read_pos so monitoring never swallows output the model hasn't seen.
+    scan_pos = entry.get("monitor_pos", 0) if entry is not None else 0
+
+    def _scan_log() -> str | None:
+        nonlocal scan_pos
+        try:
+            with open(entry["log"], "rb") as fh:
+                fh.seek(scan_pos)
+                chunk = fh.read()
+                scan_pos = fh.tell()
+        except OSError:
+            return None
+        entry["monitor_pos"] = scan_pos
+        if not chunk:
+            return None
+        for line in _strip_terminal_controls(chunk.decode("utf-8", "replace")).splitlines():
+            if rx is not None and rx.search(line):
+                return line.strip()
+        return None
+
+    def _port_open() -> bool:
+        import socket  # noqa: PLC0415
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.5):
+                return True
+        except OSError:
+            return False
+
+    start = time.monotonic()
+    while True:
+        if entry is not None:
+            if rx is not None:
+                hit = _scan_log()
+                if hit is not None:
+                    return f"matched after {time.monotonic() - start:.1f}s: {hit}"
+            rc = entry["proc"].poll()
+            if rc is not None:
+                tail = _scan_log()  # flush remaining output through the pattern
+                if rx is not None and tail is not None:
+                    return f"matched after {time.monotonic() - start:.1f}s: {tail}"
+                return (f"{bash_id} exited with code {rc} after "
+                        f"{time.monotonic() - start:.1f}s"
+                        + (" — pattern never matched" if rx is not None else "")
+                        + f". Read remaining output with bash_output(bash_id=\"{bash_id}\").")
+        if p is not None:
+            if not existed and p.exists():
+                return f"{p} appeared after {time.monotonic() - start:.1f}s"
+            if baseline is not None and p.exists():
+                st = p.stat()
+                if (st.st_mtime_ns, st.st_size) != baseline:
+                    return f"{p} changed after {time.monotonic() - start:.1f}s"
+        if port is not None and _port_open():
+            return f"port {port} is accepting connections (after {time.monotonic() - start:.1f}s)"
+        if time.monotonic() - start >= timeout_s:
+            what = until_pattern or (str(p) if p is not None else f"port {port}" if port else f"{bash_id} exit")
+            return (f"timeout: {what!r} not seen within {timeout_s:.0f}s — still waiting? "
+                    f"call monitor again, or check bash_output / the process directly.")
+        await anyio.sleep(poll_s)
 
 
 @tool(is_read_only=True)
@@ -1068,6 +1185,7 @@ CODING_TOOLS: tuple[Tool, ...] = (
     bash,
     bash_output,
     bash_kill,
+    monitor,
     read_file,
     write_file,
     edit_file,
@@ -1084,6 +1202,7 @@ __all__ = [
     "bash",
     "bash_output",
     "bash_kill",
+    "monitor",
     "read_file",
     "write_file",
     "edit_file",

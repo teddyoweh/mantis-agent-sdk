@@ -43,6 +43,41 @@ import httpx
 
 _LOG = logging.getLogger("mantis_agent.retry")
 
+# UI status hook. When a TUI is running, raw log lines would tear through the
+# prompt frame (and four wrapped WARNINGs per outage read as a crash), so the
+# TUI sets ``notify`` to render retries as a single in-place status note
+# instead. With a hook installed the log drops to DEBUG; headless keeps the
+# WARNING lines. Payload: {host, reason, attempt, attempts, sleep_s}.
+notify = None  # Callable[[dict], None] | None
+
+
+def _friendly_reason(exc: Exception | None = None, status: int | None = None) -> str:
+    if status is not None:
+        return "rate limited (429)" if status == 429 else f"HTTP {status}"
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
+        return "connection failed"
+    if isinstance(exc, (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return "timed out"
+    if isinstance(exc, httpx.RemoteProtocolError):
+        return "connection dropped"
+    return type(exc).__name__ if exc is not None else "error"
+
+
+def _emit_retry(request: httpx.Request, reason: str, attempt: int,
+                attempts: int, sleep_s: float) -> None:
+    cb = notify
+    if cb is not None:
+        try:
+            cb({"host": request.url.host, "reason": reason, "attempt": attempt,
+                "attempts": attempts, "sleep_s": sleep_s})
+        except Exception:  # noqa: BLE001 — a UI hook must never break retries
+            pass
+        _LOG.debug("request %s %s: %s; retry %d/%d in %.2fs",
+                   request.method, request.url, reason, attempt, attempts, sleep_s)
+    else:
+        _LOG.warning("request %s %s failed (%s); retry %d/%d in %.2fs",
+                     request.method, request.url, reason, attempt, attempts, sleep_s)
+
 
 # Retryable status codes (per RFC 9110 + provider conventions).
 _RETRY_STATUSES: frozenset[int] = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -109,15 +144,8 @@ class RetryTransport(httpx.AsyncBaseTransport):
             except _RETRY_EXCEPTIONS as e:
                 last_exc = e
                 sleep_for = self._backoff_seconds(attempt)
-                _LOG.warning(
-                    "request %s %s failed (%s); retry %d/%d in %.2fs",
-                    request.method,
-                    request.url,
-                    type(e).__name__,
-                    attempt + 1,
-                    self._attempts,
-                    sleep_for,
-                )
+                _emit_retry(request, _friendly_reason(exc=e),
+                            attempt + 1, self._attempts, sleep_for)
                 await anyio.sleep(sleep_for)
                 continue
 
@@ -129,15 +157,8 @@ class RetryTransport(httpx.AsyncBaseTransport):
                     response.headers.get("retry-after")
                 )
                 sleep_for = retry_after if retry_after is not None else self._backoff_seconds(attempt)
-                _LOG.info(
-                    "request %s %s returned %d; retry %d/%d in %.2fs",
-                    request.method,
-                    request.url,
-                    response.status_code,
-                    attempt + 1,
-                    self._attempts,
-                    sleep_for,
-                )
+                _emit_retry(request, _friendly_reason(status=response.status_code),
+                            attempt + 1, self._attempts, sleep_for)
                 # Drain the response body before retrying so the connection
                 # can be reused (httpx pools won't release otherwise).
                 try:

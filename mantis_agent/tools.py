@@ -381,6 +381,22 @@ class ToolRegistry:
 _ENC = msgspec.json.Encoder()
 
 
+def unknown_tool_message(name: str, registry: "ToolRegistry") -> str:
+    """An unknown-tool error the MODEL can recover from. Small local models
+    invent tool names constantly ('model', 'search', 'run') — a bare 'not
+    found' makes them retry blindly; naming the close match (or telling them
+    no tool is needed) lets them self-correct in one step."""
+    import difflib  # noqa: PLC0415
+    names = [t.name for t in registry]
+    close = difflib.get_close_matches(name, names, n=1, cutoff=0.5)
+    hint = f" Did you mean {close[0]!r}?" if close else ""
+    return (
+        f"tool {name!r} does not exist.{hint} Only these tools are available: "
+        f"{', '.join(sorted(names))}. If none fits, answer directly in text — "
+        "no tool call is needed to reply."
+    )
+
+
 async def dispatch_tool_calls(
     registry: ToolRegistry,
     calls: list[ToolUseBlock],
@@ -405,7 +421,7 @@ async def dispatch_tool_calls(
         if t is None:
             results[idx] = ToolResultBlock(
                 tool_use_id=call.id,
-                content=f"tool {call.name!r} not found",
+                content=unknown_tool_message(call.name, registry),
                 is_error=True,
             )
             return

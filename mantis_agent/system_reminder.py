@@ -248,6 +248,8 @@ def build_env_context_block(
     dir_entries: list[str] | None = None,
     is_git: bool | None = None,
     max_dir_entries: int = 40,
+    model: str | None = None,
+    backend: str | None = None,
 ) -> str:
     """Pure(ish). The ``<env>`` block: working directory, platform, OS version,
     today's date, and a shallow (non-recursive) directory listing. Every input
@@ -281,8 +283,12 @@ def build_env_context_block(
         f"Platform: {platform_name}",
         f"OS Version: {os_version}",
         f"Today's date: {now.strftime('%Y-%m-%d')}",
-        "</env>",
     ]
+    # Identity: lets any model answer "what model are you / what backend" from
+    # context instead of guessing or flailing at tools.
+    if model:
+        lines.append(f"You are the model: {model}" + (f" (served via {backend})" if backend else ""))
+    lines.append("</env>")
     block = "\n".join(lines)
     if dir_entries:
         listing = "\n".join(f"- {n}" for n in dir_entries)
@@ -350,7 +356,8 @@ def build_git_context(cwd: str | None = None, *, run: object = None) -> str:
 
 
 def render_environment_context(
-    cwd: str | None = None, now: datetime | None = None
+    cwd: str | None = None, now: datetime | None = None,
+    model: str | None = None, backend: str | None = None,
 ) -> str:
     """Compose the ``<env>`` block + git snapshot into the single string that
     becomes the ``environment`` context key. Never raises — best-effort; always
@@ -360,7 +367,8 @@ def render_environment_context(
     except Exception:  # noqa: BLE001
         git = ""
     try:
-        env = build_env_context_block(cwd=cwd, now=now, is_git=bool(git))
+        env = build_env_context_block(cwd=cwd, now=now, is_git=bool(git),
+                                      model=model, backend=backend)
     except Exception:  # noqa: BLE001
         env = "<env>\n</env>"
     return env + (f"\n\n{git}" if git else "")

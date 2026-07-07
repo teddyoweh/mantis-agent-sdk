@@ -721,6 +721,9 @@ def _run_anthropic(c: Any, prov: Any) -> int:
             c.print(Text("  Cancelled.", style=dim))
             return 1
         base_url = entered if entered.startswith(("http://", "https://")) else "https://" + entered
+        # Recover the base if a full endpoint (…/anthropic/v1/messages) was pasted.
+        from .paths import normalize_base_url  # noqa: PLC0415
+        base_url = normalize_base_url(base_url)
 
     # -- credential --------------------------------------------------------
     if method == "oauth":
@@ -943,6 +946,9 @@ def _run_selfhost(c: Any) -> int:
         return 1
     if not url.startswith(("http://", "https://")):
         url = "http://" + url
+    # Recover the base if the user pasted a full endpoint (…/v1/chat/completions).
+    from .paths import normalize_base_url  # noqa: PLC0415
+    url = normalize_base_url(url)
     try:
         key = getpass.getpass("  API key (Enter if none — most local servers need none): ").strip()
     except (EOFError, KeyboardInterrupt):

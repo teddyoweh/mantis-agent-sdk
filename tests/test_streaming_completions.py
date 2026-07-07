@@ -235,7 +235,7 @@ def test_completion_emitted_for_unknown_tool():
             assert idx == 0
             assert result.tool_use_id == "ghost"
             assert result.is_error
-            assert "not found" in result.content
+            assert "does not exist" in result.content
 
     anyio.run(main)
 

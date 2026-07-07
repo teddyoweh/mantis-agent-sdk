@@ -3,8 +3,10 @@ APIUserMessage
 Agent
 AgentDefinition
 AgentError
+AgentType
 AssistantMessage
 AuthError
+BUILTIN_AGENT_TYPES
 BackendCapability
 BudgetExceededError
 CLIConnectionError
@@ -79,9 +81,11 @@ WrappedAgentTool
 __version__
 as_subagent_tool
 create_sdk_mcp_server
+discover_agent_types
 fork_session
 lookup_model
 make_checkpoints
+make_pair_tool
 make_task_tool
 normalize_response_format
 query
