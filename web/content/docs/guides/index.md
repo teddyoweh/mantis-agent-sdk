@@ -6,6 +6,8 @@ to do; each one is self-contained.
 ## By task
 
 - **Pick a model** → [Models and backends](models-and-backends.md)
+- **Code in the terminal** → [The mantis terminal](terminal.md)
+- **Script it / run in CI** → [Headless & CI](headless.md)
 - **Write a tool** → [Tools](tools.md)
 - **Stream tokens + dispatch tools mid-response** → [Streaming](streaming.md)
 - **Approve / deny / rewrite tool calls** → [Permissions](permissions.md)

@@ -32,7 +32,7 @@ export function Terminal() {
             {MANTIS_ART}
           </pre>
           <div className="hidden sm:block pt-1 space-y-0.5" style={{ color: "#8b8577" }}>
-            <div style={{ color: "#e8e2d4" }}>Mantis Code v1.21.0</div>
+            <div style={{ color: "#e8e2d4" }}>Mantis Code v2.56.0</div>
             <div>
               qwen2.5-coder:7b · <span style={{ color: "var(--color-mantis-soft)" }}>Ollama (local)</span>
             </div>

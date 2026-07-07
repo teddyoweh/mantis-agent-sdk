@@ -48,7 +48,7 @@ Gemini — works with the base install.
 python -c "import mantis_agent; print(mantis_agent.__version__)"
 ```
 
-Prints the installed version (e.g. `1.21.0`). Then head to the
+Prints the installed version (e.g. `2.56.0`). Then head to the
 [Quickstart](quickstart.md).
 
 > Want `mantis` available everywhere, isolated from your projects?

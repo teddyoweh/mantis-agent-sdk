@@ -72,6 +72,7 @@ SLASH_COMMANDS = {
     "/models": "browse & pick a model (local · API · self-host)",
     "/model": "switch / pick a model",
     "/goal": "autopilot: plan → execute → verify until done",
+    "/swarm": "N parallel attempts in worktrees; judge applies the best",
     "/watch": "watch a command; agent wakes + fixes when it breaks",
     "/loop": "re-run a prompt on an interval (/loop 5m <prompt>)",
     "/resume": "resume a past conversation",
@@ -333,7 +334,7 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
     ("model", ["/models", "/model", "/enable", "/disable", "/connect"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
-    ("autonomy", ["/goal", "/watch", "/loop"]),
+    ("autonomy", ["/goal", "/swarm", "/watch", "/loop"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
     ("info", ["/status", "/cost", "/doctor", "/permissions", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/export", "/cwd"]),
@@ -790,6 +791,24 @@ def set_terminal_title(title: str) -> None:
         sys.stdout.flush()
     except Exception:  # noqa: BLE001 — cosmetic
         pass
+
+
+_VISION_MARKERS = (
+    "gpt-4o", "gpt-4.1", "gpt-5", "chatgpt", "o3", "o4",          # OpenAI multimodal
+    "claude",                                                       # all modern Claude
+    "gemini",                                                       # Gemini
+    "llava", "vision", "-vl", "vl-", "pixtral", "moondream",       # OSS vision
+    "minicpm-v", "qwen-vl", "qwen2-vl", "qwen2.5vl", "gemma-3",
+    "llama3.2-vision", "llama-3.2-11b", "llama-3.2-90b", "kimi-latest",
+)
+
+
+def model_supports_vision(model_id: str) -> bool:
+    """Best-effort: can this model SEE images? Used to warn at paste time —
+    attaching a screenshot to a text-only model silently does nothing, which
+    reads as 'image paste is broken'. Unknown ids default to False (warn)."""
+    low = (model_id or "").lower()
+    return any(m in low for m in _VISION_MARKERS)
 
 
 _PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b")
@@ -1453,6 +1472,8 @@ class MantisTUI:
         # File checkpoints: every write-tool call snapshots its target first,
         # so /rewind (and esc-esc) restores CODE state, not just conversation.
         self._file_checkpoints: list[dict[str, Any]] = []
+        # Live subagent progress (task tool runs): id → {type, desc, tools, started}.
+        self._live_subagents: dict[int, dict[str, Any]] = {}
         # Auto session title: generated once after the first completed turn.
         self._title_done = False
         # The on-disk transcript for /resume + /branch (created in run()).
@@ -1560,7 +1581,7 @@ class MantisTUI:
         if not slim:  # subagents/twins are big-model features
             registry.add(make_task_tool(
                 model=self.model, provider=provider, tools=list(registry),
-                permissions=permissions))
+                permissions=permissions, on_progress=self._subagent_progress))
             # pair — persistent same-model TWINS the agent converses with across
             # turns (stress-test a plan, verify a claim, argue to convergence).
             # Read-only kit: grounded pushback, no write races with the parent.
@@ -2539,6 +2560,72 @@ class MantisTUI:
         self._title_done = bool(target.title)
         return label
 
+    # -- crash recovery ---------------------------------------------------------
+
+    def _session_state_path(self) -> Path:
+        from . import paths as _pp  # noqa: PLC0415
+        d = _pp.get_project_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "session-state.json"
+
+    def _mark_session_state(self, *, clean: bool) -> None:
+        """Record this session + whether it exited cleanly. Written at startup
+        (clean=False) and on orderly exit (clean=True) — a crash leaves the
+        False marker behind, and the next launch offers to resume."""
+        import json as _json  # noqa: PLC0415
+        try:
+            sid = getattr(self.transcript, "session_id", None)
+            if not sid:
+                return
+            self._session_state_path().write_text(_json.dumps(
+                {"session_id": sid, "clean": clean, "ts": time.time()}))
+        except OSError:
+            pass
+
+    def _check_unclean_exit(self) -> str | None:
+        """If the previous session crashed (marker left clean=False), return a
+        one-line resume hint. None when the last exit was orderly, the crashed
+        session is what we're already resuming, or it holds no messages."""
+        import json as _json  # noqa: PLC0415
+        try:
+            rec = _json.loads(self._session_state_path().read_text())
+        except (OSError, ValueError):
+            return None
+        if rec.get("clean") or not rec.get("session_id"):
+            return None
+        sid = str(rec["session_id"])
+        if getattr(self.transcript, "session_id", None) == sid:
+            return None
+        try:
+            from .session_tree import list_sessions  # noqa: PLC0415
+            info = next((s for s in list_sessions() if s.session_id == sid), None)
+        except Exception:  # noqa: BLE001
+            return None
+        if info is None or info.message_count == 0:
+            return None
+        title = ellipsize(info.title or info.first_prompt or sid[:8], 40)
+        return (f"previous session ended unexpectedly — resume it: "
+                f"/resume {sid[:8]} ({title} · {info.message_count} msgs)")
+
+    def _subagent_progress(self, ev: dict) -> None:
+        """task-tool progress sink: keeps the live map the fullscreen spinner
+        block renders ('⎿ explore · 6 tools · 42s'). Thread/task-safe enough:
+        single event loop, plain dict ops."""
+        try:
+            rid = ev.get("id")
+            if rid is None:
+                return
+            if ev.get("phase") == "start":
+                self._live_subagents[rid] = {
+                    "type": ev.get("type", "explore"), "desc": ev.get("desc", ""),
+                    "tools": 0, "started": time.monotonic()}
+            elif ev.get("phase") == "tool" and rid in self._live_subagents:
+                self._live_subagents[rid]["tools"] += 1
+            elif ev.get("phase") == "end":
+                self._live_subagents.pop(rid, None)
+        except Exception:  # noqa: BLE001 — progress is garnish
+            pass
+
     # -- file checkpoints (code-state rewind) ---------------------------------
 
     _WRITE_TOOLS = frozenset({"write_file", "edit_file", "multi_edit", "notebook_edit"})
@@ -3205,7 +3292,7 @@ class MantisTUI:
         if cmd == "/mcp":
             self._show_mcp()
             return True
-        if cmd in ("/loop", "/goal", "/watch"):
+        if cmd in ("/loop", "/goal", "/watch", "/swarm"):
             # These engines need a UI that can fire turns while idle-waiting;
             # the classic REPL blocks on the prompt, so they're fullscreen-only.
             self.console.print(f"[ansibrightblack]{cmd} runs in the full-screen UI "

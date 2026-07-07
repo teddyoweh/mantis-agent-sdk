@@ -40,6 +40,8 @@ The 28 hook events the runtime emits:
 **Per-turn**
 
 - `Stop` — agent loop is about to exit (e.g. `stop_reason='end_turn'`).
+- `UserPromptSubmit` — a user prompt was submitted; inject extra context
+  or block the prompt before the model sees it.
 - `PreCompact` / `PostCompact` — about to / just finished compacting.
 
 **Per-message**

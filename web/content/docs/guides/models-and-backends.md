@@ -153,6 +153,16 @@ options = {"model": "qwen2.5:0.5b", "tool_use_path": "xml_prompt_engineered"}
 
 ## Good to know
 
+- **Retries are built in** — transient errors back off exponentially and
+  honor `Retry-After`; context overflow triggers an emergency compact and
+  retry; and `fallback_model="..."` in options retries a pre-output
+  failure on a second model.
+- **Small models get extra tolerance** — hallucinated extra tool args are
+  dropped, string-typed ints/bools are coerced to the schema, near-miss
+  tool names resolve, and `<function=NAME>` call formats are salvaged. A
+  1.5B model misbehaving rarely breaks the loop.
+- **`max_tokens` defaults to the model's output budget**, not a fixed
+  1024 — long answers stopped getting truncated by default.
 - **Ollama** supports native tool use for Llama 3.1+ and Qwen 2.5+; older
   models fall back to the prompted path automatically.
 - **Groq and Cerebras** have tighter context windows than the model cards

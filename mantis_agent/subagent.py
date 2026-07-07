@@ -45,6 +45,7 @@ hand.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, overload
@@ -55,6 +56,8 @@ from .tools import Tool, ToolRegistry, tool
 from .types import AssistantMessage, Message, TextBlock, UserMessage
 
 IsolationMode = Literal["asyncio_task", "subprocess", "remote"]
+
+_RUN_COUNTER = itertools.count(1)  # live-progress ids for task-tool runs
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +552,7 @@ def make_task_tool(
     max_steps: int = 20,
     permissions: Any = None,
     agent_types: list[AgentType] | None = None,
+    on_progress: Any = None,
 ) -> Tool:
     """Build the ``task`` tool: the parent delegates a focused, multi-step task
     to a fresh subagent that runs to completion and returns just its findings.
@@ -578,6 +582,30 @@ def make_task_tool(
             return (f"task: unknown subagent_type {type_name!r} — available: "
                     f"{', '.join(sorted(by_name))}")
         kit = resolve_agent_tools(at, tools)
+        # Live progress: wrap this run's kit so every child tool call pings
+        # on_progress — the TUI renders "⎿ explore · 6 tools · 42s" under the
+        # spinner instead of a silent 90s Delegate line.
+        run_id = None
+        if on_progress is not None:
+            import dataclasses  # noqa: PLC0415
+            run_id = next(_RUN_COUNTER)
+            try:
+                on_progress({"id": run_id, "phase": "start", "type": type_name,
+                             "desc": str((args or {}).get("description") or "")})
+            except Exception:  # noqa: BLE001
+                pass
+
+            def _wrap(t: Tool) -> Tool:
+                orig = t.fn
+
+                async def fn(*a: Any, _orig: Any = orig, _name: str = t.name, **kw: Any) -> Any:
+                    try:
+                        on_progress({"id": run_id, "phase": "tool", "tool": _name})
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return await _orig(*a, **kw)
+                return dataclasses.replace(t, fn=fn)
+            kit = [_wrap(t) for t in kit]
         registry = ToolRegistry()
         if kit:
             registry.add(*kit)
@@ -597,11 +625,19 @@ def make_task_tool(
             include_env=False,
         )
         messages: list[Message] = [UserMessage(content=prompt)]
-        await child.run(messages)
+        try:
+            await child.run(messages)
+        finally:
+            if on_progress is not None and run_id is not None:
+                try:
+                    on_progress({"id": run_id, "phase": "end"})
+                except Exception:  # noqa: BLE001
+                    pass
         return _extract_final_text(messages) or "(subagent produced no output)"
 
     task.description = _task_tool_description(types)
     return task
+
 
 
 # ---------------------------------------------------------------------------

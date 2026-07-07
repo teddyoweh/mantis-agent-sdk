@@ -52,6 +52,15 @@ Each transport starts its handshake at session start and tears down at
 session end. Failures during handshake surface as `McpServerError` hooks;
 failures mid-call surface as tool errors.
 
+## Resources and prompts
+
+Beyond tools, the MCP client speaks the other two halves of the protocol:
+servers can expose **resources** (documents, tables, file trees the agent
+can list and read) and **prompts** (parameterized prompt templates). Both
+are available through the client methods on the session — list what a
+server offers, read a resource by URI, or expand a named prompt with
+arguments — so any server that publishes them works out of the box.
+
 ## Elicitation
 
 Servers can prompt the user mid-tool-call. The `ctx.elicit()` API
@@ -140,3 +149,51 @@ options = {
     ],
 }
 ```
+
+## Terminal integration (`.mcp.json`)
+
+The `mantis` terminal discovers MCP servers automatically — Claude Code's
+config format, verbatim:
+
+```json
+// ./.mcp.json (project) or ~/.mantis-agent/mcp.json (user)
+{
+  "mcpServers": {
+    "github":   {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+                 "env": {"GITHUB_TOKEN": "..."}},
+    "internal": {"type": "http", "url": "https://mcp.example.com/api"},
+    "legacy":   {"type": "sse",  "url": "https://old.example.com/sse"}
+  }
+}
+```
+
+`settings.json` may also carry a top-level `mcpServers` object (lowest
+priority; project `.mcp.json` wins by name). Servers connect in the
+background at launch — a slow or broken server never delays your prompt, and
+each failure is isolated. Tools land namespaced as `mcp__{server}__{tool}`
+and survive model switches. `/mcp` shows per-server status + tools.
+
+Handshakes time out at 10s and tool calls at 120s, so a mute server fails
+fast instead of hanging the terminal.
+
+## SDK: `options.mcp_servers`
+
+External transports work through the Claude-SDK-shaped API too:
+
+```python
+from mantis_agent import MantisAgentOptions
+from mantis_agent.compat_query import query
+
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    mcp_servers={
+        "tiny":  {"command": "python3", "args": ["./my_mcp_server.py"]},  # stdio
+        "calc":  create_sdk_mcp_server("calc", tools=[echo]),             # in-process
+    },
+)
+async for msg in query(prompt="call mcp__tiny__ping", options=options):
+    ...
+```
+
+Lifecycle is handled for you (`MCPManager.start()/stop()` — connect at query
+start, clean close at the end, safe from async generators).

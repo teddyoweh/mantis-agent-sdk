@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [2.57.0] - 2026-07-07
+
+### Added
+
+- **`/swarm N <task>`** — N parallel general-purpose agents in isolated git
+  worktrees; a judge ranks the diffs and applies only the winner's patch.
+  Engine (`mantis_agent.swarm.run_swarm`) takes injectable runner/judge.
+- **Live subagent progress** — in-flight `task`/swarm runs render under the
+  spinner (`⎿ ◇ explore · 6 tools · 42s`).
+- **Crash recovery** — unclean exits are detected; the next launch offers the
+  crashed session's `/resume` line.
+- **Vision guard** — Ctrl+V into a text-only model warns immediately instead
+  of silently attaching an invisible image.
+- **PTY end-to-end tests** — an expect-style harness drives the real
+  fullscreen binary (slash commands, pickers, `!` prefix, crash reboot).
+- **Docs** — sub-agents, MCP, and terminal guides now cover agent types,
+  twins, `.mcp.json`, autonomy commands, sessions/rewind, small-model mode.
+
 ## [2.56.0] - 2026-07-07
 
 ### Added

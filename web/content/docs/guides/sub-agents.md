@@ -157,3 +157,74 @@ Three common shapes:
 
 See `mantis_agent/examples/multi_agent_research.py` for a worked
 example of all three.
+
+## Agent types (the `task` tool)
+
+The `mantis` terminal ships one delegation tool — `task` — with selectable
+**agent types** (Claude Code's `subagent_type`):
+
+| type | tools | steps | for |
+|---|---|---|---|
+| `explore` | read-only | 20 | find code/facts, report with `file:line` |
+| `plan` | read-only | 25 | read the code → step-by-step implementation plan |
+| `general-purpose` | full belt | 100 | autonomous multi-step execution |
+
+Parallel fan-out works: the model can launch several `task` calls in one
+message and they run concurrently. Subagents inherit the parent's
+**permission gate** — a write-capable child prompts you exactly like the
+parent would.
+
+### User-defined agents
+
+Drop a markdown file in `~/.mantis-agent/agents/<name>.md` (user-wide) or
+`./.mantis/agents/<name>.md` (project — wins on collision, can override the
+built-ins):
+
+```markdown
+---
+name: code-reviewer
+description: Reviews a diff for bugs and style problems.
+tools: read_file, grep, glob    # or "all" / "read-only" (default "all")
+model: gpt-5.4-mini             # optional; default inherits the parent
+max_steps: 30
+---
+You are a meticulous code reviewer...
+```
+
+`/agents` lists everything discovered. In the SDK, `discover_agent_types()`
+returns the same list, and `make_task_tool(..., agent_types=...)` builds the
+tool.
+
+### SDK: `options.agents`
+
+Claude-SDK-style agent definitions register as delegatable tools named after
+the agent:
+
+```python
+from mantis_agent import AgentDefinition, MantisAgentOptions
+
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    agents={"reviewer": AgentDefinition(
+        description="Reviews diffs for bugs.",
+        prompt="You are a reviewer.",
+        tools=["read_file", "grep"],       # narrows the child's kit
+    )},
+)
+```
+
+## Twins (the `pair` tool)
+
+`task` is fire-and-forget; **`pair` is a conversation**. Each named peer — a
+*twin* — is a persistent same-model agent that remembers your whole dialogue
+with it: propose → get pushback → revise → converge.
+
+- `pair(message, peer="skeptic", persona="stress-test every proposal")` —
+  named peers are independent minds with separate memories
+- Twins carry the **read-only** kit, so their pushback cites real
+  `file:line`, and they can't race the parent on writes
+- `reset=true` wipes one peer
+
+In the terminal, `/twin skeptic: <message>` lets **you** join the exact same
+conversation the model has been having (state is shared, survives model
+switches). SDK: `make_pair_tool(model=..., tools=..., conversations=...)`.

@@ -141,6 +141,24 @@ options = MantisAgentOptions(mcp_servers={"calc": calc})
 External servers: `{"mcp_servers": [{"transport": "stdio", "command": "uvx",
 "args": ["mcp-server-fetch"]}]}` — also `sse` and `http`.
 
+## Headless / CI (no interaction)
+
+One-shot coding agent from the shell — great inside scripts and CI:
+
+```bash
+mantis-agent run "Fix the failing test" --model qwen2.5:7b --tools --json
+cat spec.md | mantis-agent run - --model qwen2.5:7b --tools   # prompt from stdin
+```
+
+`--tools` grants read/write/edit/bash/grep/glob/lsp/web (dangerous shell
+commands are refused unless you add `--dangerously-skip-permissions`/
+`--yes`). `--json` prints one object: `result`, `is_error`, `num_turns`,
+`total_cost_usd`, `usage`, `session_id` — gate CI on `is_error`.
+
+The interactive terminal: `mantis` (resume last conversation with
+`mantis --continue`; autonomy via `/goal`, `/watch`, `/loop`; `/init`
+writes a MANTIS.md project brief).
+
 ## Verify and debug
 
 - Run any bundled example: `python -m mantis_agent.examples.quickstart`
@@ -158,11 +176,20 @@ External servers: `{"mcp_servers": [{"transport": "stdio", "command": "uvx",
 ## Gotchas
 
 - Old models without function calling still get tools (prompted XML path) —
-  don't filter them out, just try.
+  don't filter them out, just try. Small-model slop (string-typed args,
+  extra kwargs, near-miss tool names, `<function=…>` formats) is coerced
+  and salvaged automatically.
+- Reliability is built in: transient errors retry with backoff (honoring
+  `Retry-After`), context overflow auto-compacts and retries, and
+  `fallback_model="..."` retries a pre-output failure on a second model.
+- `max_tokens` defaults to the model's output budget — don't set 1024
+  manually out of habit.
+- Hooks include `UserPromptSubmit` (inject context / block a prompt) and
+  `PreCompact`, with multiple hooks per event and tool-name matchers.
 - Groq/Cerebras context windows are tighter than the model cards claim;
   the capability table accounts for it.
 - The `mantis` terminal (Claude-Code-style coding agent) ships in the same
   pip package: `mantis setup && mantis`.
 
-Docs: https://mantis-agent-sdk.vercel.app/docs ·
+Docs: https://mantisagent.cc/docs ·
 Source: https://github.com/teddyoweh/mantis-agent-sdk

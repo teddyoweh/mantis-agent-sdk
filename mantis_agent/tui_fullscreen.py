@@ -146,6 +146,15 @@ async def run_fullscreen(tui: Any) -> int:
             tui.transcript = SessionTranscript(new_session_id())
         except Exception:  # noqa: BLE001 — persistence is best-effort
             tui.transcript = None
+    # Crash recovery: if the LAST session died mid-flight, offer its resume
+    # line; then mark THIS session as in-flight (flipped to clean on exit).
+    try:
+        _hint = tui._check_unclean_exit()
+        if _hint:
+            tui.console.print(f"[ansiyellow]⚠[/] [ansibrightblack]{_hint}[/]\n")
+        tui._mark_session_state(clean=False)
+    except Exception:  # noqa: BLE001
+        pass
 
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
@@ -707,22 +716,44 @@ async def run_fullscreen(tui: Any) -> int:
 
     _LIVE_TODO_ROWS = 8
 
+    def _live_subagent_rows(width: int) -> list[str]:
+        """'⎿ ◇ explore · 6 tools · 42s — CPU analysis' rows for in-flight
+        task-tool runs, capped at 4."""
+        from .tui import ellipsize  # noqa: PLC0415
+        rows: list[str] = []
+        subs = getattr(tui, "_live_subagents", None) or {}
+        for i, (rid, s) in enumerate(list(subs.items())[:4]):
+            el = int(time.monotonic() - s.get("started", time.monotonic()))
+            desc = f" — {s['desc']}" if s.get("desc") else ""
+            body = ellipsize(f"◇ {s.get('type', '?')} · {s.get('tools', 0)} tools · {el}s{desc}",
+                             max(width - 6, 20))
+            branch = "  ⎿ " if (i == 0 and not tui.todos) else "    "
+            rows.append(f"{_DIM}{branch}\033[36m{body}\033[0m{_RESET}")
+        return rows
+
     def live_todos_ft() -> Any:
-        """The checklist pinned under the spinner while the agent works —
-        Claude Code's `⎿ □ current task / ✔ struck-done` block. Collapses to
-        nothing when idle (the scrollback render covers history)."""
-        if not (state["working"] and tui.todos):
+        """The checklist + live subagent rows pinned under the spinner while
+        the agent works. Collapses to nothing when idle."""
+        subs = getattr(tui, "_live_subagents", None) or {}
+        if not (state["working"] and (tui.todos or subs)):
             return ANSI("")
         from .tui import format_live_todo_rows  # noqa: PLC0415
         width = shutil.get_terminal_size((80, 24)).columns
-        return ANSI("\n".join(format_live_todo_rows(tui.todos, width, max_rows=_LIVE_TODO_ROWS)))
+        rows: list[str] = []
+        if tui.todos:
+            rows += format_live_todo_rows(tui.todos, width, max_rows=_LIVE_TODO_ROWS)
+        rows += _live_subagent_rows(width)
+        return ANSI("\n".join(rows))
 
     def _live_todos_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        if not (state["working"] and tui.todos):
+        subs = getattr(tui, "_live_subagents", None) or {}
+        if not (state["working"] and (tui.todos or subs)):
             return Dimension.exact(0)
-        n = min(len(tui.todos), _LIVE_TODO_ROWS)
-        return Dimension.exact(n + (1 if len(tui.todos) > _LIVE_TODO_ROWS else 0))
+        n = min(len(tui.todos), _LIVE_TODO_ROWS) if tui.todos else 0
+        n += (1 if len(tui.todos) > _LIVE_TODO_ROWS else 0)
+        n += min(len(subs), 4)
+        return Dimension.exact(n)
 
     _PERM_OPTS = ["allow once", "allow for session", "deny"]
     _PERM_OPTS_VALUES = ["allow_once", "allow_session", "deny"]
@@ -1015,6 +1046,86 @@ async def run_fullscreen(tui: Any) -> int:
                 await asyncio.sleep(min(1.0, interval - waited))
                 waited += 1.0
 
+    async def _run_swarm(n: int, task_text: str) -> None:
+        """Drive swarm mode: N parallel general-purpose child agents in git
+        worktrees, twin-judge ranks the diffs, winner's patch lands in the
+        real tree. Runs as its own background task with the spinner up."""
+        import os as _os  # noqa: PLC0415
+
+        from .subagent import _GENERAL_SYSTEM, _extract_final_text  # noqa: PLC0415
+        from .swarm import run_swarm  # noqa: PLC0415
+        from .tools import ToolRegistry  # noqa: PLC0415
+        from .agent import Agent as _Agent  # noqa: PLC0415
+        from .builtin_tools import CODING_TOOLS  # noqa: PLC0415
+        from .types import UserMessage as _UM, TextBlock as _TB  # noqa: PLC0415
+
+        repo = _os.getcwd()
+        state.update(working=True, started=time.monotonic(),
+                     word="Swarming", task=asyncio.current_task())
+        get_app().invalidate()
+        await _announce(f"⛬ swarm: {n} parallel attempts · isolated worktrees · "
+                        "judge applies the best")
+
+        async def runner(worktree: str, task: str, index: int) -> str:
+            reg = ToolRegistry()
+            reg.add(*CODING_TOOLS)
+            child = _Agent(
+                model=tui.model, provider=tui.agent.provider if tui.agent else None,
+                system=(_GENERAL_SYSTEM +
+                        f"\n\nCRITICAL: you are attempt #{index + 1} of a swarm. Work "
+                        f"ONLY inside {worktree} — use ABSOLUTE paths under it for every "
+                        "file and shell operation; never touch files outside it. Take "
+                        "your own distinct approach to the task."),
+                tools=reg, max_steps=40, include_recall=False, include_env=False,
+            )
+            msgs = [_UM(content=f"In the repo copy at {worktree}: {task}")]
+            await child.run(msgs)
+            tui._subagent_progress({"id": 90000 + index, "phase": "end"})
+            return _extract_final_text(msgs)
+
+        async def judge(viable) -> tuple[int, str]:
+            briefs = []
+            for c in viable:
+                briefs.append(f"ATTEMPT {c.index}:\nreport: {c.report[:600]}\n"
+                              f"diff (truncated):\n{c.diff[:3000]}")
+            child = _Agent(
+                model=tui.model, provider=tui.agent.provider if tui.agent else None,
+                system=("You judge competing code attempts. Reply with ONLY a line "
+                        "like: WINNER: <index> — <one-line reason>. Judge on "
+                        "correctness first, then simplicity."),
+                tools=ToolRegistry(), max_steps=1, max_tokens=200,
+                include_recall=False, include_env=False,
+            )
+            msgs = [_UM(content=f"Task: {task_text}\n\n" + "\n\n".join(briefs))]
+            await child.run(msgs)
+            text = _extract_final_text(msgs)
+            m = re.search(r"WINNER:\s*(\d+)", text)
+            if m and any(c.index == int(m.group(1)) for c in viable):
+                return int(m.group(1)), text.strip()[:160]
+            return viable[0].index, f"judge unparseable; defaulted ({text[:80]})"
+
+        try:
+            for i in range(n):
+                tui._subagent_progress({"id": 90000 + i, "phase": "start",
+                                        "type": f"swarm#{i + 1}", "desc": task_text[:40]})
+            result = await run_swarm(task_text, n, repo,
+                                     agent_runner=runner, judge=judge)
+            if result.winner is None:
+                await _announce(f"⛬ swarm: {result.reason}")
+            else:
+                ok = "applied ✓" if result.applied else "NOT applied"
+                await _announce(f"⛬ swarm: attempt #{result.winner + 1} wins — "
+                                f"{ok} · {result.reason[:100]}")
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack]review with /diff · undo with git checkout[/]"))
+        except Exception as e:  # noqa: BLE001
+            await _announce(f"⛬ swarm failed: {e}")
+        finally:
+            for i in range(n):
+                tui._subagent_progress({"id": 90000 + i, "phase": "end"})
+            state.update(working=False, task=None)
+            get_app().invalidate()
+
     async def _slash(text: str) -> bool:
         cmd, _, arg = text.partition(" ")
         cmd, arg = cmd.lower(), arg.strip()
@@ -1214,6 +1325,16 @@ async def run_fullscreen(tui: Any) -> int:
                 state.update(working=False, task=None)
             await _print(lambda: tui._twin_render(peer, body))
             get_app().invalidate()
+            return True
+        if cmd == "/swarm":
+            sub = arg.strip()
+            m_n = re.match(r"^(\d+)\s+(.+)$", sub, re.DOTALL)
+            if not m_n:
+                await _announce("usage: /swarm <2-8> <task> — N parallel attempts "
+                                "in isolated worktrees; a judge applies the best")
+                return True
+            n, task_text = int(m_n.group(1)), m_n.group(2).strip()
+            get_app().create_background_task(_run_swarm(n, task_text))
             return True
         if cmd == "/goal":
             from .tui import GOAL_MAX_CYCLES, goal_kickoff_prompt  # noqa: PLC0415
@@ -1847,8 +1968,14 @@ async def run_fullscreen(tui: Any) -> int:
         placeholder = tui._capture_clipboard_attachment()
         if placeholder:
             input_buffer.insert_text(placeholder + " ")
-            event.app.create_background_task(_announce(
-                f"attached {placeholder} — sends with your next message"))
+            from .tui import model_supports_vision  # noqa: PLC0415
+            if placeholder.startswith("[Image") and not model_supports_vision(tui.model):
+                event.app.create_background_task(_announce(
+                    f"attached {placeholder} — ⚠ {tui.model} can't see images; "
+                    "/model to switch to a vision model (e.g. gpt-5.4)"))
+            else:
+                event.app.create_background_task(_announce(
+                    f"attached {placeholder} — sends with your next message"))
         else:
             event.app.create_background_task(_announce(
                 "no image or file on the clipboard"))
@@ -1953,5 +2080,9 @@ async def run_fullscreen(tui: Any) -> int:
             pass
         if tui.agent is not None:
             await tui.agent.aclose()
+        try:
+            tui._mark_session_state(clean=True)  # orderly exit — no crash hint
+        except Exception:  # noqa: BLE001
+            pass
     tui.console.print("[ansibrightblack]bye 👋[/]")
     return 0

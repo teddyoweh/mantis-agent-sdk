@@ -52,10 +52,10 @@ const SECTIONS: {
     blurb: "How each part of the surface works, with runnable examples.",
     links: [
       { title: "Models & backends", href: "/docs/guides/models-and-backends", desc: "Auto-routing from the model name" },
+      { title: "The mantis terminal", href: "/docs/guides/terminal", desc: "/init, @-mentions, /goal autonomy" },
+      { title: "Headless & CI", href: "/docs/guides/headless", desc: "mantis-agent run --json for scripts" },
       { title: "Tools", href: "/docs/guides/tools", desc: "Native, prompted, grammar-constrained" },
-      { title: "Streaming", href: "/docs/guides/streaming", desc: "Mid-stream tool dispatch" },
-      { title: "MCP servers", href: "/docs/guides/mcp", desc: "In-process, stdio, sse, http" },
-      { title: "Sessions & resume", href: "/docs/guides/sessions", desc: "Persist, fork, resume, compact" },
+      { title: "MCP servers", href: "/docs/guides/mcp", desc: "Tools, resources, prompts — all transports" },
       { title: "Sub-agents", href: "/docs/guides/sub-agents", desc: "Compose agents as tools" },
     ],
   },

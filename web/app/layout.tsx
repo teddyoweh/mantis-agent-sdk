@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
-const SITE = "https://mantis-agent-sdk.vercel.app";
+const SITE = "https://mantisagent.cc";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),

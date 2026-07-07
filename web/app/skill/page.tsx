@@ -46,7 +46,7 @@ export default async function SkillPage() {
         </p>
         <div className="mt-6 max-w-[560px] flex flex-col gap-2.5">
           <CopyLine text="mkdir -p ~/.claude/skills/mantis-agent-sdk" />
-          <CopyLine text="curl -o ~/.claude/skills/mantis-agent-sdk/SKILL.md https://mantis-agent-sdk.vercel.app/skill.md" />
+          <CopyLine text="curl -o ~/.claude/skills/mantis-agent-sdk/SKILL.md https://mantisagent.cc/skill.md" />
         </div>
 
         <hr className="rule my-10" />
