@@ -538,6 +538,15 @@ def _task_schema(types: list[AgentType]) -> dict[str, Any]:
                 "enum": names,
                 "description": "Which agent type to launch (default: explore).",
             },
+            "run_in_background": {
+                "type": "boolean",
+                "description": (
+                    "Run as a detached background JOB: returns a job id "
+                    "immediately so you can keep working; the result arrives "
+                    "as a notification (or fetch it with job_output). Use for "
+                    "long tasks that shouldn't block the conversation."
+                ),
+            },
         },
         "required": ["prompt"],
     }
@@ -553,6 +562,7 @@ def make_task_tool(
     permissions: Any = None,
     agent_types: list[AgentType] | None = None,
     on_progress: Any = None,
+    jobs: Any = None,
 ) -> Tool:
     """Build the ``task`` tool: the parent delegates a focused, multi-step task
     to a fresh subagent that runs to completion and returns just its findings.
@@ -609,31 +619,40 @@ def make_task_tool(
         registry = ToolRegistry()
         if kit:
             registry.add(*kit)
-        # A type-level model override still uses the PARENT's provider/backend:
-        # the common case is a cheaper sibling on the same endpoint (gpt-5.4 →
-        # gpt-5.4-mini). A cross-provider override would need its own key wiring
-        # — that's the parent agent's job to set up, not a spawn-time guess.
-        child = Agent(
-            model=at.model or model,
-            provider=provider,
-            backend=backend,
-            system=at.system_prompt,
-            tools=registry,
-            max_steps=max(max_steps, at.max_steps),
-            permissions=permissions,
-            include_recall=False,   # subagent is stateless; no session memory
-            include_env=False,
-        )
-        messages: list[Message] = [UserMessage(content=prompt)]
-        try:
-            await child.run(messages)
-        finally:
-            if on_progress is not None and run_id is not None:
-                try:
-                    on_progress({"id": run_id, "phase": "end"})
-                except Exception:  # noqa: BLE001
-                    pass
-        return _extract_final_text(messages) or "(subagent produced no output)"
+
+        async def _execute() -> str:
+            # A type-level model override still uses the PARENT's provider/
+            # backend: the common case is a cheaper sibling on the same
+            # endpoint. Cross-provider overrides are the parent's job to wire.
+            child = Agent(
+                model=at.model or model,
+                provider=provider,
+                backend=backend,
+                system=at.system_prompt,
+                tools=registry,
+                max_steps=max(max_steps, at.max_steps),
+                permissions=permissions,
+                include_recall=False,   # subagent is stateless; no session memory
+                include_env=False,
+            )
+            messages: list[Message] = [UserMessage(content=prompt)]
+            try:
+                await child.run(messages)
+            finally:
+                if on_progress is not None and run_id is not None:
+                    try:
+                        on_progress({"id": run_id, "phase": "end"})
+                    except Exception:  # noqa: BLE001
+                        pass
+            return _extract_final_text(messages) or "(subagent produced no output)"
+
+        if (args or {}).get("run_in_background") and jobs is not None:
+            desc = str((args or {}).get("description") or prompt[:60])
+            job = jobs.spawn(_execute(), desc=desc, kind=f"task:{type_name}")
+            return (f"Started background job #{job.id} ({type_name}: {desc}). "
+                    f"Keep working — the result will arrive as a notification, "
+                    f"or fetch it with job_output(job_id={job.id}).")
+        return await _execute()
 
     task.description = _task_tool_description(types)
     return task
@@ -775,6 +794,50 @@ def make_pair_tool(
         "whenever a second pair of eyes would catch what you can't see."
     )
     return pair
+
+
+_JOB_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "job_id": {"type": "integer", "description": "The background job id."},
+        "wait": {
+            "type": "boolean",
+            "description": "Block up to 120s for the job to finish (default: "
+                           "return current status immediately).",
+        },
+    },
+    "required": ["job_id"],
+}
+
+
+def make_job_output_tool(jobs: Any) -> Tool:
+    """Build ``job_output``: check on / collect the result of a background job
+    started with ``task(run_in_background=true)``."""
+
+    @tool(name="job_output", is_read_only=True, is_concurrency_safe=True,
+          input_schema=_JOB_OUTPUT_SCHEMA)
+    async def job_output(args: dict) -> str:
+        try:
+            jid = int((args or {}).get("job_id"))
+        except (TypeError, ValueError):
+            return "job_output: an integer 'job_id' is required."
+        job = jobs.get(jid)
+        if job is None:
+            known = ", ".join(str(j.id) for j in jobs.all()) or "none"
+            return f"no job #{jid} (known jobs: {known})"
+        if (args or {}).get("wait") and job.status == "running":
+            await jobs.wait(jid, timeout_s=120.0)
+        if job.status == "running":
+            return (f"job #{jid} still running ({int(job.elapsed_s)}s) — "
+                    f"{job.desc[:60]}. Call again with wait=true, or keep working.")
+        return f"job #{jid} {job.status} after {int(job.elapsed_s)}s:\n{job.result}"
+
+    job_output.description = (
+        "Check a background job started with task(run_in_background=true): "
+        "returns its status, or the full result once finished. wait=true "
+        "blocks up to 120s for completion."
+    )
+    return job_output
 
 
 def _extract_final_text(messages: list[Message]) -> str:

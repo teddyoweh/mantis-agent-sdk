@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [2.58.0] - 2026-07-07
+
+### Added
+
+- **Background jobs.** `task(run_in_background=true)` detaches any subagent as
+  a job: returns the id instantly, keeps showing in the live progress block,
+  and on completion the user gets a notification while the RESULT is injected
+  into context so the model knows next turn. `job_output(job_id, wait)` checks
+  in; `/jobs` lists and kills; leftovers die with the session. Engine:
+  `mantis_agent.jobs.JobManager` (spawn/wait/cancel, 60-min backstop,
+  exactly-once completion events, pre-start-cancel race handled).
+
 ## [2.57.0] - 2026-07-07
 
 ### Added

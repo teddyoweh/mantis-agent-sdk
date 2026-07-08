@@ -1454,6 +1454,9 @@ async def run_fullscreen(tui: Any) -> int:
                 f"loop #{lid} started · every {format_loop_interval(interval)} · "
                 f"{prompt[:60]} — /loop stop {lid} to end")
             return True
+        if cmd == "/jobs":
+            await _print(lambda: tui._cmd_jobs(arg))
+            return True
         if cmd == "/mcp":
             await _print(lambda: tui._show_mcp())
             return True
@@ -2056,6 +2059,15 @@ async def run_fullscreen(tui: Any) -> int:
 
     _retry.notify = _on_retry
 
+    def _notify_job(job: Any) -> None:
+        icon = {"done": "✓", "error": "✗", "timeout": "⏱", "cancelled": "–"}.get(job.status, "·")
+        get_app().create_background_task(_announce(
+            f"⦿ job #{job.id} {job.status} {icon} · {job.desc[:50]} — result added to "
+            f"context (or /jobs)"))
+        get_app().invalidate()
+
+    tui._job_notify = _notify_job
+
     anim = asyncio.ensure_future(_animate())
     mcp_boot = asyncio.ensure_future(_mcp_startup())
     try:
@@ -2069,6 +2081,7 @@ async def run_fullscreen(tui: Any) -> int:
             t = l.get("task")
             if t is not None:
                 t.cancel()
+        tui._jobs.cancel_all()  # background jobs die with the session
         for w in (state.get("watches") or {}).values():  # stop /watch sentinels
             w["stopped"].set()
             t = w.get("task")

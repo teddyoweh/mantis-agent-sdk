@@ -74,6 +74,7 @@ SLASH_COMMANDS = {
     "/goal": "autopilot: plan → execute → verify until done",
     "/swarm": "N parallel attempts in worktrees; judge applies the best",
     "/watch": "watch a command; agent wakes + fixes when it breaks",
+    "/jobs": "background jobs — list · /jobs kill <id>",
     "/loop": "re-run a prompt on an interval (/loop 5m <prompt>)",
     "/resume": "resume a past conversation",
     "/branch": "fork this conversation into a new session",
@@ -334,7 +335,7 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
     ("model", ["/models", "/model", "/enable", "/disable", "/connect"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
-    ("autonomy", ["/goal", "/swarm", "/watch", "/loop"]),
+    ("autonomy", ["/goal", "/swarm", "/watch", "/loop", "/jobs"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
     ("info", ["/status", "/cost", "/doctor", "/permissions", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/export", "/cwd"]),
@@ -1474,6 +1475,12 @@ class MantisTUI:
         self._file_checkpoints: list[dict[str, Any]] = []
         # Live subagent progress (task tool runs): id → {type, desc, tools, started}.
         self._live_subagents: dict[int, dict[str, Any]] = {}
+        # Background jobs (task run_in_background=true). The fullscreen app
+        # installs _job_notify to announce; completion also injects a meta
+        # message so the MODEL learns the result on its next turn.
+        from .jobs import JobManager  # noqa: PLC0415
+        self._jobs = JobManager(on_event=self._on_job_done)
+        self._job_notify: Any = None
         # Auto session title: generated once after the first completed turn.
         self._title_done = False
         # The on-disk transcript for /resume + /branch (created in run()).
@@ -1579,9 +1586,12 @@ class MantisTUI:
         # carve their own kit from the parent's full belt. Interactive tools
         # are stripped automatically; permissions are inherited.
         if not slim:  # subagents/twins are big-model features
+            from .subagent import make_job_output_tool  # noqa: PLC0415
             registry.add(make_task_tool(
                 model=self.model, provider=provider, tools=list(registry),
-                permissions=permissions, on_progress=self._subagent_progress))
+                permissions=permissions, on_progress=self._subagent_progress,
+                jobs=self._jobs))
+            registry.add(make_job_output_tool(self._jobs))
             # pair — persistent same-model TWINS the agent converses with across
             # turns (stress-test a plan, verify a claim, argue to convergence).
             # Read-only kit: grounded pushback, no write races with the parent.
@@ -2607,6 +2617,52 @@ class MantisTUI:
         return (f"previous session ended unexpectedly — resume it: "
                 f"/resume {sid[:8]} ({title} · {info.message_count} msgs)")
 
+    def _on_job_done(self, job: Any) -> None:
+        """A background job reached a terminal state: tell the user (UI hook)
+        and inject the result as meta context so the model knows next turn."""
+        from .types import UserMessage  # noqa: PLC0415
+        try:
+            self.messages.append(UserMessage(
+                content=(f"<background-job id={job.id} status={job.status}>\n"
+                         f"{job.desc}\n---\n{job.result[:4000]}\n"
+                         f"</background-job>"),
+                isMeta=True))
+        except Exception:  # noqa: BLE001
+            pass
+        cb = self._job_notify
+        if cb is not None:
+            try:
+                cb(job)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _cmd_jobs(self, arg: str) -> None:
+        """/jobs — list background jobs, or kill one (`/jobs kill 3` / `all`)."""
+        sub = (arg or "").strip().split()
+        if sub and sub[0] == "kill":
+            which = sub[1] if len(sub) > 1 else ""
+            if which == "all":
+                n = self._jobs.cancel_all()
+                self.console.print(f"[ansibrightblack](cancelled {n} job{'s' if n != 1 else ''})[/]")
+            elif which.isdigit() and self._jobs.cancel(int(which)):
+                self.console.print(f"[ansibrightblack](cancelled job #{which})[/]")
+            else:
+                self.console.print(f"[ansibrightblack]no running job {which!r}[/]")
+            return
+        jobs = self._jobs.all()
+        if not jobs:
+            self.console.print("[ansibrightblack]no background jobs — the model starts "
+                               "them with task(run_in_background=true)[/]")
+            return
+        self.console.print("\n[bold]Background jobs[/]")
+        self._list_rows([
+            ({"running": "[ansiyellow]●[/]", "done": "[ansigreen]●[/]"}.get(
+                j.status, "[ansired]●[/]"), f"#{j.id}",
+             f"{j.kind} · {j.status} · {int(j.elapsed_s)}s · {j.desc}")
+            for j in jobs])
+        self.console.print("[ansibrightblack]→ /jobs kill <id|all> · results auto-inject "
+                           "when done[/]")
+
     def _subagent_progress(self, ev: dict) -> None:
         """task-tool progress sink: keeps the live map the fullscreen spinner
         block renders ('⎿ explore · 6 tools · 42s'). Thread/task-safe enough:
@@ -3291,6 +3347,9 @@ class MantisTUI:
             return True
         if cmd == "/mcp":
             self._show_mcp()
+            return True
+        if cmd == "/jobs":
+            self._cmd_jobs(arg)
             return True
         if cmd in ("/loop", "/goal", "/watch", "/swarm"):
             # These engines need a UI that can fire turns while idle-waiting;
