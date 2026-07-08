@@ -108,6 +108,7 @@ path.
 | `/swarm 3 <task>` | 3 parallel attempts in isolated git worktrees; a judge ranks the diffs and applies the winner |
 | `/watch 30s pytest -q` | sentinel: the moment the command starts failing, the agent wakes and fixes it (edge-triggered) |
 | `/loop 5m <prompt>` | re-run a prompt on an interval, never overlapping a running turn |
+| `/jobs` | background jobs — the model detaches long work with `task(run_in_background=true)`; you get a notification and the result auto-injects into context. `/jobs kill <id>` |
 
 ## Sessions
 
