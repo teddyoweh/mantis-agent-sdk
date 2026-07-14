@@ -57,7 +57,6 @@ import msgspec
 from .agent import Agent
 from .budget import lookup_pricing
 from .capabilities import lookup_model
-from .providers.base import Provider, detect_provider, resolve
 from .tools import Tool, ToolRegistry
 from .transcripts import JsonlTranscript
 from .types import (
@@ -363,6 +362,7 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         "provider",
         "response_format",
         "tracer",
+        "skills",
     ):
         if key in opts:
             agent_kwargs[key] = opts[key]
@@ -380,6 +380,10 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         "agents",
     }
     extra = {k: v for k, v in opts.items() if k not in consumed}
+    if isinstance(extra.get("extra"), dict):
+        nested = dict(extra.pop("extra"))
+        nested.update(extra)
+        extra = nested
     if extra:
         agent_kwargs["extra"] = extra
 
@@ -441,19 +445,22 @@ def _accumulate_usage(
     agg_usage: Usage,
     msg_usage: Usage,
 ) -> Usage:
-    """Sum tokens across turns. Cache fields take the latest non-zero value
-    because providers often report a single static prefix-cache count."""
+    """Sum tokens across turns, including the cache fields.
+
+    Each turn reports its own cache_read / cache_creation counts, so the
+    run-total must accumulate them like input/output tokens; taking only the
+    latest turn's value undercounts a multi-turn run."""
 
     return Usage(
         input_tokens=agg_usage.input_tokens + msg_usage.input_tokens,
         output_tokens=agg_usage.output_tokens + msg_usage.output_tokens,
         cache_creation_input_tokens=(
-            msg_usage.cache_creation_input_tokens
-            or agg_usage.cache_creation_input_tokens
+            agg_usage.cache_creation_input_tokens
+            + msg_usage.cache_creation_input_tokens
         ),
         cache_read_input_tokens=(
-            msg_usage.cache_read_input_tokens
-            or agg_usage.cache_read_input_tokens
+            agg_usage.cache_read_input_tokens
+            + msg_usage.cache_read_input_tokens
         ),
     )
 

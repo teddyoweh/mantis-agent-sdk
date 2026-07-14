@@ -50,10 +50,7 @@ so the matrix stays honest about what's covered.
 
 from __future__ import annotations
 
-import importlib
-import io
 import os
-import sys
 from contextlib import contextmanager
 from typing import Any
 
@@ -902,14 +899,44 @@ def _assert_assistant_text_seen(seen: list[Any], *, contains: str) -> None:
     )
 
 
+async def _verify_exa_mcp(backend_kind: str, model: str, url: str) -> None:
+    """exa_mcp.py — query() wired to a remote *http* MCP server (Exa).
+
+    Like mcp_filesystem, the real example talks to a network MCP endpoint;
+    we never do that in CI. We mock the model with a plain text turn (no MCP
+    tool is actually invoked, so the http transport is never reached), passing
+    an explicit Exa MCP URL, and confirm the run completes cleanly with the
+    http MCP config attached."""
+
+    seen: list[Any] = []
+    mock = _ScriptedMock([_stream_text_only("web_fetch_exa takes a url.", model=model)])
+    with _install_backend(backend_kind, mock):
+        opts = MantisAgentOptions(
+            model=model,
+            backend=url,
+            mcp_servers={
+                "exa": {
+                    "type": "http",
+                    "url": "https://mcp.exa.ai/mcp?exaApiKey=test-key&tools=web_search_exa",
+                }
+            },
+            max_turns=1,
+            include_memory=False,
+        )
+        async for msg in query(prompt="Summarize the Exa web_fetch_exa shape.", options=opts):
+            seen.append(msg)
+    _assert_completed_with_result(seen)
+
+
 # ---------------------------------------------------------------------------
-# The 16-example matrix. Each entry maps a name to a verifier coroutine.
+# The example matrix. Each entry maps a name to a verifier coroutine.
 # The names match the example filenames so a failure points directly at
 # the source file that should be inspected.
 # ---------------------------------------------------------------------------
 
 
 EXAMPLES: dict[str, Any] = {
+    "exa_mcp.py": _verify_exa_mcp,
     "quickstart.py": _verify_quickstart,
     "quick_start.py": _verify_quick_start,
     "system_prompt.py": _verify_system_prompt,
@@ -931,7 +958,7 @@ EXAMPLES: dict[str, Any] = {
 
 
 def test_example_count_matches_roadmap() -> None:
-    """The README Roadmap promises 17 examples — keep us honest.
+    """The README Roadmap promises 18 examples — keep us honest.
 
     If you add or remove an example file, this test forces you to
     update the matrix above (or the README) instead of silently
@@ -949,7 +976,7 @@ def test_example_count_matches_roadmap() -> None:
     assert on_disk == matrix, (
         f"matrix/disk mismatch.\non-disk: {on_disk}\nmatrix:  {matrix}"
     )
-    assert len(matrix) == 17, f"expected 17 examples, found {len(matrix)}"
+    assert len(matrix) == 18, f"expected 18 examples, found {len(matrix)}"
 
 
 # ---------------------------------------------------------------------------

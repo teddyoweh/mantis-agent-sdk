@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [2.59.0] - 2026-07-14
+
+### Added
+
+- **Ambitious harness (persistence + completion contract).** The core loop
+  (`Agent.run_iter`) no longer stops the instant a turn has no tool call. A
+  gated completion contract keeps working while there's real unfinished work
+  (open todos or an unmet token/USD *target*), under a diminishing-returns
+  guard and a hard continuation cap — with a terse "keep working, don't
+  summarize" nudge. `persist=True` by default (opt out with `persist=False`); a
+  plain `query()` that returns a final answer with no todos behaves exactly as
+  before. New `Budget` spend *floors* (`target_usd`/`target_total_tokens`) plus
+  `runway()`/`target_unmet()` two-sided signals.
+- **Adaptive thinking + effort.** Providers accept a `thinking` config and
+  translate it per backend (OpenAI `reasoning_effort`, Anthropic thinking
+  budget, Ollama best-effort), gated by a new `supports_reasoning_effort`
+  capability. `effort` option (low|medium|high|max); an "ultrathink"/"think
+  harder" keyword escalates reasoning for a turn; thinking bumps after repeated
+  failure.
+- **Coordinator tool.** `mantis_agent.coordinator.make_coordinate_tool` wires
+  the workflow engine into a model-facing `coordinate` tool — decompose an
+  objective into plan → parallel workers → synthesis → adversarial verify,
+  streamed live into `/workflows`.
+- **`/workflows` engine + viewer** (fullscreen overlay + classic modal): a
+  deterministic orchestration engine (`workflow.py`: agent/parallel/pipeline/
+  phase, per-agent budget, stop/pause/resume/skip/retry) with a live viewer.
+- **Live subagent inspector.** ↓ from the prompt steps into running subagents;
+  Enter drills into a focused detail view, ← goes back, Esc closes.
+- **AGI-level `/agi` + `/goal`.** Budget-aware continuation, robust completion
+  markers, stagnation guard, independent evidence-cited verify, durable
+  frontier, recall-at-kickoff, pause-not-kill.
+- **Sharper exploration.** Rewritten `explore`/`plan` personas, a new
+  adversarial `verify` persona (`VERDICT: PASS|FAIL|PARTIAL`), light context
+  instead of blind exploration, and a "# Delegating to subagents" section in
+  the main system prompt.
+
+### Fixed
+
+- Large security + correctness hardening: swarm now runs under the parent
+  permission context; permission-callback rewrites are re-validated (fail
+  closed); SSRF guard on `web_fetch`; MCP transport fixes (SSE handshake, HTTP
+  per-request errors, string ids, session DELETE); capabilities table
+  (qwen3/deepseek-r1/llama.cpp); cache-token cost double-count; Optional/Union
+  tool-schema derivation; notebook read-before-write; compaction tool-pair
+  boundary; settings precedence; plus ~120 further audit fixes.
+- Lint now blocks CI (removed `|| true`); classic `run()` missing `anyio`
+  import (would `NameError` on `MANTIS_CLASSIC=1`).
+
 ## [2.58.0] - 2026-07-07
 
 ### Added

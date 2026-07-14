@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 
 from mantis_agent import MantisAgentOptions
-from mantis_agent.builtin_tools import CODING_TOOLS
 from mantis_agent.cli import _build_options, _build_parser
 
 

@@ -8,6 +8,18 @@ A broad, reliable open-model menu (GLM, DeepSeek, Llama, gpt-oss) with dedicated
 | env var | `TOGETHER_API_KEY` |
 | get a key | [api.together.xyz](https://api.together.xyz/settings/api-keys) |
 
+## Get an API key
+
+1. Create an account at api.together.xyz
+2. Open Settings → API Keys
+3. Click 'Create key' and name it
+4. Copy the key value (shown only once)
+5. Set TOGETHER_API_KEY
+
+[Create a key ↗](https://api.together.xyz/settings/api-keys) · [Pricing ↗](https://www.together.ai/pricing)
+
+> Small starter credit for new accounts; ~$5 top-up for continued use.
+
 ## Enable
 
 ```bash

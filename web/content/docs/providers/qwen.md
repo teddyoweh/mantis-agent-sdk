@@ -8,6 +8,18 @@ Alibaba's international (Singapore) endpoint for the Qwen family — qwen-max, q
 | env var | `DASHSCOPE_API_KEY` (aliases: `QWEN_API_KEY`) |
 | get a key | [Alibaba Model Studio](https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key) |
 
+## Get an API key
+
+1. Register an international Alibaba Cloud account, enable Model Studio
+2. Open the Model Studio (Bailian) console, pick an intl region
+3. Select 'API Key' in the left nav, click 'Create API Key'
+4. Set workspace and permission, confirm
+5. Copy the key once (base URL dashscope-intl.aliyuncs.com)
+
+[Create a key ↗](https://bailian.console.alibabacloud.com/?tab=model#/api-key) · [Pricing ↗](https://www.alibabacloud.com/help/en/model-studio/models)
+
+> New users get ~1M free tokens/model (valid ~180 days), then pay-as-you-go.
+
 ## Enable
 
 ```bash

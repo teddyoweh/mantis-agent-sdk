@@ -84,7 +84,6 @@ def test_version_detector_has_fallback() -> None:
     that here by parsing the literal source.
     """
     src = Path(mantis_agent.__file__).read_text()
-    m = re.search(r'return\s+"([^"]+)"\s*\#.*?defensive|return\s+"([^"]+)"', src)
     # Find the fallback literal — it's the one inside _detect_version()'s except.
     fallback_match = re.search(
         r"def _detect_version.*?except.*?return\s+\"([^\"]+)\"",
@@ -95,6 +94,11 @@ def test_version_detector_has_fallback() -> None:
         "Could not locate the fallback literal in _detect_version()."
     )
     fallback = fallback_match.group(1)
+    assert fallback == _pyproject_version(), (
+        f"Fallback version literal {fallback!r} in _detect_version() is stale — it "
+        f"must match pyproject [project].version ({_pyproject_version()!r}). Bump it "
+        f"whenever you bump the release version."
+    )
     assert SEMVER_RE.match(fallback), (
         f"Fallback version literal {fallback!r} in _detect_version() is not valid SemVer."
     )

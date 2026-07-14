@@ -8,6 +8,17 @@ Custom LPU silicon serving open models at absurd token speeds, with a generous f
 | env var | `GROQ_API_KEY` |
 | get a key | [console.groq.com](https://console.groq.com/keys) |
 
+## Get an API key
+
+1. Sign up at console.groq.com and verify your email
+2. Open 'API Keys', click 'Create API Key'
+3. Name the key and submit
+4. Copy it immediately, then set GROQ_API_KEY
+
+[Create a key ↗](https://console.groq.com/keys) · [Pricing ↗](https://groq.com/pricing)
+
+> Free tier, no credit card — all models with per-minute/daily limits.
+
 ## Enable
 
 ```bash

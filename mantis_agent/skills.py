@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Iterable
 
 import msgspec
@@ -283,6 +284,7 @@ def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
                 name=name,
                 description=meta.get("description", ""),
                 body=body,
+                search_hint=meta.get("search_hint") or meta.get("keywords"),
                 always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
                 category=meta.get("category"),
             )
@@ -304,6 +306,70 @@ def render_skill_catalog(skills: list[Skill]) -> str:
     return "\n".join(lines)
 
 
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9_+.#-]*", re.IGNORECASE)
+
+
+def _tokens(text: str) -> set[str]:
+    return {t.lower() for t in _WORD_RE.findall(text or "") if len(t) >= 2}
+
+
+def match_skills(query: str, skills: list[Skill], limit: int = 3) -> list[Skill]:
+    """Return skills relevant to a user turn using lightweight local scoring.
+
+    Claude Code can surface skills automatically before the model asks for them.
+    This keeps that behavior offline and deterministic: exact name/phrase hits
+    score highest, then token overlap against name, description, category, and
+    search hints. Skill bodies are intentionally ignored so matching remains
+    cheap and does not make hidden instructions affect discovery.
+    """
+
+    if not query or limit <= 0 or not skills:
+        return []
+    q = query.lower()
+    q_tokens = _tokens(query)
+    scored: list[tuple[int, int, Skill]] = []
+    for idx, skill in enumerate(skills):
+        haystacks = [skill.name, skill.description]
+        if skill.search_hint:
+            haystacks.append(skill.search_hint)
+        if skill.category:
+            haystacks.append(skill.category)
+        hay = " ".join(haystacks).lower()
+        fields = _tokens(" ".join(haystacks))
+        name_l = skill.name.lower()
+        score = 0
+        if q == name_l:
+            score += 100
+        elif q in name_l:
+            score += 50
+        if q and q in hay:
+            score += 25
+        overlap = q_tokens & fields
+        if overlap:
+            score += 8 * len(overlap)
+        # Hyphenated skill names should match natural-language mentions such as
+        # "pdf forms" as well as slash-style "pdf-forms".
+        name_words = _tokens(skill.name.replace("-", " ").replace("_", " "))
+        if name_words and name_words <= q_tokens:
+            score += 30
+        if score > 0:
+            scored.append((-score, idx, skill))
+    scored.sort()
+    return [s for _, _, s in scored[:limit]]
+
+
+def render_relevant_skills(skills: list[Skill]) -> str:
+    """Render auto-selected skill bodies for a turn-level system reminder."""
+
+    if not skills:
+        return ""
+    return (
+        "Relevant skills for this turn (already loaded because they match the "
+        "user request):\n"
+        + render_skills(skills).rstrip()
+    )
+
+
 def load_skill_body(name: str, cwd: str | Path | None = None) -> str | None:
     """Return the full body of the named skill, or ``None`` if not found."""
     for s in discover_skills(cwd):
@@ -318,6 +384,8 @@ __all__ = [
     "SkillRegistry",
     "discover_skills",
     "load_skill_body",
+    "match_skills",
+    "render_relevant_skills",
     "render_skill_catalog",
     "render_skills",
 ]

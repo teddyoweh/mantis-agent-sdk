@@ -10,7 +10,10 @@ upstream so integrators can lift their existing config files across:
   the user-extensible policy fallback when no rule matches.
 * **Asker**: ``asker(tool, input, prompt) -> allow_once|allow_session|deny``
   resolves any ``Ask`` interactively. With no asker wired (library / headless),
-  ``Ask`` falls back to a non-blocking default so nothing hangs.
+  an *explicit* Ask (a ``can_use_tool`` policy or an ``ask`` rule that asked to
+  be prompted, or a dangerous shell command) fails CLOSED (Deny) so nothing
+  runs unattended; only the implicit "mutating tool in default mode" fallback
+  stays non-blocking so ordinary library use doesn't hang.
 
 Decision precedence on each call (``check_permission``)::
 
@@ -30,6 +33,7 @@ Decision precedence on each call (``check_permission``)::
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -127,15 +131,15 @@ class PermissionRuleSet:
         """Return the first matching rule across deny/allow/ask in that
         precedence order, or ``None`` if nothing matches."""
 
-        projection = _project_input(input)
+        targets = _match_targets(input)
         for rule in self.deny:
-            if _rule_matches(rule, tool_name, projection):
+            if _rule_matches(rule, tool_name, targets):
                 return rule
         for rule in self.allow:
-            if _rule_matches(rule, tool_name, projection):
+            if _rule_matches(rule, tool_name, targets):
                 return rule
         for rule in self.ask:
-            if _rule_matches(rule, tool_name, projection):
+            if _rule_matches(rule, tool_name, targets):
                 return rule
         return None
 
@@ -157,18 +161,50 @@ def _project_input(input: dict[str, Any]) -> str:
         return repr(input)
 
 
-def _rule_matches(rule: PermissionRule, tool_name: str, projection: str) -> bool:
-    """Test whether a single rule fires."""
+def _match_targets(input: dict[str, Any]) -> list[str]:
+    """Strings a rule pattern is tested against.
+
+    Includes the whole JSON projection (backward compat) *plus* each scalar
+    field value on its own. Matching individual values is what makes intuitive
+    patterns like ``rm -rf*`` or ``ls*`` fire: they whole-string glob against
+    the field value (``"rm -rf /"``) instead of the JSON blob
+    (``{"command": "rm -rf /"}``), which no bare pattern could ever match. It is
+    deliberately NOT a substring match against the projection — that would
+    over-broaden *allow* rules (a pattern could match text anywhere in the blob).
+    """
+
+    targets = [_project_input(input)]
+    if isinstance(input, dict):
+        for v in input.values():
+            if isinstance(v, str):
+                targets.append(v)
+            elif isinstance(v, bool | int | float):
+                targets.append(str(v))
+    return targets
+
+
+@functools.lru_cache(maxsize=256)
+def _compiled_regex(pattern: str) -> re.Pattern[str] | None:
+    """Compile (and cache) a rule regex. ``None`` on a bad pattern so a broken
+    rule fails safe (matches nothing) instead of raising on every call."""
+    try:
+        return re.compile(pattern)
+    except re.error:
+        return None
+
+
+def _rule_matches(rule: PermissionRule, tool_name: str, targets: list[str]) -> bool:
+    """Test whether a single rule fires against any match target."""
 
     if rule.tool_name is not None and rule.tool_name != tool_name:
         return False
     if rule.is_regex:
-        try:
-            return re.search(rule.pattern, projection) is not None
-        except re.error:
+        pat = _compiled_regex(rule.pattern)
+        if pat is None:
             return False
-    # Default: shell-style glob, matched against the JSON projection.
-    return fnmatch.fnmatchcase(projection, rule.pattern)
+        return any(pat.search(t) is not None for t in targets)
+    # Default: shell-style glob, matched (whole-string) against each target.
+    return any(fnmatch.fnmatchcase(t, rule.pattern) for t in targets)
 
 
 # ---------------------------------------------------------------------------
@@ -221,21 +257,16 @@ class PermissionContext:
 # Tool read-only hint
 # ---------------------------------------------------------------------------
 #
-# ``auto`` mode wants to auto-allow read-only tools. ``Tool`` currently
-# doesn't carry an ``is_read_only`` field; we honour it if present (so user
-# code that adds it via ``@tool(..., parallel_safe=True)`` plus a separate
-# attribute works) and otherwise fall back to a conservative naming
-# heuristic.
-
-_READ_ONLY_PREFIXES = ("read_", "get_", "list_", "search_", "find_", "describe_", "head_")
+# ``auto`` mode wants to auto-allow read-only tools. We treat a tool as
+# read-only ONLY when it explicitly carries ``is_read_only=True``. We do NOT
+# infer read-only-ness from the name: a tool called ``find_and_delete`` or
+# ``get_and_reset`` reads as read-only by prefix but mutates state, and
+# auto-allowing it unprompted is a fail-open hole. Unknown tools (no flag)
+# default to the mutating / ask path.
 
 
 def _is_read_only(tool: Tool) -> bool:
-    flag = getattr(tool, "is_read_only", None)
-    if isinstance(flag, bool):
-        return flag
-    name = tool.name.lower()
-    return any(name.startswith(p) for p in _READ_ONLY_PREFIXES)
+    return getattr(tool, "is_read_only", False) is True
 
 
 _EDIT_TOOL_NAMES = {
@@ -289,14 +320,18 @@ class BashRisk:
     reason: str = ""
 
 
+# Compiled case-insensitively and with long-option forms so trivial variants
+# (``rm --recursive --force``, ``CHMOD``, reordered ``dd`` args, ``doas``/
+# ``pkexec``) don't slip past the annotator. This is best-effort defense in
+# depth layered on top of the shell-tool Ask/deny gate — never the sole gate.
 _DANGEROUS_BASH: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\brm\s+-[a-z]*[rf]"), "recursive/forced delete"),
+    (re.compile(r"\brm\s+(?:-[a-z]*[rf]|--(?:recursive|force)\b)", re.IGNORECASE), "recursive/forced delete"),
     (re.compile(r":\(\)\s*\{.*\};\s*:"), "fork bomb"),
-    (re.compile(r"\bmkfs\b|\bdd\s+if="), "raw disk write"),
-    (re.compile(r">\s*/dev/(sd|nvme|disk)"), "writes to a block device"),
-    (re.compile(r"\bchmod\s+-R\s+0?777\b"), "world-writable recursive chmod"),
-    (re.compile(r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh"), "pipe-to-shell from network"),
-    (re.compile(r"\bsudo\b"), "privilege escalation"),
+    (re.compile(r"\bmkfs\b|\bdd\b[^|;&]*\b(?:if|of)=", re.IGNORECASE), "raw disk write"),
+    (re.compile(r">\s*/dev/(?:sd|nvme|disk)", re.IGNORECASE), "writes to a block device"),
+    (re.compile(r"\bchmod\s+(?:-R|--recursive)\s+0?777\b", re.IGNORECASE), "world-writable recursive chmod"),
+    (re.compile(r"\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh", re.IGNORECASE), "pipe-to-shell from network"),
+    (re.compile(r"\b(?:sudo|doas|pkexec)\b", re.IGNORECASE), "privilege escalation"),
     (re.compile(r">\s*/etc/"), "overwrites a system config"),
 ]
 
@@ -309,11 +344,45 @@ def classify_bash_command(command: str) -> BashRisk:
     return BashRisk(False)
 
 
+# Any of these tool names (or a tool explicitly flagged ``is_shell=True``) is
+# treated as a shell surface — the danger classifier and the headless hard-deny
+# key off shell-tool IDENTITY, not the single literal "bash". A shell tool
+# registered under another name must never bypass the safety net.
+_SHELL_TOOL_NAMES = {
+    "bash", "sh", "shell", "zsh", "fish", "ksh",
+    "exec", "run", "run_command", "runcommand", "command", "cmd",
+    "system", "powershell", "pwsh",
+}
+
+# Fields a shell tool conventionally carries its command in.
+_SHELL_COMMAND_FIELDS = ("command", "cmd", "script", "code", "commands")
+
+
+def _is_shell_tool(tool: Tool) -> bool:
+    """True for a command-executing tool, by explicit flag or known name."""
+    flag = getattr(tool, "is_shell", None)
+    if isinstance(flag, bool):
+        return flag
+    return tool.name.lower() in _SHELL_TOOL_NAMES
+
+
+def _shell_command(input: dict[str, Any]) -> str:
+    """Best-effort extraction of the command string from a shell tool input."""
+    inp = input or {}
+    for f in _SHELL_COMMAND_FIELDS:
+        v = inp.get(f)
+        if isinstance(v, str) and v:
+            return v
+        if isinstance(v, list | tuple):
+            return " ".join(str(x) for x in v)
+    return ""
+
+
 def _is_dangerous_bash(tool: Tool, input: dict[str, Any]) -> bool:
     """True for a shell tool call whose command trips the danger classifier."""
-    if tool.name != "bash":
+    if not _is_shell_tool(tool):
         return False
-    return classify_bash_command(str((input or {}).get("command", ""))).is_dangerous
+    return classify_bash_command(_shell_command(input)).is_dangerous
 
 
 def _snip(s: Any, limit: int = 32) -> str:
@@ -328,12 +397,12 @@ def _format_prompt(tool: Tool, input: dict[str, Any]) -> str:
     about to happen), not a raw ``tool(old_string=..., new_string=...)`` repr."""
     name = tool.name
     inp = input or {}
-    if name == "bash":
-        cmd = str(inp.get("command", "")).strip()
+    if _is_shell_tool(tool):
+        cmd = _shell_command(inp).strip()
         risk = classify_bash_command(cmd)
         short = cmd if len(cmd) <= 80 else cmd[:77] + "…"
         warn = f"  ⚠ {risk.reason}" if risk.is_dangerous else ""
-        return f"bash: {short}{warn}"
+        return f"{name}: {short}{warn}"
 
     path = inp.get("path") or inp.get("file_path") or inp.get("notebook_path")
     if path:
@@ -385,22 +454,27 @@ async def _decide(
     if ctx.mode == "bypass":
         return Allow()
 
-    # "Allow for session" — an identical (tool, input) the user already
-    # approved this run. Checked before everything else so it never re-prompts.
-    if _session_key(tool, input) in ctx.session_allows:
-        return Allow()
-
-    # Explicit deny rule always wins — evaluate it before anything else.
+    # Explicit deny rule always wins — evaluate it before anything else,
+    # including "allow for session": a prior session approval must never
+    # override a deny rule.
     hit = ctx.rules.match(tool.name, input) if ctx.rules is not None else None
     if hit is not None and hit.action == "deny":
         return Deny(reason=f"denied by rule {hit.pattern!r}")
 
     # A dangerous shell command can NEVER be auto-allowed by a broad allow rule,
-    # by acceptEdits, or by the mode default — it must be confirmed live (or
-    # denied when headless). Only an explicit deny rule (above) or bypass mode
-    # short-circuits it. This is the bypass-immune-style safety check.
+    # by acceptEdits, by the mode default, or by a prior "allow for session" —
+    # it must be confirmed live (or denied when headless) on EVERY call. Only an
+    # explicit deny rule (above) or bypass mode short-circuits it. Evaluated
+    # before the session-allows check so session approval can't defeat it.
     if _is_dangerous_bash(tool, input):
         return Ask(prompt=_format_prompt(tool, input))
+
+    # "Allow for session" — an identical (tool, input) the user already approved
+    # this run. Checked after the deny + dangerous-command guards so it can never
+    # bypass them, but before the remaining allow/ask/mode logic so it doesn't
+    # re-prompt.
+    if _session_key(tool, input) in ctx.session_allows:
+        return Allow()
 
     # Declarative allow / ask rules.
     if hit is not None:
@@ -444,6 +518,18 @@ async def _resolve_ask(
             return Deny(
                 reason="dangerous command blocked (no interactive approval available)"
             )
+        # An EXPLICIT request for confirmation — a user-configured ``ask`` rule
+        # or a ``can_use_tool`` policy that deliberately returned Ask — means the
+        # user asked to be prompted. With no interactive surface, fail CLOSED
+        # (Deny) rather than silently running the mutating call. Only the
+        # implicit "mutating tool in default mode" fallback stays non-blocking,
+        # preserving historical library behavior.
+        hit = ctx.rules.match(tool.name, input) if ctx.rules is not None else None
+        explicit_ask = (hit is not None and hit.action == "ask") or ctx.can_use_tool is not None
+        if explicit_ask:
+            return Deny(
+                reason="approval required but no interactive approver is available"
+            )
         # Otherwise preserve historical behavior: ``auto`` surfaced Ask (the
         # loop treats it permissively); everything else was permissive too.
         return ask if ctx.mode == "auto" else Allow()
@@ -452,7 +538,44 @@ async def _resolve_ask(
     if result == "deny":
         return Deny(reason="denied by user")
     if result == "allow_session":
-        ctx.session_allows.add(_session_key(tool, input))
+        # A dangerous command is never remembered for the session — it must be
+        # re-confirmed live on every call (the guard in _decide re-Asks anyway).
+        if not _is_dangerous_bash(tool, input):
+            ctx.session_allows.add(_session_key(tool, input))
+    return Allow()
+
+
+async def recheck_mutated_input(
+    tool: Tool, updated_input: dict[str, Any], ctx: PermissionContext
+) -> PermissionDecision:
+    """Re-validate an input that a ``can_use_tool`` / ``PreToolUse`` callback
+    REWROTE *after* it was approved.
+
+    The callback approved some *other* input and handed back this rewritten one;
+    the rewrite itself was never vetted. Re-run the mandatory, non-overridable
+    guards — an explicit ``deny`` rule and the dangerous-shell-command gate —
+    against the MUTATED input so an approved ``ls`` can't be rewritten into an
+    unreviewed ``rm -rf``. Fails CLOSED: a denied rewrite is denied, and a
+    dangerous rewrite must be confirmed live (or is denied when headless).
+
+    We deliberately do NOT re-invoke the callback (it just ran and produced this
+    input — calling it again would recurse / re-mutate) nor re-apply the mode /
+    allow-with-modified-input logic (that would defeat the legitimate "approve a
+    normalized input" flow). Only the guards that ``_decide`` applies BEFORE any
+    approval are re-checked.
+    """
+
+    if ctx.mode == "bypass":
+        return Allow()
+
+    hit = ctx.rules.match(tool.name, updated_input) if ctx.rules is not None else None
+    if hit is not None and hit.action == "deny":
+        return Deny(reason=f"denied by rule {hit.pattern!r} (after input rewrite)")
+
+    if _is_dangerous_bash(tool, updated_input):
+        ask = Ask(prompt=_format_prompt(tool, updated_input))
+        return await _resolve_ask(tool, updated_input, ctx, ask)
+
     return Allow()
 
 
@@ -471,4 +594,5 @@ __all__ = [
     "PermissionRule",
     "PermissionRuleSet",
     "check_permission",
+    "recheck_mutated_input",
 ]

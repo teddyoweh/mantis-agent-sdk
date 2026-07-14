@@ -85,6 +85,40 @@ def strip_context_messages(messages: list[Message]) -> list[Message]:
     return [m for m in messages if not getattr(m, "isMeta", False)]
 
 
+def strip_dangling_tool_uses(messages: list[Message]) -> list[Message]:
+    """Drop assistant ``tool_use`` blocks that have no matching ``tool_result``
+    anywhere in ``messages``.
+
+    Truncating to a checkpoint (fork/resume) can land inside an open tool
+    exchange, leaving a trailing assistant ``tool_use`` whose answering
+    ``tool_result`` was cut off. Submitting that to a provider returns HTTP 400
+    (unanswered tool_use). This mirrors ``session_tree._drop_dangling_tool_uses``
+    for the SQLite/``Message`` path."""
+    from .types import ToolResultBlock, ToolUseBlock  # noqa: PLC0415
+
+    answered: set[str] = set()
+    for m in messages:
+        content = getattr(m, "content", None)
+        if isinstance(content, list):
+            for b in content:
+                if isinstance(b, ToolResultBlock):
+                    answered.add(b.tool_use_id)
+    cleaned: list[Message] = []
+    for m in messages:
+        if isinstance(m, AssistantMessage):
+            kept = [
+                b
+                for b in m.content
+                if not (isinstance(b, ToolUseBlock) and b.id not in answered)
+            ]
+            if not kept:
+                continue
+            cleaned.append(msgspec.structs.replace(m, content=kept))
+        else:
+            cleaned.append(m)
+    return cleaned
+
+
 def _decode_messages(blob: bytes) -> list[Message]:
     """Decode a JSON blob back into typed messages, dispatching on ``role``."""
 
@@ -101,9 +135,27 @@ def _decode_messages(blob: bytes) -> list[Message]:
 
 
 def _utcnow_iso() -> str:
-    """ISO-8601 with Z suffix, second precision. Sortable lexicographically."""
+    """ISO-8601 with Z suffix, microsecond precision. Sortable lexicographically.
 
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    Sub-second precision keeps ``list_sessions`` ordering stable when several
+    sessions are saved within the same wall-clock second (both stores sort on
+    ``updated_at``)."""
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _updated_at_sort_key(ts: str) -> str:
+    """Normalize a stored ``updated_at`` for lexicographic ordering.
+
+    Legacy rows were written at second precision (``...:SSZ``); new rows carry
+    microseconds (``...:SS.ffffffZ``). Because ``'.'`` (0x2E) sorts before
+    ``'Z'`` (0x5A), a naive string compare ranks a genuinely-newer microsecond
+    value *below* a same-second legacy value. Padding the legacy form to
+    ``.000000Z`` restores a correct total order across the format boundary."""
+
+    if ts.endswith("Z") and "." not in ts:
+        return f"{ts[:-1]}.000000Z"
+    return ts
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +300,7 @@ class InMemorySessionStore:
     async def list_sessions(self) -> list[SessionInfo]:
         async with self._lock:
             rows = list(self._rows.values())
-        rows.sort(key=lambda r: r.updated_at, reverse=True)
+        rows.sort(key=lambda r: _updated_at_sort_key(r.updated_at), reverse=True)
         return [r.to_info() for r in rows]
 
     async def fork(self, session_id: str, new_id: str) -> None:
@@ -412,7 +464,7 @@ class SqliteSessionStore:
             cur = conn.execute(
                 """
                 SELECT id, created_at, updated_at, title, tags, messages
-                FROM sessions ORDER BY updated_at DESC
+                FROM sessions
                 """
             )
             out: list[SessionInfo] = []
@@ -434,6 +486,9 @@ class SqliteSessionStore:
                         tags=json.loads(tags_json) if tags_json else [],
                     )
                 )
+            out.sort(
+                key=lambda i: _updated_at_sort_key(i.updated_at), reverse=True
+            )
             return out
         finally:
             conn.close()
@@ -771,14 +826,23 @@ class Session:
         new_sid = new_id or f"sess_{uuid.uuid4().hex[:16]}"
 
         if checkpoint is None:
-            # Full fork — delegate to the store-level fork() which already
-            # handles the "copy + record forked_from" pattern atomically.
-            await self._store.fork(self._id, new_sid)
-            # Reload the new row so we have its real meta.
-            return await Session.load(self._store, new_sid)
+            # Full fork — copy the CURRENT in-memory state, not the persisted
+            # row. Delegating to store.fork() would clone the last-saved BLOB
+            # and silently drop any unsaved in-memory turns (append() only
+            # mutates memory); it would also resurrect the isMeta context a
+            # fresh_context load stripped. Forking from self._messages keeps the
+            # fork in sync with what the caller sees, matching the truncated
+            # path below.
+            new_meta = dict(self._meta)
+            new_meta["forked_from"] = self._id
+            forked = list(self._messages)
+            await self._store.save(new_sid, forked, new_meta)
+            return Session(self._store, new_sid, messages=forked, meta=new_meta)
 
         idx = self._resolve_checkpoint(checkpoint)
-        truncated = list(self._messages[:idx])
+        # Strip any tool_use left dangling by cutting inside an open tool
+        # exchange, else the fork's next run 400s on the unanswered tool_use.
+        truncated = strip_dangling_tool_uses(list(self._messages[:idx]))
         new_meta = dict(self._meta)
         new_meta["forked_from"] = self._id
         new_meta["forked_at_index"] = idx
@@ -797,7 +861,9 @@ class Session:
         """
 
         idx = self._resolve_checkpoint(checkpoint)
-        self._messages = self._messages[:idx]
+        # Strip any tool_use left dangling by cutting inside an open tool
+        # exchange, else the next run 400s on the unanswered tool_use.
+        self._messages = strip_dangling_tool_uses(self._messages[:idx])
         # Track the rewind in meta for audit — useful when debugging
         # "why did this session lose its tail?" later.
         history = list(self._meta.get("resume_history") or [])
@@ -840,6 +906,11 @@ async def fork_session(
     # Truncated fork — round-trip through load/save so we don't need a
     # truncate-aware fork primitive on every store.
     messages, meta = await store.load(src_id)
+    # Strip the synthetic isMeta context first so ``checkpoint.index`` means the
+    # same thing here as in ``Session.checkpoints()`` (which runs on the
+    # fresh_context-stripped list). Without this, a checkpoint chosen from a
+    # Session view would cut at a different message on the unstripped list.
+    messages = strip_context_messages(messages)
     if isinstance(checkpoint, Checkpoint):
         idx = checkpoint.index
     else:
@@ -851,7 +922,9 @@ async def fork_session(
     new_meta = dict(meta)
     new_meta["forked_from"] = src_id
     new_meta["forked_at_index"] = idx
-    await store.save(new_sid, messages[:idx], new_meta)
+    # Drop any tool_use left dangling by cutting inside an open tool exchange.
+    truncated = strip_dangling_tool_uses(messages[:idx])
+    await store.save(new_sid, truncated, new_meta)
     return new_sid
 
 

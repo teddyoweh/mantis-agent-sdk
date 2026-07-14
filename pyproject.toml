@@ -1,6 +1,6 @@
 [project]
 name = "mantis-agent-sdk"
-version = "2.58.0"
+version = "2.59.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -66,11 +66,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["mantis_agent"]
+packages = ["mantis_agent", "mantis_agent_sdk"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/mantis_agent",
+    "/mantis_agent_sdk",
     "/tests",
     "/docs",
     "/README.md",
@@ -84,6 +85,16 @@ include = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# The package root is a re-export hub: it deliberately imports the public
+# API surface. Names not listed in ``__all__`` are intentional implementation
+# detail kept importable, so unused-import (F401) does not apply here.
+"mantis_agent/__init__.py" = ["F401"]
+# Intentional IPython top-level-await walkthrough: `await` at module scope
+# (F704) and imports interleaved with narrative (E402) are the point of the
+# example, not bugs.
+"mantis_agent/examples/streaming_mode_ipython.py" = ["F704", "E402"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

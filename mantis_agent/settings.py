@@ -290,14 +290,28 @@ def _deep_merge(a: dict[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
 def _union_list(a: list[Any], b: list[Any]) -> list[Any]:
     """Best-effort union preserving order: a then any new b items.
 
+    A higher-priority layer can *revoke* an entry an earlier layer added
+    by listing it with a leading ``!`` (e.g. project allows ``Bash(*)``,
+    a stricter local layer lists ``!Bash(*)`` to drop it). The ``!`` token
+    itself never survives into the merged list.
+
     Falls back to plain concat if items aren't hashable (lists of dicts).
     """
 
     try:
+        # Removal directives ("!X") drop a matching plain "X" from either
+        # layer, so a stricter local layer can revoke a broad inherited allow.
+        removals = {
+            item[1:]
+            for item in (*a, *b)
+            if isinstance(item, str) and item.startswith("!")
+        }
         seen: set[Any] = set()
         result: list[Any] = []
         for item in (*a, *b):
-            if item in seen:
+            if isinstance(item, str) and item.startswith("!"):
+                continue
+            if item in removals or item in seen:
                 continue
             seen.add(item)
             result.append(item)
@@ -341,16 +355,25 @@ def apply_settings_to_options(
     extra: dict[str, Any] = dict(out.get("extra") or {})
 
     perms = loaded.get("permissions") or {}
+    if not isinstance(perms, Mapping):
+        raise ValueError(
+            "settings 'permissions' must be an object with allow/deny keys, "
+            f"got {type(perms).__name__}"
+        )
     perm_allow = list(perms.get("allow") or [])
     perm_deny = list(perms.get("deny") or [])
 
-    # Flat keys layered underneath when missing on options.
+    # Flat keys layered underneath only when the option is genuinely
+    # absent. "Absent" means None / missing — NOT merely falsy: an
+    # explicit falsy value (e.g. system_prompt="" to clear an inherited
+    # prompt) is a deliberate choice and must win over persisted settings.
     for key in ("model", "backend", "system_prompt", "permission_mode"):
-        if not out.get(key) and loaded.get(key):
-            # The internal options dict uses "system" for system_prompt.
-            target = "system" if key == "system_prompt" else key
-            if not out.get(target):
-                out[target] = loaded[key]
+        if not loaded.get(key):
+            continue
+        # The internal options dict uses "system" for system_prompt.
+        target = "system" if key == "system_prompt" else key
+        if out.get(key) is None and out.get(target) is None:
+            out[target] = loaded[key]
 
     for key in ("max_turns", "max_tokens", "temperature", "max_budget_usd"):
         if out.get(key) in (None,) and loaded.get(key) is not None:
@@ -365,21 +388,35 @@ def apply_settings_to_options(
     if loaded.get("mcp_servers") and not out.get("mcp_servers"):
         out["mcp_servers"] = loaded["mcp_servers"]
 
-    # allowed_tools / disallowed_tools live on extra. Union with any
-    # patterns coming from permissions.allow / permissions.deny so the
-    # user can use either spelling in settings.json.
+    # allowed_tools / disallowed_tools live on extra. Patterns from
+    # permissions.allow / permissions.deny are folded in so the user can
+    # use either spelling in settings.json.
     settings_allowed = list(loaded.get("allowed_tools") or []) + perm_allow
     settings_disallowed = list(loaded.get("disallowed_tools") or []) + perm_deny
     if settings_allowed:
         cur = list(extra.get("allowed_tools") or [])
+        # setting_sources is an opt-in, trusted on-disk config the caller
+        # explicitly enabled — it is meant to CONTRIBUTE allowed_tools, not
+        # be capped by whatever the caller also passed. Union (settings
+        # first, existing extra appended without dup), mirroring how env and
+        # permissions layers add to — rather than intersect with — caller
+        # values elsewhere in this function.
         extra["allowed_tools"] = _union_list(settings_allowed, cur)
     if settings_disallowed:
         cur = list(extra.get("disallowed_tools") or [])
+        # Denials only ever restrict, so unioning persisted + explicit
+        # denials is safe — it can only narrow, never broaden, access.
         extra["disallowed_tools"] = _union_list(settings_disallowed, cur)
 
     # env — merge under so the user can override individual keys.
     if loaded.get("env"):
-        merged_env = dict(loaded["env"])
+        env_val = loaded["env"]
+        if not isinstance(env_val, Mapping):
+            raise ValueError(
+                "settings 'env' must be an object of NAME: value pairs, "
+                f"got {type(env_val).__name__}"
+            )
+        merged_env = dict(env_val)
         merged_env.update(extra.get("env") or {})
         extra["env"] = merged_env
 

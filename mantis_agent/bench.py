@@ -23,9 +23,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import os
 import resource
-import statistics
 import sys
 import time
 from collections.abc import Callable
@@ -53,11 +51,15 @@ def _measure(
     gc.collect()
     gc.disable()
     times_us: list[float] = []
-    for _ in range(samples):
-        t0 = time.perf_counter()
-        fn()
-        times_us.append((time.perf_counter() - t0) * 1e6)
-    gc.enable()
+    try:
+        for _ in range(samples):
+            t0 = time.perf_counter()
+            fn()
+            times_us.append((time.perf_counter() - t0) * 1e6)
+    finally:
+        # Always re-enable GC, even if ``fn`` raises — leaving it disabled
+        # would corrupt every later benchmark (and the whole process).
+        gc.enable()
     times_us.sort()
     return {
         "op": name,

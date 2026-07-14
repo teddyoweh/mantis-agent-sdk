@@ -30,7 +30,7 @@ or any save_* function creates it on first use.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -98,6 +98,11 @@ _FRONTMATTER_RE = re.compile(
     r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL
 )
 
+# Enough to capture any entry's frontmatter block (name/description/type are a
+# handful of short lines). Used by the frontmatter-only scan so recall doesn't
+# slurp large bodies it never scores on.
+_FRONTMATTER_SCAN_BYTES = 4096
+
 
 def _parse_entry(text: str, *, slug: str, path: Path) -> MemoryEntry:
     """Split the YAML-ish frontmatter from the body. Tolerant of missing
@@ -145,21 +150,27 @@ def load_memory_entry(slug: str) -> MemoryEntry | None:
     """
 
     base = get_memory_dir()
+    # A nested "topic/slug" resolves here too: pathlib joins it into
+    # base/topic/slug.md directly, so no separate fallback is needed.
     path = base / f"{slug}.md"
     if not path.exists():
-        # Allow nested form: "topic/slug"
-        path = base / f"{slug}.md"
-        if not path.exists():
-            return None
+        return None
     return _parse_entry(path.read_text(encoding="utf-8"), slug=slug, path=path)
 
 
-def list_memory_entries(*, recursive: bool = True) -> list[MemoryEntry]:
+def list_memory_entries(
+    *, recursive: bool = True, frontmatter_only: bool = False
+) -> list[MemoryEntry]:
     """Return every memory entry under ``memory/``.
 
     Skips ``INDEX.md`` and ``MEMORY.md`` (those are indexes, not entries).
     Returns them in alphabetical order (slug) for stable test output;
     callers can re-sort by `name`/`type`/etc. as needed.
+
+    With ``frontmatter_only=True`` each entry's ``body`` is left empty and only
+    the leading frontmatter block is read from disk. Recall scoring reads
+    name/description/type but never the body, so this avoids re-reading (and
+    materializing) every full memory file on every turn.
     """
 
     base = get_memory_dir()
@@ -173,7 +184,14 @@ def list_memory_entries(*, recursive: bool = True) -> list[MemoryEntry]:
         rel = path.relative_to(base).with_suffix("")
         slug = str(rel).replace("\\", "/")
         try:
-            out.append(_parse_entry(path.read_text(encoding="utf-8"), slug=slug, path=path))
+            if frontmatter_only:
+                with path.open("r", encoding="utf-8") as fh:
+                    text = fh.read(_FRONTMATTER_SCAN_BYTES)
+                entry = _parse_entry(text, slug=slug, path=path)
+                entry.body = ""
+                out.append(entry)
+            else:
+                out.append(_parse_entry(path.read_text(encoding="utf-8"), slug=slug, path=path))
         except OSError:
             continue
     return out

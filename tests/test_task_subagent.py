@@ -70,11 +70,16 @@ def test_subagent_runs_isolated_context() -> None:
 def test_builtin_agent_types_present() -> None:
     from mantis_agent.subagent import BUILTIN_AGENT_TYPES
     names = [t.name for t in BUILTIN_AGENT_TYPES]
-    assert names == ["explore", "plan", "general-purpose"]
+    assert names == ["explore", "plan", "general-purpose", "verify"]
     by = {t.name: t for t in BUILTIN_AGENT_TYPES}
     assert by["explore"].tools == "read-only"
     assert by["plan"].tools == "read-only"
     assert by["general-purpose"].tools == "all"
+    # verify runs tests (needs bash) but must not edit files, so it gets an
+    # explicit read+search+shell kit rather than "read-only" or "all".
+    assert isinstance(by["verify"].tools, tuple)
+    assert "bash" in by["verify"].tools
+    assert "write_file" not in by["verify"].tools and "edit_file" not in by["verify"].tools
 
 
 def test_tool_policy_resolution() -> None:
@@ -113,7 +118,7 @@ def test_task_schema_and_description_list_types() -> None:
     t = make_task_tool(model="mock", provider=MockProvider(default_text="x"),
                        tools=_explore(), agent_types=list(BUILTIN_AGENT_TYPES))
     enum = t.input_schema["properties"]["subagent_type"]["enum"]
-    assert enum == ["explore", "plan", "general-purpose"]
+    assert enum == ["explore", "plan", "general-purpose", "verify"]
     for name in enum:
         assert name in t.description  # the model reads the menu from here
     assert t.input_schema["required"] == ["prompt"]  # type stays optional
@@ -144,7 +149,10 @@ def test_default_type_is_explore_and_model_inherits(monkeypatch) -> None:
     assert "read-only exploration subagent" in captured["system"]
     assert captured["model"] == "parent-model"      # inherit
     assert captured["permissions"] is perms          # parent's gate flows down
-    assert captured["include_recall"] is False and captured["include_env"] is False
+    # Stateless subagent: recall stays off. But read-only investigators
+    # (explore is the default) now start with a LIGHT env block so they aren't
+    # blind to cwd/dir/git — only write-heavy general-purpose agents stay lean.
+    assert captured["include_recall"] is False and captured["include_env"] is True
 
 
 def test_type_model_override_and_step_budget(monkeypatch) -> None:
@@ -173,7 +181,8 @@ def test_type_model_override_and_step_budget(monkeypatch) -> None:
 
 def test_discover_user_and_project_agents(monkeypatch, tmp_path) -> None:
     from mantis_agent.subagent import discover_agent_types
-    home = tmp_path / "home"; proj = tmp_path / "proj"
+    home = tmp_path / "home"
+    proj = tmp_path / "proj"
     monkeypatch.setenv("MANTIS_AGENT_HOME", str(home))
     (home / "agents").mkdir(parents=True)
     (home / "agents" / "docs-writer.md").write_text(

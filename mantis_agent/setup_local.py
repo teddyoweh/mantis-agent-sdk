@@ -284,8 +284,11 @@ def start_ollama_server(
     # Detach so the daemon outlives this Python process. On POSIX we use
     # ``start_new_session`` (its own process group + session leader). On
     # Windows we use ``DETACHED_PROCESS`` + ``CREATE_NEW_PROCESS_GROUP``.
+    # Popen dups this fd into the child, so the parent must close its own copy
+    # afterward — otherwise every call leaks one open file handle.
+    log_fh = open(log_path, "ab")
     popen_kwargs: dict[str, object] = {
-        "stdout": open(log_path, "ab"),
+        "stdout": log_fh,
         "stderr": subprocess.STDOUT,
         "stdin": subprocess.DEVNULL,
         "close_fds": True,
@@ -306,6 +309,8 @@ def start_ollama_server(
         except OSError:
             pass
         return False, log_path
+    finally:
+        log_fh.close()
 
     # Poll until the server answers or we hit the deadline. We sleep in
     # small slices so a fast cold-start (~1s on warm caches) doesn't pay

@@ -17,7 +17,6 @@ from mantis_agent.session_tree import (
     new_session_id,
     rewind_chain,
 )
-from mantis_agent.types import AssistantMessage, UserMessage
 
 
 @pytest.fixture(autouse=True)

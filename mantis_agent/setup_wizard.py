@@ -558,10 +558,19 @@ def _run_hosted(c: Any, *, free_only: bool) -> int:
     if existing:
         c.print(Text(f"\n  {prov.label} already has a saved key.", style=green))
         try:
-            ans = input("  Reuse it? [Y/n] (or paste a new key): ").strip()
+            ans = input("  Reuse it? [Y/n]: ").strip()
         except (EOFError, KeyboardInterrupt):
             return 1
-        key = existing if ans.lower() in ("", "y", "yes") else ans
+        if ans.lower() in ("", "y", "yes"):
+            key = existing
+        else:
+            # Read the replacement via getpass so a pasted key isn't echoed to
+            # the terminal / scrollback (plain input() would leak it in clear).
+            c.print(Text(f"  Paste your {prov.api_key_env} (input hidden):", style="white"))
+            try:
+                key = getpass.getpass("  key> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return 1
     else:
         c.print(Text(f"\n  Get a key: {prov.note.split('·')[0].strip()}", style=dim))
         c.print(Text(f"  Paste your {prov.api_key_env} (input hidden):", style="white"))
@@ -668,6 +677,32 @@ def _run_oauth_login(c: Any) -> str | None:
     if not token:
         c.print(Text("  ✗ no access_token in the response", style="red"))
         return None
+    # Claude OAuth access tokens are short-lived. Persist the refresh_token and
+    # an absolute expiry alongside the access token (the caller stores the access
+    # token itself as ANTHROPIC_AUTH_TOKEN) so the credential can be renewed via
+    # grant_type=refresh_token instead of forcing a full browser re-login when it
+    # expires. Without this the refresh_token/expires_in are discarded and every
+    # request 401s after expiry with no recovery path.
+    refresh = tokens.get("refresh_token")
+    expires_in = tokens.get("expires_in")
+    if refresh or expires_in:
+        env: dict[str, str] = {}
+        if refresh:
+            env["ANTHROPIC_REFRESH_TOKEN"] = str(refresh)
+        if expires_in:
+            import time  # noqa: PLC0415
+
+            try:
+                env["ANTHROPIC_AUTH_EXPIRES_AT"] = str(int(time.time()) + int(expires_in))
+            except (TypeError, ValueError):
+                pass
+        if env:
+            try:
+                from .settings import update_setting_source  # noqa: PLC0415
+
+                update_setting_source("user", {"env": env})
+            except Exception:  # noqa: BLE001 — persistence is best-effort
+                pass
     return str(token)
 
 

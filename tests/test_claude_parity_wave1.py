@@ -173,6 +173,7 @@ def test_show_status_renders_key_facts() -> None:
     out = t.console.text()
     assert "gpt-5.4" in out and "api.openai.com" in out
     assert "1,234" in out and "$0.5" in out
+    assert "read-only tools auto-run" in out
 
 
 def test_show_cost_no_pricing_is_graceful() -> None:
@@ -195,6 +196,7 @@ def test_show_permissions_lists_rules(monkeypatch, tmp_path) -> None:
     out = t.console.text()
     assert "allow" in out and "git status" in out
     assert "deny" in out and ".env" in out
+    assert "effect" in out and "mutations ask first" in out
 
 
 def test_show_permissions_no_rules(monkeypatch) -> None:

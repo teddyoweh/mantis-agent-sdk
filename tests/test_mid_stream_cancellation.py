@@ -20,11 +20,9 @@ cancellation mid-flight without races.
 from __future__ import annotations
 
 import anyio
-import pytest
 
 from mantis_agent import (
     Agent,
-    AssistantMessage,
     TextBlock,
     Tool,
     ToolUseBlock,

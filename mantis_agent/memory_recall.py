@@ -23,9 +23,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
-from .memory import MemoryEntry, list_memory_entries
+from .memory import MemoryEntry, list_memory_entries, load_memory_entry
 
 MAX_SCANNED = 200       # recency prefilter cap (CC: MAX_MEMORY_FILES)
 DEFAULT_LIMIT = 5       # CC surfaces at most 5 per turn
@@ -50,8 +49,15 @@ def _mtime(entry: MemoryEntry) -> float:
 
 
 def scan_memories() -> list[ScoredMemory]:
-    """All memory entries, newest-first, capped at ``MAX_SCANNED`` (score 0)."""
-    scored = [ScoredMemory(e, _mtime(e), 0.0) for e in list_memory_entries()]
+    """All memory entries, newest-first, capped at ``MAX_SCANNED`` (score 0).
+
+    Reads only each file's frontmatter — scoring uses name/description/type, and
+    the body is loaded lazily for the handful of entries actually injected.
+    """
+    scored = [
+        ScoredMemory(e, _mtime(e), 0.0)
+        for e in list_memory_entries(frontmatter_only=True)
+    ]
     scored.sort(key=lambda s: s.mtime, reverse=True)
     return scored[:MAX_SCANNED]
 
@@ -91,14 +97,18 @@ def find_relevant_memories(
     doesn't re-surface the same notes). Pass ``selector`` to override the
     built-in keyword scorer with an LLM-backed chooser.
     """
+    # A negative limit would slice as "all but the last -n" (and a plain loop
+    # would treat it as unbounded), silently surfacing almost everything.
+    # Clamp to >=0 so limit <= 0 means "none".
+    limit = max(0, limit)
     candidates = [
         s for s in scan_memories()
         if not (s.entry.path and str(s.entry.path) in already_surfaced)
     ]
-    if not candidates:
+    if not candidates or limit == 0:
         return []
     if selector is not None:
-        return selector(query, candidates)[:limit]
+        return [_hydrate_body(s) for s in selector(query, candidates)[:limit]]
 
     qt = _tokens(query)
     scored = [
@@ -108,7 +118,19 @@ def find_relevant_memories(
     hits = [s for s in scored if s.score > 0]
     # Highest score first; mtime breaks ties (newer wins).
     hits.sort(key=lambda s: (s.score, s.mtime), reverse=True)
-    return hits[:limit]
+    return [_hydrate_body(s) for s in hits[:limit]]
+
+
+def _hydrate_body(scored: ScoredMemory) -> ScoredMemory:
+    """Load the full body for a selected memory. ``scan_memories`` reads only
+    frontmatter, so entries reach injection with an empty body — load it lazily
+    for just the handful actually surfaced."""
+    if scored.entry.body or scored.entry.path is None:
+        return scored
+    full = load_memory_entry(scored.entry.slug)
+    if full is None or not full.body:
+        return scored
+    return ScoredMemory(full, scored.mtime, scored.score)
 
 
 # ---------------------------------------------------------------------------

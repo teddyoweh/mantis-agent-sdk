@@ -46,6 +46,7 @@ hand.
 from __future__ import annotations
 
 import itertools
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, overload
@@ -53,11 +54,58 @@ from typing import Any, Literal, overload
 from .agent import Agent
 from .providers.base import Provider
 from .tools import Tool, ToolRegistry, tool
-from .types import AssistantMessage, Message, TextBlock, UserMessage
+from .types import AssistantMessage, Message, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
 
 IsolationMode = Literal["asyncio_task", "subprocess", "remote"]
 
 _RUN_COUNTER = itertools.count(1)  # live-progress ids for task-tool runs
+
+
+def _job_log(job: Any, text: str) -> None:
+    try:
+        if hasattr(job, "record_event"):
+            job.record_event(text)
+        else:
+            job.last_event = text
+            job.events.append((time.monotonic(), text))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _short_text(s: str, limit: int = 90) -> str:
+    s = " ".join((s or "").split())
+    return s if len(s) <= limit else s[:limit - 1] + "…"
+
+
+def _update_job_progress(job: Any, msg: Message) -> None:
+    if isinstance(msg, AssistantMessage):
+        try:
+            job.turn_count += 1
+        except Exception:  # noqa: BLE001
+            pass
+        text = _short_text(" ".join(
+            b.text for b in msg.content if isinstance(b, TextBlock)
+        ))
+        if text:
+            _job_log(job, f"assistant: {text}")
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock):
+                try:
+                    job.tool_count += 1
+                    job.last_tool = block.name
+                except Exception:  # noqa: BLE001
+                    pass
+                desc = ""
+                if isinstance(block.input, dict):
+                    desc = str(block.input.get("description") or block.input.get("path")
+                               or block.input.get("pattern") or block.input.get("command") or "")
+                _job_log(job, f"tool {block.name}{(': ' + _short_text(desc, 70)) if desc else ''}")
+    elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+        for block in msg.content:
+            if isinstance(block, ToolResultBlock):
+                status = "error" if block.is_error else "result"
+                content = block.content if isinstance(block.content, str) else ""
+                _job_log(job, f"{status}: {_short_text(content, 90)}")
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +134,11 @@ class SubAgentSpec:
     max_turns: int = 10
     isolation: IsolationMode = "asyncio_task"
     description: str | None = None
+    # Inherited by the child Agent so a write-capable sub-agent still routes
+    # mutating calls through the parent's gate, and stays under the parent's
+    # spend cap. ``None`` leaves the child ungated / uncapped (v0 behaviour).
+    permissions: Any = None
+    budget: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +225,8 @@ class SubAgentTool(Tool):
             system=self._spec.system_prompt,
             tools=registry,
             max_steps=self._spec.max_turns,
+            permissions=self._spec.permissions,
+            budget=self._spec.budget,
         )
 
         # The child sees a single user turn: the prompt the parent passed in.
@@ -347,33 +402,97 @@ class AgentType:
 
 
 _EXPLORE_SYSTEM = (
-    "You are a read-only exploration subagent, launched by a parent coding agent "
-    "to investigate a focused question autonomously. You have search/read tools "
-    "(read_file, grep, glob, ls, lsp, web) but CANNOT edit files, run shell "
-    "commands, or ask the user anything — work entirely from what you can read. "
-    "Investigate thoroughly, then return ONE concise report: the concrete answer "
-    "with exact file:line references and any facts the parent needs to act. No "
-    "preamble — return only the findings."
+    "You are a file-search specialist — a read-only exploration subagent "
+    "launched by a parent coding agent to navigate a codebase and answer ONE "
+    "focused question. You excel at thoroughly exploring code.\n"
+    "\n"
+    "=== CRITICAL: READ-ONLY MODE ===\n"
+    "You are STRICTLY PROHIBITED from changing anything. Do NOT create or modify "
+    "files, and NEVER use shell redirect operators (>, >>, |), heredocs (<<), or "
+    "any other state-changing command. You cannot ask the user anything — work "
+    "entirely from what you can read.\n"
+    "\n"
+    "Tool choice:\n"
+    "- glob for file-name/path patterns (e.g. **/*.py, src/**/test_*).\n"
+    "- grep for content across files (symbols, strings, call sites).\n"
+    "- read_file when you already know the path — read generously.\n"
+    "- ls / lsp / web for structure, definitions, and outside facts.\n"
+    "- bash ONLY for read-only inspection: ls, cat, head, tail, find, and "
+    "git status / git log / git diff. NEVER mkdir, touch, rm, cp, mv, git add, "
+    "git commit, or any install.\n"
+    "\n"
+    "Be FAST: spawn multiple grep/read calls in parallel wherever the searches "
+    "are independent instead of going one at a time. Adapt your breadth to the "
+    "THOROUGHNESS the caller asks for — 'quick' (answer the exact question and "
+    "stop), 'medium' (confirm across the obvious files), or 'very thorough' "
+    "(trace every relevant path and edge). Default to medium.\n"
+    "\n"
+    "Then return ONE concise report: the concrete answer with exact file:line "
+    "citations and any facts the parent needs to act. No preamble, and create "
+    "no files — communicate everything in your final message."
 )
 
 _PLAN_SYSTEM = (
     "You are a software-architect subagent, launched by a parent coding agent to "
-    "design an implementation plan. You have read-only tools — read the relevant "
-    "code first; never guess at what exists. You CANNOT edit files or run shell "
-    "commands, and you never implement — you design. Return ONE plan: the "
-    "recommended approach, concrete step-by-step changes with exact file:line "
-    "targets, critical files to touch, trade-offs you weighed, and risks. Be "
-    "decisive — pick an approach rather than listing options. No preamble."
+    "design an implementation plan. You have read-only tools and you NEVER "
+    "implement, edit files, or run state-changing commands — you design.\n"
+    "\n"
+    "Process:\n"
+    "1. Understand — restate the goal and constraints in one line.\n"
+    "2. Explore thoroughly — read the files you were pointed at, find existing "
+    "patterns with glob/grep/read_file, and trace the real code paths. Never "
+    "guess at what exists; verify it.\n"
+    "3. Design — weigh the trade-offs, follow the patterns already in the repo, "
+    "and be decisive: pick ONE approach rather than listing options.\n"
+    "4. Detail — lay out the change step by step with exact file:line targets, "
+    "the ordering/dependencies between steps, and the risks or edge cases to "
+    "watch.\n"
+    "\n"
+    "REQUIRED OUTPUT: end your report with a section headed exactly "
+    "'### Critical Files' listing the 3-5 files that must change, each an exact "
+    "path with a one-line note on what changes there. No preamble."
 )
 
 _GENERAL_SYSTEM = (
     "You are a general-purpose subagent, launched by a parent coding agent to "
     "complete a focused multi-step task autonomously. You have the parent's real "
     "tool belt — shell, file edits, search, web — but you CANNOT ask the user "
-    "anything: make reasonable decisions yourself and note them in your report. "
-    "Verify your work (run tests/commands where applicable) before finishing. "
-    "Then return ONE concise report: what you did, files you changed, how you "
-    "verified it, and anything the parent must know. No preamble."
+    "anything: make reasonable decisions yourself and note them in your report.\n"
+    "\n"
+    "Explore before you act: when you don't know where something lives, search "
+    "broadly first, then narrow. Start with a wide grep/glob and drill down. Try "
+    "multiple naming conventions and locations before concluding something is "
+    "absent, and read the surrounding code so your change matches existing "
+    "patterns.\n"
+    "\n"
+    "Verify your work by RUNNING it — tests, the type checker, or the relevant "
+    "command — before you finish; do not assume it works because it reads "
+    "correctly. Then return ONE concise report: what you did, files you changed, "
+    "how you verified it, and anything the parent must know. No preamble."
+)
+
+_VERIFY_SYSTEM = (
+    "You are an adversarial verification subagent, launched by a parent coding "
+    "agent to check whether a change actually works. Your job is NOT to confirm "
+    "it works — it is to try to BREAK it. The first 80% is the easy part; your "
+    "entire value is in finding the last 20%.\n"
+    "\n"
+    "Resist verification avoidance. Reading is not verification — RUN it. If you "
+    "catch yourself writing an explanation instead of a command, stop and run "
+    "the command. Do not be seduced by the first passing case: probe the edges, "
+    "the error paths, and the inputs the author probably did not think about.\n"
+    "\n"
+    "You have shell plus read/search tools. Run tests, invoke the code, and "
+    "inspect real output — but do NOT edit files to make a check pass.\n"
+    "\n"
+    "OUTPUT CONTRACT — report every check in exactly this form:\n"
+    "### Check: <what you tested>\n"
+    "**Command run:** <the exact command>\n"
+    "**Output observed:** <the real output, trimmed>\n"
+    "**Result: PASS** (or FAIL)\n"
+    "A check with no 'Command run' block is a SKIP, not a PASS. Include at least "
+    "one adversarial / edge-case probe. End your report with a single final line "
+    "that is literally 'VERDICT: PASS', 'VERDICT: FAIL', or 'VERDICT: PARTIAL'."
 )
 
 BUILTIN_AGENT_TYPES: tuple[AgentType, ...] = (
@@ -385,7 +504,7 @@ BUILTIN_AGENT_TYPES: tuple[AgentType, ...] = (
         ),
         system_prompt=_EXPLORE_SYSTEM,
         tools="read-only",
-        max_steps=20,
+        max_steps=30,
     ),
     AgentType(
         name="plan",
@@ -407,6 +526,22 @@ BUILTIN_AGENT_TYPES: tuple[AgentType, ...] = (
         system_prompt=_GENERAL_SYSTEM,
         tools="all",
         max_steps=100,
+    ),
+    AgentType(
+        name="verify",
+        description=(
+            "Adversarial verifier: tries to BREAK a change by running tests and "
+            "exercising edge cases, then returns a PASS/FAIL/PARTIAL verdict. "
+            "Can run commands (bash) but not edit files."
+        ),
+        system_prompt=_VERIFY_SYSTEM,
+        # Needs bash to actually RUN tests/commands, but must not edit files —
+        # so an explicit read+search+shell kit rather than "read-only" or "all".
+        # Unknown names are dropped by resolve_agent_tools, so listing optional
+        # tools (lsp/web) is harmless when the parent lacks them.
+        tools=("read_file", "grep", "glob", "ls", "bash", "bash_output",
+               "lsp", "web"),
+        max_steps=30,
     ),
 )
 
@@ -507,7 +642,9 @@ def _task_tool_description(types: list[AgentType]) -> str:
         "and returns only its final report — keeping this context clean. The "
         "subagent starts with NO memory of this conversation: include every "
         "path, name, and constraint in the prompt. Launch multiple task calls "
-        "in one message to run them in parallel.",
+        "in one message and they run in PARALLEL. For explore/plan you can set a "
+        "thoroughness dial in the prompt — 'quick', 'medium', or 'very thorough' "
+        "— to trade speed for depth.",
         "",
         "Available agent types (pass as subagent_type):",
     ]
@@ -552,6 +689,23 @@ def _task_schema(types: list[AgentType]) -> dict[str, Any]:
     }
 
 
+def make_coordinate_tool(*args: Any, **kwargs: Any) -> Tool:
+    """Re-export of :func:`mantis_agent.coordinator.make_coordinate_tool`.
+
+    ``coordinate`` is the model-facing entry to the workflow engine: it
+    decomposes a hard, multi-part objective into a phased Research → Synthesis →
+    Verification DAG (parallel workers, then an adversarial verify pass) instead
+    of the blind parallel ``task`` calls the model would otherwise fire. Exposed
+    here so tool-assembly points can register it in the same import that pulls in
+    :func:`make_task_tool`. Use ``coordinate`` for big decomposable problems,
+    ``task`` for a single focused delegation. Imported lazily to avoid a module
+    import cycle (coordinator imports this module's agent types)."""
+
+    from .coordinator import make_coordinate_tool as _impl  # noqa: PLC0415
+
+    return _impl(*args, **kwargs)
+
+
 def make_task_tool(
     *,
     model: str,
@@ -560,6 +714,7 @@ def make_task_tool(
     backend: str | None = None,
     max_steps: int = 20,
     permissions: Any = None,
+    budget: Any = None,
     agent_types: list[AgentType] | None = None,
     on_progress: Any = None,
     jobs: Any = None,
@@ -573,7 +728,9 @@ def make_task_tool(
     and recursive tools are always stripped. ``permissions`` (the parent's
     PermissionContext) is inherited by the child so a write-capable subagent
     still routes mutating calls through the same gate as the parent — without
-    it a general-purpose child would edit/execute unchecked.
+    it a general-purpose child would edit/execute unchecked. ``budget`` (the
+    parent's :class:`Budget`) is likewise inherited so a delegated child stays
+    under the same USD/token cap instead of spending unbounded.
 
     ``max_steps`` is a floor for backward compatibility: an agent type's own
     budget wins when larger."""
@@ -597,11 +754,12 @@ def make_task_tool(
         # spinner instead of a silent 90s Delegate line.
         run_id = None
         if on_progress is not None:
-            import dataclasses  # noqa: PLC0415
+            import copy  # noqa: PLC0415
             run_id = next(_RUN_COUNTER)
             try:
                 on_progress({"id": run_id, "phase": "start", "type": type_name,
-                             "desc": str((args or {}).get("description") or "")})
+                             "desc": str((args or {}).get("description") or ""),
+                             "model": at.model or model})
             except Exception:  # noqa: BLE001
                 pass
 
@@ -614,16 +772,29 @@ def make_task_tool(
                     except Exception:  # noqa: BLE001
                         pass
                     return await _orig(*a, **kw)
-                return dataclasses.replace(t, fn=fn)
+                # Shallow-copy preserves the concrete type (SubAgentTool /
+                # WrappedAgentTool have custom __init__ signatures that
+                # ``dataclasses.replace`` can't reconstruct) and its extra
+                # slots; we only swap the callable.
+                wrapped = copy.copy(t)
+                wrapped.fn = fn  # type: ignore[assignment]
+                return wrapped
             kit = [_wrap(t) for t in kit]
         registry = ToolRegistry()
         if kit:
             registry.add(*kit)
 
-        async def _execute() -> str:
+        async def _execute(job: Any = None) -> str:
             # A type-level model override still uses the PARENT's provider/
             # backend: the common case is a cheaper sibling on the same
             # endpoint. Cross-provider overrides are the parent's job to wire.
+            #
+            # Read-only investigators (explore/plan + user read-only agents) and
+            # the verifier start with a LIGHT env block — cwd, a shallow dir
+            # listing, and a git snapshot — so they aren't blind. Write-heavy
+            # general-purpose agents stay lean. Recall/memory stay off either
+            # way: the subagent is stateless.
+            starts_with_env = at.tools == "read-only" or at.name == "verify"
             child = Agent(
                 model=at.model or model,
                 provider=provider,
@@ -632,12 +803,37 @@ def make_task_tool(
                 tools=registry,
                 max_steps=max(max_steps, at.max_steps),
                 permissions=permissions,
+                budget=budget,   # inherit the parent's USD/token spend cap
                 include_recall=False,   # subagent is stateless; no session memory
-                include_env=False,
+                include_env=starts_with_env,
             )
             messages: list[Message] = [UserMessage(content=prompt)]
+            child_model = at.model or model
+            acc_usage: Any = None  # running ModelUsage: latest input + summed output
             try:
-                await child.run(messages)
+                if hasattr(child, "run_iter"):
+                    async for msg in child.run_iter(messages):
+                        if job is not None:
+                            _update_job_progress(job, msg)
+                        # Additive per-turn progress: carry the child's model and
+                        # accumulated token usage so a viewer (e.g. /workflows)
+                        # can show per-agent tokens/model. Existing consumers read
+                        # phase/type/desc/tool and ignore these extra keys.
+                        if (on_progress is not None and run_id is not None
+                                and isinstance(msg, AssistantMessage)
+                                and msg.usage is not None):
+                            from .workflow_view import (  # noqa: PLC0415
+                                accumulate_usage, total_tokens,
+                            )
+                            acc_usage = accumulate_usage(acc_usage, msg.usage)
+                            try:
+                                on_progress({"id": run_id, "phase": "turn",
+                                             "model": child_model, "usage": acc_usage,
+                                             "tokens": total_tokens(acc_usage)})
+                            except Exception:  # noqa: BLE001
+                                pass
+                else:
+                    await child.run(messages)
             finally:
                 if on_progress is not None and run_id is not None:
                     try:
@@ -646,13 +842,30 @@ def make_task_tool(
                         pass
             return _extract_final_text(messages) or "(subagent produced no output)"
 
-        if (args or {}).get("run_in_background") and jobs is not None:
+        wants_bg = bool((args or {}).get("run_in_background"))
+        if wants_bg and jobs is not None:
             desc = str((args or {}).get("description") or prompt[:60])
-            job = jobs.spawn(_execute(), desc=desc, kind=f"task:{type_name}")
+            holder: dict[str, Any] = {}
+
+            async def _bg_execute() -> str:
+                return await _execute(holder.get("job"))
+
+            job = jobs.spawn(_bg_execute(), desc=desc, kind=f"task:{type_name}")
+            holder["job"] = job
             return (f"Started background job #{job.id} ({type_name}: {desc}). "
                     f"Keep working — the result will arrive as a notification, "
                     f"or fetch it with job_output(job_id={job.id}).")
-        return await _execute()
+        result = await _execute()
+        if wants_bg:
+            # No JobManager wired: we couldn't background this, so it ran
+            # inline to completion. Tell the model rather than silently
+            # pretending it was backgrounded.
+            return (
+                "Note: background execution is unavailable here (no job "
+                "manager), so this task ran synchronously and its result "
+                "is below.\n\n" + result
+            )
+        return result
 
     task.description = _task_tool_description(types)
     return task
@@ -772,8 +985,18 @@ def make_pair_tool(
             include_recall=False,
             include_env=False,
         )
+        rollback_to = len(history)
         history.append(UserMessage(content=message))
-        await child.run(history)
+        try:
+            await child.run(history)
+        except BaseException:
+            # A failed turn must not poison the persistent history: run()
+            # mutates `history` in place, so a mid-turn exception can leave a
+            # user message with no assistant reply (or a half-written pair),
+            # which corrupts the twin's next turn. Roll back to the pre-turn
+            # state so the sliding window stays well-formed.
+            del history[rollback_to:]
+            raise
         # Trim from the FRONT (oldest exchanges) so the twin's memory is a
         # sliding window; never split a user/assistant pair.
         while len(history) > max_history:

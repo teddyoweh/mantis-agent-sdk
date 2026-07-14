@@ -8,7 +8,7 @@ from __future__ import annotations
 import anyio
 
 from mantis_agent.permissions import Allow, Ask, Deny
-from mantis_agent.tui import MODES, MantisTUI
+from mantis_agent.tui import MODES, MantisTUI, permission_mode_label, permission_mode_summary
 
 
 def _tui() -> MantisTUI:
@@ -113,3 +113,82 @@ def test_godmode_allows_dangerous_without_prompt() -> None:
         lambda: check_permission(bash, {"command": "rm -rf /tmp/x"}, agent.permissions)
     )
     assert isinstance(decision, Allow)  # godmode runs it with no prompt
+
+
+def test_permission_mode_label_accepts_cli_and_settings_spellings() -> None:
+    assert permission_mode_label("acceptEdits") == "accept edits on"
+    assert permission_mode_label("accept-edits") == "accept edits on"
+    assert permission_mode_label("plan") == "plan mode on"
+    assert permission_mode_label("bypass permissions on") == "bypass permissions on"
+    assert permission_mode_label("future-mode") is None
+
+
+def test_permission_mode_summary_explains_safe_bypass_distinction() -> None:
+    assert "dangerous shell commands still ask" in permission_mode_summary(
+        "bypass permissions on"
+    )
+    assert "including dangerous shell commands" in permission_mode_summary(
+        "bypass permissions on", force_bypass=True
+    )
+
+
+def test_settings_permission_mode_sets_initial_footer(monkeypatch, tmp_path) -> None:
+    import json
+
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / "settings.json").write_text(json.dumps({"permission_mode": "acceptEdits"}))
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(home))
+
+    tui = _tui()
+    assert MODES[tui.mode_idx][0] == "accept edits on"
+
+
+def test_cli_permission_mode_helper_overrides_settings(monkeypatch, tmp_path) -> None:
+    import json
+
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / "settings.json").write_text(json.dumps({"permission_mode": "acceptEdits"}))
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(home))
+
+    tui = _tui()
+    assert tui._apply_initial_permission_mode("plan") is True
+    assert MODES[tui.mode_idx][0] == "plan mode on"
+
+
+def test_tui_model_knobs_flow_to_agent_extra() -> None:
+    tui = MantisTUI(
+        model="gpt-5.6-sol",
+        backend="https://api.openai.com/v1",
+        api_key="k",
+        system=None,
+        max_tokens=1,
+        temperature=None,
+        max_turns=1,
+        effort="xhigh",
+        verbosity="high",
+        reasoning_mode="pro",
+    )
+    assert tui._model_extra() == {
+        "effort": "xhigh",
+        "verbosity": "high",
+        "reasoning_mode": "pro",
+    }
+    agent = tui._build_agent()
+    assert agent.extra == tui._model_extra()
+
+
+def test_tui_knobs_command_updates_agent_extra() -> None:
+    tui = _tui()
+    tui._cmd_knobs("effort=xhigh verbosity=high reasoning=pro")
+    assert tui.effort == "xhigh"
+    assert tui.verbosity == "high"
+    assert tui.reasoning_mode == "pro"
+    assert tui.agent.extra == {
+        "effort": "xhigh",
+        "verbosity": "high",
+        "reasoning_mode": "pro",
+    }
+    tui._cmd_knobs("effort=off verbosity=off reasoning=off")
+    assert tui.agent.extra == {}

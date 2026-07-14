@@ -11,13 +11,11 @@ integration territory and not exercised here.
 from __future__ import annotations
 
 import io
-import json
 import os
 import socket
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -497,7 +495,6 @@ def test_cli_setup_local_llamacpp_help_lists_in_top_level_help() -> None:
     users discover it."""
 
     parser = cli._build_parser()
-    actions = parser._subparsers._actions if parser._subparsers else []
     # Find the subparsers action to inspect available choices.
     sub_actions = [a for a in parser._actions if a.dest == "cmd"]
     assert sub_actions, "expected a single subparsers action"

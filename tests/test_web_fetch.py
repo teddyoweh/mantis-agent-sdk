@@ -21,7 +21,7 @@ def test_html_to_text_drops_script_style() -> None:
 
 def test_html_to_text_block_newlines() -> None:
     out = _html_to_text("<p>a</p><p>b</p><br><div>c</div>")
-    assert [l for l in out.splitlines() if l] == ["a", "b", "c"]  # markdown keeps blank breaks
+    assert [ln for ln in out.splitlines() if ln] == ["a", "b", "c"]  # markdown keeps blank breaks
 
 
 def test_html_to_text_collapses_whitespace() -> None:
@@ -34,6 +34,12 @@ def _mock_web(monkeypatch, *, body: str, content_type: str) -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(web, "_CLIENT", client)
     monkeypatch.delenv("EXA_API_KEY", raising=False)   # force the raw path
+    # The SSRF guard added to _raw_fetch resolves the host via real DNS before
+    # issuing the request and fails closed on anything non-public. The fake
+    # ``http://x`` host behind MockTransport can't resolve, so opt out of the
+    # local-address block here — we're exercising the HTML/JSON extraction path,
+    # not the SSRF check (which has its own coverage).
+    monkeypatch.setenv("MANTIS_WEB_ALLOW_LOCAL", "1")
 
 
 def test_web_fetch_html_cleaned(monkeypatch) -> None:

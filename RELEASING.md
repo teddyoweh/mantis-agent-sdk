@@ -2,7 +2,14 @@
 
 This file is the maintainer-facing runbook. End users don't need it.
 
-## How releases work
+> **⚠️ Current reality (2026-07):** GitHub Actions is billing-locked, so the
+> tag-triggered OIDC workflow below does **not** run. Publish **locally** instead —
+> `python -m build` then `uv publish` (or `twine upload`), exactly as
+> [`AGENTS.md`](AGENTS.md) describes. The OIDC path below is the intended
+> steady-state once Actions is re-enabled; keep it as the target, not today's
+> procedure.
+
+## How releases work (target state — Actions-based)
 
 1. Tags shaped `vX.Y.Z` push to GitHub.
 2. The `release.yml` workflow runs:

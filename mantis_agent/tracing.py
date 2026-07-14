@@ -71,7 +71,7 @@ import logging
 import os
 import secrets
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -107,6 +107,14 @@ class Span:
     attributes: dict[str, Any] = field(default_factory=dict)
     status: str = "ok"  # "ok" | "error" | "cancelled"
     exception: str | None = None
+    # Callbacks fired exactly once when the span ends (idempotent with end()).
+    # Tracers register here so that a span opened via ``start_span`` and closed
+    # manually via ``sp.end()`` still gets exported/recorded — the agent loop
+    # uses that manual pattern (not the context manager) for run/turn/llm spans.
+    # Excluded from repr/compare/serialization; runtime wiring only.
+    _end_callbacks: list[Callable[[Span], None]] = field(
+        default_factory=list, repr=False, compare=False
+    )
 
     @property
     def duration_ms(self) -> float | None:
@@ -141,6 +149,13 @@ class Span:
             self.exception = f"{type(exception).__name__}: {exception}"
             if self.status == "ok":
                 self.status = "error"
+        # Fire end callbacks exactly once (guarded by the end_ns check above).
+        # A misbehaving callback must never prevent the span from closing.
+        for cb in self._end_callbacks:
+            try:
+                cb(self)
+            except Exception:  # noqa: BLE001 — never let export break span end
+                logger.debug("span end callback failed", exc_info=True)
 
     # Convenience: dict for JSON / OTel translation.
     def to_dict(self) -> dict[str, Any]:
@@ -216,10 +231,12 @@ class InMemoryTracer:
     """Zero-dep tracer that keeps every finished span on ``self.spans``.
 
     Suitable for tests, local debugging, dashboards that read the list
-    after a run, and "just give me a JSONL trace" exports. The full list
-    is in memory — for very long-running agents that emit thousands of
-    spans you may want to swap in an :class:`OTelTracer` (or a custom impl
-    that flushes periodically). For 99% of agent runs, in-memory is fine.
+    after a run, and "just give me a JSONL trace" exports. The list is
+    bounded by ``max_spans`` (default 50k) with oldest-first rolling
+    eviction, so a long-running agent can't grow it without limit — for
+    very long-running agents that need every span you may still want to
+    swap in an :class:`OTelTracer` (or a custom impl that flushes
+    periodically). For 99% of agent runs, in-memory is fine.
 
     Span order in ``self.spans`` is *end-order* — a span enters the list
     when it ``end()``s, not when it starts. This matches OTel exporter
@@ -230,11 +247,17 @@ class InMemoryTracer:
     flight is safe but the snapshot may grow under you.
     """
 
-    def __init__(self, *, trace_id: str | None = None) -> None:
+    def __init__(
+        self, *, trace_id: str | None = None, max_spans: int | None = 50_000
+    ) -> None:
         # 32-char hex matches OTel TraceId width (128 bits).
         self._trace_id = trace_id or secrets.token_hex(16)
         self.spans: list[Span] = []
         self._open: dict[str, Span] = {}
+        # Bound the retained history so a long-running agent can't grow the
+        # list without limit. Oldest (earliest-finished) spans are evicted
+        # first. ``None`` disables the cap for callers that truly want it all.
+        self._max_spans = max_spans
 
     @property
     def trace_id(self) -> str:
@@ -254,12 +277,24 @@ class InMemoryTracer:
             attributes=dict(attributes) if attributes else {},
         )
         self._open[sp.span_id] = sp
+        # Move the span into ``self.spans`` when it ends — even when the caller
+        # ends it manually via ``sp.end()`` instead of the ``span()`` CM. end()
+        # is idempotent so ``_close`` runs at most once.
+        sp._end_callbacks.append(self._close)
         return sp
 
     def _close(self, sp: Span) -> None:
         # Caller already called sp.end(); we only move it to spans + drop from open.
-        self._open.pop(sp.span_id, None)
+        # Idempotent: only the first close (while the span is still open) records
+        # it. Guards against double-recording when a span is closed via BOTH its
+        # end callback and an explicit ``_close`` call — e.g. the streaming
+        # executor ends the span then calls ``_close`` as belt-and-suspenders.
+        if self._open.pop(sp.span_id, None) is None:
+            return
         self.spans.append(sp)
+        if self._max_spans is not None and len(self.spans) > self._max_spans:
+            # Rolling eviction — drop the oldest to keep memory bounded.
+            del self.spans[: len(self.spans) - self._max_spans]
 
     @contextlib.contextmanager
     def span(
@@ -273,12 +308,10 @@ class InMemoryTracer:
         try:
             yield sp
         except BaseException as exc:
-            sp.end(status="error", exception=exc)
-            self._close(sp)
+            sp.end(status="error", exception=exc)  # _close runs via end callback
             raise
         else:
-            sp.end()
-            self._close(sp)
+            sp.end()  # _close runs via end callback
 
     # --- export helpers --------------------------------------------------
 
@@ -422,7 +455,25 @@ class OTelTracer:
             logger.debug("OTel start_span failed", exc_info=True)
         if otel_span is not None:
             self._open_otel[sp.span_id] = otel_span
+            # Ensure the OTel span is ended (and thus exported) even when the
+            # caller closes ``sp`` manually via ``sp.end()`` rather than the
+            # ``span()`` context manager — the agent loop uses the manual path.
+            # The mirror's own _close callback (registered by
+            # ``InMemoryTracer.start_span``) already fires alongside this one.
+            sp._end_callbacks.append(self._end_otel_from_span)
         return sp
+
+    def _end_otel_from_span(self, sp: Span) -> None:
+        """End-callback: close the OTel span using the mirror span's status.
+
+        Used for the manual ``start_span``/``sp.end()`` path where we don't have
+        the original exception object — status ("ok"/"error"/"cancelled") is
+        read off ``sp``. The context-managed path calls ``_finish_otel``
+        directly first (with the real exception) so this becomes a no-op there,
+        since ``_finish_otel`` pops the OTel span from ``_open_otel``.
+        """
+
+        self._finish_otel(sp, status=sp.status, exception=None)
 
     @contextlib.contextmanager
     def span(
@@ -436,14 +487,15 @@ class OTelTracer:
         try:
             yield sp
         except BaseException as exc:
+            # Finish OTel first with the real exception (for record_exception);
+            # sp.end() then runs the mirror's _close callback (and the OTel
+            # end-callback, now a no-op since the span was already popped).
             self._finish_otel(sp, status="error", exception=exc)
             sp.end(status="error", exception=exc)
-            self._mirror._close(sp)
             raise
         else:
             self._finish_otel(sp, status="ok", exception=None)
             sp.end()
-            self._mirror._close(sp)
 
     def _finish_otel(
         self,
@@ -467,6 +519,10 @@ class OTelTracer:
                     otel_span.record_exception(exception)
                 except Exception:  # noqa: BLE001
                     pass
+            # Mark the span errored when we either caught an exception or the
+            # mirror span itself recorded an error status (manual end() path,
+            # where the exception object isn't threaded through the callback).
+            if exception is not None or sp.status == "error":
                 try:
                     otel_span.set_status(self._otel.Status(self._otel.StatusCode.ERROR))
                 except Exception:  # noqa: BLE001

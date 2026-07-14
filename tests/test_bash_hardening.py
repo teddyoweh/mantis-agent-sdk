@@ -4,6 +4,11 @@ pollute its context with terminal-control sequences (Claude-Code parity)."""
 
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
+import time
+
 import anyio
 
 from mantis_agent.builtin_tools import bash
@@ -45,6 +50,38 @@ def test_stdin_closes_after_input_so_no_hang() -> None:
     # `cat` with no stdin must hit EOF and exit fast, not block until timeout.
     out = anyio.run(bash.fn, "cat", 8)
     assert "exit code 0" in out or out.strip() == ""
+
+
+def test_foreground_timeout_kills_child_process_group() -> None:
+    before = subprocess.run(["pgrep", "-f", "mantis-timeout-child"],
+                            text=True, capture_output=True, check=False).stdout.split()
+    try:
+        try:
+            anyio.run(bash.fn, "bash -c 'exec -a mantis-timeout-child sleep 30'", 1)
+        except TimeoutError as exc:
+            assert "run_in_background=True" in str(exc)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            after = subprocess.run(["pgrep", "-f", "mantis-timeout-child"],
+                                   text=True, capture_output=True, check=False).stdout.split()
+            leaked = [p for p in after if p not in before and p != str(os.getpid())]
+            if not leaked:
+                return
+            time.sleep(0.1)
+        for pid in leaked:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except OSError:
+                pass
+        raise AssertionError(f"foreground bash leaked child process(es): {leaked}")
+    finally:
+        after = subprocess.run(["pgrep", "-f", "mantis-timeout-child"],
+                               text=True, capture_output=True, check=False).stdout.split()
+        for pid in [p for p in after if p not in before and p != str(os.getpid())]:
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def test_bash_exposes_stdin_parameter() -> None:

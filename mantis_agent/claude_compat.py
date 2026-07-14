@@ -47,21 +47,20 @@ shapes are exported. Pick whichever your codebase wants.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Union
 
 import msgspec
 
+from .errors import ProviderError
 from .tools import Tool
 from .types import (
     AssistantMessage,
     ContentBlock,
-    SystemMessage as _InternalSystemMessage,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
-    Usage,
     UserMessage,
 )
 
@@ -70,7 +69,6 @@ __all__ = [
     "AgentDefinition",
     "AssistantMessage",
     "CLIConnectionError",
-    "MantisAgentOptions",
     "MantisAgentOptions",
     "ClaudeSDKClient",
     "ClaudeSDKError",
@@ -123,8 +121,27 @@ class MantisAgentOptions:
     max_turns: int | None = None
     max_tokens: int | None = None
     temperature: float | None = None
+    # Claude/OpenAI reasoning controls. For GPT-5.6 chat models, effort maps to
+    # reasoning_effort (none/low/medium/high/xhigh; max requires Responses API)
+    # and verbosity maps to GPT-5.6 chat verbosity.
+    max_thinking_tokens: int | None = None
+    thinking: dict[str, Any] | None = None
+    # Reasoning/persistence effort — threads into ``Agent.effort`` and drives the
+    # adaptive thinking config the loop derives each turn (low|medium|high|max).
+    # "medium" is the neutral default: it maps to the provider default (no
+    # thinking block forwarded). Non-medium values also flow to ``extra`` as an
+    # explicit ``reasoning_effort`` override for providers that read it.
+    effort: Literal["minimal", "low", "medium", "high", "xhigh", "max", "none"] | None = "medium"
+    verbosity: Literal["low", "medium", "high"] | None = None
+    reasoning_mode: Literal["standard", "pro"] | None = None
+    reasoning_context: Literal["auto", "all_turns", "current_turn"] | None = None
 
     # Tools
+    # ``skills`` matches Claude SDK's run-level skill enablement. ``None`` means
+    # normal auto-relevance/catalog behavior; a list preloads only those skill
+    # bodies; "all" preloads every discovered skill.
+    skills: list[str] | Literal["all"] | None = None
+
     # ``tools`` accepts either:
     #   * list[str]  — built-in tool names (e.g. ["Read", "Glob"])
     #   * list[Tool] — direct ``Tool`` instances
@@ -145,7 +162,11 @@ class MantisAgentOptions:
     cwd: str | None = None
     add_dirs: list[str] | None = None
     session_id: str | None = None
-    persist: bool = False
+    # Loop persistence. When True (default), the core loop honors its completion
+    # contract — it only continues past a natural stop on real unfinished-work
+    # signals (open todos, an active target), so a no-todo query() is unchanged.
+    # Set False to restore the strict "stop at the first no-tool turn" behavior.
+    persist: bool = True
     include_memory: bool = True
     setting_sources: list[str] | None = None
 
@@ -195,11 +216,13 @@ class MantisAgentOptions:
 
         opts: dict[str, Any] = {}
         if self.system_prompt is not None:
-            opts["system"] = (
+            system = (
                 self.system_prompt
                 if isinstance(self.system_prompt, str)
                 else _stringify_system_prompt(self.system_prompt)
             )
+            if system:
+                opts["system"] = system
         if self.model:
             opts["model"] = self.model
         if self.backend:
@@ -260,6 +283,27 @@ class MantisAgentOptions:
             opts.setdefault("extra", {})["disallowed_tools"] = self.disallowed_tools
         if self.mcp_servers:
             opts["mcp_servers"] = list(_normalize_mcp_servers(self.mcp_servers))
+        if self.skills is not None:
+            opts["skills"] = self.skills
+        for key, value in {
+            "max_thinking_tokens": self.max_thinking_tokens,
+            "thinking": self.thinking,
+            "verbosity": self.verbosity,
+            "reasoning_mode": self.reasoning_mode,
+            "reasoning_context": self.reasoning_context,
+        }.items():
+            if value is not None:
+                opts.setdefault("extra", {})[key] = value
+        # ``effort`` threads top-level into ``Agent.effort`` (drives the loop's
+        # adaptive thinking). "medium" is the neutral default (provider default),
+        # so it is NOT forwarded to ``extra`` — only an explicit non-medium
+        # effort becomes an explicit ``reasoning_effort`` override for providers
+        # that read ``extra["effort"]`` (keeping gpt-4o-style non-reasoning
+        # models untouched by default).
+        if self.effort is not None:
+            opts["effort"] = self.effort
+            if self.effort != "medium":
+                opts.setdefault("extra", {})["effort"] = self.effort
         if self.agents:
             # subagent definitions — consumed by compat_query, which registers
             # each as a delegatable tool (previously accepted but dropped here)
@@ -302,8 +346,9 @@ class MantisAgentOptions:
             opts["cwd"] = self.cwd
         if self.session_id:
             opts["session_id"] = self.session_id
-        if self.persist:
-            opts["persist"] = True
+        # Always forward the bool so an explicit ``persist=False`` can turn the
+        # loop's persistence off (the Agent default is True).
+        opts["persist"] = self.persist
         opts["include_memory"] = self.include_memory
 
         # setting_sources flows through as-is. compat_query._build_agent
@@ -328,8 +373,8 @@ def _stringify_system_prompt(sp: dict[str, Any]) -> str:
     """Render the Claude SDK's structured ``system_prompt`` dict to a string.
 
     Their dict form: ``{"type": "preset", "preset": "claude_code", "append": "..."}``.
-    We don't run the Claude Code preset, so we just take the ``append`` field
-    (if present) and pass through; otherwise empty string.
+    Mantis' own agent prompt is the Claude-Code-style preset, so the preset
+    itself maps to no extra text; any append/text field is layered on top.
     """
 
     if isinstance(sp, dict):
@@ -415,11 +460,9 @@ def _convert_hooks_dict(hooks: dict[str, list[Any]]) -> Any:
     return Hooks(**out_kwargs)
 
 
-# Mantis-branded alias for the options class. ``MantisAgentOptions`` stays the
-# drop-in name (so ``from claude_agent_sdk import MantisAgentOptions`` →
-# ``from mantis_agent import MantisAgentOptions`` works unchanged);
-# ``MantisAgentOptions`` is the native name — same class, either works.
-MantisAgentOptions = MantisAgentOptions  # drop-in compat alias (Claude SDK litmus test)
+# ``MantisAgentOptions`` (defined above) is the sole, native options class name.
+# The Claude-branded ``ClaudeAgentOptions`` alias was intentionally dropped —
+# see ``tests/test_mantis_agent_options.py`` — so there is nothing to alias here.
 
 
 # ---------------------------------------------------------------------------
@@ -596,23 +639,24 @@ class ToolPermissionContext:
             self.signal = anyio.Event()
 
 
-class CLIConnectionError(Exception):
+class ClaudeSDKError(Exception):
+    """Drop-in for ``claude_agent_sdk.ClaudeSDKError``. Base class
+    that the Claude SDK uses for ``CLIConnectionError`` and
+    ``ProcessError``. We extend it as a sibling of our AgentError so
+    callers can catch either."""
+
+
+class CLIConnectionError(ProviderError, ClaudeSDKError):
     """Drop-in for ``claude_agent_sdk.CLIConnectionError``.
 
     Raised when the underlying transport / model API can't be reached.
     The Claude SDK examples catch this around the streaming-client
     setup. We map it onto our existing :class:`ProviderError` family —
     instances of CLIConnectionError ARE ProviderErrors so existing
-    catch blocks still work, and Claude SDK examples that catch
-    CLIConnectionError see the same surface.
+    catch blocks still work — and also subclass :class:`ClaudeSDKError`
+    so Claude SDK examples that catch ``ClaudeSDKError`` (or
+    ``CLIConnectionError``) see the same surface.
     """
-
-
-class ClaudeSDKError(Exception):
-    """Drop-in for ``claude_agent_sdk.ClaudeSDKError``. Base class
-    that the Claude SDK uses for ``CLIConnectionError`` and
-    ``ProcessError``. We extend it as a sibling of our AgentError so
-    callers can catch either."""
 
 
 @dataclass(slots=True)
@@ -694,7 +738,13 @@ class ClaudeSDKClient:
 
     def __init__(self, options: MantisAgentOptions | None = None) -> None:
         self.options = options or MantisAgentOptions()
-        self._pending_prompt: str | None = None
+        # A real queue (not a single slot) so back-to-back ``query()`` calls
+        # before a ``receive_response()`` don't drop all but the last prompt.
+        self._queue: list[str] = []
+        # Persistent internal-message history so successive turns share context
+        # (the documented "over multiple turns" contract) instead of each
+        # ``receive_response()`` starting from a blank conversation.
+        self._history: list[Any] = []
 
     async def __aenter__(self) -> ClaudeSDKClient:
         await self.connect()
@@ -718,9 +768,10 @@ class ClaudeSDKClient:
 
     async def query(self, prompt: str) -> None:
         """Queue a prompt. Returns immediately; consume the response via
-        ``receive_response()``."""
+        ``receive_response()``. Multiple queued prompts are drained in FIFO
+        order by successive ``receive_response()`` calls."""
 
-        self._pending_prompt = prompt
+        self._queue.append(prompt)
 
     async def receive_messages(self) -> AsyncIterator[Message]:
         """Alias for :meth:`receive_response`. Some Claude SDK examples
@@ -756,13 +807,17 @@ class ClaudeSDKClient:
         started.
         """
 
-        prompt = self._pending_prompt
-        if prompt is None:
+        if not self._queue:
             raise RuntimeError("ClaudeSDKClient.query(...) must be called before receive_response()")
-        self._pending_prompt = None
+        prompt = self._queue.pop(0)
 
         # Local import to avoid a circular at module init time.
         from .compat_query import query as _compat_query
 
-        async for msg in _compat_query(prompt=prompt, options=self.options):
+        # Thread the persistent history so this turn continues the prior
+        # conversation; ``_compat_query`` appends this turn's messages back into
+        # the same list for the next ``receive_response()``.
+        async for msg in _compat_query(
+            prompt=prompt, options=self.options, _history=self._history
+        ):
             yield msg

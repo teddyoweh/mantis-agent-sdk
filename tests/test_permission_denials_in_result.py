@@ -16,7 +16,6 @@ from mantis_agent import (
     PermissionResultDeny,
     ResultMessage,
     TextBlock,
-    Tool,
     ToolUseBlock,
     UserMessage,
     Usage,

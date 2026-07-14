@@ -8,6 +8,18 @@ Wafer-scale hardware; the fastest tokens/sec on the market, with a free tier. Sm
 | env var | `CEREBRAS_API_KEY` |
 | get a key | [cloud.cerebras.ai](https://cloud.cerebras.ai/platform/) |
 
+## Get an API key
+
+1. Sign up or log in at cloud.cerebras.ai
+2. Click 'API Keys' in the left nav
+3. Click 'Create API Key' and name it
+4. Copy the key and store it securely
+5. Export it as CEREBRAS_API_KEY
+
+[Create a key ↗](https://cloud.cerebras.ai/platform/apikeys) · [Pricing ↗](https://www.cerebras.ai/pricing)
+
+> Free dev tier: 1M tokens/day, no card, ~30 req/min (8k context cap).
+
 ## Enable
 
 ```bash

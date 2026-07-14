@@ -8,6 +8,18 @@ Claude, natively — mantis speaks the real Messages API (x-api-key), not a tran
 | env var | `ANTHROPIC_API_KEY` |
 | get a key | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 
+## Get an API key
+
+1. Sign in at console.anthropic.com
+2. Open Settings → API Keys
+3. Click 'Create Key' and name it
+4. Copy the sk-ant- key (shown once)
+5. Add credits under Settings → Billing
+
+[Create a key ↗](https://console.anthropic.com/settings/keys) · [Pricing ↗](https://www.anthropic.com/pricing#api)
+
+> No ongoing free tier; buy prepaid credits (small trial credit may apply).
+
 ## Enable
 
 ```bash

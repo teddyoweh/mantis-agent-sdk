@@ -116,6 +116,48 @@ def test_manager_connects_and_namespaces_tools() -> None:
     anyio.run(go)
 
 
+def test_manager_reports_duplicate_and_unnamed_remote_tools(tmp_path) -> None:
+    server = tmp_path / "duplicate_tools_server.py"
+    server.write_text('''
+import json, sys
+
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    m = json.loads(line)
+    mid, meth = m.get("id"), m.get("method")
+    if meth == "initialize":
+        send({"jsonrpc":"2.0","id":mid,"result":{"protocolVersion":"2024-11-05",
+              "capabilities":{"tools":{}},"serverInfo":{"name":"dups","version":"1"}}})
+    elif meth == "tools/list":
+        send({"jsonrpc":"2.0","id":mid,"result":{"tools":[
+            {"name":"search","description":"first","inputSchema":{"type":"object"}},
+            {"name":"search","description":"second","inputSchema":{"type":"object"}},
+            {"name":"","description":"unnamed","inputSchema":{"type":"object"}},
+            {"name":"lookup","description":"ok","inputSchema":{"type":"object"}}
+        ]}})
+''')
+    import sys as _sys
+    cfg = StdioServerConfig(command=_sys.executable, args=[str(server)])
+
+    async def go():
+        mgr = MCPManager({"dups": cfg})
+        tools = await mgr.connect_all(timeout_s=5.0)
+        assert [t.name for t in tools] == ["mcp__dups__search", "mcp__dups__lookup"]
+        assert mgr.warnings == {"dups": [
+            "skipped duplicate tool 'search'; first definition kept",
+            "skipped unnamed tool from tools/list",
+        ]}
+        row = mgr.status_rows()[0]
+        assert row["state"] == "connected"
+        assert row["detail"] == "2 tools · 2 warnings"
+        assert mgr.summary() == "dups (2 tools, 2 warnings)"
+        await mgr.aclose()
+    anyio.run(go)
+
+
 def test_manager_isolates_a_failing_server() -> None:
     async def go():
         bad = StdioServerConfig(command="definitely-not-a-real-binary-xyz")
@@ -189,6 +231,21 @@ def test_show_mcp_renders_status_and_recipe(monkeypatch) -> None:
         assert "echoes" in out and "connected" in out and "mcp__echoes__echo" in out
         await t._close_mcp()
     anyio.run(go)
+
+
+def test_show_mcp_renders_tool_warnings() -> None:
+    t = _tui()
+    t.console = _Rec()
+    t._mcp_manager = MCPManager({"dups": StdioServerConfig(command="x")})
+    t._mcp_manager.clients["dups"] = object()
+    t._mcp_manager.tools["dups"] = []
+    t._mcp_manager.warnings["dups"] = [
+        "skipped duplicate tool 'search'; first definition kept"
+    ]
+    t._show_mcp()
+    out = t.console.text()
+    assert "dups" in out and "1 warning" in out
+    assert "warning:" in out and "duplicate tool 'search'" in out
 
 
 # -- skills: /skills + direct /<name> invocation --------------------------------------

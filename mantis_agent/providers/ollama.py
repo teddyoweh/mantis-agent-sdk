@@ -40,6 +40,7 @@ from collections.abc import AsyncIterator, Iterable
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import msgspec
 
 from ..capabilities import HOSTED_PROFILES, BackendCapability, ModelCapability
@@ -215,6 +216,7 @@ class OllamaProvider(HTTPProviderMixin):
         temperature: float | None = None,
         extra: dict[str, Any] | None = None,
         model_capability: ModelCapability | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         # Decide tool-use path. Native if model + backend both support it.
         use_native_tools = bool(
@@ -256,6 +258,18 @@ class OllamaProvider(HTTPProviderMixin):
             if isinstance(opts, dict):
                 payload["options"].update(opts)
             payload.update(extra)
+
+        # Universal thinking config -> Ollama's top-level ``think`` flag.
+        # Best-effort: most local checkpoints have no reasoning mode, so only
+        # send ``think`` when the model actually reasons (per capabilities) —
+        # otherwise Ollama rejects the field. When we can't tell, we no-op. An
+        # explicit extra["think"] wins (guarded below). ``None`` == no change.
+        if (thinking is not None
+                and "think" not in payload
+                and _model_supports_thinking(model_capability)):
+            ttype = thinking.get("type") if isinstance(thinking, dict) else None
+            if ttype in ("enabled", "adaptive", "disabled"):
+                payload["think"] = ttype != "disabled"
 
         # When we're on the prompt-engineered path, the model emits
         # ``<tool_call>...</tool_call>`` blocks in its text content. We thread
@@ -425,9 +439,17 @@ class OllamaProvider(HTTPProviderMixin):
                     tool_id = tc.get("id") or f"call_{uuid4().hex[:12]}"
                     tool_index = cursor["next_index"]
                     cursor["next_index"] += 1
+                    # Emit the arguments EXACTLY ONCE — via the InputJsonDelta
+                    # below — and open the block with empty input, matching the
+                    # Anthropic wire contract and every other path in this SDK
+                    # (openai_compat native + the prompt-engineered parser path).
+                    # Populating ``input`` here AND streaming the same args as a
+                    # delta makes any consumer that folds both (per the wire
+                    # contract) concatenate the arguments twice into malformed
+                    # JSON.
                     yield ContentBlockStart(
                         index=tool_index,
-                        block=ToolUseBlock(id=tool_id, name=name, input=args_dict),
+                        block=ToolUseBlock(id=tool_id, name=name, input={}),
                     )
                     yield ContentBlockDelta(
                         index=tool_index,
@@ -497,19 +519,43 @@ class OllamaProvider(HTTPProviderMixin):
             # Stream ended without a final ``done:true`` chunk.
             if not started:
                 raise ProviderError("Ollama stream ended with no chunks")
-            if text_parser is not None:
-                for parser_ev in text_parser.finalize():
-                    for out in _from_parser_event(parser_ev, cursor):
-                        yield out
-            if cursor["text_open"] and cursor["text_index"] is not None:
-                yield ContentBlockStop(index=cursor["text_index"])
-            yield MessageDelta(stop_reason="end_turn", usage=None)
-            yield MessageStop()
+            # Ollama terminates every healthy stream with a ``done:true`` chunk
+            # (which carries the stop reason + usage). Reaching here with
+            # ``started`` true means the NDJSON body was cut short mid-message —
+            # a dropped connection, a killed/OOM'd backend, or a proxy that
+            # closed the stream early. Emitting a clean ``end_turn`` here would
+            # hand the agent loop a silently-truncated message as if it were a
+            # complete completion. Fail closed instead: raise a transport-level
+            # error so the loop treats it as a transient failure (and retries
+            # when nothing has streamed yet) rather than accepting the
+            # truncation as success.
+            raise httpx.RemoteProtocolError(
+                "Ollama stream truncated: ended without a final done:true chunk"
+            )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _model_supports_thinking(cap: ModelCapability | None) -> bool:
+    """Whether it's safe to send Ollama a ``think`` flag for this model.
+
+    Ollama only honors ``think`` on models it serves in reasoning mode (R1,
+    QwQ, distills, …); sending it to a plain chat model errors. Gate on the
+    capability's reasoning signals — request-side knob, or the model emitting
+    thinking either out-of-band or inline. Unknown capability -> no-op.
+    """
+
+    return bool(
+        cap
+        and (
+            cap.supports_reasoning_effort
+            or cap.emits_thinking_blocks
+            or cap.emits_inline_thinking
+        )
+    )
 
 
 def _join_text(blocks: list[Any]) -> str:

@@ -30,10 +30,8 @@ These tests pin the new public surface:
 from __future__ import annotations
 
 import anyio
-import pytest
 
 from mantis_agent import Tool, ToolUseBlock, tool
-from mantis_agent.permissions import PermissionContext
 from mantis_agent.streaming.executor import StreamingToolExecutor
 from mantis_agent.tools import ToolRegistry
 from mantis_agent.types import ToolResultBlock

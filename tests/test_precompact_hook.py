@@ -10,13 +10,11 @@ from mantis_agent.agent import Agent
 from mantis_agent.capabilities import HOSTED_PROFILES, ModelCapability
 from mantis_agent.compact import SimpleCompactor
 from mantis_agent.events import (
-    ContentBlockDelta,
     ContentBlockStart,
     ContentBlockStop,
     MessageDelta,
     MessageStart,
     MessageStop,
-    TextDelta,
 )
 from mantis_agent.hooks import HookResult, Hooks
 from mantis_agent.tools import ToolRegistry, tool

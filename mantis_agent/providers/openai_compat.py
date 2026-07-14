@@ -25,9 +25,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 from uuid import uuid4
+from xml.sax.saxutils import escape as _xml_escape
+from xml.sax.saxutils import quoteattr as _xml_quoteattr
 
 import httpx
 import msgspec
@@ -151,14 +154,29 @@ _TOOL_PROTOCOL_TRAILER = (
 
 def _render_prompt_engineered_tools(tools: list[dict[str, Any]]) -> str:
     """System-prompt block teaching a non-native model the ``<tool_call>``
-    protocol. Accepts OpenAI function-tool format OR flattened Anthropic-shaped."""
+    protocol. Accepts OpenAI function-tool format OR flattened Anthropic-shaped.
+
+    Each tool is rendered as its own readable, pretty-printed section rather than
+    one dense minified JSON blob — weak OSS models (the only ones routed through
+    Paths B/C) parse a spaced per-tool listing far more reliably, losing track of
+    which ``required``/``properties`` belong to which tool much less often."""
 
     flattened = [t["function"] if isinstance(t.get("function"), dict) else t for t in tools]
-    return (
-        _TOOL_PROTOCOL_PREAMBLE
-        + json.dumps(flattened, separators=(",", ":"))
-        + _TOOL_PROTOCOL_TRAILER
-    )
+    sections: list[str] = []
+    for fn in flattened:
+        name = fn.get("name", "")
+        description = fn.get("description", "")
+        schema = fn.get("parameters") or fn.get("input_schema") or {}
+        lines = [f"## {name}"]
+        if description:
+            lines.append(description)
+        lines.append("Parameters (JSON schema):")
+        lines.append(json.dumps(schema, indent=2))
+        required = schema.get("required") if isinstance(schema, dict) else None
+        if required:
+            lines.append("Required: " + ", ".join(str(r) for r in required))
+        sections.append("\n".join(lines))
+    return _TOOL_PROTOCOL_PREAMBLE + "\n\n".join(sections) + _TOOL_PROTOCOL_TRAILER
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +258,17 @@ class OpenAICompatProvider(HTTPProviderMixin):
         temperature: float | None = None,
         extra: dict[str, Any] | None = None,
         model_capability: ModelCapability | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Stream a chat completion as normalized ``StreamEvent``s."""
+        """Stream a chat completion as normalized ``StreamEvent``s.
+
+        ``thinking`` is the universal reasoning config —
+        ``{"type": "adaptive"|"enabled"|"disabled", "budget_tokens": int|None}``.
+        It is translated to ``reasoning_effort`` / ``max_thinking_tokens`` (only
+        for models that accept a request-side knob) and never overrides an
+        explicit reasoning field the caller already put in ``extra``. When
+        ``thinking`` is ``None`` the built payload is byte-for-byte unchanged.
+        """
 
         cap = model_capability or self._default_model_capability
         # Without tools the path doesn't matter, but we keep Path A semantics
@@ -251,6 +278,14 @@ class OpenAICompatProvider(HTTPProviderMixin):
             if (cap is not None and tools)
             else "A"
         )
+        # Path C promises grammar-constrained sampling (server-enforced JSON),
+        # but this adapter does not build/inject a guided_json/GBNF grammar for
+        # the ``<tool_call>`` protocol — and it can't safely, since guided_json
+        # would forbid the interleaved prose the protocol requires. Rather than
+        # mislabel C while behaving identically to B on the wire (a false
+        # enforcement claim), downgrade to B honestly.
+        if path == "C":
+            path = "B"
 
         payload = self._build_payload(
             model=model,
@@ -261,6 +296,8 @@ class OpenAICompatProvider(HTTPProviderMixin):
             temperature=temperature,
             extra=extra,
             path=path,
+            thinking=thinking,
+            model_capability=cap,
         )
 
         # why: ``client.stream(...)`` is the only httpx call that doesn't drain
@@ -269,7 +306,14 @@ class OpenAICompatProvider(HTTPProviderMixin):
         # instead of ``max_tokens`` (and reject a custom temperature) but aren't
         # matched by name — e.g. the bare ``chat-latest`` alias. Rather than fail
         # a valid model, swap the field on that specific 400 and retry once.
-        for _attempt in range(2):
+        # Track which param repairs we've already applied so each can fire on
+        # whatever attempt first surfaces it — keying them all on ``_attempt == 0``
+        # meant a first-attempt context-length lowering disabled every later
+        # field/temperature/reasoning repair.
+        _swapped_token_field = False
+        _dropped_temperature = False
+        _disabled_reasoning_effort = False
+        for _attempt in range(4):
             async with self.client.stream(
                 "POST",
                 "/chat/completions",
@@ -277,27 +321,39 @@ class OpenAICompatProvider(HTTPProviderMixin):
             ) as response:
                 if response.status_code >= 400:
                     await response.aread()
-                    # Handle the two "recent OpenAI model" param rejections
-                    # independently (OpenAI may report either first): swap
+                    # Handle the "recent OpenAI model" param rejections
+                    # independently (OpenAI may report any first): swap
                     # max_tokens→max_completion_tokens, and/or drop a temperature
-                    # the model won't accept. Retry once if we changed anything.
+                    # the model won't accept. Retry if we changed anything.
                     body = response.content
-                    if _attempt == 0:
-                        retry = False
-                        if "max_tokens" in payload and b"max_completion_tokens" in body:
-                            payload["max_completion_tokens"] = payload.pop("max_tokens")
-                            # Models that require max_completion_tokens (gpt-5.x /
-                            # o-series) also reject a non-default temperature — drop
-                            # it too so the retry doesn't just trip the next error.
-                            payload.pop("temperature", None)
-                            retry = True
-                        if ("temperature" in payload and b"temperature" in body
-                                and (b"nsupported" in body or b"does not support" in body
-                                     or b"only the default" in body or b"only supports" in body)):
-                            payload.pop("temperature", None)
-                            retry = True
-                        if retry:
-                            continue
+                    retry = False
+                    if (not _swapped_token_field
+                            and "max_tokens" in payload and b"max_completion_tokens" in body):
+                        payload["max_completion_tokens"] = payload.pop("max_tokens")
+                        # Models that require max_completion_tokens (gpt-5.x /
+                        # o-series) also reject a non-default temperature — drop
+                        # it too so the retry doesn't just trip the next error.
+                        payload.pop("temperature", None)
+                        _swapped_token_field = True
+                        _dropped_temperature = True
+                        retry = True
+                    if (not _dropped_temperature
+                            and "temperature" in payload and b"temperature" in body
+                            and (b"nsupported" in body or b"does not support" in body
+                                 or b"only the default" in body or b"only supports" in body)):
+                        payload.pop("temperature", None)
+                        _dropped_temperature = True
+                        retry = True
+                    if (not _disabled_reasoning_effort
+                            and "tools" in payload and b"reasoning_effort" in body
+                            and b"none" in body):
+                        payload["reasoning_effort"] = "none"
+                        _disabled_reasoning_effort = True
+                        retry = True
+                    if retry:
+                        continue
+                    if _lower_max_tokens_for_context_error(payload, body):
+                        continue
                     raise_for_status(response)
 
                 if path == "A":
@@ -326,6 +382,8 @@ class OpenAICompatProvider(HTTPProviderMixin):
         temperature: float | None,
         extra: dict[str, Any] | None,
         path: ToolUsePath,
+        thinking: dict[str, Any] | None = None,
+        model_capability: ModelCapability | None = None,
     ) -> dict[str, Any]:
         """Translate universal messages -> OpenAI chat shape and assemble the
         full request body."""
@@ -373,9 +431,58 @@ class OpenAICompatProvider(HTTPProviderMixin):
         if temperature is not None and not _new_openai:
             payload["temperature"] = temperature
 
+        if extra:
+            effort = extra.get("reasoning_effort", extra.get("effort"))
+            if effort == "minimal":
+                effort = "low"
+            if effort in ("ultra", "max"):
+                # Ultra is a multi-agent orchestration mode; 'max' requires the
+                # Responses API. Neither is a valid Chat Completions
+                # reasoning_effort value (400 with no recovery), so clamp to the
+                # highest value the endpoint accepts.
+                effort = "high"
+            if effort is not None:
+                payload["reasoning_effort"] = effort
+            if extra.get("max_thinking_tokens") is not None:
+                payload["max_thinking_tokens"] = extra["max_thinking_tokens"]
+            thinking = extra.get("thinking")
+            if isinstance(thinking, dict):
+                thinking_effort = thinking.get("effort")
+                if thinking_effort == "minimal":
+                    thinking_effort = "low"
+                if thinking_effort is not None:
+                    payload["reasoning_effort"] = thinking_effort
+                if thinking.get("budget_tokens") is not None:
+                    payload["max_thinking_tokens"] = thinking["budget_tokens"]
+            if extra.get("verbosity") is not None:
+                payload["verbosity"] = extra["verbosity"]
+
+        # Universal thinking config -> OpenAI reasoning knobs. Only applied when
+        # the caller didn't already set a reasoning field (extra wins), and only
+        # for models that accept a request-side knob — sending reasoning_effort to
+        # a plain chat model (gpt-4o, most local checkpoints) is a hard 400.
+        if (thinking
+                and "reasoning_effort" not in payload
+                and "max_thinking_tokens" not in payload
+                and _supports_request_reasoning(model, model_capability)):
+            ttype = thinking.get("type")
+            budget = thinking.get("budget_tokens")
+            if ttype == "disabled":
+                payload["reasoning_effort"] = "none"
+            else:
+                # "enabled" is an explicit ask for deeper reasoning; "adaptive"
+                # lets the model self-pace — map to a middle setting. There's no
+                # OpenAI reasoning_effort value for "adaptive", so pick sane
+                # defaults the Chat Completions endpoint accepts.
+                payload["reasoning_effort"] = "high" if ttype == "enabled" else "medium"
+                if budget is not None:
+                    payload["max_thinking_tokens"] = int(budget)
+
         if path == "A" and tools:
             payload["tools"] = _normalize_tool_defs(tools)
             payload["tool_choice"] = "auto"
+            if _bare.startswith("gpt-5.6") and "reasoning_effort" not in payload:
+                payload["reasoning_effort"] = "none"
         # why: Path C grammar (GBNF / guided_json / response_format) is built
         # elsewhere — caller injects it via ``extra``. Without it, Path C
         # degrades to Path B at the wire; the Hermes-Pro prompt is strict
@@ -383,8 +490,22 @@ class OpenAICompatProvider(HTTPProviderMixin):
 
         if extra:
             # Shallow-merge last so callers can override anything above (e.g.
-            # guided_grammar, response_format, vendor knobs).
-            payload.update(extra)
+            # guided_grammar, response_format, vendor knobs). Claude-style
+            # reasoning aliases were normalized above; don't leak them as
+            # unknown OpenAI parameters.
+            passthrough = {
+                k: v for k, v in extra.items()
+                if k not in {
+                    "effort", "reasoning_effort", "thinking",
+                    "max_thinking_tokens", "verbosity",
+                    "reasoning_mode", "reasoning_context",
+                    # Never let opaque passthrough clobber the structural fields
+                    # the translator owns — doing so would silently break the
+                    # request (e.g. extra={'stream': False} or a stray messages).
+                    "model", "messages", "stream", "stream_options", "tools",
+                }
+            }
+            payload.update(passthrough)
         return payload
 
 
@@ -445,7 +566,7 @@ def _encode_user_blocks(
         elif isinstance(b, ToolResultBlock):
             tool_results.append(b)
         else:
-            image_parts.append(msgspec.to_builtins(b))
+            image_parts.append(_image_block_to_openai_part(b))
 
     out: list[dict[str, Any]] = []
     if path == "A":
@@ -456,12 +577,18 @@ def _encode_user_blocks(
                 "content": _tool_result_content_to_string(tr.content),
             })
     else:
-        for tr in tool_results:
-            text_pieces.insert(
-                0,
-                f'<tool_result tool_call_id="{tr.tool_use_id}">'
-                f"{_tool_result_content_to_string(tr.content)}</tool_result>",
-            )
+        # Prepend results as one block in call order. Repeated ``insert(0, ...)``
+        # reversed multi-result turns relative to the matching <tool_call> blocks.
+        # Escape both the id (attribute) and the payload (element text) so
+        # result content containing a literal ``</tool_result>`` (or any markup)
+        # can't break out of the block and inject a spoofed tool call. The model
+        # reads XML entities fine; this is context-only, never parsed back.
+        rendered = [
+            f"<tool_result tool_call_id={_xml_quoteattr(tr.tool_use_id)}>"
+            f"{_xml_escape(_tool_result_content_to_string(tr.content))}</tool_result>"
+            for tr in tool_results
+        ]
+        text_pieces[:0] = rendered
 
     if text_pieces or image_parts:
         if image_parts:
@@ -473,6 +600,32 @@ def _encode_user_blocks(
         else:
             out.append({"role": "user", "content": "\n".join(text_pieces)})
     return out
+
+
+def _image_block_to_openai_part(block: ContentBlock) -> dict[str, Any]:
+    """Convert an Anthropic-shaped ``ImageBlock`` to OpenAI's ``image_url``
+    content part. Anthropic carries images as ``source={type, media_type, data}``
+    (base64) or ``source={type:'url', url}``; OpenAI wants a single
+    ``{"type":"image_url","image_url":{"url": ...}}`` where the url is either a
+    ``data:<media_type>;base64,<data>`` URI or a plain URL. Emitting the raw
+    Anthropic shape makes images fail on OpenAI-compatible endpoints."""
+
+    src = getattr(block, "source", None)
+    if not isinstance(src, dict):
+        # Unknown shape — fall back to a passthrough so we don't crash, but this
+        # path is not expected for well-formed ImageBlocks.
+        return msgspec.to_builtins(block)
+
+    src_type = src.get("type")
+    if src_type == "url" or (src_type is None and "url" in src):
+        url = src.get("url", "")
+    elif src.get("data") is not None:
+        media_type = src.get("media_type") or "image/png"
+        url = f"data:{media_type};base64,{src['data']}"
+    else:
+        # Already a data: URI stashed under url, or otherwise best-effort.
+        url = src.get("url", "")
+    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _encode_assistant_blocks(
@@ -624,10 +777,16 @@ async def _translate_native(
     thinking_open = False
     thinking_index = 0
     next_index = 0
-    # Tool calls keyed by OpenAI's per-stream ``index`` (position in the
-    # ``tool_calls`` array). Value:
-    #   {sdk_index, id, name_buf, opened, args_pending}
-    tool_state: dict[int, dict[str, Any]] = {}
+    # Tool calls keyed by a canonical key. OpenAI always sends ``index``, but
+    # many OpenAI-*compatible* backends stream deltas with only ``id`` (no
+    # index) — keying purely on ``index`` (default 0) merged distinct calls.
+    # Value: {sdk_index, id, name_buf, opened, args_pending}
+    tool_state: dict[Any, dict[str, Any]] = {}
+    # Map a provider ``index`` -> canonical key so later index-only continuation
+    # deltas resolve back to the entry created when the ``id`` first arrived.
+    index_to_key: dict[int, Any] = {}
+    synthetic_counter = 0  # last resort when a delta carries neither id nor index
+    last_key: Any = None
     stop_reason: str | None = None
     usage: Usage | None = None
 
@@ -693,24 +852,53 @@ async def _translate_native(
 
         # Tool call deltas — the meat of Path A.
         for tc in delta.get("tool_calls") or ():
-            oai_idx = tc.get("index", 0)
+            tc_id = tc.get("id")
+            tc_index = tc.get("index")
             fn = tc.get("function") or {}
             name_chunk = fn.get("name")
             args_chunk = fn.get("arguments")
 
-            st = tool_state.get(oai_idx)
+            # Resolve the canonical key. Prefer an index we've already bound;
+            # then a known id; then a fresh id (binding its index if present);
+            # then a bare index; then continue the last call; finally a synthetic
+            # key so two id-less/index-less calls never collapse into one.
+            if tc_index is not None and tc_index in index_to_key:
+                key = index_to_key[tc_index]
+            elif tc_id is not None and tc_id in tool_state:
+                key = tc_id
+            elif tc_id is not None:
+                key = tc_id
+                if tc_index is not None:
+                    index_to_key[tc_index] = key
+            elif tc_index is not None:
+                key = tc_index
+                index_to_key[tc_index] = key
+            elif last_key is not None:
+                key = last_key
+            else:
+                key = ("_syn", synthetic_counter)
+                synthetic_counter += 1
+            last_key = key
+
+            st = tool_state.get(key)
             if st is None:
                 st = {
                     "sdk_index": -1,
-                    "id": tc.get("id") or "",
+                    "id": tc_id or "",
                     "name_buf": name_chunk or "",
                     "opened": False,
                     "args_pending": "",
                 }
-                tool_state[oai_idx] = st
+                tool_state[key] = st
             else:
-                if tc.get("id") and not st["id"]:
-                    st["id"] = tc["id"]
+                # Some OpenAI-compatible streams revise a tool_call's id across
+                # deltas (they emit a provisional id, then correct it). Adopt the
+                # latest id until the block is committed so the emitted
+                # ContentBlockStart — and thus the tool_result key the caller
+                # sends back — carries the final id and matches. Once opened the
+                # id is on the wire and can't be retracted, so we lock it.
+                if tc_id and tc_id != st["id"] and not st["opened"]:
+                    st["id"] = tc_id
                 if name_chunk:
                     st["name_buf"] += name_chunk
 
@@ -726,10 +914,15 @@ async def _translate_native(
                 st["sdk_index"] = next_index
                 next_index += 1
                 st["opened"] = True
+                # Persist the exact id we put on the wire (real or synthetic)
+                # so state stays in sync with the emitted block and a later
+                # differing id can't silently diverge from what the caller keys
+                # its tool_result to.
+                st["id"] = st["id"] or f"call_{uuid4().hex[:12]}"
                 yield ContentBlockStart(
                     index=st["sdk_index"],
                     block=ToolUseBlock(
-                        id=st["id"] or f"call_{uuid4().hex[:12]}",
+                        id=st["id"],
                         name=st["name_buf"],
                         input={},  # filled client-side from streamed args
                     ),
@@ -761,8 +954,32 @@ async def _translate_native(
     if thinking_open:
         yield ContentBlockStop(index=thinking_index)
     for st in tool_state.values():
-        if st.get("opened"):
-            yield ContentBlockStop(index=st["sdk_index"])
+        if not st.get("opened"):
+            # A call that streamed id/args but never a name would otherwise be
+            # silently dropped — a silent agentic dead-end. Surface it with a
+            # placeholder name so the executor returns a recoverable is_error
+            # ("unknown tool") the model can react to and re-issue, rather than
+            # the turn ending with no tool_use at all.
+            if not (st["args_pending"] or st["id"]):
+                continue
+            st["sdk_index"] = next_index
+            next_index += 1
+            st["opened"] = True
+            yield ContentBlockStart(
+                index=st["sdk_index"],
+                block=ToolUseBlock(
+                    id=st["id"] or f"call_{uuid4().hex[:12]}",
+                    name=st["name_buf"] or "unknown_tool",
+                    input={},
+                ),
+            )
+            if st["args_pending"]:
+                yield ContentBlockDelta(
+                    index=st["sdk_index"],
+                    delta=InputJsonDelta(partial_json=st["args_pending"]),
+                )
+                st["args_pending"] = ""
+        yield ContentBlockStop(index=st["sdk_index"])
 
     if stop_reason or usage:
         yield MessageDelta(stop_reason=stop_reason, usage=usage)
@@ -974,6 +1191,47 @@ _FINISH_REASON_MAP: dict[str, str] = {
 
 def _map_finish_reason(fr: str) -> str:
     return _FINISH_REASON_MAP.get(fr, fr)
+
+
+def _lower_max_tokens_for_context_error(payload: dict[str, Any], body: bytes) -> bool:
+    text = body.decode("utf-8", "replace")
+    if "maximum context length" not in text and "context length" not in text:
+        return False
+    field = "max_completion_tokens" if "max_completion_tokens" in payload else "max_tokens"
+    cur = payload.get(field)
+    if not isinstance(cur, int) or cur <= 512:
+        return False
+    max_match = re.search(r"maximum context length is\s+(\d+)", text, re.IGNORECASE)
+    input_match = re.search(r"prompt contains at least\s+(\d+)\s+input tokens", text,
+                            re.IGNORECASE)
+    maximum = int(max_match.group(1)) if max_match else None
+    input_tokens = int(input_match.group(1)) if input_match else None
+    if maximum and input_tokens:
+        next_max = maximum - input_tokens - 512
+        next_max = max(256, min(cur - 1, next_max))
+    else:
+        next_max = max(256, cur // 2)
+    if next_max >= cur:
+        next_max = cur // 2
+    payload[field] = max(256, next_max)
+    return payload[field] < cur
+
+
+def _supports_request_reasoning(
+    model: str, cap: ModelCapability | None
+) -> bool:
+    """Whether ``model`` accepts a request-side reasoning knob (``reasoning_effort``).
+
+    Two signals: the resolved capability's ``supports_reasoning_effort`` bit
+    (hosted flagships — o-series / gemini / glm), plus a name check for OpenAI's
+    gpt-5.x and o-series, which resolve to the bare "openai" family (shared with
+    the reasoning-less gpt-4o) and so can't be told apart at the family level.
+    """
+
+    bare = model.lower().rsplit("/", 1)[-1]
+    if bare.startswith(("gpt-5", "o1", "o3", "o4")):
+        return True
+    return bool(cap and cap.supports_reasoning_effort)
 
 
 def _err_message(err: Any) -> str:

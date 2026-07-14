@@ -15,14 +15,17 @@ it and cancels leftovers on exit.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = ["Job", "JobManager"]
 
 _MAX_RUNTIME_S = 60 * 60  # absolute backstop — a job may not run forever
+_MAX_RETAINED_JOBS = 100  # cap terminal jobs kept for later job_output/inspection
 
 
 @dataclass(slots=True)
@@ -34,10 +37,24 @@ class Job:
     status: str = "running"          # running | done | error | cancelled | timeout
     result: str = ""                 # final text (or error string)
     task: Any = None                 # the asyncio.Task
+    tool_count: int = 0
+    turn_count: int = 0
+    last_event: str = "starting"
+    last_tool: str = ""
+    events: Any = field(default_factory=lambda: deque(maxlen=40))
+
+    def __post_init__(self) -> None:
+        self.record_event(self.last_event, ts=self.started)
 
     @property
     def elapsed_s(self) -> float:
         return time.monotonic() - self.started
+
+    def record_event(self, text: str, *, ts: float | None = None,
+                     update_last: bool = True) -> None:
+        if update_last:
+            self.last_event = text
+        self.events.append((time.monotonic() if ts is None else ts, text))
 
     def summary(self) -> str:
         el = int(self.elapsed_s)
@@ -56,32 +73,49 @@ class JobManager:
         self.jobs: dict[int, Job] = {}
         self._counter = itertools.count(1)
 
+    async def _fire_on_event(self, job: Job) -> None:
+        """Deliver a terminal job to ``on_event``, awaiting async callbacks.
+
+        ``on_event`` may be a plain function or a coroutine function; either is
+        supported. Errors are swallowed — a broken notifier must never turn a
+        completed job into a failure."""
+        cb = self.on_event
+        if cb is None:
+            return
+        try:
+            res = cb(job)
+            if inspect.isawaitable(res):
+                await res
+        except Exception:  # noqa: BLE001
+            pass
+
     def spawn(self, coro: Any, *, desc: str, kind: str = "task",
               max_runtime_s: float = _MAX_RUNTIME_S) -> Job:
         """Detach ``coro`` as a job. Returns the Job (id assigned) immediately."""
         job = Job(id=next(self._counter), desc=desc, kind=kind)
         self.jobs[job.id] = job
+        self._prune()
 
         async def _run() -> None:
             try:
                 async with asyncio.timeout(max_runtime_s):
                     out = await coro
                 job.status, job.result = "done", str(out or "")
+                job.record_event("done", update_last=False)
             except TimeoutError:
                 job.status = "timeout"
                 job.result = f"(job exceeded {max_runtime_s / 60:.0f} min and was stopped)"
+                job.record_event("timeout", update_last=False)
             except asyncio.CancelledError:
                 job.status, job.result = "cancelled", "(cancelled)"
+                job.record_event("cancelled", update_last=False)
                 # swallow: cancellation of a background job is an outcome, not
                 # an exception to propagate into the event loop's void
             except Exception as e:  # noqa: BLE001
                 job.status = "error"
                 job.result = f"{type(e).__name__}: {e}"
-            if self.on_event is not None:
-                try:
-                    self.on_event(job)
-                except Exception:  # noqa: BLE001
-                    pass
+                job.record_event(f"error: {job.result}", update_last=False)
+            await self._fire_on_event(job)
 
         job.task = asyncio.ensure_future(_run())
 
@@ -91,14 +125,38 @@ class JobManager:
             # runner leaves status terminal, so this only fires for that case).
             if job.status == "running":
                 job.status, job.result = "cancelled", "(cancelled)"
-                if self.on_event is not None:
+                job.record_event("cancelled", update_last=False)
+                close = getattr(coro, "close", None)
+                if close is not None:
                     try:
-                        self.on_event(job)
+                        close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if self.on_event is not None:
+                    # Sync context (a done-callback) — can't await here, so run
+                    # the callback via the shared async helper on the loop. This
+                    # awaits coroutine callbacks instead of dropping them.
+                    try:
+                        asyncio.ensure_future(self._fire_on_event(job))
                     except Exception:  # noqa: BLE001
                         pass
 
         job.task.add_done_callback(_finalize)
         return job
+
+    def _prune(self) -> None:
+        # Evict the oldest TERMINAL jobs once we exceed the retention cap so the
+        # dict (and each job's retained result string + events deque) can't grow
+        # unbounded over a long session that fires many background jobs. Running
+        # jobs are never evicted; the most recent terminal results stay fetchable
+        # via job_output. ``self.jobs`` preserves id-ascending insertion order,
+        # so slicing from the front drops the oldest first.
+        terminal = [j for j in self.jobs.values() if j.status != "running"]
+        excess = len(terminal) - _MAX_RETAINED_JOBS
+        if excess <= 0:
+            return
+        for j in terminal[:excess]:
+            self.jobs.pop(j.id, None)
 
     def get(self, job_id: int) -> Job | None:
         return self.jobs.get(job_id)
@@ -121,11 +179,15 @@ class JobManager:
                 pass  # still running — caller sees status == "running"
             except asyncio.CancelledError:
                 # The JOB ending cancelled is a terminal outcome for it, not an
-                # exception for us. Re-raise only when WE (the waiter) were
-                # cancelled — i.e. the job's task itself didn't end cancelled.
-                if not (job.task is not None and job.task.cancelled()) \
-                        and job.status == "running":
-                    raise
+                # exception for us: in that case its task ends cancelled, so
+                # return the job. Otherwise the CancelledError is a genuine
+                # cancellation of WE, the waiter, and MUST propagate for
+                # structured cancellation. Gate only on the task's own cancelled
+                # state — never on job.status, which races with the job reaching
+                # a terminal state at the same instant we're cancelled.
+                if job.task is not None and job.task.cancelled():
+                    return job
+                raise
         return job
 
     def cancel(self, job_id: int) -> bool:

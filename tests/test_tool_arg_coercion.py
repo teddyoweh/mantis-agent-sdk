@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import anyio
 
 from mantis_agent.streaming.executor import _coerce_to_schema, _coerce_value
 from mantis_agent.builtin_tools.fs import grep

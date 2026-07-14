@@ -8,6 +8,18 @@ Fast open-model serving with fine-grained model versions — note the long `acco
 | env var | `FIREWORKS_API_KEY` |
 | get a key | [app.fireworks.ai](https://app.fireworks.ai/settings/users/api-keys) |
 
+## Get an API key
+
+1. Sign up or log in at app.fireworks.ai
+2. Open Settings → API Keys
+3. Click 'Create API Key'
+4. Copy the key and store it securely
+5. Export it as FIREWORKS_API_KEY
+
+[Create a key ↗](https://app.fireworks.ai/settings/users/api-keys) · [Pricing ↗](https://fireworks.ai/pricing)
+
+> New accounts get $1 free credit (10 req/min without a payment method).
+
 ## Enable
 
 ```bash

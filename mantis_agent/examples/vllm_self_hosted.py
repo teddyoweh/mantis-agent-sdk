@@ -255,7 +255,7 @@ async def main() -> None:
                     final_text.append(block.text)
                 elif getattr(block, "name", None) == "search_docs":
                     tool_calls.append(block.name)
-                    print(f"[assistant → search_docs] dispatching")
+                    print("[assistant → search_docs] dispatching")
         elif msg.type == "result":
             cost = getattr(msg, "total_cost_usd", 0.0) or 0.0
             print(

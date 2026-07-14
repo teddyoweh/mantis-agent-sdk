@@ -210,7 +210,7 @@ async def main() -> None:
                     final_text.append(block.text)
                 elif getattr(block, "name", None) == "lookup_company":
                     tool_calls.append(block.name)
-                    print(f"[assistant → lookup_company] dispatching")
+                    print("[assistant → lookup_company] dispatching")
         elif msg.type == "result":
             cost = getattr(msg, "total_cost_usd", 0.0) or 0.0
             print(

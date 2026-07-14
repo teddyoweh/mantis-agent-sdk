@@ -14,6 +14,7 @@ the http transport; we support both.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urljoin
 
@@ -21,12 +22,49 @@ import anyio
 import httpx
 import msgspec
 
-from ...http import iter_sse, make_client
+from ...http import make_client
 from .base import TransportClosed
 
 
 _DECODER = msgspec.json.Decoder()
 _ENCODER = msgspec.json.Encoder()
+
+
+async def _iter_sse_frames(
+    response: httpx.Response,
+) -> AsyncIterator[tuple[str, str]]:
+    """Yield ``(event_name, raw_data)`` SSE frames without decoding the data.
+
+    The shared model-API ``iter_sse`` JSON-decodes every event's data and
+    raises on non-JSON — but the standard MCP ``endpoint`` event carries a
+    RAW URL path (``data: /messages/?session_id=...``), which is not JSON.
+    Parsing frames here keeps ``endpoint`` a plain string; only ``message``
+    events are JSON-decoded by the caller.
+    """
+
+    event_name: str | None = None
+    data_chunks: list[str] = []
+    async for line in response.aiter_lines():
+        if line == "":
+            if data_chunks:
+                yield (event_name or "message", "\n".join(data_chunks))
+            event_name = None
+            data_chunks = []
+            continue
+        if line.startswith(":"):
+            # SSE comment / keepalive — ignore.
+            continue
+        if line.startswith("event:"):
+            event_name = line[6:].strip()
+        elif line.startswith("data:"):
+            chunk = line[5:]
+            if chunk.startswith(" "):
+                chunk = chunk[1:]
+            data_chunks.append(chunk)
+        # Other fields (id:, retry:) are ignored.
+    # Trailing event if the server didn't send a final blank line.
+    if data_chunks:
+        yield (event_name or "message", "\n".join(data_chunks))
 
 
 class SseTransport:
@@ -91,24 +129,22 @@ class SseTransport:
             self._response_cm = self._client.stream("GET", self.url, headers=self.headers)
             self._response = await self._response_cm.__aenter__()
             self._response.raise_for_status()
-            async for event_name, data in iter_sse(self._response):
+            async for event_name, data in _iter_sse_frames(self._response):
                 if event_name == "endpoint":
                     # MCP SSE spec: the endpoint event's *data* is the path
-                    # (relative or absolute) to POST to. Servers vary on
-                    # whether they JSON-encode it as a string or send it
-                    # raw. ``iter_sse`` already parsed via msgspec, so a
-                    # string payload arrives as ``str`` here.
-                    if isinstance(data, str):
-                        endpoint = data
-                    elif isinstance(data, dict):
-                        endpoint = data.get("uri") or data.get("url") or ""
-                    else:
-                        endpoint = ""
+                    # (relative or absolute) to POST to. The reference server
+                    # sends it as a RAW string; some servers JSON-encode it as
+                    # a quoted string or an object with a uri/url field.
+                    endpoint = self._parse_endpoint(data)
                     self._post_url = urljoin(self.url, endpoint) if endpoint else self.url
                     self._endpoint_ready.set()
                 elif event_name in ("message", "default"):
-                    if isinstance(data, dict):
-                        await self._inbox_tx.send(data)
+                    try:
+                        msg = _DECODER.decode(data)
+                    except msgspec.DecodeError:
+                        continue
+                    if isinstance(msg, dict):
+                        await self._inbox_tx.send(msg)
                 # Other event types (ping, etc.) are ignored.
         except Exception as exc:  # noqa: BLE001 — surface to the receiver
             try:
@@ -123,6 +159,30 @@ class SseTransport:
                 await self._inbox_tx.aclose()
             except Exception:  # noqa: BLE001
                 pass
+
+    @staticmethod
+    def _parse_endpoint(data: str) -> str:
+        """Resolve the ``endpoint`` event's data to a POST path.
+
+        The reference MCP SSE server sends a raw path; be lenient about servers
+        that JSON-quote the string or wrap it in an object. Only attempt JSON
+        when the payload looks like JSON, so a bare path is never decode-failed.
+        """
+        text = data.strip()
+        if not text:
+            return ""
+        if text[0] in "{\"":
+            try:
+                decoded = _DECODER.decode(text)
+            except msgspec.DecodeError:
+                return text
+            if isinstance(decoded, str):
+                return decoded
+            if isinstance(decoded, dict):
+                uri = decoded.get("uri") or decoded.get("url")
+                return str(uri) if uri else ""
+            return ""
+        return text
 
     async def send(self, message: dict[str, Any]) -> None:
         if self._closed or self._client is None or self._post_url is None:

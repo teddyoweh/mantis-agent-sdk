@@ -100,6 +100,15 @@ def infer_backend(model: str) -> str:
     if name.startswith("accounts/fireworks/models/"):
         return FIREWORKS_DEFAULT
 
+    # gpt-oss is OpenAI's OPEN-WEIGHT model — it is NOT served on the OpenAI
+    # API under that id (it runs on Ollama / vLLM / Groq / Together). The
+    # org/repo form (openai/gpt-oss-120b) routes via the HF shape below; every
+    # other spelling (bare gpt-oss-120b, colon form gpt-oss:20b) would otherwise
+    # fall into the gpt- branch and 404 against api.openai.com. Send it to the
+    # safe open-weight default (Ollama).
+    if lower.startswith("gpt-oss"):
+        return OLLAMA_DEFAULT
+
     # OpenAI native — gpt-* and o*-mini/o1/o3/o4 reasoning models.
     if lower.startswith("gpt-") or lower.startswith("o1-") or lower.startswith("o3-") or lower.startswith("o4-") or lower in {"o1", "o3", "o4"}:
         return OPENAI_DEFAULT

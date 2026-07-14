@@ -178,9 +178,14 @@ def ollama_base_url() -> str:
         return "http://localhost:11434"
     if not host.startswith(("http://", "https://")):
         host = "http://" + host
-    from urllib.parse import urlparse  # noqa: PLC0415
-    if urlparse(host).port is None:
-        host = f"{host.rstrip('/')}:11434"
+    from urllib.parse import urlparse, urlunparse  # noqa: PLC0415
+    parsed = urlparse(host)
+    if parsed.port is None:
+        # Inject the default port into the authority only — never after a path,
+        # which would malform the URL (e.g. a reverse-proxied host/ollama subpath
+        # would otherwise become host/ollama:11434).
+        parsed = parsed._replace(netloc=f"{parsed.netloc}:11434")
+        host = urlunparse(parsed)
     host = host.rstrip("/")
     # 0.0.0.0 is a *bind* address (OLLAMA_HOST=0.0.0.0 exposes the server on all
     # interfaces); as a client connect target it's unroutable, so rewrite it to

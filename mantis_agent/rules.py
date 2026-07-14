@@ -27,7 +27,9 @@ RULES_SUBDIR = "rules"
 
 # Tool-call argument keys that carry a file path.
 _PATH_KEYS = ("path", "file_path", "filename", "notebook_path", "file")
-_MENTION_RE = re.compile(r"@([\w./~-]+\.[\w]+)")  # @src/db/schema.sql
+# Require the ``@`` to start a token (not follow a word char) so email
+# addresses like ``foo@bar.com`` aren't captured as file mentions.
+_MENTION_RE = re.compile(r"(?<![\w@])@([\w./~-]+\.[\w]+)")  # @src/db/schema.sql
 
 
 def parse_rule_frontmatter(text: str) -> tuple[list[str], str]:

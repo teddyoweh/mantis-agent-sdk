@@ -16,7 +16,6 @@ import anyio
 import pytest
 
 from mantis_agent import Agent, AssistantMessage, TextBlock, ToolUseBlock, UserMessage, tool
-from mantis_agent.providers.ollama import OllamaProvider
 
 
 def _ollama_reachable(host: str = "127.0.0.1", port: int = 11434) -> bool:

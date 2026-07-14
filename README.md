@@ -410,7 +410,7 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 **1.0 prerequisites**
 - [x] Streaming tool dispatch rewrite (`iter_completions` / `wait_one` — observe results in completion order, not batched on `wait_all`)
 - [x] Mid-stream cancellation via `ToolPermissionContext.signal`
-- [x] All 16 examples verified against ≥ 3 backends
+- [x] All 18 examples verified against ≥ 3 backends
 - [x] Docs site (mkdocs-material)
 - [x] PyPI 1.0 release with semver guarantee
 

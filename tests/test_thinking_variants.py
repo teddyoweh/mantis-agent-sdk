@@ -19,7 +19,6 @@ from __future__ import annotations
 import pytest
 
 from mantis_agent.streaming.thinking_parser import (
-    DEFAULT_THINKING_TAGS,
     TextChunk,
     ThinkingChunk,
     ThinkingParser,

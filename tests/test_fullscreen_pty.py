@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-on
 class Term:
     """Minimal expect-style driver for one mantis process on a pty."""
 
-    def __init__(self, tmp_home: str, cwd: str) -> None:
+    def __init__(self, tmp_home: str, cwd: str, env_extra: dict | None = None) -> None:
         env = dict(os.environ)
         env.update({
             "MANTIS_AGENT_HOME": tmp_home,
@@ -30,6 +30,8 @@ class Term:
             "COLUMNS": "100", "LINES": "30",
         })
         env.pop("MANTIS_CLASSIC", None)
+        if env_extra:
+            env.update(env_extra)
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "mantis_agent.tui",
@@ -117,6 +119,35 @@ def term(tmp_path):
     t.close()
 
 
+@pytest.fixture()
+def term_with_agents(tmp_path):
+    """A mantis process seeded with fake live subagents (MANTIS_FS_SEED_AGENTS)
+    so the ↓-into-subagent-inspector path can be driven without a real run."""
+    t = Term(str(tmp_path / "home"), str(tmp_path),
+             env_extra={"MANTIS_FS_SEED_AGENTS": "1"})
+    yield t
+    if t.proc.poll() is None:
+        t.proc.kill()
+    t.close()
+
+
+def test_down_arrow_enters_live_subagent_inspector(term_with_agents) -> None:
+    """↓ enters the inspector list; Enter drills into a focused detail view;
+    ← goes back to the list; esc closes."""
+    term = term_with_agents
+    term.ready()
+    term.send("\x1b[B")                        # ↓ — enter the inspector list
+    term.expect("Live agents")                 # list header
+    term.expect("explore")                     # a seeded subagent row
+    term.send("\r")                            # Enter — drill into detail
+    term.expect("← back")                      # detail-view header
+    term.send("\x1b[D")                        # ← — back to the list
+    term.expect("Enter inspect")               # list header hint again
+    term.esc()                                 # esc closes the overlay
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
 def test_boots_help_status_and_exits(term) -> None:
     term.ready()                       # banner rendered
     term.send("/help\r")
@@ -132,10 +163,27 @@ def test_boots_help_status_and_exits(term) -> None:
 def test_model_picker_opens_and_escapes(term) -> None:
     term.ready()
     term.send("/models\r")
-    term.expect("Pick a model")               # picker overlay up
+    term.expect("Select a model")             # picker overlay up
     term.esc()                                # esc closes it
     term.send("/agents\r")
     term.expect("general-purpose")            # agent types render
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
+def test_workflows_overlay_opens_navigates_and_escapes(term) -> None:
+    term.ready()
+    term.send("/workflows\r")
+    term.expect("Workflows")                   # overlay header rendered
+    term.expect("no active workflows yet")     # empty-state body (no runs)
+    term.send("\x1b[B")                        # down-arrow: safe no-op when empty
+    term.send("\x1b[A")                        # up-arrow: same
+    term.pump(0.3)
+    term.expect("no active workflows yet")     # still up, nothing crashed
+    term.esc()                                 # esc closes the overlay
+    term.send("/models\r")                     # app still interactive afterward
+    term.expect("Select a model")              # picker header up again
+    term.esc()
     term.send("/exit\r")
     assert term.close() == 0
 

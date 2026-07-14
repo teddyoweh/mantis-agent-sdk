@@ -81,14 +81,24 @@ def test_moonshot_url_detection() -> None:
     assert cap.supports_native_tools is True
     assert cap.provider_hint == "moonshot"
 
-    # Same for the China endpoint and the kimi alias.
+    # Same for the China endpoint and the kimi.moonshot.ai subdomain.
     for url in [
         "https://api.moonshot.cn/v1",
         "https://kimi.moonshot.ai/v1",
-        "http://localhost:8000/v1/kimi",
     ]:
         cap = hosted_profile_from_url(url)
         assert cap is not None and cap.provider_hint == "moonshot", f"failed for {url}"
+
+    # A self-hosted Kimi box must NOT be mistaken for the hosted Moonshot
+    # profile (which advertises supports_grammar=False): "kimi" is a model
+    # name, not the vendor host. It falls through to a grammar-capable profile
+    # (or None) so its tool-use path isn't silently downgraded.
+    for url in [
+        "http://localhost:8000/v1/kimi",
+        "http://kimi-box:8000/v1",
+    ]:
+        cap = hosted_profile_from_url(url)
+        assert cap is None or cap.provider_hint != "moonshot", f"self-host {url}"
 
 
 def test_kimi_picks_path_a_on_native_backend() -> None:

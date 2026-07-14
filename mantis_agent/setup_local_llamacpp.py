@@ -474,6 +474,14 @@ def download_gguf(
         if show_progress and total:
             sys.stdout.write("\n")
             sys.stdout.flush()
+        # Guard against a truncated download: a clean mid-stream EOF exits the
+        # read loop without raising, but a partial GGUF promoted to the canonical
+        # path would pass the >=95% size check on the next run and be trusted as
+        # a complete model forever. Verify the byte count before promoting.
+        if total and written != total:
+            raise OSError(
+                f"incomplete download: got {written} of {total} bytes from {url}"
+            )
         os.replace(tmp_path, target_path)
     except Exception:
         # Best-effort cleanup; ignore failures because the user already

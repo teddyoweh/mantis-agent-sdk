@@ -9,11 +9,9 @@ through both ``Agent.cancel()`` and the permission-callback dispatch.
 from __future__ import annotations
 
 import anyio
-import pytest
 
 from mantis_agent import (
     Agent,
-    AssistantMessage,
     MantisAgentOptions,
     PermissionResultAllow,
     PermissionResultDeny,

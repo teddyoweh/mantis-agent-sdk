@@ -9,6 +9,8 @@ subcommand parses + dispatches to the right handler. The actual
 from __future__ import annotations
 
 import io
+import os
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -314,10 +316,6 @@ def test_cli_start_timeout_flag_parses() -> None:
 # fails on the CI machines we actually run.
 
 
-import os
-import urllib.error
-
-
 def _make_installer_constants_known() -> None:
     """Sanity check the module-level constants other tests rely on."""
 
@@ -608,7 +606,6 @@ def test_install_ollama_windows_passes_custom_download_url(
 
     def fake_urlopen(req: object, *args: object, **kwargs: object) -> object:
         seen["url"] = getattr(req, "full_url", str(req))
-        ctx = object()
         # mimic context manager + read()
         class _R:
             def __enter__(self_inner: object) -> object: return self_inner

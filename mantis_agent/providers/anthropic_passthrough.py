@@ -56,7 +56,6 @@ without invoking the bare-model routing path that would otherwise raise.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
@@ -80,7 +79,7 @@ from ..events import (
     TextDelta,
     ThinkingDelta,
 )
-from ..http import make_client, raise_for_status
+from ..http import make_client
 from ..types import (
     AssistantMessage,
     ContentBlock,
@@ -173,6 +172,16 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         #     (ANTHROPIC_AUTH_TOKEN). This is what a subscription OAuth login,
         #     or a Bedrock/Vertex/Azure/LiteLLM gateway in front of Anthropic,
         #     issues. auth_token wins when both are present.
+        # Refresh a subscription OAuth token if it's expired/near-expiry, so a
+        # long-lived process doesn't 401 forever once the short-lived access
+        # token lapses. No-op unless a refresh token was stored at login, and
+        # only when no explicit auth_token was passed in.
+        if not auth_token:
+            try:
+                from ..anthropic_oauth import ensure_fresh_anthropic_token  # noqa: PLC0415
+                ensure_fresh_anthropic_token()
+            except Exception:  # noqa: BLE001 — never block construction on refresh
+                pass
         # Strip stray whitespace/newlines — .env files and copy-paste often add a
         # trailing \n, which would otherwise poison the auth header and 401.
         token = (auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip() or None
@@ -231,8 +240,17 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         temperature: float | None = None,
         extra: dict[str, Any] | None = None,
         model_capability: ModelCapability | None = None,
+        thinking: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Stream events from Anthropic's Messages API."""
+        """Stream events from Anthropic's Messages API.
+
+        ``thinking`` is the universal reasoning config —
+        ``{"type": "adaptive"|"enabled"|"disabled", "budget_tokens": int|None}``.
+        It maps to Anthropic's native ``thinking`` block (``{"type": "enabled",
+        "budget_tokens": N}`` when a budget is given, else ``{"type": "adaptive"}``
+        / ``{"type": "disabled"}``). An explicit ``extra["thinking"]`` wins. When
+        ``thinking`` is ``None`` the request body is byte-for-byte unchanged.
+        """
 
         if not model:
             raise ProviderError(
@@ -265,6 +283,19 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
             payload["temperature"] = float(temperature)
         if tools:
             payload["tools"] = _normalize_tools(tools)
+        # Universal thinking config -> Anthropic thinking block. An explicit
+        # extra["thinking"] takes precedence (respected via the guard + the
+        # setdefault merge below).
+        if thinking is not None and not (extra and "thinking" in extra):
+            block = _thinking_to_anthropic(thinking)
+            if block is not None:
+                payload["thinking"] = block
+                # With thinking on, Anthropic requires the default sampling
+                # temperature — a non-default temperature is a 400 on the models
+                # that take a thinking block. Drop it so enabling thinking can't
+                # turn a valid request into a rejected one.
+                if block.get("type") != "disabled":
+                    payload.pop("temperature", None)
         if extra:
             for k, v in extra.items():
                 payload.setdefault(k, v)
@@ -496,6 +527,12 @@ async def _iter_normalized_events(
 
     current_event: str | None = None
     data_lines: list[str] = []
+    # Per-index streaming state shared across frames. Used to re-attach a
+    # thinking block's signature — Anthropic delivers it via a trailing
+    # ``signature_delta`` frame, AFTER the block already started with an empty
+    # signature — so the reconstructed ThinkingBlock round-trips the signature
+    # Anthropic requires when the prior thinking is echoed on a follow-up turn.
+    stream_state: dict[int, dict[str, Any]] = {}
 
     async for line in response.aiter_lines():
         if line == "" or line == "\n":
@@ -505,7 +542,7 @@ async def _iter_normalized_events(
                 data_lines = []
                 event_name = current_event
                 current_event = None
-                async for ev in _frame_to_events(event_name, payload_str):
+                async for ev in _frame_to_events(event_name, payload_str, stream_state):
                     yield ev
             continue
         # Some SSE servers also send lines without explicit \n stripping.
@@ -524,12 +561,14 @@ async def _iter_normalized_events(
     # If the connection closes without a final blank line, flush whatever's left.
     if data_lines:
         payload_str = "\n".join(data_lines)
-        async for ev in _frame_to_events(current_event, payload_str):
+        async for ev in _frame_to_events(current_event, payload_str, stream_state):
             yield ev
 
 
 async def _frame_to_events(
-    event_name: str | None, payload_str: str
+    event_name: str | None,
+    payload_str: str,
+    stream_state: dict[int, dict[str, Any]] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Decode one SSE frame payload into 0..n StreamEvents."""
 
@@ -544,6 +583,8 @@ async def _frame_to_events(
         ) from exc
     if not isinstance(payload, dict):
         return
+
+    state = stream_state if stream_state is not None else {}
 
     kind = payload.get("type") or event_name
     if kind == "ping":
@@ -565,6 +606,15 @@ async def _frame_to_events(
         block = _decode_block(block_payload)
         if block is None:
             return
+        if isinstance(block, ThinkingBlock):
+            # Anthropic starts a thinking block with an empty signature and
+            # streams the real one later via ``signature_delta``. Track the
+            # accumulating text + signature so we can re-attach it at block stop.
+            state[index] = {
+                "thinking": [block.thinking],
+                "signature": block.signature,
+                "sig_from_delta": False,
+            }
         yield ContentBlockStart(index=index, block=block)
         return
     if kind == "content_block_delta":
@@ -576,10 +626,27 @@ async def _frame_to_events(
                 index=index, delta=TextDelta(text=str(delta.get("text", "")))
             )
         elif dtype == "thinking_delta":
+            text = str(delta.get("thinking", ""))
+            st = state.get(index)
+            if st is not None:
+                st["thinking"].append(text)
             yield ContentBlockDelta(
                 index=index,
-                delta=ThinkingDelta(thinking=str(delta.get("thinking", ""))),
+                delta=ThinkingDelta(thinking=text),
             )
+        elif dtype == "signature_delta":
+            # Signature for the in-flight thinking block. There's no signature
+            # StreamEvent to carry it live; stash it and re-emit the block start
+            # (with the full thinking text) at content_block_stop so the
+            # assembler's ThinkingBlock keeps the signature. Discarding it would
+            # make a follow-up request echoing this thinking fail Anthropic's
+            # signature validation.
+            st = state.get(index)
+            if st is not None:
+                sig = str(delta.get("signature", "")) or st.get("signature")
+                st["signature"] = sig
+                st["sig_from_delta"] = True
+            return
         elif dtype == "input_json_delta":
             yield ContentBlockDelta(
                 index=index,
@@ -590,7 +657,21 @@ async def _frame_to_events(
         # Unknown delta types — silently skip.
         return
     if kind == "content_block_stop":
-        yield ContentBlockStop(index=int(payload.get("index", 0)))
+        index = int(payload.get("index", 0))
+        st = state.pop(index, None)
+        if st is not None and st.get("sig_from_delta") and st.get("signature"):
+            # Re-issue the thinking block start carrying the finalized text +
+            # signature. The assembler rebuilds its block from this start, so
+            # the reconstructed ThinkingBlock (and any follow-up request that
+            # echoes it) now carries the signature Anthropic validates against.
+            yield ContentBlockStart(
+                index=index,
+                block=ThinkingBlock(
+                    thinking="".join(st["thinking"]),
+                    signature=st["signature"],
+                ),
+            )
+        yield ContentBlockStop(index=index)
         return
     if kind == "message_delta":
         delta = payload.get("delta") or {}
@@ -641,21 +722,61 @@ def _decode_usage(payload: Any) -> Usage | None:
 
     if not isinstance(payload, dict):
         return None
+    # Anthropic reports cache tokens SEPARATELY from ``input_tokens`` — its
+    # ``input_tokens`` counts only the fresh (uncached) prompt tokens. The rest
+    # of the SDK follows the OpenAI convention, where ``prompt_tokens`` already
+    # INCLUDES cached tokens (see openai_compat._decode_usage) and the cache
+    # fields are a *subset* of ``input_tokens``. budget.CostModel.cost and
+    # BudgetState.total_tokens both rely on that subset invariant. Fold the
+    # cache tokens into ``input_tokens`` here so cost/token accounting is
+    # correct — the cache fields are still carried for the per-cache rate
+    # adjustment, without being double-counted or lost.
+    cache_creation = int(payload.get("cache_creation_input_tokens", 0) or 0)
+    cache_read = int(payload.get("cache_read_input_tokens", 0) or 0)
     return Usage(
-        input_tokens=int(payload.get("input_tokens", 0) or 0),
+        input_tokens=int(payload.get("input_tokens", 0) or 0)
+        + cache_creation
+        + cache_read,
         output_tokens=int(payload.get("output_tokens", 0) or 0),
-        cache_creation_input_tokens=int(
-            payload.get("cache_creation_input_tokens", 0) or 0
-        ),
-        cache_read_input_tokens=int(
-            payload.get("cache_read_input_tokens", 0) or 0
-        ),
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
     )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _thinking_to_anthropic(thinking: dict[str, Any]) -> dict[str, Any] | None:
+    """Translate the universal thinking config to an Anthropic ``thinking`` block.
+
+    Universal shape: ``{"type": "adaptive"|"enabled"|"disabled",
+    "budget_tokens": int|None}``.
+
+    * ``disabled``                     -> ``{"type": "disabled"}``
+    * ``enabled``/``adaptive`` + budget -> ``{"type": "enabled", "budget_tokens": N}``
+      (the fixed-budget form; required on pre-4.6 models, honored elsewhere)
+    * ``adaptive`` without a budget      -> ``{"type": "adaptive"}`` (Claude paces
+      itself; the modern default on 4.6+)
+
+    Returns ``None`` for an unrecognized/empty config so the caller leaves the
+    payload untouched.
+    """
+
+    if not isinstance(thinking, dict):
+        return None
+    ttype = thinking.get("type")
+    budget = thinking.get("budget_tokens")
+    if ttype == "disabled":
+        return {"type": "disabled"}
+    if ttype in ("enabled", "adaptive"):
+        if budget is not None:
+            return {"type": "enabled", "budget_tokens": int(budget)}
+        # No budget: adaptive is a valid standalone block; a bare "enabled" is
+        # not (it needs budget_tokens), so fall through to adaptive for it too.
+        return {"type": "adaptive"}
+    return None
 
 
 def _normalize_base_url(url: str) -> str:

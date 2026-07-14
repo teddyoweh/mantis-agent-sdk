@@ -8,6 +8,18 @@ One key, essentially every model on the market — plus `:free` variants of many
 | env var | `OPENROUTER_API_KEY` |
 | get a key | [openrouter.ai](https://openrouter.ai/settings/keys) |
 
+## Get an API key
+
+1. Sign up at openrouter.ai (Google or email)
+2. Open the Keys page (openrouter.ai/settings/keys)
+3. Click 'Create Key' and name it
+4. Copy the key now — it's shown only once
+5. Set OPENROUTER_API_KEY
+
+[Create a key ↗](https://openrouter.ai/settings/keys) · [Pricing ↗](https://openrouter.ai/pricing)
+
+> Free (:free) models work at $0 balance; add credits for paid models/limits.
+
 ## Enable
 
 ```bash

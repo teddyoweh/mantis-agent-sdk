@@ -154,7 +154,6 @@ def test_mock_provider_yields_two_turns_in_order():
 
     from mantis_agent.events import (
         ContentBlockStart,
-        ContentBlockStop,
         MessageStart,
         MessageStop,
     )

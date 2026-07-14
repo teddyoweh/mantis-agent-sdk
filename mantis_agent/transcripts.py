@@ -33,7 +33,6 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +40,7 @@ import msgspec
 
 from .paths import (
     ensure_dir,
-    get_mantis_agent_dir,
     get_session_path,
-    get_sessions_dir,
     iter_sessions,
     sanitize_session_id,
 )

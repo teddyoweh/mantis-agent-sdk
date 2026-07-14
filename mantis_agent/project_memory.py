@@ -24,9 +24,8 @@ Stdlib only.
 
 from __future__ import annotations
 
-import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .paths import get_mantis_agent_dir
@@ -44,6 +43,13 @@ MANAGED_PATH = Path("/etc/mantis-agent") / PROJECT_FILE
 
 MAX_IMPORT_DEPTH = 5
 _MAX_FILE_BYTES = 100_000  # don't slurp a giant file into the prompt
+
+# Tiers whose files are authored by the machine owner / admin and are NOT
+# delivered via an untrusted repo clone. Only these may import absolute or
+# home-relative (``@/abs`` / ``@~/...``) paths. Project/local tier files ship in
+# (or alongside) the repo, so allowing them to import ``@~/.ssh/id_rsa`` would
+# let a cloned repo exfiltrate arbitrary files into the model prompt.
+_TRUSTED_IMPORT_TIERS = frozenset({"user", "managed"})
 
 # ``@path`` — leading boundary, then a path that allows ``\ ``-escaped spaces.
 _IMPORT_RE = re.compile(r"(?:^|\s)@((?:[^\s\\]|\\ )+)")
@@ -101,23 +107,42 @@ def _local_candidates(cwd: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _expand_path(raw: str, base_dir: Path) -> Path | None:
+def _within(path: Path, base_dir: Path) -> bool:
+    """True if ``path`` resolves inside ``base_dir`` (blocks ``../`` escapes)."""
+    try:
+        path.resolve().relative_to(base_dir.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _expand_path(raw: str, base_dir: Path, tier: str) -> Path | None:
     raw = raw.split("#", 1)[0].replace("\\ ", " ").strip()
     if not raw:
         return None
+    trusted = tier in _TRUSTED_IMPORT_TIERS
     if raw.startswith("~/"):
-        return Path(raw).expanduser()
-    if raw.startswith("./") or raw.startswith("../"):
-        return (base_dir / raw).resolve()
+        # Home-relative import: only owner/admin tiers. A repo-shipped file that
+        # could pull in ~/.ssh/id_rsa is an exfiltration vector — reject it.
+        return Path(raw).expanduser() if trusted else None
     if raw.startswith("/"):
-        return Path(raw)
+        # Absolute import: same restriction as home-relative.
+        return Path(raw) if trusted else None
+    if raw.startswith("./") or raw.startswith("../"):
+        p = (base_dir / raw).resolve()
+        if not trusted and not _within(p, base_dir):
+            return None  # untrusted tier may not escape its own directory tree
+        return p
     # Bare relative path (e.g. "notes/foo.md") — must look path-like.
     if re.match(r"^[a-zA-Z0-9._-]", raw):
-        return (base_dir / raw).resolve()
+        p = (base_dir / raw).resolve()
+        if not trusted and not _within(p, base_dir):
+            return None
+        return p
     return None
 
 
-def _extract_imports(content: str, base_dir: Path) -> list[Path]:
+def _extract_imports(content: str, base_dir: Path, tier: str) -> list[Path]:
     """Resolve ``@path`` imports in ``content``, skipping fenced code blocks."""
     out: list[Path] = []
     in_fence = False
@@ -129,7 +154,7 @@ def _extract_imports(content: str, base_dir: Path) -> list[Path]:
         if in_fence:
             continue
         for m in _IMPORT_RE.finditer(line):
-            p = _expand_path(m.group(1), base_dir)
+            p = _expand_path(m.group(1), base_dir, tier)
             if p is not None:
                 out.append(p)
     return out
@@ -137,9 +162,15 @@ def _extract_imports(content: str, base_dir: Path) -> list[Path]:
 
 def _read(path: Path) -> str | None:
     try:
-        if not path.is_file() or path.stat().st_size > _MAX_FILE_BYTES:
-            data = path.read_text("utf-8", "replace") if path.is_file() else None
-            return data[:_MAX_FILE_BYTES] if data else None
+        if not path.is_file():
+            return None
+        if path.stat().st_size > _MAX_FILE_BYTES:
+            # Over the cap: read only the first _MAX_FILE_BYTES BYTES rather than
+            # slurping a potentially huge (e.g. multi-GB) file into RAM just to
+            # slice it. Byte-bounded read matches the byte-measured st_size guard;
+            # "replace" absorbs a multibyte char split at the boundary.
+            with path.open("rb") as fh:
+                return fh.read(_MAX_FILE_BYTES).decode("utf-8", "replace")
         return path.read_text("utf-8", "replace")
     except OSError:
         return None
@@ -164,7 +195,7 @@ def _process_file(
         return
     seen.add(key)
     out.append(MemoryFile(path=path, tier=tier, content=content.strip(), parent=parent))
-    for imp in _extract_imports(content, path.parent):
+    for imp in _extract_imports(content, path.parent, tier):
         _process_file(imp, tier, seen, out, depth=depth + 1, parent=path)
 
 

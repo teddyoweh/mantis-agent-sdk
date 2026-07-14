@@ -12,6 +12,10 @@ finish line is identical:
 options = MantisAgentOptions(model="<model-id>", backend="<your-url>/v1")   # SDK
 ```
 
+Prefer clicking? Run `mantis serve`, open the **Models** tab, and use the
+**Self-host / custom endpoint** form — paste the base URL, model id, and an
+optional key, then hit Connect. Same result as `/connect`, no terminal.
+
 ## Where you can self-host — the full map
 
 ### On your own hardware — automated, no guide needed

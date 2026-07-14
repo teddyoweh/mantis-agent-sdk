@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import anyio
@@ -118,7 +117,7 @@ def test_agent_include_memory_false_skips_injection(
         MessageStop,
         TextDelta,
     )
-    from mantis_agent import TextBlock, Usage
+    from mantis_agent import TextBlock
 
     save_memory_entry(
         MemoryEntry(slug="x", name="X", description="x", type="project", body="x")

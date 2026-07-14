@@ -8,6 +8,18 @@ gpt-5.x. mantis handles this API's quirks for you — `max_completion_tokens` vs
 | env var | `OPENAI_API_KEY` |
 | get a key | [platform.openai.com](https://platform.openai.com/api-keys) |
 
+## Get an API key
+
+1. Sign in at platform.openai.com
+2. Open the API keys page
+3. Click 'Create new secret key'
+4. Name it and copy the key (shown once)
+5. Add funds under Settings → Billing
+
+[Create a key ↗](https://platform.openai.com/api-keys) · [Pricing ↗](https://openai.com/api/pricing)
+
+> No free tier; pay-as-you-go needs a prepaid funded balance.
+
 ## Enable
 
 ```bash

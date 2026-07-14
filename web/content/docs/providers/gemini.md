@@ -8,6 +8,17 @@ Google's Gemini via the OpenAI-compatible surface of the Generative Language API
 | env var | `GEMINI_API_KEY` (aliases: `GOOGLE_API_KEY`) |
 | get a key | [Google AI Studio](https://aistudio.google.com/apikey) |
 
+## Get an API key
+
+1. Sign in at aistudio.google.com with a Google account
+2. Open the API keys page, click 'Create API key'
+3. Create in a new or existing Google Cloud project
+4. Copy the key and set GEMINI_API_KEY
+
+[Create a key ↗](https://aistudio.google.com/apikey) · [Pricing ↗](https://ai.google.dev/gemini-api/docs/pricing)
+
+> Free tier with rate limits; paid tier unlocks higher quotas.
+
 ## Enable
 
 ```bash

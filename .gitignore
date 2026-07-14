@@ -37,3 +37,4 @@ env/
 
 # Docs build output
 site/
+audit-report.html

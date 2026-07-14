@@ -140,6 +140,13 @@ class AssistantMessage(msgspec.Struct, omit_defaults=True):
     usage: Usage | None = None
 
 
+# ``Message`` is an *untagged* union: its members are discriminated by a plain
+# ``role`` Literal, not a msgspec ``tag``. msgspec requires every Struct in a
+# union to be tagged, so ``msgspec.json.Decoder(Message)`` raises TypeError at
+# construction — the union is encode-only. Tagging the structs would drop the
+# ``role`` attribute (msgspec doesn't expose the tag field as an attribute),
+# breaking every ``msg.role`` consumer, so to decode a persisted message use
+# ``decode_message`` below, which dispatches on the ``role`` discriminator.
 Message = Union[SystemMessage, UserMessage, AssistantMessage]
 
 
@@ -197,11 +204,56 @@ class ModelUsage(msgspec.Struct, frozen=True, omit_defaults=True):
 ENCODE_MESSAGE = msgspec.json.Encoder()
 DECODE_ASSISTANT_MESSAGE = msgspec.json.Decoder(AssistantMessage)
 
+# Per-role decoders for the untagged ``Message`` union (see the note by its
+# definition). Keyed by the ``role`` discriminator so ``decode_message`` can
+# route without a union decoder (which msgspec refuses to build for untagged
+# Struct members).
+_MESSAGE_DECODERS = {
+    "system": msgspec.json.Decoder(SystemMessage),
+    "user": msgspec.json.Decoder(UserMessage),
+    "assistant": DECODE_ASSISTANT_MESSAGE,
+}
+
+
+class _RoleTag(msgspec.Struct):
+    """Minimal peek struct: reads only ``role`` (msgspec ignores other fields).
+
+    ``role`` is optional because the message structs use ``omit_defaults=True``,
+    which drops ``role`` when it equals its Literal default. The session store
+    forces ``role`` back into persisted blobs, so persisted rows always carry it.
+    """
+
+    role: str | None = None
+
+
+_DECODE_ROLE = msgspec.json.Decoder(_RoleTag)
+
 
 def to_json(obj: Any) -> bytes:
     """Fast JSON encode using the shared encoder."""
 
     return ENCODE_MESSAGE.encode(obj)
+
+
+def decode_message(data: bytes | str) -> Message:
+    """Decode a persisted JSON :data:`Message`, dispatching on its ``role`` field.
+
+    ``Message`` is an untagged union, so ``msgspec.json.Decoder(Message)`` raises
+    ``TypeError`` at construction. This helper peeks the ``role`` discriminator and
+    routes to the matching per-type decoder, giving consumers a working round-trip
+    without tagging the structs (which would drop the ``role`` attribute).
+
+    Expects the persisted wire format, which carries ``role`` (the session store
+    forces it in even though ``omit_defaults`` would otherwise drop it). Raises
+    ``ValueError`` when ``role`` is absent or unrecognized rather than guessing."""
+
+    role = _DECODE_ROLE.decode(data).role
+    decoder = _MESSAGE_DECODERS.get(role) if role is not None else None
+    if decoder is None:
+        raise ValueError(
+            f"cannot decode message: missing or unknown 'role' discriminator ({role!r})"
+        )
+    return decoder.decode(data)
 
 
 # ---------------------------------------------------------------------------

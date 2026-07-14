@@ -14,8 +14,8 @@ This is the speed unlock the roadmap calls out under
     assistant.content order).
   * Multi-tool turns parallelize: dispatch happens block-by-block, not
     all-at-once at the end of the stream.
-  * Malformed input JSON still surfaces as a ``StreamProtocolError`` from
-    ``assembler.finalize()`` — no broken dispatch.
+  * Malformed input JSON is never dispatched; instead of crashing the run it
+    short-circuits into an ``is_error`` recovery reminder so the model retries.
 
 The tests use a *slow* mock provider: each event is held behind a gate or
 an explicit ``anyio.sleep`` so we can deterministically observe ordering
@@ -25,11 +25,9 @@ without races.
 from __future__ import annotations
 
 import anyio
-import pytest
 
 from mantis_agent import (
     Agent,
-    AssistantMessage,
     TextBlock,
     Tool,
     ToolUseBlock,
@@ -37,7 +35,6 @@ from mantis_agent import (
     UserMessage,
     tool,
 )
-from mantis_agent.errors import StreamProtocolError
 from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
@@ -54,7 +51,6 @@ from mantis_agent.permissions import Deny, PermissionContext
 from mantis_agent.providers.mock import MockProvider
 from mantis_agent.types import (
     AssistantMessage as InternalAssistantMessage,
-    ToolResultBlock,
     UserMessage as InternalUserMessage,
 )
 
@@ -585,16 +581,17 @@ def test_tool_runs_concurrently_with_post_tool_text_deltas():
 
 
 # ---------------------------------------------------------------------------
-# 6. Malformed input JSON falls through to ``finalize()`` and raises
-#    ``StreamProtocolError`` — no half-dispatch.
+# 6. Malformed input JSON is never dispatched — it becomes an is_error
+#    recovery reminder (re-issue valid JSON) rather than crashing the run.
 # ---------------------------------------------------------------------------
 
 
-def test_malformed_tool_input_json_raises_at_finalize():
-    """A tool_use block whose input JSON is malformed must NOT be
-    dispatched. The agent surfaces ``StreamProtocolError`` from the
-    assembler's ``finalize`` call so the whole turn errors out — same
-    behavior as the pre-streaming path."""
+def test_malformed_tool_input_json_recovers_with_reminder():
+    """A tool_use block whose input JSON is malformed (trailing commas,
+    unquoted keys, truncation) must NOT be dispatched — but it must also
+    NOT crash the whole run. The agent fails closed: it short-circuits the
+    call into an ``is_error`` tool-result reminder telling the model to
+    re-issue well-formed JSON, so the model can recover on its next turn."""
 
     @tool
     async def never(value: str) -> str:
@@ -609,35 +606,55 @@ def test_malformed_tool_input_json_raises_at_finalize():
         bodies.append(value)
         return value
 
-    events: list[StreamEvent] = []
-    events.extend(_msg())
-    events.append(
+    turn1: list[StreamEvent] = []
+    turn1.extend(_msg())
+    turn1.append(
         ContentBlockStart(
             index=0,
             block=ToolUseBlock(id="bad", name="witness", input={}),
         )
     )
-    events.append(ContentBlockDelta(index=0, delta=InputJsonDelta(partial_json='{not valid')))
-    events.append(ContentBlockStop(index=0))
-    events.extend(_stop("tool_use"))
+    turn1.append(ContentBlockDelta(index=0, delta=InputJsonDelta(partial_json='{not valid')))
+    turn1.append(ContentBlockStop(index=0))
+    turn1.extend(_stop("tool_use"))
+    turn2 = _msg() + _text_block(0, "sorry, retrying") + _stop("end_turn")
+
+    class _Two(MockProvider):
+        def __init__(self):
+            super().__init__()
+            self._turn = 0
+
+        async def stream(self, **kw):
+            script = turn1 if self._turn == 0 else turn2
+            self._turn += 1
+            for ev in script:
+                yield ev
 
     async def main():
         agent = Agent(
             model="mock-7b",
-            provider=MockProvider(scripted_events=events),
+            provider=_Two(),
             tools=[witness, never],
-            max_turns=2,
+            max_turns=3,
             include_memory=False,
         )
         try:
-            with pytest.raises(StreamProtocolError):
-                msgs = [UserMessage(content="go")]
-                async for _ in agent.run_iter(msgs):
-                    pass
+            seen: list = []
+            async for m in agent.run_iter([UserMessage(content="go")]):
+                seen.append(m)
         finally:
             await agent.aclose()
 
-        assert bodies == []  # never dispatched
+        assert bodies == []  # never dispatched with garbage input
+        # The malformed call produced an is_error recovery reminder, not a crash.
+        errs = [
+            b
+            for m in seen
+            for b in (getattr(m, "content", None) or [])
+            if getattr(b, "is_error", False)
+        ]
+        assert errs, "expected an is_error recovery result for malformed JSON"
+        assert "JSON" in errs[0].content
 
     anyio.run(main)
 

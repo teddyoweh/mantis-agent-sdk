@@ -27,7 +27,6 @@ from ..tools import Tool
 
 if TYPE_CHECKING:
     from .client import MCPClient
-    from .server import SdkServer
 
 
 # ---------------------------------------------------------------------------

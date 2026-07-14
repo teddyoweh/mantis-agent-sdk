@@ -10,6 +10,16 @@ Read [`../../AGENTS.md`](../../AGENTS.md) first for orientation and the gotchas.
 
 Effort key: **S** trivial/<1h · **M** half-day · **L** multi-day. Impact: 🔴 critical · 🟠 high · 🟡 nice.
 
+> **⚠️ Status note (2026-07) — several tickets below have since shipped; treat their
+> "🔴/🟠 not-done" framing as historical:**
+> - **T0.2 interactive permissions** — ✅ shipped: `permissions.py` has modes
+>   (`default`/`acceptEdits`/`auto`/`bypass`), allow/deny rules from `settings.json`,
+>   interactive Ask, and a dangerous-bash classifier.
+> - **T1.3 skills (progressive disclosure + `load_skill`)** — ✅ shipped (`skills.py`).
+> - **Background bash** — ✅ shipped: `bash`/`bash_output`/`bash_kill` (`builtin_tools/fs.py`) + `/jobs`.
+> - **Context views** — ✅ shipped: `/context` in both TUIs.
+> - **T1.8 LSP** — 🟡 partial: `builtin_tools/codenav.py` (regex goto-def/find-refs; not a full LSP client yet).
+
 ---
 
 ## 🔴 Tier 0 — Critical. A long session today either crashes or runs unsafe. Ship these first.

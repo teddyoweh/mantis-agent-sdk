@@ -26,7 +26,6 @@ from typing import Any
 
 from .agent import Agent
 from .budget import lookup_pricing
-from .capabilities import lookup_model
 from .claude_compat import (
     AssistantMessage,
     MantisAgentOptions,
@@ -57,6 +56,7 @@ async def query(
     *,
     prompt: str | AsyncIterable[Any],
     options: MantisAgentOptions | dict[str, Any] | None = None,
+    _history: list[Message] | None = None,
 ) -> AsyncIterator[Message]:
     """Drop-in replacement for ``claude_agent_sdk.query``.
 
@@ -137,16 +137,25 @@ async def query(
         else None
     )
 
-    # Track which seed messages have already been echoed to the consumer
-    # as UserMessage events above. ``run_iter`` may re-yield them (it can
-    # prepend a synthetic <system-reminder> UserMessage) — we want every
-    # NEW message it produces, but not duplicates of what we already
-    # streamed. The cheapest test: was this message instance already in
-    # ``seed_messages`` when we passed the list in?
-    seed_set = {id(m) for m in seed_messages}
+    # Carry prior-turn history when a caller (``ClaudeSDKClient``) threads a
+    # persistent running list: the new seed(s) are appended to it so the agent
+    # sees the full multi-turn conversation, and ``run_iter`` accumulates this
+    # turn's assistant/tool-result messages back into the SAME list for the next
+    # turn. Everything already in the list was streamed in a prior turn, so it's
+    # in ``seed_set`` and never re-yielded here.
+    if _history is not None:
+        running: list[Message] = _history
+        running.extend(seed_messages)
+    else:
+        running = list(seed_messages)
+
+    # Track which messages were already surfaced to the consumer (prior-turn
+    # history + this turn's echoed seeds). ``run_iter`` may re-yield them (it can
+    # prepend a synthetic <system-reminder> UserMessage) — we want every NEW
+    # message it produces, not duplicates of what we already streamed.
+    seed_set = {id(m) for m in running}
 
     try:
-        running: list[Message] = list(seed_messages)
         # Stream messages out as the agent produces them — assistant
         # turns yield the moment their stream finalizes (tools are
         # already dispatching in the background under the
@@ -198,8 +207,6 @@ async def query(
         error_strings.append(f"{type(e).__name__}: {e}")
     finally:
         await _shutdown()
-
-    duration_ms = int((time.monotonic() - started_at) * 1000)
 
     total_cost_usd = 0.0
     if agent._budget_tracker is not None:
@@ -358,7 +365,8 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "max_steps": opts.get("max_turns", opts.get("max_steps", 20)),
         "max_usd": opts.get("max_usd"),
     }
-    for key in ("hooks", "permissions", "budget", "include_memory", "response_format", "tracer"):
+    for key in ("hooks", "permissions", "budget", "include_memory", "response_format",
+                "tracer", "skills", "persist", "effort"):
         if key in opts:
             kw[key] = opts[key]
 
@@ -371,9 +379,13 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "max_turns", "max_steps", "max_usd", "api_key",
         "persist", "session_id", "cwd", "permission_mode",
         "mcp_servers", "agents", "setting_sources", "response_format",
-        "tracer",
+        "tracer", "skills",
     }
     extra = {k: v for k, v in opts.items() if k not in consumed}
+    if isinstance(extra.get("extra"), dict):
+        nested = dict(extra.pop("extra"))
+        nested.update(extra)
+        extra = nested
     if extra:
         kw["extra"] = extra
 

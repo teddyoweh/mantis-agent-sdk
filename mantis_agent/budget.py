@@ -58,6 +58,15 @@ class Budget:
     max_usd: float | None = None
     fallback_model: str | None = None
 
+    # Spend FLOORS (optional). Distinct from the ``max_*`` ceilings above: a
+    # target is a "do at least this much work" goal the persistence loop uses
+    # to decide whether to keep going after a natural stop. Where a ceiling
+    # BRAKES (raise BudgetExceededError when crossed), a target MOTIVATES
+    # (keep working while it's unmet). ``None`` = no floor. A target should be
+    # set well below the matching ceiling; the ceiling always wins.
+    target_usd: float | None = None
+    target_total_tokens: int | None = None
+
 
 # ---------------------------------------------------------------------------
 # Pricing
@@ -86,24 +95,21 @@ class Pricing:
         completion = usage.output_tokens / 1_000_000.0
         total = prompt * self.prompt_per_million + completion * self.completion_per_million
 
-        # Cache tokens: bill at the configured cache rate when set, otherwise
-        # at the prompt rate (already counted above if the provider folds
-        # them into input_tokens; we add the *extra* here only if cache_*
-        # tokens are reported separately, which is the msgspec Usage shape).
-        if usage.cache_read_input_tokens:
-            rate = (
-                self.cache_read_per_million
-                if self.cache_read_per_million is not None
-                else self.prompt_per_million
-            )
-            total += (usage.cache_read_input_tokens / 1_000_000.0) * rate
-        if usage.cache_creation_input_tokens:
-            rate = (
-                self.cache_write_per_million
-                if self.cache_write_per_million is not None
-                else self.prompt_per_million
-            )
-            total += (usage.cache_creation_input_tokens / 1_000_000.0) * rate
+        # Cache tokens are a *subset* of input_tokens (the providers this SDK
+        # targets fold prompt_tokens_details.cached_tokens into prompt_tokens,
+        # which _decode_usage maps to input_tokens). They're therefore already
+        # billed at prompt_per_million above. When a distinct cache rate is
+        # configured we apply only the *adjustment* — the difference between
+        # the cache rate and the prompt rate already charged — so a discounted
+        # cache rate reduces the total and a premium write rate adds to it.
+        # When no cache rate is set we add nothing: billing at the prompt rate
+        # is already correct.
+        if usage.cache_read_input_tokens and self.cache_read_per_million is not None:
+            adjustment = self.cache_read_per_million - self.prompt_per_million
+            total += (usage.cache_read_input_tokens / 1_000_000.0) * adjustment
+        if usage.cache_creation_input_tokens and self.cache_write_per_million is not None:
+            adjustment = self.cache_write_per_million - self.prompt_per_million
+            total += (usage.cache_creation_input_tokens / 1_000_000.0) * adjustment
         return total
 
 
@@ -301,6 +307,53 @@ class BudgetTracker:
 
         return self.input_tokens + self.output_tokens
 
+    def runway(self) -> float | None:
+        """Fraction of the tightest configured ceiling still available, in
+        ``[0.0, 1.0]`` — ``1.0`` fresh, ``0.0`` exhausted. ``None`` when no
+        ceiling is set (unbounded runway).
+
+        Two-sided by design: the persistence loop reads it both to BRAKE (as it
+        approaches ``0.0``, wrap up before ``check()`` raises) and to MOTIVATE
+        (while it stays well above ``0.0``, keep pushing on unfinished work).
+        Computed as ``1 - max(used_ratio)`` over the same limit set
+        ``should_use_fallback`` watches, so the signal a run brakes on and the
+        one it motivates on agree.
+        """
+
+        b = self.budget
+        ratios: list[float] = []
+        if b.max_turns is not None and b.max_turns > 0:
+            ratios.append(self.turns / b.max_turns)
+        if b.max_input_tokens is not None and b.max_input_tokens > 0:
+            ratios.append(self.input_tokens / b.max_input_tokens)
+        if b.max_output_tokens is not None and b.max_output_tokens > 0:
+            ratios.append(self.output_tokens / b.max_output_tokens)
+        if b.max_total_tokens is not None and b.max_total_tokens > 0:
+            ratios.append(self.total_tokens / b.max_total_tokens)
+        if b.max_usd is not None and b.max_usd > 0:
+            ratios.append(self.total_usd / b.max_usd)
+        if not ratios:
+            return None
+        remaining = 1.0 - max(ratios)
+        if remaining < 0.0:
+            return 0.0
+        if remaining > 1.0:
+            return 1.0
+        return remaining
+
+    def target_unmet(self) -> bool:
+        """True when the caller set a spend FLOOR (``Budget.target_usd`` /
+        ``Budget.target_total_tokens``) that has not yet been reached — the
+        "keep working, there's a stated goal" signal persist mode honors. No
+        target set → always ``False`` (nothing to chase)."""
+
+        b = self.budget
+        if b.target_usd is not None and self.total_usd < b.target_usd:
+            return True
+        if b.target_total_tokens is not None and self.total_tokens < b.target_total_tokens:
+            return True
+        return False
+
     def should_use_fallback(self, headroom: float = 0.85) -> bool:
         """Heuristic: are we within ``headroom`` of any limit?
 
@@ -333,16 +386,22 @@ class BudgetTracker:
         before this is called.
         """
 
+        # A resource *spend* (tokens / USD) STRICTLY over the cap is a breach —
+        # spending exactly up to the cap is allowed (the cap is inclusive).
+        # Using ``>=`` for those would be an off-by-one that rejects the
+        # exact-limit case. ``max_turns`` is different: it's a completed-turn
+        # counter, so reaching the cap must stop the *next* turn — allowing the
+        # exact value would let one extra turn run and overshoot. It stays ``>=``.
         b = self.budget
         if b.max_turns is not None and self.turns >= b.max_turns:
             raise BudgetExceededError("turns", b.max_turns, self.turns)
-        if b.max_input_tokens is not None and self.input_tokens >= b.max_input_tokens:
+        if b.max_input_tokens is not None and self.input_tokens > b.max_input_tokens:
             raise BudgetExceededError("input_tokens", b.max_input_tokens, self.input_tokens)
-        if b.max_output_tokens is not None and self.output_tokens >= b.max_output_tokens:
+        if b.max_output_tokens is not None and self.output_tokens > b.max_output_tokens:
             raise BudgetExceededError("output_tokens", b.max_output_tokens, self.output_tokens)
-        if b.max_total_tokens is not None and self.total_tokens >= b.max_total_tokens:
+        if b.max_total_tokens is not None and self.total_tokens > b.max_total_tokens:
             raise BudgetExceededError("total_tokens", b.max_total_tokens, self.total_tokens)
-        if b.max_usd is not None and self.total_usd >= b.max_usd:
+        if b.max_usd is not None and self.total_usd > b.max_usd:
             raise BudgetExceededError("usd", b.max_usd, self.total_usd)
 
 

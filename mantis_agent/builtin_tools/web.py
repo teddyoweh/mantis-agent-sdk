@@ -27,10 +27,13 @@ WebFetch is the same idea — fetch a URL, return readable text. Optional
 
 from __future__ import annotations
 
+import asyncio
 import html as html_mod
+import ipaddress
 import logging
 import os
 import re
+import socket
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
@@ -101,25 +104,40 @@ def _resolve_search_provider() -> str:
     return "ddg"
 
 
+def _host_matches(host: str, entry: str) -> bool:
+    """True if ``host`` equals ``entry`` or is a subdomain of it.
+
+    Matches on real DNS-label boundaries (host == entry or
+    host.endswith('.' + entry)) so an allow/block entry can never be
+    satisfied by an unrelated host that merely *contains* the string
+    (e.g. ``corp.com`` must not match ``corp.com.evil.net``).
+    """
+
+    entry = _strip_scheme(entry.lower().strip())
+    if not entry:
+        return False
+    return host == entry or host.endswith("." + entry)
+
+
 def _domain_filter(host_url: str, allowed: list[str] | None, blocked: list[str] | None) -> bool:
     """Decide whether a result URL passes the allow/block filters.
 
     Both lists treat each entry as a domain or domain suffix. Empty / None
-    lists are no-ops. Blocked wins over allowed.
+    lists are no-ops. Blocked wins over allowed. Matching is on the parsed
+    host with proper label boundaries — never a raw substring of the URL.
     """
 
     if not (allowed or blocked):
         return True
-    host = host_url.lower()
+    # Callers pass a full URL; match on its host only, not path/query.
+    host = (urlparse(host_url).hostname or host_url).lower()
     if blocked:
         for b in blocked:
-            b = b.lower().strip()
-            if b and b in host:
+            if _host_matches(host, b):
                 return False
     if allowed:
         for a in allowed:
-            a = a.lower().strip()
-            if a and a in host:
+            if _host_matches(host, a):
                 return True
         return False  # allowed set is non-empty but nothing matched
     return True
@@ -456,14 +474,152 @@ def _html_to_markdown(html: str) -> str:
 _html_to_text = _html_to_markdown
 
 
+# ---------------------------------------------------------------------------
+# SSRF protection — refuse to fetch loopback / link-local / private / reserved
+# addresses (cloud metadata at 169.254.169.254, internal admin services, etc.).
+# This SDK is built to drive untrusted models, so a prompt-injected page must
+# not be able to make web_fetch reach into the host's private network. Fails
+# CLOSED: anything we can't confirm is a public address is rejected. Set
+# ``MANTIS_WEB_ALLOW_LOCAL=1`` to opt into fetching non-public addresses.
+# ---------------------------------------------------------------------------
+
+_ALLOW_LOCAL_ENV = "MANTIS_WEB_ALLOW_LOCAL"
+_MAX_REDIRECTS = 5
+
+
+def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True for any address that must not be reachable from a web_fetch."""
+
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return True
+    if ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        return True
+    # IPv4-mapped IPv6 (::ffff:169.254.169.254) — unwrap and re-check.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _ip_is_blocked(mapped)
+    return False
+
+
+async def _vet_url(url: str) -> tuple[str | None, str | None]:
+    """Validate ``url`` and pin a vetted address.
+
+    Returns ``(error, pinned_ip)``:
+
+    * ``error`` is a non-``None`` string when the URL is unsafe (non-http(s)
+      scheme, or a host that resolves / is a literal for a loopback /
+      link-local / private / reserved address).
+    * ``pinned_ip`` is the concrete public IP the caller MUST connect to.
+      Pinning it into the connection closes the TOCTOU / DNS-rebinding gap:
+      without it httpx would re-resolve the host independently at connect
+      time, so a low-TTL record that flips public→private after this check
+      would slip past the denylist.
+
+    ``pinned_ip`` is ``None`` when ``MANTIS_WEB_ALLOW_LOCAL`` is set (the guard
+    is disabled and the caller should fetch the URL as-is) or when every
+    resolved address is rejected (in which case ``error`` is also set).
+    """
+
+    if os.environ.get(_ALLOW_LOCAL_ENV):
+        return None, None
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return f"fetch error: refusing non-http(s) URL scheme {parsed.scheme!r}", None
+    host = parsed.hostname
+    if not host:
+        return "fetch error: URL has no host", None
+
+    # Host given as an IP literal — check it directly and pin it.
+    try:
+        literal = ipaddress.ip_address(host)
+        if _ip_is_blocked(literal):
+            return "fetch error: refusing to fetch non-public address", None
+        return None, str(literal)
+    except ValueError:
+        pass  # not a literal — resolve below
+
+    try:
+        infos = await asyncio.get_event_loop().getaddrinfo(host, parsed.port or 0)
+    except (OSError, socket.gaierror) as e:
+        return f"fetch error: cannot resolve host ({e!r})", None
+    if not infos:
+        return "fetch error: cannot resolve host", None
+    pinned: str | None = None
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return "fetch error: refusing to fetch non-public address", None
+        if _ip_is_blocked(ip):
+            return "fetch error: refusing to fetch non-public address", None
+        if pinned is None:
+            pinned = str(ip)
+    return None, pinned
+
+
+async def _pinned_get(
+    client: httpx.AsyncClient, url: str, pinned_ip: str | None
+) -> httpx.Response:
+    """GET ``url`` but connect to ``pinned_ip`` (the address ``_vet_url``
+    validated) instead of letting httpx re-resolve the hostname.
+
+    When ``pinned_ip`` is ``None`` (``MANTIS_WEB_ALLOW_LOCAL`` set) the URL is
+    fetched as-is. Otherwise the request targets the IP literal while the
+    original ``Host`` header and TLS SNI/cert hostname are preserved, so name-
+    based virtual hosting and certificate verification still work."""
+
+    if pinned_ip is None:
+        return await client.get(url, follow_redirects=False)
+
+    parsed = httpx.URL(url)
+    hostpart = f"[{pinned_ip}]" if ":" in pinned_ip else pinned_ip
+    ip_url = parsed.copy_with(host=hostpart)
+    host_header = parsed.host if parsed.port is None else f"{parsed.host}:{parsed.port}"
+    return await client.get(
+        ip_url,
+        follow_redirects=False,
+        headers={"Host": host_header},
+        extensions={"sni_hostname": parsed.host},
+    )
+
+
 async def _raw_fetch(url: str) -> str:
     """Direct HTTP fetch + dependency-free text extraction (the default path when
     Exa isn't configured). HTML is cleaned to readable text; non-HTML bodies
     (JSON, plain text, markdown, source) are returned verbatim so nothing useful
-    is mangled."""
+    is mangled.
 
+    SSRF-hardened: the target and every redirect hop is validated against the
+    non-public-address denylist before the request is issued, redirects are
+    followed manually (not by httpx) so a public URL can't bounce to an
+    internal one, and the request is connected to the exact IP that was vetted
+    (not the hostname) so a DNS record can't flip public→private between the
+    check and the connect (TOCTOU / DNS rebinding)."""
+
+    err, pinned_ip = await _vet_url(url)
+    if err:
+        return err
+
+    client = _client()
+    current = url          # logical URL (keeps the hostname for redirects/Host)
+    r: httpx.Response | None = None
     try:
-        r = await _client().get(url)
+        for _ in range(_MAX_REDIRECTS + 1):
+            r = await _pinned_get(client, current, pinned_ip)
+            if not r.is_redirect:
+                break
+            loc = r.headers.get("location")
+            if not loc:
+                break
+            # Join relative redirects against the logical hostname URL, not the
+            # IP we happened to connect to.
+            current = str(httpx.URL(current).join(loc))
+            hop_err, pinned_ip = await _vet_url(current)
+            if hop_err:
+                return hop_err
+        else:
+            return "fetch error: too many redirects"
         r.raise_for_status()
     except httpx.HTTPError as e:
         return f"fetch error: {e!r}"

@@ -27,6 +27,7 @@ Storage is msgspec + stdlib only — no third-party deps.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid as _uuid
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ import msgspec
 from . import __version__
 from .paths import get_project_dir
 from .types import AssistantMessage, Message, TextBlock, UserMessage
+
+_log = logging.getLogger("mantis_agent.session_tree")
 
 # Message-bearing entry types (everything else on a line is metadata).
 _MESSAGE_TYPES = frozenset({"user", "assistant", "system", "attachment"})
@@ -98,9 +101,11 @@ class SessionTranscript:
     """Append-only writer/reader for one session's ``.jsonl`` tree.
 
     Threads ``parent_uuid`` forward across appended messages (port of
-    ``insertMessageChain``): each new message parents off the last *chain
-    participant*, and ``tool_result`` user turns parent off their originating
-    assistant message (the DAG edge that parallel tool calls create).
+    ``insertMessageChain``): each new message parents off the current tip, so
+    the writer produces a strictly linear chain. Non-linear structure (rewind
+    branches, and the DAG edges parallel tool calls create) is expressed by
+    passing an explicit ``parent_uuid`` to :meth:`append_message`; the writer
+    does not derive tool_result→originating-assistant edges on its own.
     """
 
     def __init__(self, session_id: str, *, cwd: str | Path | None = None) -> None:
@@ -135,6 +140,16 @@ class SessionTranscript:
             "system" if role == "system" else "user"
         )
         parent = self._tip if parent_uuid == "__tip__" else parent_uuid
+        # An explicit parent that names no known message would create an orphan
+        # node — a spurious root that resume's leaf-picker can mistake for the
+        # true head. Fall back to the current tip so the chain stays connected.
+        if parent is not None and parent not in self._seen:
+            _log.warning(
+                "session_tree: parent %s is unknown; attaching new %s message "
+                "to the current tip %s instead of orphaning it",
+                parent, etype, self._tip,
+            )
+            parent = self._tip
         entry = TranscriptEntry(
             uuid=str(_uuid.uuid4()),
             parent_uuid=parent,
@@ -198,6 +213,7 @@ def load_entries(path: Path) -> list[TranscriptEntry]:
     out: list[TranscriptEntry] = []
     if not path.exists():
         return out
+    dropped = 0  # message lines lost to decode/validation errors (not metadata)
     with path.open("rb") as fh:
         for raw in fh:
             raw = raw.strip()
@@ -206,6 +222,9 @@ def load_entries(path: Path) -> list[TranscriptEntry]:
             try:
                 obj = _DEC.decode(raw)
             except msgspec.DecodeError:
+                # Could be a trailing partial line (benign) or a corrupted
+                # interior message line (drops descendants). Count it either way.
+                dropped += 1
                 continue
             if not isinstance(obj, dict) or obj.get("type") not in _MESSAGE_TYPES:
                 continue
@@ -214,7 +233,17 @@ def load_entries(path: Path) -> list[TranscriptEntry]:
             try:
                 out.append(msgspec.convert(obj, TranscriptEntry))
             except msgspec.ValidationError:
+                # A well-formed JSON line that no longer matches the schema —
+                # its uuid is gone, so any descendants orphan. Surface it.
+                dropped += 1
                 continue
+    if dropped:
+        _log.warning(
+            "session_tree: dropped %d unparseable line(s) from %s; "
+            "conversation history may be truncated at a corrupted entry",
+            dropped,
+            path,
+        )
     return out
 
 
@@ -242,19 +271,57 @@ def build_chain(entries: list[TranscriptEntry], leaf_uuid: str) -> list[Transcri
     while cur is not None and cur.uuid not in seen:
         seen.add(cur.uuid)
         chain.append(cur)
-        cur = by_uuid.get(cur.parent_uuid) if cur.parent_uuid else None
+        parent_uuid = cur.parent_uuid
+        if parent_uuid and parent_uuid not in by_uuid:
+            # The parent line is missing (corrupt/dropped) — everything before
+            # it is unreachable, so the walk stops here and the reconstructed
+            # history is truncated. Warn rather than lose turns silently.
+            _log.warning(
+                "session_tree: entry %s references missing parent %s; "
+                "conversation history is truncated at this gap",
+                cur.uuid,
+                parent_uuid,
+            )
+            break
+        cur = by_uuid.get(parent_uuid) if parent_uuid else None
     chain.reverse()
     return chain
 
 
+def _compact_boundary_fields(content: Any) -> dict[str, Any] | None:
+    """If a persisted system entry's content marks a compaction boundary, return
+    its ``{summary, compacted_count}`` fields; else ``None``. The writer records
+    a boundary as ``{"__compact_boundary__": true, "summary": ..., ...}``."""
+    if isinstance(content, dict) and content.get("__compact_boundary__"):
+        return content
+    return None
+
+
 def entries_to_messages(chain: list[TranscriptEntry]) -> list[Message]:
-    """Convert a transcript chain into mantis ``Message`` objects, dropping
-    tool_uses with no matching tool_result so the array stays API-valid (port of
-    ``filterUnresolvedToolUses``)."""
+    """Convert a transcript chain into mantis ``Message`` objects.
+
+    Honors a runtime compaction boundary: if the chain contains one or more
+    persisted compaction-boundary system entries, replay starts at the LAST
+    one — everything before it is dropped and replaced by the boundary's
+    summary (a :class:`CompactBoundaryMessage`), exactly as an in-memory
+    compaction would have left the live context. Without this, resume would
+    silently re-expand history the run had already compacted away.
+
+    Dangling tool_uses with no matching tool_result are dropped so the array
+    stays API-valid (port of ``filterUnresolvedToolUses``)."""
+    from .compact import CompactBoundaryMessage  # noqa: PLC0415
     from .types import ContentBlock  # noqa: PLC0415
 
+    # Start from the last compaction boundary if one was persisted.
+    start = 0
+    for i, e in enumerate(chain):
+        if e.message.get("role") == "system" and _compact_boundary_fields(
+            e.message.get("content")
+        ):
+            start = i
+
     msgs: list[Message] = []
-    for e in chain:
+    for e in chain[start:]:
         role = e.message.get("role")
         content = e.message.get("content")
         if role == "assistant":
@@ -269,7 +336,16 @@ def entries_to_messages(chain: list[TranscriptEntry]) -> list[Message]:
             if isinstance(content, list):
                 content = msgspec.convert(content, list[ContentBlock])
             msgs.append(UserMessage(content=content, isMeta=e.is_meta))
-        # 'system' messages are folded into the agent's system prompt, not here.
+        elif role == "system":
+            # A compaction boundary is preserved (it carries the summary that
+            # stands in for the dropped turns); other system entries are folded
+            # into the agent's system prompt, not the message array.
+            fields = _compact_boundary_fields(content)
+            if fields is not None:
+                msgs.append(CompactBoundaryMessage(
+                    summary=str(fields.get("summary", "")),
+                    compacted_count=int(fields.get("compacted_count", 0) or 0),
+                ))
     return _drop_dangling_tool_uses(msgs)
 
 
@@ -430,8 +506,12 @@ def _read_session_lite(path: Path) -> SessionInfo | None:
             tail = head if size <= _LITE_READ_BYTES else (head + fh.read())
     head_s = head.decode("utf-8", "replace")
     tail_s = tail.decode("utf-8", "replace")
-    first_line = head_s.split("\n", 1)[0]
-    if '"is_sidechain":true' in first_line.replace(" ", ""):
+    # Scan the whole head window, not just the first line: append_meta writes
+    # plain metadata records (no is_sidechain) that can precede the first
+    # message line, so a first-line-only check would miss a subagent session
+    # whose head starts with a custom-title/summary record. A non-sidechain
+    # session never encodes is_sidechain:true (the default False is omitted).
+    if '"is_sidechain":true' in head_s.replace(" ", ""):
         return None  # don't list subagent sessions
     title = _last_json_str(tail_s, "custom_title") or _last_json_str(head_s, "custom_title")
     first_prompt = _first_user_text(head_s)
@@ -448,6 +528,24 @@ def _read_session_lite(path: Path) -> SessionInfo | None:
     )
 
 
+# Known synthetic wrapper prefixes the SDK injects as user turns. We skip only
+# these in the picker preview — a blanket "starts with '<'" test would also
+# discard legitimate prompts like "<html> why is this invalid?".
+_SYNTHETIC_PREFIXES = (
+    "<system-reminder",
+    "<command-name",
+    "<command-message",
+    "<command-args",
+    "<local-command-stdout",
+    "<local-command-stderr",
+    "<bash-input",
+    "<bash-stdout",
+    "<bash-stderr",
+    "<user-memory-input",
+    "<ide_",
+)
+
+
 def _first_user_text(head: str) -> str | None:
     """First meaningful user-message text in the head (skips meta/tool lines)."""
     for line in head.split("\n"):
@@ -460,8 +558,11 @@ def _first_user_text(head: str) -> str | None:
         except json.JSONDecodeError:
             continue
         content = (obj.get("message") or {}).get("content")
-        if isinstance(content, str) and content.strip() and not content.startswith("<"):
-            return content.strip()[:200]
+        if isinstance(content, str) and content.strip():
+            stripped = content.strip()
+            if stripped.startswith(_SYNTHETIC_PREFIXES):
+                continue
+            return stripped[:200]
     return None
 
 

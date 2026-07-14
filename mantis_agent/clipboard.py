@@ -21,6 +21,7 @@ blobs so a stray paste can't blow up the request.
 from __future__ import annotations
 
 import base64
+import os
 import platform
 import subprocess
 import tempfile
@@ -92,7 +93,13 @@ def has_clipboard_image() -> bool:
 def grab_clipboard_image() -> ImageBlock | None:
     """Read an image off the clipboard as an ``ImageBlock``, or ``None``."""
     system = platform.system()
-    tmp = Path(tempfile.gettempdir()) / "mantis_clipboard.png"
+    # Unique, O_EXCL temp file per grab. A constant filename in a shared temp
+    # dir is a symlink/TOCTOU target (an attacker pre-creating the path can
+    # redirect the write) and lets two concurrent sessions clobber each other's
+    # file mid-read. mkstemp creates a fresh, unpredictable, exclusive file.
+    fd, tmp_name = tempfile.mkstemp(suffix=".png", prefix="mantis_clipboard_")
+    os.close(fd)
+    tmp = Path(tmp_name)
     try:
         if system == "Darwin":
             save = (

@@ -29,7 +29,6 @@ from mantis_agent import (
     UserMessage,
     tool,
 )
-from mantis_agent.budget import Budget
 from mantis_agent.events import (
     ContentBlockDelta,
     ContentBlockStart,
@@ -41,7 +40,7 @@ from mantis_agent.events import (
     TextDelta,
 )
 from mantis_agent.hooks import HookContext, HookResult, Hooks
-from mantis_agent.permissions import Allow, Deny, PermissionContext
+from mantis_agent.permissions import Deny, PermissionContext
 from mantis_agent.providers.mock import MockProvider
 
 

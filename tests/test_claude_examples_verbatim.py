@@ -181,13 +181,10 @@ def test_query_yields_claude_shaped_messages() -> None:
     import anyio
 
     from mantis_agent import (
-        Agent,
         AssistantMessage,
         MantisAgentOptions,
         ResultMessage,
-        SystemMessage,
         TextBlock,
-        UserMessage,
         query,
     )
     from mantis_agent.events import (
@@ -213,7 +210,6 @@ def test_query_yields_claude_shaped_messages() -> None:
 
     # Inject the provider via env override — compat_query builds the
     # agent from options. Patch provider routing via the mock entry.
-    import os
     from mantis_agent.providers.base import register
 
     register("mock", lambda: MockProvider(scripted_events=events))

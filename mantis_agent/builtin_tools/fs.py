@@ -18,8 +18,10 @@ so a runaway ``find /`` or a huge log can't blow up the context window.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
+import signal
 import time
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,7 @@ from ..tools import Tool, tool
 # Caps — keep tool output from swamping the model's context window.
 _MAX_OUTPUT = 30_000  # chars of bash stdout/stderr returned
 _MAX_READ_LINES = 2000  # default lines per read_file call
+_MAX_READ_OUTPUT = 200_000  # total chars of file text returned by read_file
 _MAX_LINE = 2000  # chars per line before truncation
 _MAX_MATCHES = 200  # grep/glob hits returned
 # Directories glob skips by default (dependency / VCS / build output), matching
@@ -40,21 +43,52 @@ _GLOB_IGNORE = {
     ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".idea", ".next",
     "target", ".cache", "vendor", ".gradle", ".egg-info",
 }
+# Bounds for the glob tree walk — cap entries examined / matches gathered / wall
+# time so a broad pattern on a huge tree can't peg a worker thread indefinitely.
+_GLOB_MAX_SCAN = 100_000
+_GLOB_MAX_COLLECT = 5_000
+_GLOB_DEADLINE_S = 20.0
 
 
 # ---------------------------------------------------------------------------
+# Per-agent isolation. The read-guard, foreground bash cwd, and background
+# shells are all conversation state — sharing them process-wide leaks across
+# concurrently-running agents/subagents: a subagent's ``cd`` would move the
+# parent's shell, one agent could kill another's background shells, and the
+# read-before-write guard would be defeatable cross-agent. Each Agent run sets
+# ``TOOL_SCOPE`` (a ContextVar) to a unique key for the duration of its run;
+# these dicts are keyed by that scope. Direct callers (tests, ad-hoc use) fall
+# back to the shared ``"__global__"`` scope, preserving old behaviour.
+# ---------------------------------------------------------------------------
+import contextvars  # noqa: E402
+
+TOOL_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "mantis_tool_scope", default="__global__"
+)
+
+
+def _scope() -> str:
+    return TOOL_SCOPE.get()
+
+
 # Read-before-write guard (Claude Code's readFileState). Tracks the mtime of
-# every file a tool has *seen* (read or written) this process. write_file then
+# every file a tool has *seen* (read or written) this run. write_file then
 # refuses to clobber an existing file the tools haven't seen, or one changed on
-# disk since — so unseen/newer content is never silently destroyed. New files
-# pass freely.
-# ---------------------------------------------------------------------------
+# disk since — so unseen/newer content is never silently destroyed.
+# ``_FILE_READS`` is the default ("__global__") scope's dict — kept as a
+# module attribute so direct callers (and tests) can reach it; other scopes get
+# their own dict on demand.
 _FILE_READS: dict[str, float] = {}
+_FILE_READS_BY_SCOPE: dict[str, dict[str, float]] = {"__global__": _FILE_READS}
+
+
+def _reads() -> dict[str, float]:
+    return _FILE_READS_BY_SCOPE.setdefault(_scope(), {})
 
 
 def _record_seen(p: Path) -> None:
     try:
-        _FILE_READS[str(p.resolve())] = p.stat().st_mtime
+        _reads()[str(p.resolve())] = p.stat().st_mtime
     except OSError:
         pass
 
@@ -67,7 +101,7 @@ def _check_write_guard(p: Path) -> None:
             return  # empty file (e.g. just `touch`ed) — no unseen content to lose
     except OSError:
         pass
-    seen = _FILE_READS.get(str(p.resolve()))
+    seen = _reads().get(str(p.resolve()))
     if seen is None:
         raise ValueError(
             f"{p} already exists but hasn't been read this session. Read it first "
@@ -187,12 +221,31 @@ def _coerce_int(value: object, *, default: int, lo: int | None = None,
 # ---------------------------------------------------------------------------
 
 
+def _is_secret_env(name: str) -> bool:
+    """Is this environment variable a credential we must NOT hand to a
+    model-driven shell command? Matches the usual secret-bearing name shapes
+    (API keys, tokens, passwords, access keys). Fails closed — matches broadly."""
+    n = name.upper()
+    if any(s in n for s in (
+        "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
+        "PRIVATE_KEY", "ACCESS_KEY", "API_KEY", "APIKEY",
+    )):
+        return True
+    return n == "TOKEN" or n.endswith(("_TOKEN", "_KEY", "_KEY_ID"))
+
+
 @tool(is_read_only=False, is_concurrency_safe=False, timeout_s=120.0)
 async def bash(command: str, timeout: int = 120, stdin: str = "",
                run_in_background: bool = False) -> str:
     """Run a shell command and return its combined stdout + stderr.
 
-    Use this to inspect the system, run builds/tests, git, grep, find, etc.
+    Use this for system commands and terminal operations: builds/tests, git,
+    package managers, generated-code commands, and project CLIs. Prefer the
+    dedicated tools for files and search: read_file (not cat/head/tail),
+    edit_file/write_file (not sed/awk/echo heredocs), glob (not find/ls for file
+    search), and grep (not grep/rg for content search). Output text directly to
+    the user; don't use echo/printf as communication.
+
     Runs through ``bash -lc`` in the current working directory.
 
     Set ``run_in_background=True`` for a long-running command (a dev server, a
@@ -213,6 +266,8 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
             if it exceeds this — usually a sign it is waiting on input.
         stdin: Text fed to the command's standard input. Use this for commands
             that read from stdin (e.g. answering a prompt: ``stdin="yes\\n"``).
+            Ignored when ``run_in_background=True`` (background commands get an
+            empty stdin).
     """
 
     # Models pass loose values — strings, 0, absurd numbers. Clamp to a sane
@@ -227,7 +282,11 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # that hang on the closed stdin or vomit terminal-control codes into the
     # result. ``TERM=dumb`` + neutered pager/editor envs make them behave like a
     # script would.
-    env = dict(os.environ)
+    # Strip credential-bearing vars (API keys, tokens, passwords) before
+    # spawning: an untrusted/prompt-injected model must not be able to read the
+    # host's secrets out of its own environment (`env`, `printenv`,
+    # `curl -d "$(env)"`). Fail closed — keep only non-secret vars.
+    env = {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
     env.update(
         TERM="dumb", PAGER="cat", GIT_PAGER="cat", EDITOR="true", VISUAL="true",
         GIT_TERMINAL_PROMPT="0", DEBIAN_FRONTEND="noninteractive",
@@ -236,9 +295,9 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # Persistent working directory: each foreground command starts where the
     # previous one ended, so `cd sub` then a later `ls` behaves like a real shell
     # (Claude Code parity) instead of resetting to the launch dir every call.
-    cwd = _BASH_CWD["cwd"]
+    cwd = _bash_cwd()["cwd"]
     if cwd is not None and not os.path.isdir(cwd):
-        cwd = _BASH_CWD["cwd"] = None  # the tracked dir vanished — fall back
+        cwd = _bash_cwd()["cwd"] = None  # the tracked dir vanished — fall back
 
     if run_in_background:
         return _start_background(command, env, cwd=cwd)
@@ -247,32 +306,50 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # call. Runs after the command (preserving its exit code); skipped only if the
     # command exits the shell itself, in which case we simply keep the old cwd.
     wrapped = f"{command}\n__mrc=$?\nprintf '\\n{_CWD_MARKER}%s\\n' \"$PWD\"\nexit $__mrc"
+    proc = await asyncio.create_subprocess_exec(
+        "bash", "-lc", wrapped,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+        cwd=cwd,
+        start_new_session=True,
+    )
     try:
-        with anyio.fail_after(timeout):
-            result = await anyio.run_process(
-                ["bash", "-lc", wrapped], check=False, input=stdin_bytes, env=env,
-                cwd=cwd,
-            )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout)
     except TimeoutError:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), 2)
+        except TimeoutError:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+            await proc.wait()
         raise TimeoutError(
-            f"command timed out after {timeout}s (is it interactive or waiting "
-            f"on input? pass it via the stdin argument): {command}"
+            f"command timed out after {timeout}s (is it interactive, waiting "
+            f"on input, or a long-running server? use run_in_background=True "
+            f"for dev servers/watchers): {command}"
         ) from None
 
-    raw_out, new_cwd = _extract_cwd_marker(result.stdout.decode("utf-8", "replace"))
+    raw_out, new_cwd = _extract_cwd_marker(stdout.decode("utf-8", "replace"))
     if new_cwd:
-        _BASH_CWD["cwd"] = new_cwd
+        _bash_cwd()["cwd"] = new_cwd
     out = _strip_terminal_controls(raw_out)
-    err = _strip_terminal_controls(result.stderr.decode("utf-8", "replace"))
+    err = _strip_terminal_controls(stderr.decode("utf-8", "replace"))
     parts = []
     if out:
         parts.append(out)
     if err:
         parts.append(err if not out else f"\n[stderr]\n{err}")
     body = "".join(parts).rstrip()
-    if result.returncode != 0:
-        body = f"{body}\n[exit code: {result.returncode}]".lstrip()
-    return _truncate(body) or f"(no output, exit code {result.returncode})"
+    if proc.returncode != 0:
+        body = f"{body}\n[exit code: {proc.returncode}]".lstrip()
+    return _truncate(body) or f"(no output, exit code {proc.returncode})"
 
 
 # ---------------------------------------------------------------------------
@@ -280,11 +357,31 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
 # Detached, stdout+stderr streamed to a temp log; read later with bash_output.
 # ---------------------------------------------------------------------------
 
+# Background shells + foreground cwd are per-agent (see TOOL_SCOPE above): a
+# subagent's cd must not move the parent's shell, and one agent must not be able
+# to read/kill another's background shells. The module-level ``_BG_SHELLS`` /
+# ``_BG_COUNTER`` / ``_BASH_CWD`` are the default ("__global__") scope's
+# containers (reachable by direct callers/tests); other scopes get their own.
 _BG_SHELLS: dict[str, dict[str, Any]] = {}
 _BG_COUNTER = [0]
-
-# Working directory carried across foreground bash calls (a shared shell's cwd).
 _BASH_CWD: dict[str, str | None] = {"cwd": None}
+_BG_SHELLS_BY_SCOPE: dict[str, dict[str, dict[str, Any]]] = {"__global__": _BG_SHELLS}
+_BG_COUNTER_BY_SCOPE: dict[str, list[int]] = {"__global__": _BG_COUNTER}
+_BASH_CWD_BY_SCOPE: dict[str, dict[str, str | None]] = {"__global__": _BASH_CWD}
+
+
+def _bg_shells() -> dict[str, dict[str, Any]]:
+    return _BG_SHELLS_BY_SCOPE.setdefault(_scope(), {})
+
+
+def _bg_counter() -> list[int]:
+    return _BG_COUNTER_BY_SCOPE.setdefault(_scope(), [0])
+
+
+def _bash_cwd() -> dict[str, str | None]:
+    return _BASH_CWD_BY_SCOPE.setdefault(_scope(), {"cwd": None})
+
+
 _CWD_MARKER = "__MANTIS_CWD_9f3a__:"
 
 
@@ -304,8 +401,9 @@ def _start_background(command: str, env: dict[str, str], *, cwd: str | None = No
     import subprocess  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
-    _BG_COUNTER[0] += 1
-    bid = f"bg_{_BG_COUNTER[0]}"
+    counter = _bg_counter()
+    counter[0] += 1
+    bid = f"bg_{counter[0]}"
     fd, log_path = tempfile.mkstemp(prefix="mantis-bg-", suffix=".log")
     try:
         proc = subprocess.Popen(  # noqa: S603
@@ -315,11 +413,34 @@ def _start_background(command: str, env: dict[str, str], *, cwd: str | None = No
         )
     finally:
         os.close(fd)
-    _BG_SHELLS[bid] = {"proc": proc, "log": log_path, "cmd": command}
+    _bg_shells()[bid] = {"proc": proc, "log": log_path, "cmd": command}
     return (
         f"Started in background as {bid} (pid {proc.pid}): {command}\n"
         f"Read its output with bash_output(bash_id=\"{bid}\")."
     )
+
+
+def _unlink_bg_log(entry: dict[str, Any]) -> None:
+    """Best-effort removal of a background shell's temp log file so backgrounded
+    commands don't leave ``mantis-bg-*.log`` files behind for the process life."""
+    log = entry.get("log")
+    if log:
+        try:
+            os.unlink(log)
+        except OSError:
+            pass
+
+
+def _signal_pg(proc: Any, sig: int) -> None:
+    """Send ``sig`` to a detached background process's whole group, falling back
+    to signalling the process directly if the process-group lookup fails."""
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill() if sig == signal.SIGKILL else proc.terminate()
+        except OSError:
+            pass
 
 
 def terminate_background_shells() -> int:
@@ -327,23 +448,44 @@ def terminate_background_shells() -> int:
     ``bash(run_in_background=True)``) so they don't outlive the agent/session —
     a dev server or watcher shouldn't keep holding ports after ``mantis`` exits.
     Kills the whole process group (they're detached with ``start_new_session``),
-    so forked children die too. Returns the count terminated. Idempotent."""
+    so forked children die too. Escalates SIGTERM→SIGKILL for processes that
+    ignore the term signal, and reaps them so none linger as zombies. Returns
+    the count terminated. Idempotent."""
     import signal  # noqa: PLC0415
 
     n = 0
-    for entry in list(_BG_SHELLS.values()):
-        proc = entry.get("proc")
-        if proc is None or proc.poll() is not None:
-            continue  # never started, or already exited
+    killed: list[Any] = []
+    # Global cleanup: sweep EVERY scope, not just the current one, so no agent's
+    # detached shells survive process exit.
+    for shells in _BG_SHELLS_BY_SCOPE.values():
+        for entry in list(shells.values()):
+            proc = entry.get("proc")
+            if proc is not None and proc.poll() is None:  # started and still running
+                _signal_pg(proc, signal.SIGTERM)
+                killed.append(proc)
+                n += 1
+            log = entry.get("log")
+            if log:
+                try:
+                    os.unlink(log)
+                except OSError:
+                    pass
+    # Give the terminated groups a moment to exit, then force-kill and reap any
+    # that ignored SIGTERM so they can't survive as runaways holding ports/fds.
+    deadline = time.monotonic() + 2.0
+    while killed and time.monotonic() < deadline:
+        killed = [p for p in killed if p.poll() is None]
+        if not killed:
+            break
+        time.sleep(0.05)
+    for proc in killed:
+        _signal_pg(proc, signal.SIGKILL)
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.terminate()
-            except OSError:
-                pass
-        n += 1
-    _BG_SHELLS.clear()
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+    for shells in _BG_SHELLS_BY_SCOPE.values():
+        shells.clear()  # clear in place so each scope's dict identity is kept
     return n
 
 
@@ -360,23 +502,31 @@ async def bash_kill(bash_id: str) -> str:
     """
     import signal  # noqa: PLC0415
 
-    entry = _BG_SHELLS.get(bash_id)
+    shells = _bg_shells()
+    entry = shells.get(bash_id)
     if entry is None:
-        running = ", ".join(_BG_SHELLS) or "none"
+        running = ", ".join(shells) or "none"
         return f"no background shell {bash_id!r} (running: {running})"
     proc = entry["proc"]
     rc = proc.poll()
     if rc is not None:
-        _BG_SHELLS.pop(bash_id, None)
+        shells.pop(bash_id, None)
+        _unlink_bg_log(entry)
         return f"{bash_id} had already exited (code {rc})"
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
+    _signal_pg(proc, signal.SIGTERM)
+    # Give it a moment to exit on SIGTERM, then force-kill and reap so a process
+    # that traps/ignores SIGTERM can't survive holding its port/fds.
+    deadline = time.monotonic() + 1.0
+    while proc.poll() is None and time.monotonic() < deadline:
+        await anyio.sleep(0.05)
+    if proc.poll() is None:
+        _signal_pg(proc, signal.SIGKILL)
         try:
-            proc.terminate()
-        except OSError:
+            proc.wait(timeout=1)
+        except Exception:
             pass
-    _BG_SHELLS.pop(bash_id, None)
+    shells.pop(bash_id, None)
+    _unlink_bg_log(entry)
     return f"terminated background shell {bash_id} ({entry['cmd']})"
 
 
@@ -415,9 +565,10 @@ async def monitor(
 
     entry = None
     if bash_id is not None:
-        entry = _BG_SHELLS.get(bash_id)
+        shells = _bg_shells()
+        entry = shells.get(bash_id)
         if entry is None:
-            running = ", ".join(_BG_SHELLS) or "none"
+            running = ", ".join(shells) or "none"
             return f"no background shell {bash_id!r} (running: {running})"
     if until_pattern and entry is None:
         return "monitor: until_pattern needs a bash_id to watch."
@@ -505,9 +656,10 @@ async def bash_output(bash_id: str) -> str:
     Args:
         bash_id: The id returned when the background command was started.
     """
-    entry = _BG_SHELLS.get(bash_id)
+    shells = _bg_shells()
+    entry = shells.get(bash_id)
     if entry is None:
-        running = ", ".join(_BG_SHELLS) or "none"
+        running = ", ".join(shells) or "none"
         return f"no background shell {bash_id!r} (running: {running})"
     proc = entry["proc"]
     rc = proc.poll()
@@ -628,6 +780,10 @@ async def notebook_edit(
     p = Path(path).expanduser()
     if not p.exists():
         raise _missing_file_error(path, p)
+    # No write-guard here: notebook_edit reads the whole notebook fresh below,
+    # mutates one cell, and writes it back — a read-modify-write like edit_file,
+    # so it never blind-clobbers unseen content. The guard is only for
+    # write_file (whole-file replace from caller-supplied content).
     try:
         nb = json.loads(await anyio.to_thread.run_sync(lambda: p.read_text("utf-8")))
     except (ValueError, OSError) as e:
@@ -664,6 +820,7 @@ async def notebook_edit(
 
     body = json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
     await anyio.to_thread.run_sync(lambda: p.write_text(body, encoding="utf-8"))
+    _record_seen(p)  # we just wrote it — subsequent writes/edits are fine
     return f"{summary} in {path} ({len(cells)} cells total)"
 
 
@@ -722,10 +879,13 @@ _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB — refuse absurd images
 
 @tool(is_read_only=True)
 async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) -> Any:
-    """Read a file. Text files come back with 1-based line numbers (``cat -n``
-    style); image files (png/jpg/gif/webp/bmp) come back as an image the model
-    can see (if the backend model is vision-capable). Other binaries are noted,
-    not dumped as mojibake.
+    """Read a file from the local filesystem. Use this instead of ``cat``,
+    ``head``, ``tail``, or ``sed``. Text files come back with 1-based line
+    numbers (``cat -n`` style): the number+tab prefix is not file content, so
+    never include it in edit_file old_string/new_string. For long files, use
+    ``offset`` and ``limit`` to read the relevant range. Images (png/jpg/gif/
+    webp/bmp) come back as an image the model can see (if the backend model is
+    vision-capable). Other binaries are noted, not dumped as mojibake.
 
     Args:
         path: File to read (absolute or relative to the working directory).
@@ -774,6 +934,10 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
     out = "\n".join(
         f"{str(start + i).rjust(width)}\t{ln[:_MAX_LINE]}" for i, ln in enumerate(chunk)
     )
+    # Cap total returned text: a file of many medium-length lines can otherwise
+    # return tens of MB (limit × _MAX_LINE) and blow up the context window even
+    # though each line is individually truncated.
+    out = _truncate(out, _MAX_READ_OUTPUT)
     if start - 1 + len(chunk) < len(lines):
         out += f"\n… [{len(lines) - (start - 1 + len(chunk))} more lines]"
     return out
@@ -782,7 +946,10 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
 @tool(is_read_only=False, is_concurrency_safe=False)
 async def write_file(path: str, content: str) -> str:
     """Write ``content`` to ``path``, creating parent directories and overwriting
-    any existing file.
+    any existing file. Prefer edit_file/multi_edit for targeted changes to
+    existing files; write_file replaces the ENTIRE file and is best for new files
+    or full rewrites. Existing non-empty files must have been read this session
+    to avoid clobbering unseen user work.
 
     Args:
         path: Destination file path.
@@ -818,8 +985,11 @@ async def write_file(path: str, content: str) -> str:
 async def edit_file(
     path: str, old_string: str, new_string: str, replace_all: bool = False
 ) -> str:
-    """Replace an exact substring in a file. ``old_string`` must appear exactly
-    once unless ``replace_all`` is true.
+    """Replace an exact substring in a file. Use this instead of shell ``sed`` or
+    ``awk``. Read the file first, then copy exact current text for ``old_string``
+    (without read_file's line-number prefix). ``old_string`` must appear exactly
+    once unless ``replace_all`` is true; use the smallest clearly-unique context
+    that identifies the target.
 
     Args:
         path: File to edit.
@@ -832,6 +1002,11 @@ async def edit_file(
     p = Path(path).expanduser()
     if not p.exists():
         raise _missing_file_error(path, p)
+    if old_string == "":
+        raise ValueError(
+            "old_string must be non-empty — an empty old_string matches everywhere "
+            "and would corrupt the file. Use write_file to replace the whole file."
+        )
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
     old_string = _reconcile_old_string(old_string, text)  # auto-fix copied line numbers
@@ -851,10 +1026,12 @@ async def edit_file(
 
 @tool(is_read_only=False, is_concurrency_safe=False)
 async def multi_edit(path: str, edits: list[dict]) -> str:
-    """Apply several edits to one file in a single atomic pass. Edits run in
-    order, each against the result of the previous one; if ANY edit fails to
-    match, NONE are written (all-or-nothing), so the file never ends up
-    half-edited.
+    """Apply several edits to one file in a single atomic pass. Prefer this when
+    making multiple replacements in the same file. Edits run in order, each
+    against the result of the previous one; if ANY edit fails to match, NONE are
+    written (all-or-nothing), so the file never ends up half-edited. As with
+    edit_file, copy exact current text from read_file without line-number
+    prefixes.
 
     Args:
         path: File to edit.
@@ -876,6 +1053,12 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
         if not isinstance(e, dict) or "old_string" not in e or "new_string" not in e:
             raise ValueError(f"edit #{i + 1} must have old_string and new_string")
         old, new = e["old_string"], e["new_string"]
+        if old == "":
+            raise ValueError(
+                f"edit #{i + 1}: old_string must be non-empty — an empty old_string "
+                f"matches everywhere and would corrupt the file. Use write_file to "
+                f"replace the whole file."
+            )
         replace_all = bool(e.get("replace_all", False))
         old = _reconcile_old_string(old, text)  # auto-fix copied line numbers
         count = text.count(old)
@@ -902,6 +1085,8 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
 @tool(is_read_only=True)
 async def ls(path: str = ".") -> str:
     """List directory entries (directories first, marked with a trailing ``/``).
+    Use this for directory inspection; use read_file to read files and glob to
+    find files by pattern across a tree.
 
     Args:
         path: Directory to list (default: current working directory).
@@ -935,10 +1120,12 @@ async def ls(path: str = ".") -> str:
     return out
 
 
-@tool(is_read_only=True)
+@tool(is_read_only=True, timeout_s=30.0)
 async def glob(pattern: str, path: str = ".") -> str:
     """Find files matching a glob pattern (e.g. ``**/*.py``), most-recently-modified
-    first.
+    first. Use this instead of shell ``find`` or broad ``ls`` when searching for
+    files. Dependency/VCS/build directories are skipped by default unless you
+    explicitly target them.
 
     Args:
         pattern: Glob pattern, relative to ``path``. Use ``**`` to recurse.
@@ -954,9 +1141,22 @@ async def glob(pattern: str, path: str = ".") -> str:
         part in _GLOB_IGNORE for part in base.parts
     )
 
-    def _glob() -> list[Path]:
+    def _glob() -> tuple[list[Path], bool]:
+        # Bound the walk: a `glob('**/*', '/')` on a huge tree / network mount
+        # would otherwise scan and stat every entry with no time limit (the tool
+        # timeout can't interrupt a running thread). Stop early on an entry or
+        # wall-clock cap and flag the result as truncated.
         out: list[Path] = []
+        scanned = 0
+        truncated = False
+        deadline = time.monotonic() + _GLOB_DEADLINE_S
         for m in base.glob(pattern):
+            scanned += 1
+            if scanned > _GLOB_MAX_SCAN or (
+                scanned % 1000 == 0 and time.monotonic() > deadline
+            ):
+                truncated = True
+                break
             if not m.is_file():
                 continue
             if not targeted:
@@ -967,16 +1167,22 @@ async def glob(pattern: str, path: str = ".") -> str:
                 if any(part in _GLOB_IGNORE for part in rel_parts):
                     continue
             out.append(m)
-        return out
+            if len(out) >= _GLOB_MAX_COLLECT:
+                truncated = True
+                break
+        return out, truncated
 
-    matches = await anyio.to_thread.run_sync(_glob)
+    matches, truncated = await anyio.to_thread.run_sync(_glob)
     if not matches:
         return f"no files matching {pattern!r} under {base}"
+    # Stat only the bounded set of collected matches (not the whole tree).
     matches.sort(key=lambda m: m.stat().st_mtime, reverse=True)
     shown = matches[:_MAX_MATCHES]
     out = "\n".join(str(m) for m in shown)
     if len(matches) > _MAX_MATCHES:
         out += f"\n… [{len(matches) - _MAX_MATCHES} more matches]"
+    if truncated:
+        out += "\n… [search stopped early — tree too large; narrow the pattern/path]"
     return out
 
 
@@ -993,8 +1199,11 @@ async def grep(
     multiline: bool = False,
     fixed_strings: bool = False,
 ) -> str:
-    """Search file contents for a regex pattern. Prefers ripgrep (``rg``) and
-    falls back to a Python walk.
+    """Search file contents for a regex pattern. Use this instead of shell
+    ``grep``/``rg`` for codebase search; results are capped and formatted for the
+    agent. Set ``fixed_strings=True`` when searching for literal code containing
+    regex metacharacters. Prefers ripgrep (``rg``) and falls back to a Python
+    walk.
 
     Args:
         pattern: Regular expression to search for.
@@ -1066,6 +1275,39 @@ def _head(text: str, limit: int) -> str:
     return "\n".join(lines[:limit]) + f"\n… [{dropped} more lines truncated]"
 
 
+# Bounds for the rg-less Python fallback. A worker thread running a C-level
+# ``re`` call can't be interrupted by the async tool timeout, so cap the input
+# fed to the regex (per line / per file) and stop on a wall-clock deadline —
+# otherwise a catastrophic-backtracking pattern pegs the thread pool long after
+# the tool has reported a timeout.
+_PY_GREP_DEADLINE_S = 10.0
+_PY_GREP_MAX_FILE_BYTES = 5_000_000
+
+# A single ``re.search`` on a pathological pattern (nested unbounded
+# quantifiers, e.g. ``(a+)+``) can back off exponentially and never return —
+# and because it's an uninterruptible C call in a worker thread, neither the
+# tool timeout nor the per-file/per-line deadline above can cancel it once it
+# starts. Since we can't kill it, we refuse it up front. Detects an
+# unbounded-quantified group whose body is itself unbounded-quantified —
+# the classic ReDoS shape — for both capturing and ``(?:…)`` groups.
+_UNBOUNDED_QUANT = r"(?:[*+]|\{\d+,\})"
+_REDOS_RE = re.compile(
+    rf"\([^()]*{_UNBOUNDED_QUANT}[^()]*\)\??{_UNBOUNDED_QUANT}"
+)
+
+
+def _reject_catastrophic_regex(pattern: str) -> None:
+    """Raise ``ValueError`` if ``pattern`` has a nested-unbounded-quantifier
+    construct that can trigger catastrophic backtracking. Fail-closed: the
+    Python fallback can't cancel an in-flight match, so we never run it."""
+    if _REDOS_RE.search(pattern):
+        raise ValueError(
+            "pattern rejected: nested unbounded quantifiers (e.g. '(a+)+') can "
+            "cause catastrophic backtracking that the search fallback cannot "
+            "cancel. Rewrite the regex, pass fixed_strings=true for a literal "
+            "match, or install ripgrep (rg)."
+        )
+
 # rg --type name → file-extension globs, for the Python fallback.
 _TYPE_EXTS = {
     "py": (".py", ".pyi"), "python": (".py", ".pyi"),
@@ -1093,6 +1335,10 @@ def _py_grep(
 ) -> str:
     import re
 
+    if not fixed_strings:
+        # fixed_strings escapes the whole pattern, so it can't backtrack; only
+        # screen real regexes.
+        _reject_catastrophic_regex(pattern)
     flags = re.IGNORECASE if ignore_case else 0
     if multiline:
         flags |= re.DOTALL
@@ -1108,13 +1354,21 @@ def _py_grep(
         files = [f for f in files if f.suffix in exts]
 
     out: list[str] = []
+    deadline = time.monotonic() + _PY_GREP_DEADLINE_S
     for f in files:
         if ".git" + os.sep in str(f):
             continue
+        if time.monotonic() > deadline:
+            out.append("… [search stopped early — took too long; install ripgrep (rg)]")
+            break
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # Cap the text handed to the regex so a huge file / long line can't drive
+        # unbounded (or exponential) backtracking on a single uninterruptible call.
+        if len(text) > _PY_GREP_MAX_FILE_BYTES:
+            text = text[:_PY_GREP_MAX_FILE_BYTES]
         if multiline:
             if rx.search(text):
                 if mode == "files_with_matches":
@@ -1127,7 +1381,12 @@ def _py_grep(
                 break
             continue
         lines = text.splitlines()
-        matched = [n for n, ln in enumerate(lines) if rx.search(ln)]
+        matched = []
+        for n, ln in enumerate(lines):
+            if n % 1000 == 0 and time.monotonic() > deadline:
+                break
+            if rx.search(ln[:_MAX_LINE]):
+                matched.append(n)
         if not matched:
             continue
         if mode == "files_with_matches":

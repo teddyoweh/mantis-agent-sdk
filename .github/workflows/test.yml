@@ -35,7 +35,7 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint
         run: |
-          ruff check mantis_agent tests || true
+          ruff check mantis_agent tests
       - name: Test
         env:
           MANTIS_AGENT_MOCK: "1"

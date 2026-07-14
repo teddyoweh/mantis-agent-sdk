@@ -113,7 +113,7 @@ async def test_client_without_handler_does_not_advertise_elicitation() -> None:
 
     config = create_sdk_server("noop", tools=[_make_echo_tool()])
 
-    async with MCPClient(config) as client:
+    async with MCPClient(config):
         # The server captured what we advertised. ``elicitation`` must be
         # absent so a polite server won't try to send us prompts we can't
         # answer.

@@ -32,7 +32,8 @@ import logging
 import os
 import re
 import time
-from collections.abc import AsyncIterator, Iterable
+import uuid as _uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,7 +46,7 @@ from .capabilities import (
     hosted_profile_from_url,
     lookup_model,
 )
-from .errors import BudgetExceededError, StreamProtocolError
+from .errors import StreamProtocolError
 from .events import (
     ContentBlockDelta,
     ContentBlockStart,
@@ -65,12 +66,13 @@ from .permissions import (
     Deny,
     PermissionContext,
     check_permission,
+    recheck_mutated_input,
 )
 from .compact import Compactor, SimpleCompactor
 from .providers.base import Provider, detect_provider, resolve
 from .streaming.executor import StreamingToolExecutor
 from .tools import ToolRegistry
-from .tracing import Span, Tracer, maybe_span, maybe_start_span
+from .tracing import Span, Tracer, maybe_start_span
 from .types import (
     AssistantMessage,
     ContentBlock,
@@ -88,6 +90,18 @@ _log = logging.getLogger("mantis_agent.agent")
 _JSON_DECODER = msgspec.json.Decoder()
 _DEFAULT_MAX_TOKENS = 1024  # the conservative field default; a caller who left this
 #                                gets bumped to the model's output budget in __post_init__
+# Marker stuffed into a tool_use block's input when the model's tool-call
+# arguments were not parseable JSON (even leniently). The run loop detects it
+# and returns an is_error tool_result asking the model to re-emit valid JSON,
+# instead of crashing the whole run or executing the tool with garbage input.
+_MALFORMED_TOOL_JSON_KEY = "__mantis_malformed_tool_json__"
+
+# Default sampling temperature ceiling when the model has tools registered and
+# the caller didn't pin one. Weak OSS models emit far more malformed/partial
+# tool-call JSON at the table's default 0.7 than near-greedy; clamping the
+# default down makes structured tool calls markedly more reliable without
+# overriding an explicit user temperature.
+_TOOL_TEMPERATURE_CAP = 0.2
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +205,67 @@ def _is_context_overflow(err: BaseException) -> bool:
     return any(p in low for p in _OVERFLOW_MARKERS)
 
 
+def _missing_tool_result(call: ToolUseBlock) -> ToolResultBlock:
+    return ToolResultBlock(
+        tool_use_id=call.id,
+        content=f"tool result missing for {call.name}; previous turn was interrupted",
+        is_error=True,
+    )
+
+
+def _repair_tool_call_history(messages: list[Message]) -> list[Message]:
+    repaired: list[Message] = []
+    pending: list[ToolUseBlock] = []
+    for msg in messages:
+        if pending:
+            if isinstance(msg, UserMessage) and isinstance(msg.content, list):
+                result_ids = {
+                    b.tool_use_id for b in msg.content if isinstance(b, ToolResultBlock)
+                }
+                missing = [call for call in pending if call.id not in result_ids]
+                pending = []
+                if missing:
+                    # Keep EVERY real block in this message (text + valid
+                    # tool_results) and synthesize an error result ONLY for the
+                    # genuinely orphaned tool_uses — appended into the SAME
+                    # message so all results directly follow the assistant's
+                    # tool_use call. Emitting the synthetic results as a separate
+                    # preceding message (the old behavior) stranded the real
+                    # results in a message that no longer immediately followed the
+                    # call, which providers reject — losing valid results and
+                    # fabricating failures.
+                    repaired.append(msgspec.structs.replace(
+                        msg,
+                        content=[
+                            *msg.content,
+                            *(_missing_tool_result(call) for call in missing),
+                        ],
+                    ))
+                else:
+                    repaired.append(msg)
+                continue
+            repaired.append(UserMessage(
+                content=[_missing_tool_result(call) for call in pending],
+                isMeta=True,
+            ))
+            pending = []
+        if isinstance(msg, UserMessage) and isinstance(msg.content, list):
+            cleaned = [b for b in msg.content if not isinstance(b, ToolResultBlock)]
+            if len(cleaned) != len(msg.content):
+                if cleaned:
+                    repaired.append(UserMessage(content=cleaned, isMeta=msg.isMeta))
+                continue
+        repaired.append(msg)
+        if isinstance(msg, AssistantMessage):
+            pending = [b for b in msg.content if isinstance(b, ToolUseBlock)]
+    if pending:
+        repaired.append(UserMessage(
+            content=[_missing_tool_result(call) for call in pending],
+            isMeta=True,
+        ))
+    return repaired
+
+
 def _is_transient(err: BaseException) -> bool:
     """Whether a provider failure is worth retrying: rate limits, 5xx / overload,
     and transport blips (connection reset, read timeout). Auth failures and
@@ -202,6 +277,19 @@ def _is_transient(err: BaseException) -> bool:
         return False
     if isinstance(err, RateLimitError):
         return True
+    # Malformed / incomplete stream — a cold-start / scaledown / proxy blip on
+    # serverless GPU backends: a 2xx body closed before any event ("without
+    # message_start"), an empty turn ("no content blocks"), or one cut off
+    # mid-block ("truncated response"). No complete output was produced, so a
+    # retry is safe and usually succeeds once the container is warm.
+    if isinstance(err, StreamProtocolError):
+        low = str(err)
+        if (
+            "without message_start" in low
+            or "no content blocks" in low
+            or "truncated response" in low
+        ):
+            return True
     if isinstance(err, ProviderError):
         return err.status_code in _TRANSIENT_STATUS
     try:
@@ -275,6 +363,99 @@ def _final_turn_reminder(reason: str = "turn limit") -> "UserMessage":
     )
 
 
+# ---------------------------------------------------------------------------
+# Persistence / completion-contract knobs
+# ---------------------------------------------------------------------------
+#
+# Mirrors Claude Code's gated-stop design (checkTokenBudget / queryLoop): a
+# no-tool-use turn is NOT automatically the end of the run. When there is a
+# real unfinished-work signal (open todos or an unmet spend target) and
+# progress isn't diminishing, persist mode nudges the model to keep going —
+# under a hard cap so "persistence on by default" can never become "never
+# stop". The gate lives in ``Agent._should_continue_at_natural_stop``.
+
+# Hard ceiling on how many times one run may re-drive a natural stop.
+_MAX_CONTINUATIONS = 8
+# ``>=`` this many consecutive near-zero-progress continuations => allow stop.
+_DIMINISHING_RETURNS_STREAK = 2
+# All-error tool turns in a row before persist mode forces a REPLAN.
+_REPLAN_AT_ERROR_STREAK = 3
+# How many times a persist-mode run may extend past ``max_steps`` when budget
+# runway remains and work is unfinished.
+_MAX_STEP_EXTENSIONS = 2
+
+# effort -> universal thinking config. "medium" maps to None (provider
+# default) so a default agent's requests are byte-for-byte unchanged; only an
+# explicit non-medium effort, an explicit ``Agent.thinking``, a keyword
+# escalation, or a failure streak sends a thinking block.
+_EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "max")
+_EFFORT_TO_THINKING: dict[str, dict[str, Any] | None] = {
+    "low": {"type": "enabled", "budget_tokens": 2048},
+    "medium": None,
+    "high": {"type": "enabled", "budget_tokens": 12288},
+    "max": {"type": "enabled", "budget_tokens": 24576},
+}
+_ULTRATHINK_KEYWORDS = ("ultrathink",)
+_THINK_HARD_KEYWORDS = (
+    "think harder", "think hard", "think more", "think deeply",
+    "think step by step", "think longer",
+)
+
+
+def _persist_nudge() -> "UserMessage":
+    """Meta nudge appended when persist mode continues a natural stop: keep the
+    model working instead of prematurely summarizing, while making the stop
+    condition explicit so a genuinely-finished task still ends."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    return UserMessage(
+        content=wrap_system_reminder(
+            "Keep working — do not summarize. There is still open work (unchecked "
+            "todos or an unmet target). Take the next concrete action now. If the "
+            "task is truly complete, say so explicitly and stop."
+        ),
+        isMeta=True,
+    )
+
+
+def _replan_nudge() -> "UserMessage":
+    """Meta message injected after a tool-error streak (persist mode): step back
+    and rethink rather than repeating the failing approach. Mirrors the spirit
+    of ``tui.goal_replan_prompt`` without needing a goal string."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    return UserMessage(
+        content=wrap_system_reminder(
+            "[replan] Repeated tool failures. STOP and step back: what is actually "
+            "failing, and why? Discard the stalled plan and re-decompose the task "
+            "into concrete, independently checkable steps, then try a DIFFERENT "
+            "method — do not repeat the calls that just failed."
+        ),
+        isMeta=True,
+    )
+
+
+def _remaining_work_summary(todos: list[dict[str, Any]] | None) -> "UserMessage":
+    """A structured "what's left" note emitted when a persist run ends with the
+    step budget exhausted but work still open, so the caller/next session can
+    pick up cleanly instead of getting a silent max-steps cutoff."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    open_items = [
+        t for t in (todos or []) if str(t.get("status", "pending")) != "completed"
+    ]
+    lines = [
+        "Step budget exhausted before the task was complete. Remaining open work:",
+    ]
+    if open_items:
+        for t in open_items:
+            lines.append(f"- [ ] {t.get('content', '')}")
+    else:
+        lines.append("- (no open todos, but a spend target was still unmet)")
+    lines.append("Resume from here to finish it.")
+    return UserMessage(content=wrap_system_reminder("\n".join(lines)), isMeta=True)
+
+
 _SHELL_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console", "shellsession"}
 _FENCE_RE = re.compile(r"```([a-zA-Z]*)[ \t]*\n(.*?)```", re.DOTALL)
 # Llama-family emit ``<function=NAME>{json args}</function>`` (or with a colon /
@@ -335,7 +516,17 @@ def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseB
 
     # 2. Shell code fences -> bash(command=...). Only explicit shell langs, so we
     #    never mistake an output dump or a python snippet for a command to run.
-    if registry.get("bash") is not None:
+    #    AND only when the message is essentially *just* the fence(s): a model
+    #    answering in prose with an illustrative ```bash``` snippet is NOT asking
+    #    to run it, so salvaging that would execute a command it merely described.
+    #    Two fail-closed gates: (a) little surrounding prose overall, and
+    #    (b) NO prose *before* the first fence — a lead-in like "To fix this,
+    #    run:" is a description of the command, not a request to execute it, so
+    #    a genuine text-channel tool call must open with the fence itself.
+    non_fence = _FENCE_RE.sub("", s).strip()
+    first = _FENCE_RE.search(s)
+    leading = s[: first.start()].strip() if first is not None else s.strip()
+    if registry.get("bash") is not None and len(non_fence) <= 40 and not leading:
         for m in _FENCE_RE.finditer(s):
             lang = m.group(1).lower()
             body = m.group(2).strip()
@@ -393,6 +584,28 @@ class Agent:
     # retry, instead of dead-ending the task on a spurious over-refusal. A
     # genuinely harmful request just gets refused again and stops. 0/False off.
     recover_refusals: bool = True
+    # Persistence — the completion contract. When True (default), a no-tool-use
+    # turn is not automatically the end of the run: if there is a real
+    # unfinished-work signal (open todos or an unmet ``Budget`` spend target)
+    # and progress isn't diminishing, the loop nudges the model to keep going,
+    # under ``_MAX_CONTINUATIONS``. It ALWAYS stops on a final answer with no
+    # open work, on diminishing returns, at the hard cap, or on budget/step
+    # ceilings — so a plain ``query()`` with no todos and no target behaves
+    # exactly as it did before persistence existed. Set False to restore the
+    # strict "stop at the first natural stop" behavior.
+    persist: bool = True
+    # Reasoning effort — "low"|"medium"|"high"|"max". Derives the adaptive
+    # thinking config passed to providers each turn (see ``thinking``). "medium"
+    # is the neutral default: it maps to the provider default (no thinking
+    # block), so a default agent's requests are unchanged.
+    effort: str = "medium"
+    # Explicit thinking config override — a dict
+    # ``{"type": "adaptive"|"enabled"|"disabled", "budget_tokens": int|None}``.
+    # ``None`` (default) derives the config from ``effort`` + per-turn
+    # escalation (an "ultrathink"/"think harder" keyword in the user's message,
+    # or a tool-error / repeated-call streak). When set, it's the base the
+    # escalation ladder builds on.
+    thinking: dict[str, Any] | None = None
     # Retry a model call that fails with a TRANSIENT error (rate limit, 5xx,
     # connection blip) BEFORE any output, with exponential backoff, this many
     # times before falling back / raising. 0 disables. Non-transient errors
@@ -477,6 +690,10 @@ class Agent:
     _env_context: str | None = field(default=None, init=False)
     # Set once the fallback model has been activated, so we don't loop.
     _fallback_used: bool = field(default=False, init=False)
+    # Original model/capability, captured the first time we fall back so a later
+    # run can restore them — fallback is scoped per-run, not a permanent downgrade.
+    _primary_model: str | None = field(default=None, init=False)
+    _primary_model_capability: ModelCapability | None = field(default=None, init=False)
     _refusal_retried: bool = field(default=False, init=False)
     _budget_wrapup_done: bool = field(default=False, init=False)
     # Absolute paths of memory files already surfaced this session, so recall
@@ -484,6 +701,10 @@ class Agent:
     _surfaced: set[str] = field(default_factory=set, init=False)
     # Path-scoped conditional rules already injected this session (dedup by path).
     _rules_surfaced: set[str] = field(default_factory=set, init=False)
+    # Auto-loaded skill bodies already injected this session (dedup by skill name).
+    _skills_surfaced: set[str] = field(default_factory=set, init=False)
+    # Explicit Claude-SDK-style skills requested via MantisAgentOptions(skills=...).
+    skills: list[str] | str | None = None
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
@@ -496,6 +717,26 @@ class Agent:
     # Per-run count of identical (name, input) tool calls — drives the
     # ``max_repeated_tool_calls`` anti-runaway guard. Reset at run start.
     _run_call_sigs: dict = field(default_factory=dict, init=False)
+    # Persistence / escalation counters — all reset at run start.
+    # How many times persist mode has re-driven a natural stop this run.
+    _continuation_count: int = field(default=0, init=False)
+    # Consecutive near-zero-progress continuations (diminishing-returns guard).
+    _near_zero_streak: int = field(default=0, init=False)
+    # Progress marker (completed-todo count) at the last natural-stop check.
+    _last_progress: int = field(default=0, init=False)
+    # Consecutive all-error tool turns — drives thinking escalation + replan.
+    _tool_error_streak: int = field(default=0, init=False)
+    # Set once the repeated-call guard trips this run — escalates thinking.
+    _repeat_tripped: bool = field(default=False, init=False)
+    # How many times the step budget was extended in persist mode this run.
+    _step_extensions: int = field(default=0, init=False)
+    # Unique per-agent key for isolating process-global tool state (bash cwd,
+    # background shells, read-before-write guard) so a subagent's ``cd`` /
+    # shells / reads never bleed into a concurrently-running parent or sibling.
+    # See ``builtin_tools.fs.TOOL_SCOPE``. Set on the ContextVar for the run.
+    _tool_scope: str = field(
+        default_factory=lambda: f"agent-{_uuid.uuid4().hex}", init=False
+    )
     # Optional sink for raw stream events during ``run_iter`` (token deltas,
     # block start/stop) so a UI can render text live. ``None`` = no overhead.
     on_event: Any = field(default=None, init=False)
@@ -520,12 +761,17 @@ class Agent:
         # chars, ~100 lines) truncates a large file write/edit mid-output; when
         # the caller leaves the conservative 1024 default and the model can do
         # more, use its ``max_output_tokens`` (capped at 8192 to stay sane). An
-        # explicitly-higher ``max_tokens`` is always respected.
+        # explicitly-higher ``max_tokens`` is always respected, but never let the
+        # completion reservation eat half+ of a small context window.
         cap = self.model_capability
-        if self.max_tokens == _DEFAULT_MAX_TOKENS and cap is not None:
+        default_max_tokens = self.max_tokens == _DEFAULT_MAX_TOKENS
+        if cap is not None:
             model_max = getattr(cap, "max_output_tokens", 0) or 0
-            if model_max > 0:
+            ctx_window = getattr(cap, "context_window", 0) or 0
+            if default_max_tokens and model_max > 0:
                 self.max_tokens = min(model_max, 8192)
+            if default_max_tokens and ctx_window > 0:
+                self.max_tokens = min(self.max_tokens, max(512, ctx_window // 4))
 
         # Resolve backend capability if not given explicitly.
         if self.backend_capability is None and self.backend:
@@ -538,9 +784,14 @@ class Agent:
             ProviderCls = resolve(backend_kind)
             self.provider = self._build_provider(ProviderCls, backend_kind)
 
-        # Propagate temperature from capability if user didn't set one.
+        # Propagate temperature from capability if user didn't set one. When
+        # tools are registered, clamp the default down for tool-call reliability
+        # (see ``_TOOL_TEMPERATURE_CAP``) — never overrides an explicit value.
         if self.temperature is None:
-            self.temperature = self.model_capability.recommended_temperature
+            rec = self.model_capability.recommended_temperature
+            if self.tools:
+                rec = min(rec, _TOOL_TEMPERATURE_CAP)
+            self.temperature = rec
 
         # Normalize ``response_format`` early so a malformed value fails at
         # ``Agent(...)`` time, not on the first ``run()`` call. We don't
@@ -647,6 +898,135 @@ class Agent:
             return False
         return getattr(first, "isMeta", False) is True
 
+    # ------------------------------------------------------------------
+    # Persistence / completion contract
+    # ------------------------------------------------------------------
+
+    def _progress_value(self) -> int:
+        """The observable progress signal the diminishing-returns guard tracks:
+        the number of completed todos. A run with no todos has a constant 0,
+        which is exactly why a no-todo natural stop is never continued (the
+        unfinished-work gate returns False first)."""
+        return sum(
+            1 for t in (self.todos or [])
+            if str(t.get("status", "pending")) == "completed"
+        )
+
+    def _has_unfinished_work(self) -> bool:
+        """A REAL unfinished-work signal: an open (non-completed) todo, or a
+        spend FLOOR (``Budget.target_*``) the run hasn't reached yet. This is
+        the hard precondition for continuing a natural stop — no signal means
+        the model's final answer is the end, exactly as before persistence."""
+        if self.todos and any(
+            str(t.get("status", "pending")) != "completed" for t in self.todos
+        ):
+            return True
+        if self._budget_tracker is not None and self._budget_tracker.target_unmet():
+            return True
+        return False
+
+    def _has_runway(self) -> bool:
+        """Whether any configured budget ceiling still has room. No budget =>
+        unbounded runway. Exhausted (runway 0.0) => brake."""
+        if self._budget_tracker is None:
+            return True
+        r = self._budget_tracker.runway()
+        return r is None or r > 0.0
+
+    def _should_continue_at_natural_stop(self) -> bool:
+        """The gate at the heart of the completion contract. Returns True only
+        when persist mode should re-drive a no-tool-use turn instead of ending.
+
+        CONTINUES iff ALL hold: persist is on; there is a real unfinished-work
+        signal; the hard continuation cap isn't hit; budget runway remains; and
+        progress is not diminishing. Otherwise STOPS. Mutates the
+        diminishing-returns streak, so call it exactly once per natural stop.
+        """
+        if not self.persist:
+            return False
+        if not self._has_unfinished_work():
+            return False
+        if self._continuation_count >= _MAX_CONTINUATIONS:
+            return False
+        if not self._has_runway():
+            return False
+        # Diminishing returns: did completed-todo count advance since the last
+        # natural stop? Two consecutive near-zero-progress stalls => give up.
+        prog = self._progress_value()
+        if prog > self._last_progress:
+            self._near_zero_streak = 0
+        else:
+            self._near_zero_streak += 1
+        self._last_progress = prog
+        if self._near_zero_streak >= _DIMINISHING_RETURNS_STREAK:
+            return False
+        return True
+
+    def _escalate_effort(self, effort: str, steps: int) -> str:
+        """Bump ``effort`` up the ladder by ``steps``, clamped to the top."""
+        try:
+            i = _EFFORT_LADDER.index(effort)
+        except ValueError:
+            i = _EFFORT_LADDER.index("medium")
+        return _EFFORT_LADDER[min(len(_EFFORT_LADDER) - 1, i + max(0, steps))]
+
+    def _thinking_config_for_turn(
+        self, messages: list[Message]
+    ) -> dict[str, Any] | None:
+        """Resolve the adaptive thinking config for THIS turn from ``effort`` +
+        per-turn escalation. Escalates on an "ultrathink"/"think harder" keyword
+        in the latest user message, and on a tool-error / repeated-call streak.
+        Returns a ``{"type", "budget_tokens"}`` dict, or ``None`` for the
+        provider default (which is what a default medium-effort agent yields —
+        keeping its requests unchanged)."""
+        base = (self.effort or "medium").lower()
+        if base not in _EFFORT_LADDER:
+            base = "medium"
+
+        text = self._latest_user_text(messages).lower()
+        escalated = base
+        if any(k in text for k in _ULTRATHINK_KEYWORDS):
+            escalated = "max"
+        elif any(k in text for k in _THINK_HARD_KEYWORDS):
+            # At least "high" for an explicit "think harder".
+            if _EFFORT_LADDER.index(escalated) < _EFFORT_LADDER.index("high"):
+                escalated = "high"
+
+        bump = (1 if self._tool_error_streak >= 2 else 0) + (
+            1 if self._repeat_tripped else 0
+        )
+        if bump:
+            escalated = self._escalate_effort(escalated, bump)
+
+        # An explicit ``thinking`` override is the base config when nothing
+        # escalated us past the configured effort; otherwise the escalated
+        # effort's mapping wins so failures actually deepen reasoning.
+        if self.thinking is not None and escalated == base:
+            return dict(self.thinking)
+        cfg = _EFFORT_TO_THINKING.get(escalated)
+        if cfg is None and self.thinking is not None:
+            return dict(self.thinking)
+        return dict(cfg) if cfg is not None else None
+
+    def _agent_cwd(self) -> str:
+        """The agent's effective working directory — the directory its bash tool
+        is currently in (tracked per-agent under ``self._tool_scope`` as it
+        ``cd``s around), falling back to the process cwd before any ``cd``.
+
+        Path-scoped features (conditional rule discovery) must resolve against
+        where THIS agent is working, not ``os.getcwd()``: a subagent — or a
+        reused session that already ``cd``'d elsewhere — has an agent cwd that
+        diverges from the process cwd, so using the process cwd matches/misses
+        rules against the wrong tree."""
+        try:
+            from .builtin_tools.fs import _BASH_CWD_BY_SCOPE  # noqa: PLC0415
+            tracked = _BASH_CWD_BY_SCOPE.get(self._tool_scope, {}).get("cwd")
+            if tracked:
+                return tracked
+        except Exception:  # noqa: BLE001 — never let cwd resolution break a turn
+            pass
+        return os.getcwd()
+
     def _build_user_context(self) -> dict[str, str]:
         """Resolve the user-context dict that gets wrapped in a
         ``<system-reminder>`` and prepended to the conversation.
@@ -709,9 +1089,21 @@ class Agent:
             # sees what's available and calls load_skill for the body on demand.
             try:
                 from .skills import discover_skills, render_skill_catalog
-                catalog = render_skill_catalog(discover_skills()).strip()
+                all_skills = discover_skills()
+                if self.skills == "all":
+                    catalog_skills = all_skills
+                elif isinstance(self.skills, list):
+                    wanted = set(self.skills)
+                    catalog_skills = [s for s in all_skills if s.name in wanted]
+                else:
+                    catalog_skills = all_skills
+                catalog = render_skill_catalog(catalog_skills).strip()
                 if catalog:
                     ctx["skills"] = catalog
+                    registry: ToolRegistry = self.tools  # type: ignore[assignment]
+                    if registry.get("load_skill") is None:
+                        from .builtin_tools.skill_tool import load_skill
+                        registry.add(load_skill)
             except Exception:  # noqa: BLE001
                 _log.debug("skills catalog skipped", exc_info=True)
 
@@ -872,7 +1264,12 @@ class Agent:
         # consumers can see what context the agent saw (and skip it via
         # the ``isMeta`` flag if they're rendering to a UI).
         if not self._has_user_context_message(messages):
-            user_ctx = self._build_user_context()
+            # _build_user_context shells out to git and scans disk (memory,
+            # skills, rules); run it in a worker thread so the first turn doesn't
+            # block the shared event loop (freezing background jobs / sibling
+            # subagents) for the up-to-several-seconds it can take.
+            import anyio  # noqa: PLC0415
+            user_ctx = await anyio.to_thread.run_sync(self._build_user_context)
             if user_ctx:
                 from .system_reminder import prepend_user_context  # local import
                 prepend_user_context(messages, user_ctx, in_place=True)
@@ -884,8 +1281,8 @@ class Agent:
         # user message (query-specific, so it rides the current turn rather than
         # the cached head), deduped across the session. Appended after the user
         # message so it's the freshest context the model sees before replying.
+        query = self._latest_user_text(messages)
         if self.include_recall and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
-            query = self._latest_user_text(messages)
             if query:
                 try:
                     from .memory_recall import recall_block
@@ -900,6 +1297,35 @@ class Agent:
                 except Exception:  # noqa: BLE001 — recall is best-effort
                     _log.debug("memory recall skipped", exc_info=True)
 
+        # Skills auto-relevance — the catalog stays in the stable context head,
+        # but matching skill bodies ride the current turn like Claude Code's
+        # progressive disclosure. Explicit Claude-SDK-style skills preload their
+        # bodies here; "all" loads every discovered skill. Dedup by skill name
+        # across the session so a long task does not keep re-paying.
+        if query and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+            try:
+                from .skills import discover_skills, match_skills, render_relevant_skills
+
+                all_skills = discover_skills()
+                if self.skills == "all":
+                    selected = all_skills
+                elif isinstance(self.skills, list):
+                    wanted = set(self.skills)
+                    selected = [s for s in all_skills if s.name in wanted]
+                else:
+                    selected = match_skills(query, all_skills)
+                matches = [s for s in selected if s.name not in self._skills_surfaced]
+                if matches:
+                    self._skills_surfaced.update(s.name for s in matches)
+                    skill_msg = UserMessage(
+                        content=render_relevant_skills(matches),
+                        isMeta=True,
+                    )
+                    messages.append(skill_msg)
+                    yield skill_msg
+            except Exception:  # noqa: BLE001 — broken SKILL.md should not break turns
+                _log.debug("skill auto-relevance skipped", exc_info=True)
+
         # Path-scoped conditional rules — inject a ``.mantis/rules/*.md`` rule
         # only when a file matching its globs is active in the conversation (an
         # @-mention or a file just read/edited). Deduped by path across the
@@ -912,7 +1338,7 @@ class Agent:
                     render_rules_reminder,
                     select_matching_rules,
                 )
-                all_rules = discover_conditional_rules(os.getcwd())
+                all_rules = discover_conditional_rules(self._agent_cwd())
                 if all_rules:
                     active = active_files_from_messages(messages)
                     fresh = [
@@ -974,10 +1400,11 @@ class Agent:
             "turns": 0,
         }
         self._run_call_sigs = {}  # reset anti-runaway counters for this run
-        run_error: BaseException | None = None
 
         def _close_run_span(error: BaseException | None = None) -> None:
-            if run_span is None or self.tracer is None:
+            # Idempotent: end_ns is set once ended, so a belated call from the
+            # finally-guard after a normal-exit close is a no-op (no double-append).
+            if run_span is None or self.tracer is None or run_span.end_ns is not None:
                 return
             run_span.set_attributes({
                 "agent.turns": run_totals["turns"],
@@ -997,6 +1424,20 @@ class Agent:
             if callable(close_fn):
                 close_fn(run_span)
 
+        def _close_span(span: Span | None, error: BaseException | None = None) -> None:
+            """End + file a turn/llm span into the finished list. Idempotent —
+            skips a span that was already closed on a normal path."""
+            if span is None or self.tracer is None or span.end_ns is not None:
+                return
+            if error is not None:
+                span.end(status="error", exception=error)
+            else:
+                span.end()
+            mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+            close_fn = getattr(mirror, "_close", None)
+            if callable(close_fn):
+                close_fn(span)
+
         # Auto-compaction bookkeeping: the most recent turn's reported usage
         # (drives should_compact) and a per-run cap on how many times we
         # summarize — the circuit breaker against a summary that itself stays
@@ -1006,384 +1447,514 @@ class Agent:
         _MAX_COMPACTIONS = 5
         self._refusal_retried = False
         self._budget_wrapup_done = False
+        # Reset persistence / escalation counters for this run.
+        self._continuation_count = 0
+        self._near_zero_streak = 0
+        self._last_progress = self._progress_value()
+        self._tool_error_streak = 0
+        self._repeat_tripped = False
+        self._step_extensions = 0
+        # Fallback is per-run: if a prior run fell back to the fallback model,
+        # restore the primary here so a recovered backend is used again (and a
+        # fresh fallback is available), instead of staying permanently downgraded.
+        if self._fallback_used and self._primary_model is not None:
+            self.model = self._primary_model
+            self.model_capability = self._primary_model_capability
+            self._env_context = None  # env block referenced the fallback model
+        self._fallback_used = False
 
-        for step in range(self.max_steps):
-            # If the cancellation signal already fired BEFORE this turn
-            # starts, bail without burning another model round-trip. The
-            # signal could be set externally (``Agent.cancel()``), or by
-            # the prior turn's tool cancellation cascade. Either way the
-            # contract is: don't ask the model again after cancel.
-            if self.cancellation_signal.is_set():
-                await self._dispatcher.dispatch(
-                    "Stop",
-                    HookContext(event="Stop", messages_snapshot=messages),
-                )
-                _close_run_span()
-                return
+        # Isolate this run's process-global tool state (bash cwd, background
+        # shells, read-guard) under a per-agent scope so concurrent agents /
+        # subagents don't share it. Reset in the finally to restore the parent's
+        # scope when a subagent's run (in the same task) returns.
+        from .builtin_tools.fs import TOOL_SCOPE  # noqa: PLC0415
+        _scope_token = TOOL_SCOPE.set(self._tool_scope)
 
-            # Final-turn wrap-up: on the last allowed step, tell the model to
-            # summarize instead of starting work it can't finish — so a run that
-            # hits the turn limit ends with a coherent answer, not a dangling
-            # tool result. Soft nudge (isMeta), injected once.
-            if self.max_steps > 1 and step == self.max_steps - 1:
-                final_msg = _final_turn_reminder()
-                messages.append(final_msg)
-                yield final_msg
-
-            # Budget wrap-up: once we're within ~85% of a configured USD/token/turn
-            # budget, nudge the model to summarize BEFORE the hard cap raises
-            # BudgetExceededError — so a budget-limited run ends coherently too.
-            elif (
-                not self._budget_wrapup_done
-                and self._budget_tracker is not None
-                and self._budget_tracker.should_use_fallback(0.75)  # leave runway to summarize
-            ):
-                self._budget_wrapup_done = True
-                budget_msg = _final_turn_reminder("budget limit")
-                messages.append(budget_msg)
-                yield budget_msg
-
-            # ----------------------------------------------------------------
-            # Auto-compaction — at the TOP of the turn (before the model call),
-            # the one safe boundary: the prior iteration ended by appending this
-            # turn's tool_result UserMessage, so every tool_use is matched and
-            # `messages` never ends on a dangling assistant tool_use.
-            # Summarizing older turns now keeps the NEXT model call inside the
-            # context window. ``messages[:]`` replaces in place so the caller's
-            # list reference sees the shrunk history too.
-            # ----------------------------------------------------------------
-            if (
-                self._compactor is not None
-                and compactions < _MAX_COMPACTIONS
-                and self._is_safe_compaction_point(messages)
-            ):
-                ctx_window = (
-                    self.model_capability.context_window
-                    if self.model_capability is not None
-                    else 0
-                )
-                usage_now = last_usage or Usage()
-                # Cheap first line: clear old tool-result bodies (no model call).
-                micro = getattr(self._compactor, "microcompact", None)
-                should_micro = getattr(self._compactor, "should_microcompact", None)
-                if micro is not None and should_micro is not None and should_micro(
-                    messages, usage_now, ctx_window
-                ):
-                    micro(messages)
-                # Fallback: full summarizing compaction when still over threshold.
-                if await self._compactor.should_compact(messages, usage_now, ctx_window):
-                    # PreCompact hook — fires just before the (lossy) summarization
-                    # so integrators can snapshot/persist the full transcript before
-                    # it's compressed, or block it to handle compaction themselves.
-                    skip_compact = False
-                    if self._dispatcher.has("PreCompact"):
-                        pc = await self._dispatcher.dispatch(
-                            "PreCompact",
-                            HookContext(event="PreCompact", messages_snapshot=messages),
-                        )
-                        skip_compact = pc.block
-                    if not skip_compact:
-                        before_len = len(messages)
-                        compacted = await self._compactor.compact(messages)
-                        if len(compacted) < before_len:
-                            messages[:] = compacted
-                            compactions += 1
-
-            # Per-turn span — nests under agent.run when tracing is on.
-            turn_span = maybe_start_span(
-                self.tracer,
-                "agent.turn",
-                parent=run_span,
-                attributes={"turn.index": run_totals["turns"]},
-            )
-            llm_span: Span | None = None
-            llm_start_ns = time.monotonic_ns()
-            llm_first_token_ns: int | None = None
-            # --------------------------------------------------------------
-            # One turn, with mid-stream tool dispatch.
-            #
-            # The executor stays open across the *entire* provider stream
-            # so it can accept ``add_tool_call`` invocations the moment a
-            # tool_use block's input JSON finalizes. Tool bodies start
-            # running concurrently with subsequent text/tool deltas — the
-            # cost saved is the per-turn ``max(tool_dur) - 0`` rather than
-            # ``sum(tool_dur)`` we paid pre-streaming.
-            # --------------------------------------------------------------
-            assembler = _AssistantAssembler()
-            # Block indices we've already dispatched (so a duplicate
-            # ContentBlockStop on the same index doesn't re-fire).
-            dispatched_indices: set[int] = set()
-            # Calls in the order the model emitted them (matches the order
-            # of ToolUseBlocks in the finalized assistant.content).
-            ordered_calls: list[ToolUseBlock] = []
-            # Calls that were short-circuited by hooks or permissions.
-            # Their entries in ``ordered_calls`` are the ORIGINAL blocks;
-            # the result lives in ``short_circuit`` keyed by call id.
-            short_circuit: dict[str, ToolResultBlock] = {}
-            # Snapshot of the conversation BEFORE this assistant turn —
-            # passed to hooks so they see the same context the model saw.
-            messages_snapshot = list(messages)
-
-            async with StreamingToolExecutor(
-                registry,
-                cancellation_signal=self.cancellation_signal,
-                tracer=self.tracer,
-                trace_parent=turn_span,
-            ) as executor:
-                # llm.call span covers just the provider stream — start →
-                # MessageStop. ``first_token_ms`` is filled at the first
-                # ContentBlockDelta (TextDelta or ThinkingDelta) so users
-                # can dashboard TTFB independently of total latency.
-                llm_span = maybe_start_span(
-                    self.tracer,
-                    "llm.call",
-                    parent=turn_span,
-                    attributes={
-                        "llm.model": self.model,
-                        "llm.provider": getattr(self.provider, "name", "")
-                        or self._provider_hint or "",
-                    },
-                )
-                async for ev in self._stream_with_fallback(messages):
-                    assembler.feed(ev)
-                    # Surface raw stream events (token deltas, block start/stop)
-                    # to an optional consumer so a UI can render text live as it
-                    # streams — run_iter itself only yields finalized messages.
-                    if self.on_event is not None:
-                        try:
-                            self.on_event(ev)
-                        except Exception:  # noqa: BLE001 — a UI callback must never break the loop
-                            _log.debug("on_event callback raised", exc_info=True)
-                    if llm_first_token_ns is None and isinstance(
-                        ev, ContentBlockDelta
+        # Spans are hoisted so the exception guard below can close whichever
+        # is still open. The loop's normal-exit paths close them explicitly.
+        turn_span: Span | None = None
+        llm_span: Span | None = None
+        # ``effective_max`` starts at ``max_steps`` but persist mode may grant a
+        # bounded extension (below) when budget runway remains and work is
+        # unfinished — a handoff that beats a silent max-steps cutoff.
+        effective_max = self.max_steps
+        step = 0
+        try:
+            while True:
+                if step >= effective_max:
+                    if (
+                        self.persist
+                        and self._step_extensions < _MAX_STEP_EXTENSIONS
+                        and self._has_unfinished_work()
+                        and self._has_runway()
                     ):
-                        llm_first_token_ns = time.monotonic_ns()
-                    if isinstance(ev, ContentBlockStop):
-                        await self._maybe_dispatch_closed_block(
-                            ev,
-                            assembler,
-                            dispatched_indices,
-                            ordered_calls,
-                            short_circuit,
-                            messages_snapshot,
-                            executor,
+                        self._step_extensions += 1
+                        effective_max += max(2, self.max_steps // 2)
+                        _log.info(
+                            "persist: extending step budget to %d (extension %d/%d)",
+                            effective_max, self._step_extensions, _MAX_STEP_EXTENSIONS,
                         )
+                    else:
+                        break
+                # If the cancellation signal already fired BEFORE this turn
+                # starts, bail without burning another model round-trip. The
+                # signal could be set externally (``Agent.cancel()``), or by
+                # the prior turn's tool cancellation cascade. Either way the
+                # contract is: don't ask the model again after cancel.
+                if self.cancellation_signal.is_set():
+                    await self._dispatcher.dispatch(
+                        "Stop",
+                        HookContext(event="Stop", messages_snapshot=messages),
+                    )
+                    _close_run_span()
+                    return
 
-                # Stream consumed. Finalize the assistant message.
-                assistant = assembler.finalize()
+                # Final-turn wrap-up: on the last allowed step, tell the model to
+                # summarize instead of starting work it can't finish — so a run that
+                # hits the turn limit ends with a coherent answer, not a dangling
+                # tool result. Soft nudge (isMeta), injected once.
+                if effective_max > 1 and step == effective_max - 1:
+                    final_msg = _final_turn_reminder()
+                    messages.append(final_msg)
+                    yield final_msg
 
-                # Salvage tool calls the model emitted as TEXT (JSON object or a
-                # shell code fence) instead of via the structured channel — the
-                # dominant failure mode for local OSS models. Convert them to
-                # real tool_use blocks and dispatch through this same executor so
-                # the loop continues exactly as if they'd been native calls.
-                if self.tools and not any(
-                    isinstance(b, ToolUseBlock) for b in assistant.content
+                # Budget wrap-up: once we're within ~85% of a configured USD/token/turn
+                # budget, nudge the model to summarize BEFORE the hard cap raises
+                # BudgetExceededError — so a budget-limited run ends coherently too.
+                elif (
+                    not self._budget_wrapup_done
+                    and self._budget_tracker is not None
+                    and self._budget_tracker.should_use_fallback(0.75)  # leave runway to summarize
                 ):
-                    salvaged = _salvage_text_tool_calls(
-                        "".join(
-                            b.text for b in assistant.content
-                            if isinstance(b, TextBlock)
-                        ),
-                        registry,
+                    self._budget_wrapup_done = True
+                    budget_msg = _final_turn_reminder("budget limit")
+                    messages.append(budget_msg)
+                    yield budget_msg
+
+                # ----------------------------------------------------------------
+                # Auto-compaction — at the TOP of the turn (before the model call),
+                # the one safe boundary: the prior iteration ended by appending this
+                # turn's tool_result UserMessage, so every tool_use is matched and
+                # `messages` never ends on a dangling assistant tool_use.
+                # Summarizing older turns now keeps the NEXT model call inside the
+                # context window. ``messages[:]`` replaces in place so the caller's
+                # list reference sees the shrunk history too.
+                # ----------------------------------------------------------------
+                if (
+                    self._compactor is not None
+                    and compactions < _MAX_COMPACTIONS
+                    and self._is_safe_compaction_point(messages)
+                ):
+                    ctx_window = (
+                        self.model_capability.context_window
+                        if self.model_capability is not None
+                        else 0
                     )
-                    if salvaged:
-                        assistant = AssistantMessage(
-                            content=list(salvaged),
-                            stop_reason=assistant.stop_reason,
-                            usage=assistant.usage,
-                        )
-                        for call in salvaged:
-                            approved, sc_result = await self._preflight_call(
-                                call, messages_snapshot
+                    usage_now = last_usage or Usage()
+                    # Cheap first line: clear old tool-result bodies (no model call).
+                    micro = getattr(self._compactor, "microcompact", None)
+                    should_micro = getattr(self._compactor, "should_microcompact", None)
+                    if micro is not None and should_micro is not None and should_micro(
+                        messages, usage_now, ctx_window
+                    ):
+                        micro(messages)
+                    # Fallback: full summarizing compaction when still over threshold.
+                    if await self._compactor.should_compact(messages, usage_now, ctx_window):
+                        # PreCompact hook — fires just before the (lossy) summarization
+                        # so integrators can snapshot/persist the full transcript before
+                        # it's compressed, or block it to handle compaction themselves.
+                        skip_compact = False
+                        if self._dispatcher.has("PreCompact"):
+                            pc = await self._dispatcher.dispatch(
+                                "PreCompact",
+                                HookContext(event="PreCompact", messages_snapshot=messages),
                             )
-                            if sc_result is not None:
-                                short_circuit[call.id] = sc_result
-                                ordered_calls.append(call)
-                            else:
-                                ordered_calls.append(approved)
-                                executor.add_tool_call(approved)
+                            skip_compact = pc.block
+                        if not skip_compact:
+                            before_len = len(messages)
+                            compacted = await self._compactor.compact(messages)
+                            if len(compacted) < before_len:
+                                messages[:] = compacted
+                                compactions += 1
 
-                messages.append(assistant)
+                # Per-turn span — nests under agent.run when tracing is on.
+                turn_span = maybe_start_span(
+                    self.tracer,
+                    "agent.turn",
+                    parent=run_span,
+                    attributes={"turn.index": run_totals["turns"]},
+                )
+                llm_span: Span | None = None
+                llm_start_ns = time.monotonic_ns()
+                llm_first_token_ns: int | None = None
+                # --------------------------------------------------------------
+                # One turn, with mid-stream tool dispatch.
+                #
+                # The executor stays open across the *entire* provider stream
+                # so it can accept ``add_tool_call`` invocations the moment a
+                # tool_use block's input JSON finalizes. Tool bodies start
+                # running concurrently with subsequent text/tool deltas — the
+                # cost saved is the per-turn ``max(tool_dur) - 0`` rather than
+                # ``sum(tool_dur)`` we paid pre-streaming.
+                # --------------------------------------------------------------
+                assembler = _AssistantAssembler()
+                # Block indices we've already dispatched (so a duplicate
+                # ContentBlockStop on the same index doesn't re-fire).
+                dispatched_indices: set[int] = set()
+                # Calls in the order the model emitted them (matches the order
+                # of ToolUseBlocks in the finalized assistant.content).
+                ordered_calls: list[ToolUseBlock] = []
+                # Calls that were short-circuited by hooks or permissions.
+                # Their entries in ``ordered_calls`` are the ORIGINAL blocks;
+                # the result lives in ``short_circuit`` keyed by call id.
+                short_circuit: dict[str, ToolResultBlock] = {}
+                # Snapshot of the conversation BEFORE this assistant turn —
+                # passed to hooks so they see the same context the model saw.
+                messages_snapshot = list(messages)
 
-                # Close the llm.call span now that the provider stream is
-                # done — *before* tool execution drains. ``llm.call`` is
-                # specifically "time the model spent generating," not
-                # "time the turn took including downstream tools." Tool
-                # latency lives on tool.call children.
-                if llm_span is not None and self.tracer is not None:
-                    llm_span.set_attributes({
-                        "llm.input_tokens": (
-                            assistant.usage.input_tokens
-                            if assistant.usage is not None else 0
-                        ),
-                        "llm.output_tokens": (
-                            assistant.usage.output_tokens
-                            if assistant.usage is not None else 0
-                        ),
-                        "llm.cache_read_tokens": (
-                            assistant.usage.cache_read_input_tokens or 0
-                            if assistant.usage is not None else 0
-                        ),
-                        "llm.cache_creation_tokens": (
-                            assistant.usage.cache_creation_input_tokens or 0
-                            if assistant.usage is not None else 0
-                        ),
-                        "llm.stop_reason": assistant.stop_reason or "",
-                        "llm.first_token_ms": (
-                            (llm_first_token_ns - llm_start_ns) / 1_000_000.0
-                            if llm_first_token_ns is not None else 0.0
-                        ),
-                    })
-                    llm_span.end()
-                    mirror = getattr(self.tracer, "_mirror", None) or self.tracer
-                    close_fn = getattr(mirror, "_close", None)
-                    if callable(close_fn):
-                        close_fn(llm_span)
-
-                # Remember this turn's usage so the NEXT turn's compaction
-                # check sees the real prompt size, not a stale/empty estimate.
-                last_usage = assistant.usage
-
-                # Bump turn + cost AFTER the assistant message materializes.
-                # Tools may already be running — that's fine, we still
-                # enforce budget on the turn that just finalized.
-                if self._budget_tracker is not None:
-                    self._budget_tracker.add_turn()
-                    if assistant.usage is not None:
-                        self._budget_tracker.add_usage(
-                            assistant.usage,
-                            self.model,
-                            backend_hint=self._provider_hint,
-                        )
-                    self._budget_tracker.check()
-
-                # Update run-totals + turn-span attrs from this turn's usage.
-                if assistant.usage is not None:
-                    run_totals["input_tokens"] += assistant.usage.input_tokens or 0
-                    run_totals["output_tokens"] += assistant.usage.output_tokens or 0
-                    run_totals["cache_read_tokens"] += assistant.usage.cache_read_input_tokens or 0
-                    run_totals["cache_creation_tokens"] += assistant.usage.cache_creation_input_tokens or 0
-                    if self._budget_tracker is not None:
-                        run_totals["cost_usd"] = self._budget_tracker.total_usd
-                run_totals["turns"] += 1
-
-                if turn_span is not None:
-                    turn_span.set_attributes({
-                        "turn.stop_reason": assistant.stop_reason or "",
-                        "turn.input_tokens": (
-                            assistant.usage.input_tokens
-                            if assistant.usage is not None else 0
-                        ),
-                        "turn.output_tokens": (
-                            assistant.usage.output_tokens
-                            if assistant.usage is not None else 0
-                        ),
-                        "turn.tool_uses": sum(
-                            1 for b in assistant.content
-                            if isinstance(b, ToolUseBlock)
-                        ),
-                    })
-
-                # Yield the assistant turn the moment it's complete — BEFORE
-                # blocking on tool execution. Consumers see the tool_use
-                # blocks immediately and can render "tool running…" state
-                # while ``wait_all`` drains the executor.
-                yield assistant
-
-                tool_uses = [
-                    b for b in assistant.content if isinstance(b, ToolUseBlock)
-                ]
-                if not tool_uses and self.recover_refusals and not self._refusal_retried:
-                    # Bare, no-tool-call refusal? Nudge ONCE with the authorized-
-                    # context reminder and re-prompt instead of dead-ending. A
-                    # ``continue`` exits this turn's ``async with executor`` cleanly
-                    # (no tools were dispatched) and re-streams with the nudge.
-                    _text = "".join(
-                        b.text for b in assistant.content if isinstance(b, TextBlock)
+                async with StreamingToolExecutor(
+                    registry,
+                    cancellation_signal=self.cancellation_signal,
+                    tracer=self.tracer,
+                    trace_parent=turn_span,
+                ) as executor:
+                    # llm.call span covers just the provider stream — start →
+                    # MessageStop. ``first_token_ms`` is filled at the first
+                    # ContentBlockDelta (TextDelta or ThinkingDelta) so users
+                    # can dashboard TTFB independently of total latency.
+                    llm_span = maybe_start_span(
+                        self.tracer,
+                        "llm.call",
+                        parent=turn_span,
+                        attributes={
+                            "llm.model": self.model,
+                            "llm.provider": getattr(self.provider, "name", "")
+                            or self._provider_hint or "",
+                        },
                     )
-                    if _looks_like_refusal(_text):
-                        self._refusal_retried = True
-                        messages.append(_refusal_nudge())
+                    async for ev in self._stream_with_fallback(messages):
+                        assembler.feed(ev)
+                        # Surface raw stream events (token deltas, block start/stop)
+                        # to an optional consumer so a UI can render text live as it
+                        # streams — run_iter itself only yields finalized messages.
+                        if self.on_event is not None:
+                            try:
+                                self.on_event(ev)
+                            except Exception:  # noqa: BLE001 — a UI callback must never break the loop
+                                _log.debug("on_event callback raised", exc_info=True)
+                        if llm_first_token_ns is None and isinstance(
+                            ev, ContentBlockDelta
+                        ):
+                            llm_first_token_ns = time.monotonic_ns()
+                        if isinstance(ev, ContentBlockStop):
+                            await self._maybe_dispatch_closed_block(
+                                ev,
+                                assembler,
+                                dispatched_indices,
+                                ordered_calls,
+                                short_circuit,
+                                messages_snapshot,
+                                executor,
+                            )
+
+                    # Stream consumed. Finalize the assistant message.
+                    assistant = assembler.finalize()
+
+                    # Salvage tool calls the model emitted as TEXT (JSON object or a
+                    # shell code fence) instead of via the structured channel — the
+                    # dominant failure mode for local OSS models. Convert them to
+                    # real tool_use blocks and dispatch through this same executor so
+                    # the loop continues exactly as if they'd been native calls.
+                    if self.tools and not any(
+                        isinstance(b, ToolUseBlock) for b in assistant.content
+                    ):
+                        salvaged = _salvage_text_tool_calls(
+                            "".join(
+                                b.text for b in assistant.content
+                                if isinstance(b, TextBlock)
+                            ),
+                            registry,
+                        )
+                        if salvaged:
+                            assistant = AssistantMessage(
+                                content=list(salvaged),
+                                stop_reason=assistant.stop_reason,
+                                usage=assistant.usage,
+                            )
+                            for call in salvaged:
+                                approved, sc_result = await self._preflight_call(
+                                    call, messages_snapshot
+                                )
+                                if sc_result is not None:
+                                    short_circuit[call.id] = sc_result
+                                    ordered_calls.append(call)
+                                else:
+                                    ordered_calls.append(approved)
+                                    executor.add_tool_call(approved)
+
+                    messages.append(assistant)
+
+                    # Close the llm.call span now that the provider stream is
+                    # done — *before* tool execution drains. ``llm.call`` is
+                    # specifically "time the model spent generating," not
+                    # "time the turn took including downstream tools." Tool
+                    # latency lives on tool.call children.
+                    if llm_span is not None and self.tracer is not None:
+                        llm_span.set_attributes({
+                            "llm.input_tokens": (
+                                assistant.usage.input_tokens
+                                if assistant.usage is not None else 0
+                            ),
+                            "llm.output_tokens": (
+                                assistant.usage.output_tokens
+                                if assistant.usage is not None else 0
+                            ),
+                            "llm.cache_read_tokens": (
+                                assistant.usage.cache_read_input_tokens or 0
+                                if assistant.usage is not None else 0
+                            ),
+                            "llm.cache_creation_tokens": (
+                                assistant.usage.cache_creation_input_tokens or 0
+                                if assistant.usage is not None else 0
+                            ),
+                            "llm.stop_reason": assistant.stop_reason or "",
+                            "llm.first_token_ms": (
+                                (llm_first_token_ns - llm_start_ns) / 1_000_000.0
+                                if llm_first_token_ns is not None else 0.0
+                            ),
+                        })
+                        llm_span.end()
+                        mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                        close_fn = getattr(mirror, "_close", None)
+                        if callable(close_fn):
+                            close_fn(llm_span)
+
+                    # Remember this turn's usage so the NEXT turn's compaction
+                    # check sees the real prompt size, not a stale/empty estimate.
+                    last_usage = assistant.usage
+
+                    # Bump turn + cost AFTER the assistant message materializes.
+                    # Tools may already be running — that's fine, we still
+                    # enforce budget on the turn that just finalized.
+                    if self._budget_tracker is not None:
+                        self._budget_tracker.add_turn()
+                        if assistant.usage is not None:
+                            self._budget_tracker.add_usage(
+                                assistant.usage,
+                                self.model,
+                                backend_hint=self._provider_hint,
+                            )
+                        self._budget_tracker.check()
+
+                    # Update run-totals + turn-span attrs from this turn's usage.
+                    if assistant.usage is not None:
+                        run_totals["input_tokens"] += assistant.usage.input_tokens or 0
+                        run_totals["output_tokens"] += assistant.usage.output_tokens or 0
+                        run_totals["cache_read_tokens"] += assistant.usage.cache_read_input_tokens or 0
+                        run_totals["cache_creation_tokens"] += assistant.usage.cache_creation_input_tokens or 0
+                        if self._budget_tracker is not None:
+                            run_totals["cost_usd"] = self._budget_tracker.total_usd
+                    run_totals["turns"] += 1
+
+                    if turn_span is not None:
+                        turn_span.set_attributes({
+                            "turn.stop_reason": assistant.stop_reason or "",
+                            "turn.input_tokens": (
+                                assistant.usage.input_tokens
+                                if assistant.usage is not None else 0
+                            ),
+                            "turn.output_tokens": (
+                                assistant.usage.output_tokens
+                                if assistant.usage is not None else 0
+                            ),
+                            "turn.tool_uses": sum(
+                                1 for b in assistant.content
+                                if isinstance(b, ToolUseBlock)
+                            ),
+                        })
+
+                    # Yield the assistant turn the moment it's complete — BEFORE
+                    # blocking on tool execution. Consumers see the tool_use
+                    # blocks immediately and can render "tool running…" state
+                    # while ``wait_all`` drains the executor.
+                    yield assistant
+
+                    tool_uses = [
+                        b for b in assistant.content if isinstance(b, ToolUseBlock)
+                    ]
+                    if not tool_uses and self.recover_refusals and not self._refusal_retried:
+                        # Bare, no-tool-call refusal? Nudge ONCE with the authorized-
+                        # context reminder and re-prompt instead of dead-ending. A
+                        # ``continue`` exits this turn's ``async with executor`` cleanly
+                        # (no tools were dispatched) and re-streams with the nudge.
+                        _text = "".join(
+                            b.text for b in assistant.content if isinstance(b, TextBlock)
+                        )
+                        if _looks_like_refusal(_text):
+                            self._refusal_retried = True
+                            messages.append(_refusal_nudge())
+                            if turn_span is not None and self.tracer is not None:
+                                turn_span.set_attributes({"turn.refusal_recovered": True})
+                                turn_span.end()
+                                mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                                close_fn = getattr(mirror, "_close", None)
+                                if callable(close_fn):
+                                    close_fn(turn_span)
+                            step += 1
+                            continue
+                    if not tool_uses:
+                        # Completion contract. A no-tool-use turn is a candidate
+                        # stop — but persist mode re-drives it when there's a
+                        # real unfinished-work signal (open todos / unmet target)
+                        # and progress isn't diminishing, under a hard cap. The
+                        # gate ALWAYS stops on a final answer with no open work,
+                        # so a plain query() with no todos behaves as before.
+                        if self._should_continue_at_natural_stop():
+                            self._continuation_count += 1
+                            nudge = _persist_nudge()
+                            messages.append(nudge)
+                            yield nudge
+                            if turn_span is not None and self.tracer is not None:
+                                turn_span.set_attributes({"turn.persist_continued": True})
+                                turn_span.end()
+                                mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                                close_fn = getattr(mirror, "_close", None)
+                                if callable(close_fn):
+                                    close_fn(turn_span)
+                            step += 1
+                            continue
+                        # Natural turn-end. Fire Stop hook and exit cleanly —
+                        # the executor's ``__aexit__`` releases its task group
+                        # (no tasks were ever started because no tool_use blocks
+                        # arrived).
+                        await self._dispatcher.dispatch(
+                            "Stop",
+                            HookContext(event="Stop", messages_snapshot=messages),
+                        )
                         if turn_span is not None and self.tracer is not None:
-                            turn_span.set_attributes({"turn.refusal_recovered": True})
                             turn_span.end()
                             mirror = getattr(self.tracer, "_mirror", None) or self.tracer
                             close_fn = getattr(mirror, "_close", None)
                             if callable(close_fn):
                                 close_fn(turn_span)
+                        _close_run_span()
+                        return
+
+                    # Drain every dispatched tool. ``wait_all`` returns results
+                    # in insertion order (= stream order = assistant.content
+                    # tool_use order). Tools that errored produce
+                    # ``is_error=True`` blocks; tools that haven't been
+                    # dispatched (short-circuited) aren't represented here.
+                    executor_results = await executor.wait_all()
+
+                # PostToolUse hooks for each tool that actually executed.
+                by_id: dict[str, ToolResultBlock] = {
+                    r.tool_use_id: r for r in executor_results
+                }
+                by_id.update(short_circuit)
+
+                for call in ordered_calls:
+                    if call.id in short_circuit:
                         continue
-                if not tool_uses:
-                    # Natural turn-end. Fire Stop hook and exit cleanly —
-                    # the executor's ``__aexit__`` releases its task group
-                    # (no tasks were ever started because no tool_use blocks
-                    # arrived).
-                    await self._dispatcher.dispatch(
-                        "Stop",
-                        HookContext(event="Stop", messages_snapshot=messages),
+                    tool = registry.resolve(call.name)
+                    if tool is None:
+                        continue
+                    result = by_id.get(call.id)
+                    if result is None:
+                        continue
+                    event_name = (
+                        "PostToolUseFailure" if result.is_error else "PostToolUse"
                     )
-                    if turn_span is not None and self.tracer is not None:
-                        turn_span.end()
-                        mirror = getattr(self.tracer, "_mirror", None) or self.tracer
-                        close_fn = getattr(mirror, "_close", None)
-                        if callable(close_fn):
-                            close_fn(turn_span)
-                    _close_run_span()
-                    return
+                    await self._dispatcher.dispatch(
+                        event_name,
+                        HookContext(
+                            event=event_name,
+                            tool=tool,
+                            input=call.input,
+                            output=result.content,
+                        ),
+                    )
 
-                # Drain every dispatched tool. ``wait_all`` returns results
-                # in insertion order (= stream order = assistant.content
-                # tool_use order). Tools that errored produce
-                # ``is_error=True`` blocks; tools that haven't been
-                # dispatched (short-circuited) aren't represented here.
-                executor_results = await executor.wait_all()
+                # Align results with assistant.content tool_use blocks in order.
+                # A tool_use materialized by finalize() but never dispatched (e.g. a
+                # non-conforming provider emits no ContentBlockStop, so
+                # _maybe_dispatch_closed_block never ran) is absent from by_id — feed
+                # back a synthetic error result instead of KeyError-crashing the turn.
+                results_in_order: list[ToolResultBlock] = []
+                for b in tool_uses:
+                    r = by_id.get(b.id)
+                    if r is None:
+                        r = ToolResultBlock(
+                            tool_use_id=b.id,
+                            content="tool call was truncated and never executed; re-issue it if needed",
+                            is_error=True,
+                        )
+                    results_in_order.append(r)
 
-            # PostToolUse hooks for each tool that actually executed.
-            by_id: dict[str, ToolResultBlock] = {
-                r.tool_use_id: r for r in executor_results
-            }
-            by_id.update(short_circuit)
+                # Tool-error-streak tally (escalation ladder). A turn whose tool
+                # calls ALL errored bumps the streak (which deepens thinking next
+                # turn via ``_thinking_config_for_turn``); any success resets it.
+                # A mixed turn leaves it unchanged.
+                if results_in_order:
+                    n_err = sum(1 for r in results_in_order if r.is_error)
+                    if n_err == 0:
+                        self._tool_error_streak = 0
+                    elif n_err == len(results_in_order):
+                        self._tool_error_streak += 1
 
-            for call in ordered_calls:
-                if call.id in short_circuit:
-                    continue
-                tool = registry.resolve(call.name)
-                if tool is None:
-                    continue
-                result = by_id.get(call.id)
-                if result is None:
-                    continue
-                event_name = (
-                    "PostToolUseFailure" if result.is_error else "PostToolUse"
-                )
-                await self._dispatcher.dispatch(
-                    event_name,
-                    HookContext(
-                        event=event_name,
-                        tool=tool,
-                        input=call.input,
-                        output=result.content,
-                    ),
-                )
+                tool_result_msg = UserMessage(content=list(results_in_order))
+                messages.append(tool_result_msg)
+                yield tool_result_msg
 
-            # Align results with assistant.content tool_use blocks in order.
-            results_in_order = [by_id[b.id] for b in tool_uses]
-            tool_result_msg = UserMessage(content=list(results_in_order))
-            messages.append(tool_result_msg)
-            yield tool_result_msg
+                # Escalation rung 3: after a sustained tool-error streak, persist
+                # mode injects a REPLAN meta message (rising-edge, fires once per
+                # streak) so a stuck run rethinks its approach instead of grinding
+                # the same failing plan. Rung 1 is the repeated-call nudge; rung 2
+                # is the deepened thinking budget above.
+                if self.persist and self._tool_error_streak == _REPLAN_AT_ERROR_STREAK:
+                    replan = _replan_nudge()
+                    messages.append(replan)
+                    yield replan
 
-            # End the turn span now that this turn (model call + tools +
-            # post-tool hooks) is fully wrapped up. Tool spans live as
-            # children of this turn via the executor's trace_parent.
-            if turn_span is not None and self.tracer is not None:
-                turn_span.end()
-                mirror = getattr(self.tracer, "_mirror", None) or self.tracer
-                close_fn = getattr(mirror, "_close", None)
-                if callable(close_fn):
-                    close_fn(turn_span)
+                # End the turn span now that this turn (model call + tools +
+                # post-tool hooks) is fully wrapped up. Tool spans live as
+                # children of this turn via the executor's trace_parent.
+                if turn_span is not None and self.tracer is not None:
+                    turn_span.end()
+                    mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                    close_fn = getattr(mirror, "_close", None)
+                    if callable(close_fn):
+                        close_fn(turn_span)
 
-        _log.warning("agent hit max_steps=%d without natural stop", self.max_steps)
-        _close_run_span()
+                step += 1
+
+            # Step budget exhausted (including any persist-mode extensions)
+            # without a natural stop. Under persist mode with work still open,
+            # emit a structured "remaining work" handoff so the run ends with a
+            # clear pick-up point instead of a silent cutoff.
+            _log.warning("agent hit max_steps=%d without natural stop", effective_max)
+            if self.persist and self._has_unfinished_work():
+                remaining = _remaining_work_summary(self.todos)
+                messages.append(remaining)
+                yield remaining
+            _close_run_span()
+        except BaseException as _run_exc:
+            # Any error (budget cap, provider failure past retries/fallback,
+            # a hook/permission bug) — or a consumer abandoning the generator —
+            # must still close the open spans and stamp the error, instead of
+            # leaking them. Idempotent closers make already-closed spans no-ops.
+            _close_span(llm_span, error=_run_exc)
+            _close_span(turn_span, error=_run_exc)
+            _close_run_span(error=_run_exc)
+            raise
+        finally:
+            # Restore the enclosing scope (parent agent, or global). Best-effort:
+            # a reset can raise only if the token is from a different context,
+            # which can't happen here (set + reset in the same frame).
+            try:
+                TOOL_SCOPE.reset(_scope_token)
+            except (ValueError, LookupError):  # pragma: no cover — defensive
+                pass
 
     async def _maybe_dispatch_closed_block(
         self,
@@ -1453,6 +2024,22 @@ class Agent:
 
         assert self._dispatcher is not None
         registry: ToolRegistry = self.tools  # type: ignore[assignment]
+
+        # Malformed tool-call JSON the assembler couldn't parse (even leniently).
+        # Fail CLOSED: never execute the tool with garbage/empty input — return
+        # an is_error result so the model re-emits a well-formed call, instead of
+        # crashing the run.
+        if isinstance(call.input, dict) and _MALFORMED_TOOL_JSON_KEY in call.input:
+            return call, ToolResultBlock(
+                tool_use_id=call.id,
+                content=(
+                    f"The arguments for `{call.name}` were not valid JSON and "
+                    f"could not be parsed. Re-issue the tool call with a single "
+                    f"well-formed JSON object as the arguments."
+                ),
+                is_error=True,
+            )
+
         tool = registry.resolve(call.name)
         if tool is None:
             return call, None
@@ -1468,6 +2055,9 @@ class Agent:
                 seen = self._run_call_sigs.get(sig, 0) + 1
                 self._run_call_sigs[sig] = seen
                 if seen > self.max_repeated_tool_calls:
+                    # Escalation rung 1 (the nudge) fires here; record the trip so
+                    # ``_thinking_config_for_turn`` deepens reasoning next turn.
+                    self._repeat_tripped = True
                     return call, ToolResultBlock(
                         tool_use_id=call.id,
                         content=(
@@ -1507,6 +2097,27 @@ class Agent:
             decision = await check_permission(tool, call.input, self.permissions)
             decision = _normalize_permission_decision(decision)
 
+            if isinstance(decision, Allow) and decision.updated_input is not None:
+                # A can_use_tool / PreToolUse callback APPROVED some input but
+                # handed back a REWRITTEN one. That rewrite was never vetted —
+                # re-run the mandatory guards (deny rules + dangerous-shell gate)
+                # against the MUTATED input before dispatch so an approval of
+                # `ls` can't be smuggled out as an unreviewed `rm -rf`. Fail
+                # closed: a denied/blocked rewrite is denied, not run.
+                recheck = _normalize_permission_decision(
+                    await recheck_mutated_input(
+                        tool, decision.updated_input, self.permissions
+                    )
+                )
+                if isinstance(recheck, Deny):
+                    decision = recheck
+                else:
+                    call = ToolUseBlock(
+                        id=call.id,
+                        name=call.name,
+                        input=decision.updated_input,
+                    )
+
             if isinstance(decision, Deny):
                 await self._dispatcher.dispatch(
                     "PermissionDenied",
@@ -1528,13 +2139,6 @@ class Agent:
                     tool_use_id=call.id,
                     content=f"permission denied: {decision.reason}",
                     is_error=True,
-                )
-
-            if isinstance(decision, Allow) and decision.updated_input is not None:
-                call = ToolUseBlock(
-                    id=call.id,
-                    name=call.name,
-                    input=decision.updated_input,
                 )
             # Ask → treated as Allow at the loop layer (integrators can
             # convert Ask to Deny via the can_use_tool callback).
@@ -1589,13 +2193,37 @@ class Agent:
         overflow_retried = False
         while True:
             produced = False
+            produced_content = False
             try:
                 async for ev in self._provider_stream(messages):
                     produced = True
+                    if isinstance(ev, ContentBlockStart):
+                        produced_content = True
                     yield ev
+                if not produced:
+                    # A 2xx whose body closed before a single event — an empty
+                    # stream (no message_start). Classic serverless cold-start /
+                    # idle-scaledown / proxy blip (e.g. a Modal or RunPod GPU
+                    # endpoint still booting the model). This is otherwise raised
+                    # later by the assembler, OUTSIDE any retry; raise it here so
+                    # a warm retry (below) can recover instead of failing the turn.
+                    raise StreamProtocolError(
+                        "stream ended without message_start (empty response — "
+                        "backend cold start or scaledown?)")
+                if not produced_content:
+                    # message_start arrived but the stream closed without a single
+                    # content block — a wholly empty assistant turn. Nothing usable
+                    # was streamed downstream (only message envelope events, safe to
+                    # replay), so retry rather than accept an empty turn as done.
+                    raise StreamProtocolError(
+                        "stream produced no content blocks (empty response)")
                 return
             except Exception as err:  # noqa: BLE001
-                if produced:
+                # Once a CONTENT block has streamed downstream we can't safely
+                # retry (the consumer's assembler already holds partial blocks);
+                # re-raise. Failures before any content — including the empty /
+                # cold-start cases above — are still retryable.
+                if produced_content:
                     raise  # can't retry partial output
                 # Context-overflow: the prompt is too long. Emergency-compact
                 # (clear old tool results + summarize) and retry ONCE, rather than
@@ -1671,19 +2299,31 @@ class Agent:
             "model %r failed (%r) before output; falling back to %r",
             self.model, error, self.fallback_model,
         )
+        # Remember the primary model once so run_iter can restore it next run;
+        # a single transient blip must not permanently downgrade the agent.
+        if self._primary_model is None:
+            self._primary_model = self.model
+            self._primary_model_capability = self.model_capability
         self._fallback_used = True
         self.model = self.fallback_model  # type: ignore[assignment]
         self.model_capability = lookup_model(self.model)
         self._env_context = None  # env block referenced the old model; let it rebuild
 
     def _provider_stream(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
+        provider_messages = _repair_tool_call_history(messages)
         # Hoist the system prompt: prefer explicit Agent.system, else look at
         # messages[0] if it's a SystemMessage. Provider adapters expect system
         # as a top-level field (Anthropic, OpenAI, Ollama all do).
         system = self.system
-        if system is None and messages and isinstance(messages[0], SystemMessage):
-            sys_msg = messages[0]
-            system = sys_msg.content if isinstance(sys_msg.content, str) else None
+        if system is None:
+            # Scan for the first SystemMessage anywhere — not just index 0.
+            # run_iter may prepend a synthetic isMeta UserMessage (memory/env
+            # context) ahead of a caller-supplied leading SystemMessage, so the
+            # system prompt is no longer guaranteed to sit at index 0.
+            for _m in provider_messages:
+                if isinstance(_m, SystemMessage):
+                    system = _m.content if isinstance(_m.content, str) else None
+                    break
 
         assert self.provider is not None  # post-init guarantees this
 
@@ -1723,20 +2363,60 @@ class Agent:
 
         # Pass the resolved capability through so the provider can pick the
         # right tool-use path (A/B/C) without re-doing lookup.
+        max_tokens = self.max_tokens
+        ctx_window = getattr(self.model_capability, "context_window", 0) or 0
+        if ctx_window > 0:
+            try:
+                from .compact import _message_token_estimate  # noqa: PLC0415
+                estimated_input = sum(_message_token_estimate(m) for m in provider_messages)
+                if system:
+                    estimated_input += max(1, len(system) // 4)
+                room = ctx_window - estimated_input - 512
+                if room > 0:
+                    max_tokens = min(max_tokens, max(512, room))
+            except Exception:  # noqa: BLE001
+                pass
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": provider_messages,
             "system": system,
             "tools": self.tools.to_wire() if self.tools else None,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens,
             "temperature": self.temperature,
             "extra": provider_extra,
         }
-        # Some legacy adapters don't accept model_capability; gate it.
-        try:
-            return self.provider.stream(model_capability=self.model_capability, **kwargs)
-        except TypeError:
-            return self.provider.stream(**kwargs)
+        # Adaptive thinking config for this turn (effort + per-turn escalation).
+        # ``None`` (the default medium-effort case) is NOT passed, so a default
+        # agent's request is byte-for-byte unchanged.
+        thinking_cfg = self._thinking_config_for_turn(provider_messages)
+        return self._call_provider_stream(kwargs, thinking_cfg)
+
+    def _call_provider_stream(
+        self, kwargs: dict[str, Any], thinking_cfg: dict[str, Any] | None
+    ) -> AsyncIterator[StreamEvent]:
+        """Invoke ``provider.stream`` with graceful degradation for adapters
+        that don't accept ``model_capability`` and/or ``thinking``. Argument
+        binding for an async-generator function raises ``TypeError`` at call
+        time (before iteration), so we can probe the richest signature and fall
+        back — a provider that can't use ``thinking`` just runs without it
+        (accepting-and-ignoring is fine per the interface contract)."""
+        assert self.provider is not None  # post-init guarantees this
+        base = dict(kwargs)
+        attempts: list[dict[str, Any]] = []
+        if thinking_cfg is not None:
+            attempts.append(
+                {**base, "thinking": thinking_cfg, "model_capability": self.model_capability}
+            )
+            attempts.append({**base, "thinking": thinking_cfg})
+        attempts.append({**base, "model_capability": self.model_capability})
+        attempts.append(base)
+        last_exc: TypeError | None = None
+        for kw in attempts:
+            try:
+                return self.provider.stream(**kw)
+            except TypeError as exc:
+                last_exc = exc
+        raise last_exc  # pragma: no cover — base attempt has the minimal kwargs
 
     @staticmethod
     def _is_safe_compaction_point(messages: list[Message]) -> bool:
@@ -1792,6 +2472,12 @@ class Agent:
                 async for ev in stream:
                     produced = True
                     asm.feed(ev)
+                if not produced:
+                    # Empty stream — same cold-start / scaledown blip as a normal
+                    # turn; raise into the retry below rather than letting
+                    # finalize() fail outside it.
+                    raise StreamProtocolError(
+                        "stream ended without message_start (empty response)")
                 break
             except Exception as err:  # noqa: BLE001
                 if produced or not (_is_transient(err) and attempt < self.max_retries):
@@ -1838,14 +2524,30 @@ class _BlockBuilder:
             )
         if self.kind == "tool_use":
             if self.json_parts:
+                raw = "".join(self.json_parts)
                 try:
-                    input_obj = _JSON_DECODER.decode("".join(self.json_parts))
-                except msgspec.DecodeError as e:
-                    raise StreamProtocolError(
-                        f"tool_use {self.tool_name!r} sent malformed input JSON"
-                    ) from e
+                    input_obj = _JSON_DECODER.decode(raw)
+                except msgspec.DecodeError:
+                    # Weak models routinely emit invalid tool-arg JSON (trailing
+                    # commas, unquoted keys) or truncate it at the token cap. Try
+                    # the lenient parser the salvage path uses; accept it only if
+                    # it yields a JSON object. If even that fails, the input is
+                    # genuinely unparseable — DON'T crash the run: flag it with
+                    # the malformed-JSON marker so ``_preflight_call`` returns an
+                    # is_error "re-issue valid JSON" reminder and the model can
+                    # recover, instead of raising ``StreamProtocolError`` and
+                    # killing the whole turn.
+                    from .streaming.text_tool_parser import _loads_lenient  # noqa: PLC0415
+                    recovered = _loads_lenient(raw)
+                    if not isinstance(recovered, dict):
+                        input_obj = {_MALFORMED_TOOL_JSON_KEY: raw}
+                    else:
+                        input_obj = recovered
             else:
                 input_obj = self.tool_initial_input or {}
+            if not isinstance(input_obj, dict):
+                # Tool arguments must be a JSON object; anything else is malformed.
+                input_obj = {_MALFORMED_TOOL_JSON_KEY: str(input_obj)}
             return ToolUseBlock(id=self.tool_id, name=self.tool_name, input=input_obj)
         # Unknown / passthrough — return whatever the start event gave us.
         if self.raw_block is None:
@@ -1859,13 +2561,16 @@ class _AssistantAssembler:
     Holds builders by block index, plus message-level metadata.
     """
 
-    __slots__ = ("blocks", "stop_reason", "usage", "_seen_start")
+    __slots__ = ("blocks", "stop_reason", "usage", "_seen_start", "_closed")
 
     def __init__(self) -> None:
         self.blocks: dict[int, _BlockBuilder] = {}
         self.stop_reason: str | None = None
         self.usage: Usage | None = None
         self._seen_start = False
+        # Indices whose ContentBlockStop we've seen — so finalize() can tell a
+        # cleanly-closed block from one the stream was cut off mid-way through.
+        self._closed: set[int] = set()
 
     def feed(self, ev: StreamEvent) -> None:
         if isinstance(ev, MessageStart):
@@ -1878,7 +2583,10 @@ class _AssistantAssembler:
             self._on_delta(ev)
             return
         if isinstance(ev, ContentBlockStop):
-            # Builder stays as-is; we materialize at finalize().
+            # Builder stays as-is; we materialize at finalize(). Record the
+            # close so a block started-but-never-stopped (truncated stream)
+            # is detectable.
+            self._closed.add(ev.index)
             return
         if isinstance(ev, MessageDelta):
             if ev.stop_reason is not None:
@@ -1894,8 +2602,27 @@ class _AssistantAssembler:
     def finalize(self) -> AssistantMessage:
         if not self._seen_start:
             raise StreamProtocolError("stream ended without message_start")
+        # Truncated stream: a content block was opened but its ContentBlockStop
+        # never arrived — the provider cut off mid-block (dropped connection,
+        # proxy truncation). The partial block is not a real completion; treat
+        # it as a transient protocol failure so the turn is retried, not
+        # accepted as a half-written success.
+        unclosed = [i for i in self.blocks if i not in self._closed]
+        if unclosed:
+            raise StreamProtocolError(
+                "stream ended mid-block (truncated response — "
+                f"{len(unclosed)} block(s) never closed)"
+            )
         # Sorted by index so block order matches what the provider emitted.
         ordered = [self.blocks[i].to_block() for i in sorted(self.blocks)]
+        if not ordered:
+            # message_start (and possibly a stop reason) but zero content blocks
+            # — a wholly empty assistant turn. Nothing usable was produced;
+            # treat it as a transient failure to retry rather than emitting an
+            # empty message the loop would silently accept as complete.
+            raise StreamProtocolError(
+                "stream produced no content blocks (empty response)"
+            )
         return AssistantMessage(
             content=ordered,
             stop_reason=self.stop_reason,

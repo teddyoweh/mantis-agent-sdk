@@ -49,7 +49,6 @@ import anyio
 from ..errors import AgentError
 from ..tools import Tool, ToolRegistry, _stringify_result
 from .types import (
-    ElicitationRequest,
     ElicitationResult,
     SamplingMessage,
     SamplingResult,

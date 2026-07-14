@@ -81,6 +81,18 @@ _ELICITATION_ERROR_CODE = -32042
 # initialize; mismatched but compatible versions are common.
 _PROTOCOL_VERSION = "2025-03-26"
 
+# Hard cap on pagination pages for tools/resources/prompts listing. Combined
+# with the repeated-cursor guard, this bounds a buggy or hostile server that
+# never stops paginating (which would hang connect-time discovery and grow
+# memory without limit).
+_MAX_LIST_PAGES = 1000
+
+# Backpressure cap on concurrent server-initiated requests (elicitation /
+# sampling). Without it a misbehaving server can stream requests faster than
+# handlers complete, spawning unbounded handler tasks and exhausting memory.
+# Requests beyond the cap are rejected with -32603 instead of queued.
+_MAX_INFLIGHT_SERVER_REQUESTS = 16
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -156,6 +168,7 @@ class MCPClient:
         "_task_group",
         "_closed",
         "_initialized",
+        "_inflight_server_requests",
     )
 
     def __init__(
@@ -194,6 +207,8 @@ class MCPClient:
         self._task_group: anyio.abc.TaskGroup | None = None
         self._closed = False
         self._initialized = False
+        # Outstanding server-initiated request handlers (bounded backpressure).
+        self._inflight_server_requests = 0
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -240,7 +255,8 @@ class MCPClient:
 
         tools: list[MCPTool] = []
         cursor: str | None = None
-        while True:
+        seen_cursors: set[str] = set()
+        for _ in range(_MAX_LIST_PAGES):
             params: dict[str, Any] = {}
             if cursor is not None:
                 params["cursor"] = cursor
@@ -260,6 +276,15 @@ class MCPClient:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
+            # Guard against a server that returns a non-advancing cursor
+            # forever (unbounded loop / memory growth).
+            if cursor in seen_cursors:
+                raise MCPProtocolError(
+                    "MCP server returned a repeating tools/list cursor"
+                )
+            seen_cursors.add(cursor)
+        else:
+            raise MCPProtocolError("MCP server exceeded tools/list pagination limit")
         return tools
 
     async def list_resources(self) -> list["MCPResource"]:
@@ -267,7 +292,8 @@ class MCPClient:
         exposes (files, rows, API responses), addressed by URI."""
         out: list[MCPResource] = []
         cursor: str | None = None
-        while True:
+        seen_cursors: set[str] = set()
+        for _ in range(_MAX_LIST_PAGES):
             params: dict[str, Any] = {"cursor": cursor} if cursor else {}
             result = await self._request("resources/list", params)
             for raw in result.get("resources", []):
@@ -282,6 +308,13 @@ class MCPClient:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                raise MCPProtocolError(
+                    "MCP server returned a repeating resources/list cursor"
+                )
+            seen_cursors.add(cursor)
+        else:
+            raise MCPProtocolError("MCP server exceeded resources/list pagination limit")
         return out
 
     async def read_resource(self, uri: str) -> str:
@@ -304,7 +337,8 @@ class MCPClient:
         templates the server offers."""
         out: list[MCPPrompt] = []
         cursor: str | None = None
-        while True:
+        seen_cursors: set[str] = set()
+        for _ in range(_MAX_LIST_PAGES):
             params: dict[str, Any] = {"cursor": cursor} if cursor else {}
             result = await self._request("prompts/list", params)
             for raw in result.get("prompts", []):
@@ -318,6 +352,13 @@ class MCPClient:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                raise MCPProtocolError(
+                    "MCP server returned a repeating prompts/list cursor"
+                )
+            seen_cursors.add(cursor)
+        else:
+            raise MCPProtocolError("MCP server exceeded prompts/list pagination limit")
         return out
 
     async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> str:
@@ -343,7 +384,7 @@ class MCPClient:
         name: str,
         arguments: dict[str, Any],
         *,
-        timeout_s: float = 60.0,
+        timeout_s: float | None = None,
     ) -> CallToolResult:
         """Invoke ``tools/call``. Returns the parsed ``CallToolResult``.
 
@@ -351,7 +392,14 @@ class MCPClient:
         sends ``notifications/cancelled`` to the server (best-effort) and
         raises ``TimeoutError``. ``MCPElicitationRequest`` bubbles when the
         server returns elicitation error code -32042.
+
+        ``timeout_s=None`` (the default) falls back to ``self.request_timeout_s``
+        — the same budget the manager raises for mid-session tool calls — so
+        that setting actually governs tool-call duration. A ``None`` effective
+        timeout waits forever.
         """
+
+        effective_timeout = timeout_s if timeout_s is not None else self.request_timeout_s
 
         request_id = next(self._id_counter)
         pending = _PendingRequest()
@@ -367,7 +415,10 @@ class MCPClient:
         )
 
         try:
-            with anyio.fail_after(timeout_s):
+            if effective_timeout is not None:
+                with anyio.fail_after(effective_timeout):
+                    await pending.event.wait()
+            else:
                 await pending.event.wait()
         except TimeoutError:
             # Best-effort cancellation notice. Server may or may not honor.
@@ -504,12 +555,16 @@ class MCPClient:
         mid = message.get("id")
         method = message.get("method")
         if mid is not None and method is None:
-            # Response to one of our requests.
-            try:
-                key = int(mid)
-            except (TypeError, ValueError):
-                return
-            pending = self._pending.get(key)
+            # Response to one of our requests. JSON-RPC ids may be strings or
+            # numbers; correlate on the raw id first (covers string ids), then
+            # fall back to an int-coerced key for servers that echo our
+            # integer id back as a numeric string ("1" vs 1).
+            pending = self._pending.get(mid)
+            if pending is None and isinstance(mid, str):
+                try:
+                    pending = self._pending.get(int(mid))
+                except ValueError:
+                    pending = None
             if pending is None:
                 return
             pending.response = message
@@ -522,6 +577,12 @@ class MCPClient:
             if self._task_group is None:
                 # No task group means we're closing; drop silently.
                 return
+            if self._inflight_server_requests >= _MAX_INFLIGHT_SERVER_REQUESTS:
+                # Too many concurrent server-initiated requests — reject this
+                # one instead of spawning an unbounded handler task.
+                self._task_group.start_soon(self._reject_overflow, message)
+                return
+            self._inflight_server_requests += 1
             self._task_group.start_soon(self._handle_server_request, message)
             return
         # Server-initiated NOTIFICATION (no id, has method). v0: log and
@@ -576,6 +637,25 @@ class MCPClient:
                 )
             except Exception:  # noqa: BLE001
                 pass
+        finally:
+            if self._inflight_server_requests > 0:
+                self._inflight_server_requests -= 1
+
+    async def _reject_overflow(self, message: dict[str, Any]) -> None:
+        """Reject a server-initiated request that exceeds the concurrency cap."""
+        try:
+            await self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": message.get("id"),
+                    "error": {
+                        "code": -32603,
+                        "message": "too many concurrent server-initiated requests",
+                    },
+                }
+            )
+        except Exception:  # noqa: BLE001 — best-effort; never crash the read loop
+            pass
 
     async def _handle_elicitation(self, mid: Any, params: dict[str, Any]) -> None:
         """Route an ``elicitation/create`` request to the client's handler.

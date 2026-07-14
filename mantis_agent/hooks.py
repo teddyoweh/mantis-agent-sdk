@@ -86,6 +86,36 @@ HOOK_EVENTS: tuple[str, ...] = (
 )
 
 
+# Of the full upstream vocabulary above, these are the events the mantis agent
+# loop actually *fires* today. The rest are declared for upstream Claude Code
+# parity (so ecosystem tooling can register handlers by the same names) and for
+# custom/out-of-band dispatch, but the built-in runtime does not emit them yet —
+# a hook registered for one of them will simply never be called. Keeping this set
+# explicit makes the contract honest: we don't silently advertise events that
+# never fire. Call ``HookDispatcher.is_dispatched(event)`` to check at runtime.
+#
+# Wired dispatch points (see mantis_agent/agent.py):
+#   PreToolUse / PostToolUse / PostToolUseFailure — around each tool execution
+#   UserPromptSubmit — before a user turn is sent
+#   PreCompact — before context compaction
+#   Stop — when a run reaches a stopping point
+#   PermissionDenied — when a tool call is refused by the permission layer
+DISPATCHED_EVENTS: frozenset[str] = frozenset(
+    {
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "UserPromptSubmit",
+        "PreCompact",
+        "Stop",
+        "PermissionDenied",
+    }
+)
+
+# Declared for parity/custom dispatch but not emitted by the built-in loop.
+RESERVED_EVENTS: frozenset[str] = frozenset(HOOK_EVENTS) - DISPATCHED_EVENTS
+
+
 # ---------------------------------------------------------------------------
 # Hook context + result
 # ---------------------------------------------------------------------------
@@ -320,9 +350,22 @@ class HookDispatcher:
             return False
         return bool(_normalize_hooks(getattr(self.hooks, field_name, None)))
 
+    @staticmethod
+    def is_dispatched(event: str) -> bool:
+        """Whether the built-in agent loop actually fires ``event``.
+
+        A hook registered for an event not in :data:`DISPATCHED_EVENTS` is
+        accepted (for upstream parity / custom dispatch) but the built-in
+        runtime will never call it. Integrators can use this to warn early.
+        """
+
+        return event in DISPATCHED_EVENTS
+
 
 __all__ = [
     "HOOK_EVENTS",
+    "DISPATCHED_EVENTS",
+    "RESERVED_EVENTS",
     "HookContext",
     "HookMatcher",
     "HookDispatcher",

@@ -59,15 +59,17 @@ def context_breakdown(messages: list, system_text: str = "") -> dict:
             "total": system + head + convo}
 
 
-def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
-    """Files under ``root`` matching ``partial`` (substring, case-insensitive),
-    ranked basename-prefix-first then shortest path. Bounded (skips VCS/build
-    dirs and dotfiles, caps the scan) so it stays snappy per keystroke on big
-    repos. Powers the ``@``-file-mention completer."""
+_MENTION_SCAN_CAP = 6000
+
+
+def _walk_mention_files(root: str) -> list[str]:
+    """All files under ``root`` (rel paths), skipping VCS/build dirs and
+    dotfiles and capping the scan so a huge repo can't stall the walk. Kept
+    separate from ranking so callers can cache this once and re-rank in-memory
+    per keystroke (the walk is the expensive part) — see ``_rank_mentions``."""
     import os  # noqa: PLC0415
 
-    pl = partial.lower()
-    hits: list[str] = []
+    rels: list[str] = []
     scanned = 0
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in _MENTION_IGNORE and not d.startswith(".")]
@@ -75,13 +77,22 @@ def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
             if f.startswith("."):
                 continue
             scanned += 1
-            rel = os.path.relpath(os.path.join(dp, f), root)
-            if not pl or pl in rel.lower():
-                hits.append(rel)
-            if scanned > 6000 or len(hits) > 400:
+            rels.append(os.path.relpath(os.path.join(dp, f), root))
+            if scanned > _MENTION_SCAN_CAP:
                 break
-        if scanned > 6000 or len(hits) > 400:
+        if scanned > _MENTION_SCAN_CAP:
             break
+    return rels
+
+
+def _rank_mentions(rels: list[str], partial: str, *, limit: int = 8) -> list[str]:
+    """Filter ``rels`` by ``partial`` (substring, case-insensitive) and rank
+    basename-prefix-first then shortest path. Cheap, in-memory — safe per
+    keystroke."""
+    import os  # noqa: PLC0415
+
+    pl = partial.lower()
+    hits = [rel for rel in rels if not pl or pl in rel.lower()]
 
     def _key(rel: str) -> tuple:
         base = os.path.basename(rel).lower()
@@ -89,6 +100,14 @@ def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
 
     hits.sort(key=_key)
     return hits[:limit]
+
+
+def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
+    """Files under ``root`` matching ``partial`` (substring, case-insensitive),
+    ranked basename-prefix-first then shortest path. Bounded (skips VCS/build
+    dirs and dotfiles, caps the scan) so it stays snappy per keystroke on big
+    repos. Powers the ``@``-file-mention completer."""
+    return _rank_mentions(_walk_mention_files(root), partial, limit=limit)
 
 
 async def run_fullscreen(tui: Any) -> int:
@@ -107,8 +126,6 @@ async def run_fullscreen(tui: Any) -> int:
         ConditionalProcessor,
         PasswordProcessor,
     )
-    from rich.markup import escape as _esc  # noqa: PLC0415
-
     from .types import (  # noqa: PLC0415
         AssistantMessage,
         ToolResultBlock,
@@ -159,8 +176,9 @@ async def run_fullscreen(tui: Any) -> int:
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
-        "awaiting_key": None,
+        "awaiting_key": None, "picking_effort": None,
         "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
+        "agent_inspector": None, "workflows": None,
     }
 
     def _ctx_window() -> int:
@@ -336,8 +354,18 @@ async def run_fullscreen(tui: Any) -> int:
         return models
 
     def _file_matches(partial: str) -> list[str]:
+        # Cache the repo walk per cwd — it is called several times per frame
+        # while an @-mention token is active (menu_ft, _menu_height, the
+        # _menu_open filter, _has_ghost), and an uncached os.walk each time
+        # lagged input on large trees. Only the cheap in-memory rank runs
+        # per keystroke; the walk happens once per working directory.
         import os  # noqa: PLC0415
-        return find_file_mentions(partial, os.getcwd())
+        cwd = os.getcwd()
+        cache = state.get("mention_files")
+        if cache is None or cache[0] != cwd:
+            cache = (cwd, _walk_mention_files(cwd))
+            state["mention_files"] = cache
+        return _rank_mentions(cache[1], partial)
 
     def _menu_options() -> list[tuple[str, str, str]]:
         """Type-ahead menu rows for the in-progress line: ``@``-file-mentions
@@ -386,29 +414,33 @@ async def run_fullscreen(tui: Any) -> int:
         state["ollama_models"] = (time.monotonic(), models)
         return models
 
-    def _build_picker_items(flt: str) -> list[dict]:
-        # GROUPED items: active backend first, then other ENABLED providers, then
-        # DISABLED (dimmed + 🔒). ``flt`` is a case-insensitive substring filter
-        # on the model id — groups with no surviving models are dropped.
-        from .tui import _is_chat_model  # noqa: PLC0415
+    # Short, lowercase tab names for the picker tab bar. Provider/model
+    # families are intentionally distinct: Claude is not an OpenAI model.
+    _TAB_LABELS = {"anthropic": "claude", "moonshot": "kimi"}
+
+    def _tab_label(provider_id: str) -> str:
+        return _TAB_LABELS.get(provider_id, provider_id)
+
+    def _picker_groups() -> list[dict]:
+        """The model picker's groups in display order — active backend, local
+        Ollama, then every provider (enabled first, disabled + 🔒 after). Each is
+        ``{tab, tablabel, header, enabled, rows}`` where ``rows`` are the model
+        items. Built once when the picker opens; the tab bar reads its counts and
+        per-tab filtering slices by ``tab``. No text filter here — that's applied
+        later in ``_items_for`` so counts stay stable while you type."""
+        from .tui import _is_chat_model, _is_open_weight  # noqa: PLC0415
         from . import catalog  # noqa: PLC0415
 
         from .capabilities import lookup_model  # noqa: PLC0415
-
-        fl = flt.lower().strip()
-
-        def keep(m: str) -> bool:
-            return not fl or fl in m.lower()
 
         def ctxlab(m: str) -> str:
             cw = lookup_model(m).context_window
             return f"{cw // 1000}k" if cw >= 1000 else ""
 
-        items: list[dict] = []
+        groups: list[dict] = []
         active_all = _chat_models()
         active_set = set(active_all)
-        active = [m for m in active_all if keep(m)]
-        if active:
+        if active_all:
             back = (tui.backend or "").rstrip("/")
             if "localhost" in back or "127.0.0.1" in back:
                 where = "Ollama (local)"
@@ -416,10 +448,11 @@ async def run_fullscreen(tui: Any) -> int:
                 # Show the friendly provider name when the backend is a known one.
                 where = next((p.label for p in catalog.CATALOG
                               if p.base_url.rstrip("/") == back), back or "backend")
-            items.append({"kind": "header", "label": f"● active · {where}"})
-            for m in active:
-                items.append({"kind": "model", "model": m, "enabled": True,
-                              "provider_id": None, "ctx": ctxlab(m)})
+            groups.append({
+                "tab": "active", "tablabel": "active", "tab_hidden": True,
+                "header": f"● active · {where}", "enabled": True,
+                "rows": [{"kind": "model", "model": m, "enabled": True,
+                          "provider_id": None, "ctx": ctxlab(m)} for m in active_all]})
         # Local Ollama models (FREE, open-source) — always shown when Ollama is
         # running, even while the active backend is a hosted API. Selecting one
         # switches the backend to localhost with no key.
@@ -427,34 +460,93 @@ async def run_fullscreen(tui: Any) -> int:
         if "localhost" not in back_now and "127.0.0.1" not in back_now:
             from . import paths as _pp  # noqa: PLC0415
             local = [m for m in _ollama_models()
-                     if _is_chat_model(m) and m not in active_set and keep(m)]
+                     if _is_chat_model(m) and m not in active_set]
             if local:
-                items.append({"kind": "header", "label": "Ollama · local · free"})
-                for m in local:
-                    items.append({"kind": "model", "model": m, "enabled": True,
-                                  "provider_id": None, "ctx": ctxlab(m),
-                                  "backend": _pp.ollama_base_url()})
+                groups.append({
+                    "tab": "local", "tablabel": "free.local",
+                    "header": "Ollama · local · free", "enabled": True,
+                    "rows": [{"kind": "model", "model": m, "enabled": True,
+                              "provider_id": None, "ctx": ctxlab(m),
+                              "backend": _pp.ollama_base_url()} for m in local]})
+        open_rows: list[dict] = []
+        seen_open: set[str] = set()
+        prov_groups: list[dict] = []
         try:
             for g in catalog.grouped_provider_models():
-                models = [m for m in g["models"] if _is_chat_model(m) and m not in active_set and keep(m)]
+                models = [m for m in g["models"]
+                          if _is_chat_model(m) and m not in active_set]
                 if not models:
                     continue
+                rows = [{"kind": "model", "model": m, "enabled": g["enabled"],
+                         "provider_id": g["provider_id"], "ctx": ctxlab(m)}
+                        for m in models]
+                for row in rows:
+                    m = row["model"]
+                    if not _is_open_weight(m):
+                        continue
+                    canon = m.rsplit("/", 1)[-1].lower()
+                    if canon in seen_open:
+                        continue
+                    seen_open.add(canon)
+                    open_rows.append(dict(row))
                 tag = "" if g["enabled"] else "  · not enabled"
-                items.append({"kind": "header", "label": f"{g['label']}{tag}"})
-                for m in models:
-                    items.append({"kind": "model", "model": m, "enabled": g["enabled"],
-                                  "provider_id": g["provider_id"], "ctx": ctxlab(m)})
+                prov_groups.append({
+                    "tab": g["provider_id"], "tablabel": _tab_label(g["provider_id"]),
+                    "header": f"{g['label']}{tag}", "enabled": g["enabled"],
+                    "rows": rows})
         except Exception:  # noqa: BLE001
             pass
+        if open_rows:
+            groups.append({
+                "tab": "open", "tablabel": "open",
+                "header": "Open-weight · self-hostable", "enabled": True,
+                "rows": open_rows})
+        # Preferred tab order up front; any provider not listed keeps its
+        # (enabled-first) catalog order after these. Stable sort makes it so, so
+        # the bar reads: all · free.local · glm · qwen · kimi · openai · claude ·
+        # gemini · <the rest>.
+        _PREF = ("active", "local", "open", "openai", "anthropic", "moonshot", "glm", "qwen", "gemini")
+        _rank = {pid: i for i, pid in enumerate(_PREF)}
+        prov_groups.sort(key=lambda g: _rank.get(g["tab"], len(_PREF)))
+        groups.extend(prov_groups)
+        return groups
+
+    def _items_for(groups: list[dict], flt: str, tab: str) -> list[dict]:
+        """Flatten ``groups`` into header+model rows for the active ``tab``
+        ("all" keeps every group), applying the case-insensitive text filter and
+        dropping groups left with no surviving models."""
+        fl = (flt or "").lower().strip()
+        items: list[dict] = []
+        for g in groups:
+            if tab != "all" and g["tab"] != tab:
+                continue
+            rows = [r for r in g["rows"] if not fl or fl in r["model"].lower()]
+            if not rows:
+                continue
+            items.append({"kind": "header", "label": g["header"]})
+            items.extend(rows)
         return items
 
+    def _build_picker_items(flt: str) -> list[dict]:
+        # Back-compat thin wrapper: the whole catalog, no tab narrowing.
+        return _items_for(_picker_groups(), flt, "all")
+
     def _open_model_picker(flt: str = "") -> None:
-        items = _build_picker_items(flt)
+        groups = _picker_groups()
+        tabs = [{"tab": "all", "label": "all",
+                 "count": sum(len(g["rows"]) for g in groups)}]
+        for g in groups:
+            if g.get("tab_hidden"):  # e.g. the ● active group — shown only in "all"
+                continue
+            tabs.append({"tab": g["tab"], "label": g["tablabel"],
+                         "count": len(g["rows"])})
+        items = _items_for(groups, flt, "all")
         sel = next((i for i, it in enumerate(items)
                     if it["kind"] == "model" and it["model"] == tui.model), None)
         if sel is None:
             sel = next((i for i, it in enumerate(items) if it["kind"] == "model"), 0)
-        state["picking_model"] = {"items": items, "sel": sel, "filter": flt}
+        state["picking_model"] = {"items": items, "sel": sel, "filter": flt,
+                                  "groups": groups, "tabs": tabs, "tab": "all"}
         get_app().invalidate()
 
     # -- session picker (same overlay, mode="session") ------------------------
@@ -524,13 +616,31 @@ async def run_fullscreen(tui: Any) -> int:
         p = state.get("picking_model")
         if not p:
             return
-        build = {"session": _build_session_items,
-                 "rewind": _build_rewind_items}.get(p.get("mode"), _build_picker_items)
-        items = build(p.get("filter", ""))
+        mode = p.get("mode")
+        if mode == "session":
+            items = _build_session_items(p.get("filter", ""))
+        elif mode == "rewind":
+            items = _build_rewind_items(p.get("filter", ""))
+        else:  # model picker — reslice cached groups within the active tab
+            items = _items_for(p.get("groups", []), p.get("filter", ""),
+                               p.get("tab", "all"))
         p["items"] = items
         if not (0 <= p["sel"] < len(items) and items[p["sel"]]["kind"] in _SELECTABLE_KINDS):
             p["sel"] = next((i for i, it in enumerate(items)
                              if it["kind"] in _SELECTABLE_KINDS), 0)
+
+    def effort_ft() -> Any:
+        p = state.get("picking_effort")
+        if not p:
+            return ANSI("")
+        items, sel = p["items"], p["sel"]
+        rows = [f"{_GREEN}Select effort{_RESET}  {_GREY}↑/↓ · enter · esc{_RESET}"]
+        for i, v in enumerate(items):
+            if i == sel:
+                rows.append(f"\033[30;48;5;113m ❯ {v} \033[0m")
+            else:
+                rows.append(f"  {_DIM}{v}{_RESET}")
+        return ANSI("\n".join(rows))
 
     def picker_ft() -> Any:
         p = state.get("picking_model")
@@ -541,8 +651,11 @@ async def run_fullscreen(tui: Any) -> int:
         lo = max(0, min(sel - _PICKER_ROWS // 2, n - _PICKER_ROWS))
         flt = p.get("filter", "")
         title = {"session": "Resume a conversation",
-                 "rewind": "Rewind to"}.get(p.get("mode"), "Pick a model")
-        _hdr = f"{_GREEN}{title}{_RESET}  {_GREY}(↑/↓ · type to filter · enter · esc){_RESET}"
+                 "rewind": "Rewind to"}.get(p.get("mode"), "Select a model")
+        tabs = p.get("tabs")
+        nav = "↑/↓ · ←/→ tabs · type to filter · enter · esc" if tabs \
+            else "↑/↓ · type to filter · enter · esc"
+        _hdr = f"{_GREEN}{title}{_RESET}  {_GREY}({nav}){_RESET}"
         if flt:
             _hdr += f"   {_DIM}filter: {flt}{_RESET}"
 
@@ -551,6 +664,18 @@ async def run_fullscreen(tui: Any) -> int:
             return f"  {c}" if c else ""
 
         rows = [_hdr]
+        # Tab bar — one chip per provider/family (all · openai · claude · …) with
+        # a live model count; the active tab is highlighted. ←/→ switches tabs.
+        if tabs:
+            curtab = p.get("tab", "all")
+            segs = []
+            for t in tabs:
+                lab = f"{t['label']}·{t['count']}"
+                if t["tab"] == curtab:
+                    segs.append(f"\033[30;48;5;113m {lab} \033[0m")
+                else:
+                    segs.append(f"{_DIM}{lab}{_RESET}")
+            rows.append("  ".join(segs))
         for i in range(lo, min(lo + _PICKER_ROWS, n)):
             it = items[i]
             if it["kind"] == "header":
@@ -574,7 +699,8 @@ async def run_fullscreen(tui: Any) -> int:
         p = state.get("picking_model")
         if not p:
             return Dimension.exact(0)
-        return Dimension.exact(1 + min(len(p["items"]), _PICKER_ROWS))
+        extra = 1 if p.get("tabs") else 0  # tab bar row (model picker only)
+        return Dimension.exact(1 + extra + min(len(p["items"]), _PICKER_ROWS))
 
     def menu_ft() -> Any:
         opts = _menu_options()
@@ -599,6 +725,26 @@ async def run_fullscreen(tui: Any) -> int:
                       backend: str | None = None) -> None:
         from . import catalog  # noqa: PLC0415
 
+        # Switching rebuilds the Agent with a fresh provider, which opens a new
+        # httpx client + connection pool. Retire the OUTGOING provider's client
+        # so its sockets/pool don't leak on every /model switch. aclose is async
+        # and we're inside the running TUI app, so fire-and-forget on the loop.
+        def _retire(old: Any, new: Any) -> None:
+            if old is None or old is new:
+                return
+            aclose = getattr(old, "aclose", None)
+            if aclose is None:
+                return
+            async def _run() -> None:
+                try:
+                    await aclose()
+                except Exception:  # noqa: BLE001 — best-effort cleanup
+                    pass
+            try:
+                asyncio.get_running_loop().create_task(_run())
+            except RuntimeError:
+                pass  # no running loop (shouldn't happen in the TUI)
+
         # Sanitize first: a picker filter / pasted id can carry whitespace or a
         # trailing newline, and a blank id must never blow away the active model.
         model_id = (model_id or "").strip()
@@ -607,9 +753,11 @@ async def run_fullscreen(tui: Any) -> int:
         if backend:
             # Explicit backend from the picker item (a local Ollama model while
             # on a hosted API): point straight at it, no key needed.
+            _old = tui.agent.provider if tui.agent is not None else None
             tui.backend, tui.api_key = backend, None
             tui.model = model_id
             tui.agent = tui._build_agent()
+            _retire(_old, tui.agent.provider if tui.agent is not None else None)
             if tui.agent is not None and tui.agent.permissions is not None:
                 tui.agent.permissions.asker = _ask_permission
             try:
@@ -641,8 +789,10 @@ async def run_fullscreen(tui: Any) -> int:
                 wired = catalog.anthropic_bearer_backend(prov, tui.backend)
                 if wired is not None:
                     tui.backend, tui.api_key = wired, None
+        _old = tui.agent.provider if tui.agent is not None else None
         tui.model = model_id
         tui.agent = tui._build_agent()
+        _retire(_old, tui.agent.provider if tui.agent is not None else None)
         if tui.agent is not None and tui.agent.permissions is not None:
             tui.agent.permissions.asker = _ask_permission
         try:
@@ -712,21 +862,308 @@ async def run_fullscreen(tui: Any) -> int:
         col = _MODE_ANSI.get(color, "90")
         ctx = _ctx_status()
         ctx_seg = f"   {ctx}" if ctx else ""
-        return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}{ctx_seg}")
+        knobs = []
+        if getattr(tui, "effort", None):
+            knobs.append(f"effort={tui.effort}")
+        if getattr(tui, "verbosity", None):
+            knobs.append(f"verb={tui.verbosity}")
+        if getattr(tui, "reasoning_mode", None):
+            knobs.append(f"reasoning={tui.reasoning_mode}")
+        knob_seg = f"   {' '.join(knobs)}" if knobs else ""
+        return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}{knob_seg}{ctx_seg}")
 
     _LIVE_TODO_ROWS = 8
 
+    def _live_agent_items() -> list[tuple[int, dict]]:
+        return sorted((getattr(tui, "_live_subagents", None) or {}).items())
+
+    def _open_agent_inspector() -> None:
+        items = _live_agent_items()
+        if not items:
+            state["agent_inspector"] = None
+            return
+        cur = state.get("agent_inspector") or {}
+        sel = min(max(int(cur.get("sel", 0)), 0), len(items) - 1)
+        # "detail" = focused single-agent view (Enter drills in, ← goes back).
+        state["agent_inspector"] = {"sel": sel, "detail": bool(cur.get("detail"))}
+
+    def _agent_inspector_ft() -> Any:
+        panel = state.get("agent_inspector")
+        if not panel:
+            return ANSI("")
+        items = _live_agent_items()
+        if not items:
+            state["agent_inspector"] = None
+            return ANSI("")
+        from .tui import ellipsize  # noqa: PLC0415
+        width = shutil.get_terminal_size((80, 24)).columns
+        sel = int(panel.get("sel", 0)) % len(items)
+        now = time.monotonic()
+        rid, rec = items[sel]
+
+        # -- detail mode: one agent, its full recent activity ----------------
+        if panel.get("detail"):
+            el = int(now - rec.get("started", now))
+            last = rec.get("last_event") or "starting"
+            rows = [f"\033[36mAgent #{rid} · {rec.get('type', 'task')}{_RESET} "
+                    f"{_GREY}← back · Esc close{_RESET}"]
+            desc = rec.get("desc", "")
+            if desc:
+                rows.append(f"{_DIM}{ellipsize(desc, max(width - 2, 20))}{_RESET}")
+            rows.append(f"{_GREY}status: {rec.get('tools', 0)} tools · {el}s · {last}{_RESET}")
+            events = list(rec.get("events") or [])[-10:]
+            if events:
+                rows.append(f"{_GREY}recent activity{_RESET}")
+                for ts, text in events:
+                    rows.append(f"{_GREY}  - {max(0, int(now - ts))}s ago · "
+                                f"{ellipsize(text, max(width - 10, 20))}{_RESET}")
+            else:
+                rows.append(f"{_DIM}  (no tool activity yet){_RESET}")
+            return ANSI("\n".join(rows))
+
+        # -- list mode: all agents, recent activity of the selected one ------
+        rows = [f"\033[36mLive agents{_RESET} {_GREY}↑/↓ move · Enter inspect · ← / Esc close{_RESET}"]
+        for i, (r_id, r_rec) in enumerate(items[:12]):
+            el = int(now - r_rec.get("started", now))
+            mark = "❯" if i == sel else " "
+            last = r_rec.get("last_event") or "starting"
+            body = ellipsize(
+                f"{mark} #{r_id} {r_rec.get('type', 'task')} · {r_rec.get('tools', 0)} tools · "
+                f"{el}s · {last} · {r_rec.get('desc', '')}",
+                max(width - 2, 20),
+            )
+            rows.append(f"{_GREEN if i == sel else _DIM}{body}{_RESET}")
+        events = list(rec.get("events") or [])[-5:]
+        if events:
+            rows.append(f"{_GREY}recent #{rid}{_RESET}")
+            for ts, text in events:
+                rows.append(f"{_GREY}  - {max(0, int(now - ts))}s ago · "
+                            f"{ellipsize(text, max(width - 10, 20))}{_RESET}")
+        return ANSI("\n".join(rows))
+
+    def _agent_inspector_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        panel = state.get("agent_inspector")
+        if not panel:
+            return Dimension.exact(0)
+        items = _live_agent_items()
+        if not items:
+            return Dimension.exact(0)
+        sel = int(panel.get("sel", 0)) % len(items)
+        rec = items[sel][1]
+        if panel.get("detail"):
+            events = list(rec.get("events") or [])[-10:]
+            n = 1                                   # header
+            n += 1 if rec.get("desc") else 0        # desc line
+            n += 1                                   # status line
+            n += (1 + len(events)) if events else 1  # activity block / placeholder
+            return Dimension.exact(n)
+        events = list(rec.get("events") or [])[-5:]
+        return Dimension.exact(1 + min(len(items), 12) + (1 + len(events) if events else 0))
+
+    # -- /workflows overlay (structured multi-agent runs) --------------------
+    # A two-pane single-Window overlay: LEFT a phase rail (glyph · title ·
+    # done/total) for the selected run, RIGHT a scrolling list of agent rows
+    # rendered with the shared ``workflow_view.format_agent_row`` so it matches
+    # the classic-REPL viewer exactly. Enter drills into a run's agent detail;
+    # x/p/s drive the live handle (stop/pause/save). Live runs are sourced from
+    # ``tui._workflows`` (data) + ``tui._workflow_handles`` (live control),
+    # populated by the workflow-engine integration.
+    _WF_ROWS = 12       # visible agent rows in the right pane's viewport
+    _WF_LEFT_W = 30     # phase-rail column width
+
+    def _wf_pairs() -> list[tuple[Any, Any]]:
+        """Flattened, input-ordered ``(run, agent)`` pairs across all runs."""
+        pairs: list[tuple[Any, Any]] = []
+        for run in list(getattr(tui, "_workflows", []) or []):
+            try:
+                for ag in run.all_agents():
+                    pairs.append((run, ag))
+            except Exception:  # noqa: BLE001 — a malformed run never breaks the list
+                pass
+        return pairs
+
+    def _open_workflows() -> None:
+        state["workflows"] = {"sel": 0, "detail": False}
+        get_app().invalidate()
+
+    def _wf_selected_run() -> Any:
+        p = state.get("workflows")
+        pairs = _wf_pairs()
+        if not p or not pairs:
+            return None
+        sel = min(max(int(p.get("sel", 0)), 0), len(pairs) - 1)
+        return pairs[sel][0]
+
+    def _wf_handle(run: Any) -> Any:
+        return (getattr(tui, "_workflow_handles", {}) or {}).get(getattr(run, "id", ""))
+
+    def _wf_detail_lines(run: Any, ag: Any, now: float) -> list[str]:
+        from .workflow_view import format_duration, format_number, total_tokens  # noqa: PLC0415
+        label = getattr(ag, "label", "") or getattr(ag, "id", "?")
+        lines = [f"{_GREEN}Workflow agent · {label}{_RESET}  {_GREY}← / esc back{_RESET}",
+                 f"{_DIM}workflow: {getattr(run, 'name', '?')}{_RESET}"]
+        phase = getattr(ag, "phase", "") or ""
+        atype = getattr(ag, "agent_type", "") or ""
+        meta = " · ".join(x for x in (phase, atype) if x)
+        if meta:
+            lines.append(f"{_DIM}phase: {meta}{_RESET}")
+        dur = format_duration(ag.elapsed_ms(now)) if hasattr(ag, "elapsed_ms") else "?"
+        lines.append(f"{_DIM}status: {getattr(ag, 'status', '?')} · {dur}{_RESET}")
+        tok = total_tokens(getattr(ag, "usage", None))
+        counts = (f"{getattr(ag, 'turns', 0)} turns · {getattr(ag, 'tool_count', 0)} "
+                  f"tools · {format_number(tok)} tok")
+        cost = getattr(ag, "cost_usd", 0.0) or 0.0
+        if cost:
+            counts += f" · ${cost:.4f}" if cost < 0.01 else f" · ${cost:.2f}"
+        lines.append(f"{_DIM}progress: {counts}{_RESET}")
+        model = getattr(ag, "model", "") or ""
+        if model:
+            lines.append(f"{_DIM}model: {model}{_RESET}")
+        acts = list(getattr(ag, "recent_activities", []) or [])[-5:]
+        if acts:
+            lines.append(f"{_GREY}recent activity{_RESET}")
+            lines += [f"{_GREY}  - {a}{_RESET}" for a in acts]
+        err = getattr(ag, "error", None)
+        if err:
+            lines.append(f"\033[38;5;203merror: {str(err)[:200]}{_RESET}")
+        return lines
+
+    def _workflows_lines() -> list[str]:
+        """All overlay lines (header + body + footer) for the current state.
+        Both ``_workflows_ft`` and ``_workflows_height`` call this so their row
+        counts can never drift apart."""
+        p = state.get("workflows")
+        if p is None:
+            return []
+        from .workflow import default_clock  # noqa: PLC0415
+        from .workflow_view import (  # noqa: PLC0415
+            _truncate_visible,
+            _visible_len,
+            format_agent_row,
+            status_glyph,
+        )
+        width = shutil.get_terminal_size((80, 24)).columns
+        pairs = _wf_pairs()
+        if not pairs:
+            return [f"{_GREEN}Workflows{_RESET}  {_GREY}(esc to close){_RESET}",
+                    f"{_DIM}no active workflows yet — /swarm and the pipeline/parallel "
+                    f"helpers register runs here{_RESET}"]
+        sel = min(max(int(p.get("sel", 0)), 0), len(pairs) - 1)
+        p["sel"] = sel
+        now = default_clock()
+        frame = state.get("frame", 0)
+        if p.get("detail"):
+            run, ag = pairs[sel]
+            return [_truncate_visible(ln, width) for ln in _wf_detail_lines(run, ag, now)]
+        # List view: left phase rail (selected run) + right scrolling agent rows.
+        run = pairs[sel][0]
+        left: list[str] = []
+        for ph in getattr(run, "phases", []) or []:
+            g = status_glyph(getattr(ph, "status", "queued"), color=True)
+            ags = getattr(ph, "agents", []) or []
+            done = sum(1 for a in ags if getattr(a, "status", "") in ("done", "cancelled"))
+            left.append(f"{g} {getattr(ph, 'title', '?')} {_DIM}{done}/{len(ags)}{_RESET}")
+        n = len(pairs)
+        lo = max(0, min(sel - _WF_ROWS // 2, n - _WF_ROWS)) if n > _WF_ROWS else 0
+        right_w = max(20, width - _WF_LEFT_W - 2)
+        right: list[str] = []
+        for i in range(lo, min(lo + _WF_ROWS, n)):
+            right.append(format_agent_row(
+                pairs[i][1], selected=(i == sel), width=right_w, now=now,
+                frame=frame, show_model=False, color=True))
+
+        def _padv(s: str, w: int) -> str:
+            vl = _visible_len(s)
+            return _truncate_visible(s, w) if vl >= w else s + " " * (w - vl)
+
+        header = f"{_GREEN}Workflows{_RESET} {_GREY}· {getattr(run, 'name', '?')}{_RESET}"
+        rows = [header]
+        for r in range(max(len(left), len(right))):
+            lft = left[r] if r < len(left) else ""
+            rgt = right[r] if r < len(right) else ""
+            rows.append(_padv(lft, _WF_LEFT_W) + "  " + rgt)
+        rows.append(f"{_GREY}↑↓ select · enter/→ inspect · ←/esc back · "
+                    f"x stop · p pause · s save{_RESET}")
+        return rows
+
+    def _workflows_ft() -> Any:
+        lines = _workflows_lines()
+        return ANSI("\n".join(lines)) if lines else ANSI("")
+
+    def _workflows_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        n = len(_workflows_lines())
+        return Dimension.exact(n) if n else Dimension.exact(0)
+
+    def _wf_stop() -> None:
+        run = _wf_selected_run()
+        if run is None:
+            return
+        handle = _wf_handle(run)
+        name = getattr(run, "name", "workflow")
+        fn = getattr(handle, "stop", None) if handle is not None else None
+        if not callable(fn):
+            get_app().create_background_task(_announce(f"{name} is not live — nothing to stop"))
+            return
+        try:
+            fn()
+            get_app().create_background_task(_announce(f"⛌ stopping {name}"))
+        except Exception as e:  # noqa: BLE001
+            get_app().create_background_task(_announce(f"could not stop {name}: {e}"))
+        get_app().invalidate()
+
+    def _wf_toggle_pause() -> None:
+        run = _wf_selected_run()
+        if run is None:
+            return
+        handle = _wf_handle(run)
+        name = getattr(run, "name", "workflow")
+        if handle is None:
+            get_app().create_background_task(_announce(f"{name} is not live — nothing to pause"))
+            return
+        try:
+            if getattr(handle, "_paused", False):
+                handle.resume()
+                get_app().create_background_task(_announce(f"▶ resumed {name}"))
+            else:
+                handle.pause()
+                get_app().create_background_task(_announce(f"⏸ paused {name}"))
+        except Exception as e:  # noqa: BLE001
+            get_app().create_background_task(_announce(f"could not pause {name}: {e}"))
+        get_app().invalidate()
+
+    def _wf_save() -> None:
+        run = _wf_selected_run()
+        if run is None:
+            return
+        handle = _wf_handle(run)
+        fn = getattr(handle, "save", None) if handle is not None else None
+        if callable(fn):
+            try:
+                path = fn()
+                get_app().create_background_task(_announce(f"saved → {path}"))
+            except Exception as e:  # noqa: BLE001
+                get_app().create_background_task(_announce(f"could not save: {e}"))
+        elif hasattr(tui, "_save_workflow"):
+            get_app().create_background_task(_print(lambda r=run: tui._save_workflow(r)))
+        else:
+            get_app().create_background_task(_announce("nothing to save"))
+
     def _live_subagent_rows(width: int) -> list[str]:
-        """'⎿ ◇ explore · 6 tools · 42s — CPU analysis' rows for in-flight
-        task-tool runs, capped at 4."""
+        """'⎿ ◇ explore · 6 tools · 42s · tool grep — CPU analysis' rows for
+        in-flight task-tool runs, capped at 10."""
         from .tui import ellipsize  # noqa: PLC0415
         rows: list[str] = []
         subs = getattr(tui, "_live_subagents", None) or {}
-        for i, (rid, s) in enumerate(list(subs.items())[:4]):
+        for i, (rid, s) in enumerate(list(subs.items())[:10]):
             el = int(time.monotonic() - s.get("started", time.monotonic()))
             desc = f" — {s['desc']}" if s.get("desc") else ""
-            body = ellipsize(f"◇ {s.get('type', '?')} · {s.get('tools', 0)} tools · {el}s{desc}",
-                             max(width - 6, 20))
+            last = s.get("last_event") or ""
+            activity = f" · {last}" if last and last != "starting" else ""
+            body = ellipsize(
+                f"◇ #{rid} {s.get('type', '?')} · {s.get('tools', 0)} tools · {el}s{activity}{desc}",
+                max(width - 6, 20))
             branch = "  ⎿ " if (i == 0 and not tui.todos) else "    "
             rows.append(f"{_DIM}{branch}\033[36m{body}\033[0m{_RESET}")
         return rows
@@ -742,7 +1179,14 @@ async def run_fullscreen(tui: Any) -> int:
         rows: list[str] = []
         if tui.todos:
             rows += format_live_todo_rows(tui.todos, width, max_rows=_LIVE_TODO_ROWS)
-        rows += _live_subagent_rows(width)
+        # When the inspector or the /workflows overlay is open it already renders
+        # the agent list (richer), so don't duplicate the rows down here.
+        if state.get("agent_inspector") is None and state.get("workflows") is None:
+            rows += _live_subagent_rows(width)
+            if subs:  # hint that ↓ steps into the live subagent list
+                rows.append(f"{_GREY}    ↓ to inspect subagents{_RESET}")
+        if not rows:
+            return ANSI("")
         return ANSI("\n".join(rows))
 
     def _live_todos_height() -> Any:
@@ -752,7 +1196,12 @@ async def run_fullscreen(tui: Any) -> int:
             return Dimension.exact(0)
         n = min(len(tui.todos), _LIVE_TODO_ROWS) if tui.todos else 0
         n += (1 if len(tui.todos) > _LIVE_TODO_ROWS else 0)
-        n += min(len(subs), 4)
+        # Agent rows + hint are hidden while the inspector or /workflows overlay
+        # is open (no dup).
+        if state.get("agent_inspector") is None and state.get("workflows") is None:
+            n += min(len(subs), 10)
+            if subs:
+                n += 1  # the "↓ inspect" hint line
         return Dimension.exact(n)
 
     _PERM_OPTS = ["allow once", "allow for session", "deny"]
@@ -843,6 +1292,19 @@ async def run_fullscreen(tui: Any) -> int:
         expanded = expand_slash_prompt(text)
         if expanded is not None:
             text = expanded  # e.g. /init → canned prompt; runs as a normal turn
+        elif text.startswith("/") and state["working"] and text.split(maxsplit=1)[0] in {
+                "/agents", "/jobs", "/job", "/cost", "/status", "/effort", "/workflows"}:
+            if text.split(maxsplit=1)[0] == "/agents" and "live" in text.split()[1:2]:
+                _open_agent_inspector()
+                get_app().invalidate()
+            try:
+                handled = await _slash(text)
+            except Exception as e:  # noqa: BLE001
+                await _announce(f"error: {str(e)}")
+                handled = True
+            if handled:
+                get_app().invalidate()
+                return
         elif text.startswith("/"):
             # A command that throws (e.g. /twin with the network down) must end
             # in ONE clean error line + hint — never a raw traceback screen.
@@ -884,6 +1346,11 @@ async def run_fullscreen(tui: Any) -> int:
             pass
         state.update(working=True, started=time.monotonic(),
                      word=random.choice(THINKING_WORDS), task=asyncio.current_task())
+        # Reset the marker buffer at turn start so a GOAL COMPLETE/BLOCKED line
+        # from a *previous* turn can never leak into this turn's autopilot check.
+        state["last_text"] = ""
+        tui._flush_job_context_backlog()
+        tui._turn_active = True
         get_app().invalidate()
         try:
             async for msg in tui.agent.run_iter(tui.messages):
@@ -914,8 +1381,10 @@ async def run_fullscreen(tui: Any) -> int:
             state.get("queue", []).clear()
             goal_note = ""
             if state.get("goal"):
-                state["goal"] = None  # interrupt = the human takes the wheel
-                goal_note = " · autopilot stopped"
+                # esc PAUSES autopilot (keeps the goal + cycle state) rather than
+                # discarding it — /goal resume picks up where it left off.
+                state["goal"]["paused"] = True
+                goal_note = " · autopilot paused (/goal resume to continue)"
             from .agent import close_open_tool_calls  # noqa: PLC0415
             close_open_tool_calls(tui.messages)
             await _print(lambda d=dropped, gn=goal_note: tui.console.print(
@@ -934,6 +1403,7 @@ async def run_fullscreen(tui: Any) -> int:
                     tui.console.print(f"[ansibrightblack]  → {styled}[/]")
             await _print(_show_err)
         finally:
+            tui._turn_active = False
             tui._persist_messages(base)  # save this turn for /resume + /branch
             elapsed = time.monotonic() - state.get("started", time.monotonic())
             state.update(working=False, task=None)
@@ -946,7 +1416,7 @@ async def run_fullscreen(tui: Any) -> int:
             q = state.get("queue") or []
             if q:
                 nxt = q.pop(0)
-                get_app().create_background_task(_handle(nxt))
+                _spawn_handle(nxt)
             elif state.get("goal"):
                 _advance_goal()
             else:
@@ -960,37 +1430,112 @@ async def run_fullscreen(tui: Any) -> int:
                         get_app().invalidate()
                 get_app().create_background_task(_ghost())
 
+    def _looks_like_turn(text: str) -> bool:
+        """True when ``text`` will run a model turn (not a ``!cmd``, ``#note``
+        or slash command). Used to claim ``state['working']`` synchronously at
+        spawn time — see ``_spawn_handle``."""
+        t = text.strip()
+        if not t:
+            return False
+        if t.startswith("!") and len(t) > 1:
+            return False
+        if t.startswith("#") and t.lstrip("#").strip():
+            return False
+        if t.startswith("/"):
+            # Most slash commands are pure UI (no model turn), but some EXPAND
+            # into a canned prompt that runs as a turn (/init, /learn, custom
+            # .mantis/commands/*, skill commands). Those must claim the slot
+            # synchronously too, or a second submit/tick can race a concurrent
+            # run_iter on the shared Agent. ``expand_slash_prompt`` returning
+            # non-None is exactly "this will run a turn".
+            from .tui import expand_slash_prompt  # noqa: PLC0415
+            try:
+                return expand_slash_prompt(t) is not None
+            except Exception:  # noqa: BLE001 — treat unknown as non-turn
+                return False
+        return True
+
+    def _spawn_handle(text: str) -> None:
+        """Spawn ``_handle`` for a real turn, claiming ``state['working']``
+        SYNCHRONOUSLY first. The flag was previously only set inside _handle
+        after an ``await`` (past every submit-time guard), so two sources that
+        both checked ``state['working']`` during that window (the Enter handler,
+        the agi/goal/watch loops, or the queue drain) could each see False and
+        start a SECOND concurrent ``run_iter`` on the shared Agent/messages.
+        Commands (``!``/``#``/``/…``) don't run a turn, so they never claim it."""
+        if _looks_like_turn(text):
+            state["working"] = True
+        get_app().create_background_task(_handle(text))
+
+    async def _agi_loop(rec: dict) -> None:
+        from .tui import agi_cycle_prompt  # noqa: PLC0415
+
+        while not rec["stopped"].is_set():
+            # Optional USD budget: stop the loop once the session cost crosses
+            # rec['max_usd'] (unset → no cap), mirroring the goal loop.
+            max_usd = rec.get("max_usd")
+            if max_usd and state.get("session_cost", 0.0) >= max_usd:
+                rec["stopped"].set()
+                state["agi"] = None
+                await _announce(f"∞ agi: cost budget ${max_usd:.2f} reached — stopped")
+                return
+            if not state["working"] and state.get("pending_perm") is None \
+                    and state.get("pending_question") is None \
+                    and state.get("picking_model") is None \
+                    and state.get("awaiting_key") is None:
+                rec["cycle"] += 1
+                await _announce(f"∞ agi cycle {rec['cycle']} · {rec['seed'][:70]}")
+                _spawn_handle(agi_cycle_prompt(rec["seed"], rec["cycle"]))
+            await asyncio.sleep(rec["interval"])
+
     def _advance_goal() -> None:
         """The autopilot state machine, called after each idle turn end:
         work → (todos all done) → verify → (GOAL COMPLETE) → reflect → finish.
-        Blocked/complete markers and the cycle cap are the exits; esc clears."""
+
+        Exits: the BLOCKED/COMPLETE markers (matched per-line on the last text
+        block), the cycle cap, an optional USD budget, or a stagnation guard
+        (no plan progress for 3 cycles → replan once, then block). esc PAUSES
+        (``g['paused']``) rather than clearing, so a paused goal simply idles
+        here until ``/goal resume``. Continuation is budget-aware: while still
+        under the context window and making progress, a "keep working" nudge is
+        injected so the model doesn't wrap up early (Claude autopilot parity)."""
         from .tui import (  # noqa: PLC0415
-            GOAL_BLOCKED_MARKER,
-            GOAL_COMPLETE_MARKER,
+            BUDGET_NUDGE,
+            detect_goal_marker,
             goal_continue_prompt,
             goal_reflect_prompt,
+            goal_replan_prompt,
+            goal_should_nudge,
+            goal_todo_snapshot,
             goal_verify_prompt,
         )
         g = state.get("goal")
-        if not g or state["working"]:
+        if not g or state["working"] or g.get("paused"):
             return
         last = state.get("last_text") or ""
+        marker = detect_goal_marker(last)
 
         def fire(prompt: str) -> None:
-            get_app().create_background_task(_handle(prompt))
+            _spawn_handle(prompt)
 
         def note(msg: str) -> None:
             get_app().create_background_task(_announce(msg))
 
-        if GOAL_BLOCKED_MARKER in last:
+        # --- hard exits: explicit block, cost budget, reflect-done ----------
+        if marker == "BLOCKED":
             state["goal"] = None
             note("⦿ autopilot: goal blocked — stopped")
+            return
+        max_usd = g.get("max_usd")
+        if max_usd and state.get("session_cost", 0.0) >= max_usd:
+            state["goal"] = None
+            note(f"⦿ autopilot: cost budget ${max_usd:.2f} reached — stopped")
             return
         if g.get("phase") == "reflect":
             state["goal"] = None
             note(f"⦿ autopilot: goal complete after {g['cycles']} cycles ✓")
             return
-        if g.get("phase") == "verify" and GOAL_COMPLETE_MARKER in last:
+        if g.get("phase") == "verify" and marker == "COMPLETE":
             g["phase"] = "reflect"
             fire(goal_reflect_prompt(g["text"]))
             return
@@ -1001,6 +1546,41 @@ async def run_fullscreen(tui: Any) -> int:
             note("⦿ autopilot: plan finished — verifying adversarially…")
             fire(goal_verify_prompt(g["text"]))
             return
+
+        # --- stagnation snapshot: (#todos, #done, plan hash) per cycle ------
+        snap = goal_todo_snapshot(todos)
+        if snap == g.get("_snap"):
+            g["_stall"] = g.get("_stall", 0) + 1
+        else:
+            g["_stall"] = 0
+            g["_snap"] = snap
+            g["_replanned"] = False  # progress resumed → allow future replans
+
+        # Force a REAL plan: in the work phase with no todos, the model must
+        # decompose before it keeps "working" against an empty checklist.
+        if g.get("phase") == "work" and not todos:
+            g["cycles"] += 1
+            if g["cycles"] > g["max"]:
+                state["goal"] = None
+                note(f"⦿ autopilot: cycle cap ({g['max']}) reached — stopped.")
+                return
+            note("⦿ autopilot: no plan yet — forcing a concrete todo breakdown")
+            fire(goal_replan_prompt(g["text"]))
+            return
+
+        # Stagnation guard: unchanged for 3 cycles → replan once; if the replan
+        # also fails to move anything, declare the goal blocked and stop.
+        if g.get("_stall", 0) >= 3:
+            if g.get("_replanned"):
+                state["goal"] = None
+                note("⦿ autopilot: no progress after replan — blocked, stopping")
+                return
+            g["_replanned"] = True
+            g["_stall"] = 0
+            note("⦿ autopilot: stalled 3 cycles — replanning")
+            fire(goal_replan_prompt(g["text"]))
+            return
+
         g["cycles"] += 1
         if g["cycles"] > g["max"]:
             state["goal"] = None
@@ -1008,6 +1588,21 @@ async def run_fullscreen(tui: Any) -> int:
                  "Re-issue /goal to keep going.")
             return
         g["phase"] = "work"
+
+        # Budget-aware continuation nudge (REF query/tokenBudget): keep working
+        # while under ~90% of the context window AND not diminishing (≥3 cycles
+        # with two consecutive sub-500-token deltas). ctx growth is the proxy
+        # for per-turn progress here.
+        tok = state.get("ctx_tokens", 0)
+        delta = tok - g.get("_prev_tok", 0)
+        g["_prev_tok"] = tok
+        g["_cont"] = g.get("_cont", 0) + 1
+        nudge = goal_should_nudge(
+            tokens=tok, window=_ctx_window(), cont=g["_cont"], delta=delta,
+            prev_delta=g.get("_last_delta", 10 ** 9))
+        g["_last_delta"] = delta
+        if nudge:
+            tui.messages.append(UserMessage(content=BUDGET_NUDGE, isMeta=True))
         fire(goal_continue_prompt(g["text"], g["cycles"], g["max"]))
 
     async def _watch_loop(wid: int, cmdline: str, interval: float, rec: dict) -> None:
@@ -1034,6 +1629,7 @@ async def run_fullscreen(tui: Any) -> int:
                     await asyncio.sleep(1.0)
                 if rec["stopped"].is_set():
                     return
+                state["working"] = True  # claim the slot before _handle awaits
                 await _handle(
                     f"[watch #{wid}] `{cmdline}` just started FAILING:\n{out}\n\n"
                     "Diagnose and fix the root cause, then rerun the command to "
@@ -1057,9 +1653,19 @@ async def run_fullscreen(tui: Any) -> int:
         from .tools import ToolRegistry  # noqa: PLC0415
         from .agent import Agent as _Agent  # noqa: PLC0415
         from .builtin_tools import CODING_TOOLS  # noqa: PLC0415
-        from .types import UserMessage as _UM, TextBlock as _TB  # noqa: PLC0415
+        from .types import UserMessage as _UM  # noqa: PLC0415
 
         repo = _os.getcwd()
+        # Swarm workers run CODING_TOOLS (real shell + filesystem writes) against
+        # live worktrees, so they MUST be gated by the SAME permission layer as
+        # the main agent — never unrestricted. Capture the parent context up front
+        # and fail CLOSED (refuse to run) if there isn't one, rather than spawning
+        # workers that could execute unapproved commands.
+        parent_perms = tui.agent.permissions if tui.agent is not None else None
+        if parent_perms is None:
+            await _announce("⛬ swarm: refused — no permission context available "
+                            "(fail closed)")
+            return
         state.update(working=True, started=time.monotonic(),
                      word="Swarming", task=asyncio.current_task())
         get_app().invalidate()
@@ -1077,31 +1683,59 @@ async def run_fullscreen(tui: Any) -> int:
                         "file and shell operation; never touch files outside it. Take "
                         "your own distinct approach to the task."),
                 tools=reg, max_steps=40, include_recall=False, include_env=False,
+                permissions=parent_perms,
             )
             msgs = [_UM(content=f"In the repo copy at {worktree}: {task}")]
             await child.run(msgs)
             tui._subagent_progress({"id": 90000 + index, "phase": "end"})
             return _extract_final_text(msgs)
 
+        # Judge budget/caps — generous enough for the judge to actually reason
+        # over each candidate's report + diff, not skim the first few hundred
+        # bytes. Bumped from the old 1-step/200-token skim.
+        judge_report_cap = 2000
+        judge_diff_cap = 8000
+
         async def judge(viable) -> tuple[int, str]:
             briefs = []
             for c in viable:
-                briefs.append(f"ATTEMPT {c.index}:\nreport: {c.report[:600]}\n"
-                              f"diff (truncated):\n{c.diff[:3000]}")
+                diff = c.diff[:judge_diff_cap]
+                trunc = " …[diff truncated]" if len(c.diff) > judge_diff_cap else ""
+                briefs.append(
+                    f"=== ATTEMPT {c.index} ===\n"
+                    f"files changed: {c.files_changed} · diff size: {len(c.diff)} bytes\n"
+                    f"report: {c.report[:judge_report_cap]}\n"
+                    f"diff:\n{diff}{trunc}")
             child = _Agent(
                 model=tui.model, provider=tui.agent.provider if tui.agent else None,
-                system=("You judge competing code attempts. Reply with ONLY a line "
-                        "like: WINNER: <index> — <one-line reason>. Judge on "
-                        "correctness first, then simplicity."),
-                tools=ToolRegistry(), max_steps=1, max_tokens=200,
+                system=(
+                    "You are an adversarial code judge. Competing attempts each tried "
+                    "to solve the SAME task in an isolated worktree; you pick the one to "
+                    "merge into the real tree. Your job is not to reward the nicest-"
+                    "looking diff — it is to find how each one BREAKS.\n\n"
+                    "For every attempt, reason briefly about failure: Does the diff "
+                    "actually accomplish the task, or only pretend to? Does it handle "
+                    "edge cases and error paths? Does it silently break existing "
+                    "behavior, delete needed code, or touch files it shouldn't? A diff "
+                    "that would fail the project's tests MUST NOT win, no matter how "
+                    "clean it reads. Treat an empty, trivial, or off-task diff as "
+                    "disqualified.\n\n"
+                    "Rank on: (1) CORRECTNESS — solves the task, handles edge cases, "
+                    "breaks nothing; then (2) SIMPLICITY — smallest change that is "
+                    "still correct; then (3) COMPLETENESS. Think through the candidates, "
+                    "then END with EXACTLY one final line and nothing after it:\n"
+                    "WINNER: <index> — <one-line justification>"),
+                tools=ToolRegistry(), max_steps=4, max_tokens=1200,
                 include_recall=False, include_env=False,
             )
             msgs = [_UM(content=f"Task: {task_text}\n\n" + "\n\n".join(briefs))]
             await child.run(msgs)
             text = _extract_final_text(msgs)
-            m = re.search(r"WINNER:\s*(\d+)", text)
-            if m and any(c.index == int(m.group(1)) for c in viable):
-                return int(m.group(1)), text.strip()[:160]
+            # Take the LAST WINNER: line — the model reasons first, decides last.
+            matches = re.findall(r"WINNER:\s*(\d+)", text)
+            for raw in reversed(matches):
+                if any(c.index == int(raw) for c in viable):
+                    return int(raw), text.strip()[-200:]
             return viable[0].index, f"judge unparseable; defaulted ({text[:80]})"
 
         try:
@@ -1303,7 +1937,21 @@ async def run_fullscreen(tui: Any) -> int:
                 _open_model_picker(arg or "")
             return True
         if cmd == "/agents":
-            await _print(lambda: tui._show_agents())
+            parts = arg.strip().split(maxsplit=1)
+            if parts and parts[0] in {"live", "watch", "inspect", "running"}:
+                await _print(lambda: tui._cmd_live_agents(parts[1] if len(parts) > 1 else parts[0]))
+            else:
+                await _print(lambda: tui._show_agents())
+            return True
+        if cmd == "/effort":
+            if arg:
+                await _print(lambda: tui._cmd_knobs(arg))
+            else:
+                state["picking_effort"] = {
+                    "items": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "off"],
+                    "sel": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "off"].index(tui.effort or "off"),
+                }
+                get_app().invalidate()
             return True
         if cmd == "/twin":
             if tui._pair_tool is None:
@@ -1336,14 +1984,60 @@ async def run_fullscreen(tui: Any) -> int:
             n, task_text = int(m_n.group(1)), m_n.group(2).strip()
             get_app().create_background_task(_run_swarm(n, task_text))
             return True
+        if cmd == "/agi":
+            from .tui import AGI_DEFAULT_INTERVAL_S, format_loop_interval, parse_loop_interval  # noqa: PLC0415
+            sub = arg.strip()
+            rec = state.get("agi")
+            if not sub or sub == "status":
+                if rec:
+                    await _announce(f"∞ agi · cycle {rec['cycle']} · every "
+                                    f"{format_loop_interval(rec['interval'])} · "
+                                    f"{rec['seed'][:70]}")
+                else:
+                    await _announce("no /agi loop — /agi <seed> or /agi 5m <seed>")
+                return True
+            if sub == "stop":
+                if rec:
+                    rec["stopped"].set()
+                    state["agi"] = None
+                    await _announce("∞ agi stopped")
+                else:
+                    await _announce("no /agi loop")
+                return True
+            parts = sub.split(maxsplit=1)
+            interval = AGI_DEFAULT_INTERVAL_S
+            seed = sub
+            if len(parts) == 2:
+                parsed = parse_loop_interval(parts[0])
+                if parsed is not None:
+                    interval, seed = parsed, parts[1].strip()
+            if not seed:
+                await _announce("usage: /agi [interval] <seed>")
+                return True
+            from .tui import autopilot_conflict  # noqa: PLC0415
+            conflict = autopilot_conflict(
+                goal_active=bool(state.get("goal")),
+                agi_active=bool(state.get("agi")), starting="agi")
+            if conflict:
+                await _announce(conflict)
+                return True
+            if rec:
+                rec["stopped"].set()
+            rec = {"seed": seed, "cycle": 0, "interval": interval,
+                   "stopped": asyncio.Event()}
+            state["agi"] = rec
+            await _announce(f"∞ agi started · every {format_loop_interval(interval)} · stop with /agi stop")
+            get_app().create_background_task(_agi_loop(rec))
+            return True
         if cmd == "/goal":
             from .tui import GOAL_MAX_CYCLES, goal_kickoff_prompt  # noqa: PLC0415
             sub = arg.strip()
             g = state.get("goal")
             if not sub or sub == "status":
                 if g:
+                    paused = " · PAUSED (/goal resume)" if g.get("paused") else ""
                     await _announce(f"⦿ autopilot · cycle {g['cycles']}/{g['max']} · "
-                                    f"{g['phase']} · {g['text'][:60]}")
+                                    f"{g['phase']}{paused} · {g['text'][:60]}")
                 else:
                     await _announce("no active goal — /goal <what you want done>")
                 return True
@@ -1351,12 +2045,29 @@ async def run_fullscreen(tui: Any) -> int:
                 state["goal"] = None
                 await _announce("⦿ autopilot stopped" if g else "no active goal")
                 return True
+            if sub == "resume":
+                if g and g.get("paused"):
+                    g["paused"] = False
+                    await _announce("⦿ autopilot resumed")
+                    _advance_goal()
+                elif g:
+                    await _announce("⦿ autopilot already running")
+                else:
+                    await _announce("no paused goal to resume")
+                return True
+            from .tui import autopilot_conflict  # noqa: PLC0415
+            conflict = autopilot_conflict(
+                goal_active=bool(state.get("goal")),
+                agi_active=bool(state.get("agi")), starting="goal")
+            if conflict:
+                await _announce(conflict)
+                return True
             tui.todos.clear()  # fresh plan; the todo tool mutates this list in place
             state["goal"] = {"text": sub, "cycles": 0, "max": GOAL_MAX_CYCLES,
                              "phase": "work"}
             await _announce(f"⦿ autopilot engaged · up to {GOAL_MAX_CYCLES} cycles · "
                             "esc stops it")
-            get_app().create_background_task(_handle(goal_kickoff_prompt(sub)))
+            _spawn_handle(goal_kickoff_prompt(sub))
             return True
         if cmd == "/watch":
             import asyncio as _aio  # noqa: PLC0415
@@ -1406,10 +2117,10 @@ async def run_fullscreen(tui: Any) -> int:
                 if not loops:
                     await _announce("no active loops — /loop <interval> <prompt> to start one")
                 else:
-                    for lid, l in loops.items():
+                    for lid, loop in loops.items():
                         await _announce(
-                            f"loop #{lid} · every {format_loop_interval(l['interval'])} · "
-                            f"{l['fires']} fires · {l['prompt'][:60]}")
+                            f"loop #{lid} · every {format_loop_interval(loop['interval'])} · "
+                            f"{loop['fires']} fires · {loop['prompt'][:60]}")
                     await _announce("stop with /loop stop <id> (or /loop stop all)")
                 return True
             if sub.split()[0] == "stop":
@@ -1436,6 +2147,7 @@ async def run_fullscreen(tui: Any) -> int:
             loops[lid] = rec
 
             async def _fire(rec: dict = rec, lid: int = lid) -> None:
+                state["working"] = True  # claim the slot before any await below
                 rec["fires"] += 1
                 await _announce(f"loop #{lid} · fire {rec['fires']}")
                 await _handle(rec["prompt"])
@@ -1454,8 +2166,27 @@ async def run_fullscreen(tui: Any) -> int:
                 f"loop #{lid} started · every {format_loop_interval(interval)} · "
                 f"{prompt[:60]} — /loop stop {lid} to end")
             return True
+        if cmd == "/workflows":
+            _open_workflows()
+            return True
+        if cmd == "/job":
+            await _print(lambda: tui._cmd_job(arg))
+            return True
         if cmd == "/jobs":
-            await _print(lambda: tui._cmd_jobs(arg))
+            watch = arg.strip().split()[:1]
+            if watch and watch[0] in {"watch", "live", "log", "logs"}:
+                await _print(lambda: tui._cmd_jobs(arg))
+
+                async def _refresh_jobs() -> None:
+                    for _ in range(120):
+                        await asyncio.sleep(2)
+                        if input_buffer.text.strip() != "/jobs watch":
+                            return
+                        await _print(lambda: tui._cmd_jobs(arg))
+
+                get_app().create_background_task(_refresh_jobs())
+            else:
+                await _print(lambda: tui._cmd_jobs(arg))
             return True
         if cmd == "/mcp":
             await _print(lambda: tui._show_mcp())
@@ -1551,11 +2282,20 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if cmd == "/help":
             def _help() -> None:
-                from .tui import all_slash_commands, build_help_lines  # noqa: PLC0415
+                from rich.markup import escape as _esc  # noqa: PLC0415
+
+                from .tui import all_slash_commands, search_help_lines  # noqa: PLC0415
                 w, d = "white", "ansibrightblack"
-                tui.console.print("\n[bold]commands[/]")
+                rows = search_help_lines(all_slash_commands(), arg)
+                title = "commands" if not arg else f"commands matching {_esc(arg)!r}"
+                tui.console.print(f"\n[bold]{title}[/]")
+                if not rows:
+                    tui.console.print(
+                        f"  [{d}]no matches · try [white]/help[/] for all commands or "
+                        f"type [white]/[/] to browse[/]"
+                    )
                 last_cat = None
-                for cat, command, desc in build_help_lines(all_slash_commands()):
+                for cat, command, desc in rows:
                     label = cat if cat != last_cat else ""
                     last_cat = cat
                     tui.console.print(f"  [{d}]{label:<8}[/] [{w}]{command}[/]  [{d}]{desc}[/]")
@@ -1563,7 +2303,7 @@ async def run_fullscreen(tui: Any) -> int:
                     f"  [{d}]quit    [/] [{w}]/exit[/]  [{d}](or Ctrl+D · Ctrl+C when idle)[/]")
                 tui.console.print(
                     f"  [{d}]keys    [/] [{d}]@file/@dir attaches its content · shift+tab cycles mode "
-                    f"· esc/Ctrl+C interrupts a running reply[/]\n")
+                    f"· esc/Ctrl+C interrupts a running reply · [white]/help <term>[/] searches[/]\n")
             await _print(_help)
             return True
         return False  # unknown → treat as a normal prompt
@@ -1575,6 +2315,27 @@ async def run_fullscreen(tui: Any) -> int:
     _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
     _picker_open = Condition(lambda: state.get("picking_model") is not None)
+    _effort_open = Condition(lambda: state.get("picking_effort") is not None)
+    _agent_open = Condition(lambda: state.get("agent_inspector") is not None)
+    _workflows_open = Condition(lambda: state.get("workflows") is not None)
+
+    def _can_enter_agents_fn() -> bool:
+        """True when ↓ from the prompt should step into the live subagent list.
+
+        Only fires when there are running subagents, the inspector isn't already
+        open, no other overlay owns the screen, and the user isn't composing a
+        line — so normal editing / history navigation is never hijacked."""
+        if state.get("agent_inspector") is not None:
+            return False
+        if any(state.get(k) for k in (
+                "pending_perm", "pending_question", "picking_model",
+                "picking_effort", "workflows", "awaiting_key")):
+            return False
+        if input_buffer.text.strip() or _menu_options():
+            return False
+        return bool(_live_agent_items())
+
+    _can_enter_agents = Condition(_can_enter_agents_fn)
     _q_open = Condition(
         lambda: state.get("pending_question") is not None
         and not state["pending_question"]["typing"]
@@ -1608,7 +2369,7 @@ async def run_fullscreen(tui: Any) -> int:
             p["selected"].symmetric_difference_update({p["sel"]})
             event.app.invalidate()
 
-    for _digit in "1234":
+    for _digit in "123456789":
         @kb.add(_digit, filter=_q_open)
         def _(event: Any, d: str = _digit) -> None:
             p = state["pending_question"]
@@ -1640,6 +2401,55 @@ async def run_fullscreen(tui: Any) -> int:
                 p["sel"] = i
                 return
 
+    def _picker_tab(delta: int) -> None:
+        # Cycle the active provider tab (←/→) and reslice the list to it. No-op
+        # for the session/rewind pickers, which carry no tabs.
+        p = state.get("picking_model")
+        if not p or not p.get("tabs"):
+            return
+        keys = [t["tab"] for t in p["tabs"]]
+        try:
+            i = keys.index(p.get("tab", "all"))
+        except ValueError:
+            i = 0
+        p["tab"] = keys[(i + delta) % len(keys)]
+        p["items"] = _items_for(p.get("groups", []), p.get("filter", ""), p["tab"])
+        p["sel"] = next((j for j, it in enumerate(p["items"])
+                         if it["kind"] in _SELECTABLE_KINDS), 0)
+
+    @kb.add("up", filter=_effort_open)
+    def _(event: Any) -> None:
+        p = state["picking_effort"]
+        p["sel"] = (p["sel"] - 1) % len(p["items"])
+        event.app.invalidate()
+
+    @kb.add("down", filter=_effort_open)
+    def _(event: Any) -> None:
+        p = state["picking_effort"]
+        p["sel"] = (p["sel"] + 1) % len(p["items"])
+        event.app.invalidate()
+
+    @kb.add("escape", filter=_effort_open)
+    def _(event: Any) -> None:
+        state["picking_effort"] = None
+        event.app.invalidate()
+
+    @kb.add("enter", filter=_effort_open, eager=True)
+    def _(event: Any) -> None:
+        p = state.get("picking_effort")
+        if not p:
+            return
+        value = p["items"][p["sel"]]
+        state["picking_effort"] = None
+        # Render the updated setting through the normal fullscreen output path;
+        # never let Rich output overwrite the selector line.
+        from prompt_toolkit.application.run_in_terminal import in_terminal  # noqa: PLC0415
+        async def _apply_effort() -> None:
+            async with in_terminal():
+                tui._cmd_knobs(f"effort={value}")
+        event.app.create_background_task(_apply_effort())
+        event.app.invalidate()
+
     @kb.add("up", filter=_picker_open)
     @kb.add("c-p", filter=_picker_open)
     def _(event: Any) -> None:
@@ -1650,6 +2460,16 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("c-n", filter=_picker_open)
     def _(event: Any) -> None:
         _picker_move(1)
+        event.app.invalidate()
+
+    @kb.add("left", filter=_picker_open)
+    def _(event: Any) -> None:
+        _picker_tab(-1)
+        event.app.invalidate()
+
+    @kb.add("right", filter=_picker_open)
+    def _(event: Any) -> None:
+        _picker_tab(1)
         event.app.invalidate()
 
     # Type-to-filter the picker. A printable char narrows the list; backspace
@@ -1741,6 +2561,112 @@ async def run_fullscreen(tui: Any) -> int:
         state["pending_perm"]["sel"] += 1
         event.app.invalidate()
 
+    @kb.add("down", filter=_can_enter_agents, eager=True)
+    def _(event: Any) -> None:
+        # ↓ from an empty prompt steps into the live subagent list.
+        _open_agent_inspector()
+        event.app.invalidate()
+
+    @kb.add("down", filter=_agent_open, eager=True)
+    @kb.add("c-n", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        items = _live_agent_items()
+        if items:
+            state["agent_inspector"]["sel"] = (state["agent_inspector"].get("sel", 0) + 1) % len(items)
+        event.app.invalidate()
+
+    @kb.add("up", filter=_agent_open, eager=True)
+    @kb.add("c-p", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        items = _live_agent_items()
+        if items:
+            panel = state["agent_inspector"]
+            cur = int(panel.get("sel", 0))
+            if cur <= 0 and not panel.get("detail"):
+                state["agent_inspector"] = None  # ↑ past the top of the list → prompt
+            else:
+                panel["sel"] = (cur - 1) % len(items)
+        event.app.invalidate()
+
+    @kb.add("enter", filter=_agent_open, eager=True)
+    @kb.add("right", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        # Drill into the selected agent's focused detail view.
+        if _live_agent_items():
+            state["agent_inspector"]["detail"] = True
+        else:
+            state["agent_inspector"] = None
+        event.app.invalidate()
+
+    @kb.add("left", filter=_agent_open, eager=True)
+    @kb.add("backspace", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        # ← goes back: detail → list, list → close (return to the prompt).
+        panel = state["agent_inspector"]
+        if panel.get("detail"):
+            panel["detail"] = False
+        else:
+            state["agent_inspector"] = None
+        event.app.invalidate()
+
+    @kb.add("escape", filter=_agent_open, eager=True)
+    @kb.add("c-c", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        state["agent_inspector"] = None  # Esc always closes the whole overlay
+        event.app.invalidate()
+
+    # -- /workflows overlay navigation (gated + eager so keys never leak into
+    # the input line while the overlay is up) --------------------------------
+    def _wf_move(delta: int) -> None:
+        p = state.get("workflows")
+        pairs = _wf_pairs()
+        if not p or not pairs:
+            return
+        p["sel"] = (int(p.get("sel", 0)) + delta) % len(pairs)
+
+    @kb.add("down", filter=_workflows_open, eager=True)
+    @kb.add("c-n", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_move(1)
+        event.app.invalidate()
+
+    @kb.add("up", filter=_workflows_open, eager=True)
+    @kb.add("c-p", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_move(-1)
+        event.app.invalidate()
+
+    @kb.add("right", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        # → drills into the selected agent's detail (same as Enter).
+        p = state["workflows"]
+        if not p.get("detail") and _wf_pairs():
+            p["detail"] = True
+        event.app.invalidate()
+
+    @kb.add("left", filter=_workflows_open, eager=True)
+    @kb.add("backspace", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        # ← goes back: detail → list, list → close (the run keeps executing).
+        p = state["workflows"]
+        if p.get("detail"):
+            p["detail"] = False
+        else:
+            state["workflows"] = None
+        event.app.invalidate()
+
+    @kb.add("x", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_stop()
+
+    @kb.add("p", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_toggle_pause()
+
+    @kb.add("s", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_save()
+
     @kb.add("down", filter=_menu_open)
     def _(event: Any) -> None:
         state["slash_sel"] += 1
@@ -1757,6 +2683,16 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("enter")
     def _(event: Any) -> None:
+        if state.get("agent_inspector") is not None:
+            return
+        # The /workflows overlay steals Enter: drill into the selected agent's
+        # detail pane (a second layer inside the same overlay).
+        if state.get("workflows") is not None:
+            p = state["workflows"]
+            if not p.get("detail") and _wf_pairs():
+                p["detail"] = True
+            event.app.invalidate()
+            return
         # A permission prompt steals Enter: submit the highlighted choice.
         if state.get("pending_perm") is not None:
             _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
@@ -1860,6 +2796,14 @@ async def run_fullscreen(tui: Any) -> int:
         if not text:
             return
         if state["working"]:
+            # Mid-turn fast-path commands run IMMEDIATELY, not queued — the
+            # whitelist here mirrors _handle's mid-turn branch, which needs the
+            # command to actually reach it (queuing would defer it to after the
+            # turn, making that branch dead).
+            _cmd0 = text.split(maxsplit=1)[0] if text.startswith("/") else ""
+            if _cmd0 in {"/agents", "/jobs", "/job", "/cost", "/status", "/effort", "/workflows"}:
+                _spawn_handle(text)
+                return
             # A turn is running: QUEUE the message (Claude Code behavior) —
             # it fires the moment this turn finishes. Esc-interrupt clears it.
             q = state.setdefault("queue", [])
@@ -1867,7 +2811,7 @@ async def run_fullscreen(tui: Any) -> int:
             event.app.create_background_task(_announce(
                 f"⧉ queued ({len(q)}) — sends when this turn finishes · esc clears"))
             return
-        event.app.create_background_task(_handle(text))
+        _spawn_handle(text)
 
     @kb.add("c-c")
     def _(event: Any) -> None:
@@ -1885,6 +2829,20 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
+        if state.get("agent_inspector") is not None:
+            state["agent_inspector"] = None
+            event.app.invalidate()
+            return
+        # /workflows overlay: esc backs out of detail → list → closed. Closing
+        # never stops the run — it keeps executing in the background.
+        if state.get("workflows") is not None:
+            p = state["workflows"]
+            if p.get("detail"):
+                p["detail"] = False
+            else:
+                state["workflows"] = None
+            event.app.invalidate()
+            return
         from .tui import esc_action  # noqa: PLC0415
         pq = state.get("pending_question")
         # Esc-Esc while idle (no overlays, nothing running) → the rewind picker:
@@ -2013,6 +2971,14 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(question_ft), height=_question_height),
             # Model picker overlay — height 0 unless /models opened it.
             Window(FormattedTextControl(picker_ft), height=_picker_height),
+            Window(FormattedTextControl(effort_ft), height=Condition(
+                lambda: (1 + len(state["picking_effort"]["items"]))
+                if state.get("picking_effort") else 0)), 
+            # Live agent inspector — arrow-key navigable while delegates run.
+            Window(FormattedTextControl(_agent_inspector_ft), height=_agent_inspector_height),
+            # /workflows overlay — two-pane structured multi-agent run viewer;
+            # height 0 unless opened. Pass the height CALLABLE, never its call.
+            Window(FormattedTextControl(_workflows_ft), height=_workflows_height),
             Window(FormattedTextControl(footer_ft), height=1),
             # Live task checklist — pinned under the spinner while working
             # (Claude Code's ⎿ □/✔ block); height 0 when idle.
@@ -2028,7 +2994,10 @@ async def run_fullscreen(tui: Any) -> int:
 
     async def _animate() -> None:
         while True:
-            if state["working"]:
+            # Tick while a turn runs (spinner) OR the /workflows overlay is open,
+            # so agent durations/spinners in the overlay recompute live even when
+            # no turn is active in the foreground.
+            if state["working"] or state.get("workflows") is not None:
                 state["frame"] += 1
                 app.invalidate()
             await asyncio.sleep(0.12)
@@ -2060,13 +3029,26 @@ async def run_fullscreen(tui: Any) -> int:
     _retry.notify = _on_retry
 
     def _notify_job(job: Any) -> None:
-        icon = {"done": "✓", "error": "✗", "timeout": "⏱", "cancelled": "–"}.get(job.status, "·")
-        get_app().create_background_task(_announce(
-            f"⦿ job #{job.id} {job.status} {icon} · {job.desc[:50]} — result added to "
-            f"context (or /jobs)"))
+        from .tui import format_job_completion_line  # noqa: PLC0415
+
+        line = format_job_completion_line(job, width=shutil.get_terminal_size((80, 24)).columns)
+        get_app().create_background_task(_announce(line))
         get_app().invalidate()
 
     tui._job_notify = _notify_job
+
+    # Test hook: seed fake live subagents so the ↓-into-inspector path is
+    # drivable in a PTY test without spawning a real model. Harmless in prod
+    # (only fires when the env var is explicitly set).
+    if _os.environ.get("MANTIS_FS_SEED_AGENTS"):
+        _now = time.monotonic()
+        tui._live_subagents = {
+            1: {"type": "explore", "desc": "seed one", "tools": 3,
+                "last_event": "tool grep", "started": _now,
+                "events": [(_now, "grep foo")]},
+            2: {"type": "explore", "desc": "seed two", "tools": 5,
+                "last_event": "tool glob", "started": _now, "events": []},
+        }
 
     anim = asyncio.ensure_future(_animate())
     mcp_boot = asyncio.ensure_future(_mcp_startup())
@@ -2074,19 +3056,38 @@ async def run_fullscreen(tui: Any) -> int:
         await app.run_async()
     finally:
         _retry.notify = None
+        # Collect every background task, request cancellation, THEN await them
+        # so the cancellation actually propagates to each task's next await —
+        # subprocess termination / transport close only happen there. Merely
+        # calling .cancel() and returning leaves orphaned child processes.
+        pending: list[Any] = [anim, mcp_boot]
         anim.cancel()
         mcp_boot.cancel()
-        for l in (state.get("loops") or {}).values():  # stop /loop timers
-            l["stopped"].set()
-            t = l.get("task")
+        if state.get("agi"):
+            state["agi"]["stopped"].set()
+        for loop in (state.get("loops") or {}).values():  # stop /loop timers
+            loop["stopped"].set()
+            t = loop.get("task")
             if t is not None:
                 t.cancel()
+                pending.append(t)
         tui._jobs.cancel_all()  # background jobs die with the session
         for w in (state.get("watches") or {}).values():  # stop /watch sentinels
             w["stopped"].set()
             t = w.get("task")
             if t is not None:
                 t.cancel()
+                pending.append(t)
+        models_task = getattr(tui, "_models_task", None)
+        if models_task is not None:
+            models_task.cancel()
+            pending.append(models_task)
+        # Await all cancellations (swallowing CancelledError + any teardown
+        # error) so nothing is left half-torn-down when we return.
+        try:
+            await asyncio.gather(*pending, return_exceptions=True)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             await tui._close_mcp()
         except Exception:  # noqa: BLE001

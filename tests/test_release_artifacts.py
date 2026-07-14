@@ -124,13 +124,15 @@ def test_pyproject_has_release_metadata() -> None:
 
 
 def test_hatchling_packages_only_the_sdk() -> None:
-    """The wheel should ship mantis_agent and nothing else (no tests, no docs)."""
+    """The wheel ships the SDK package plus its `mantis_agent_sdk` import alias
+    (and nothing else — no tests, no docs)."""
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
     wheel_pkgs = data.get("tool", {}).get("hatch", {}).get("build", {}).get(
         "targets", {}
     ).get("wheel", {}).get("packages")
-    assert wheel_pkgs == ["mantis_agent"], (
-        f"Wheel packages should be ['mantis_agent'], got {wheel_pkgs!r}"
+    assert wheel_pkgs == ["mantis_agent", "mantis_agent_sdk"], (
+        f"Wheel packages should be ['mantis_agent', 'mantis_agent_sdk'], "
+        f"got {wheel_pkgs!r}"
     )
 
 

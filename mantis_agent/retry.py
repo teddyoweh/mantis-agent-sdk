@@ -17,12 +17,13 @@ Policy
 * Honor ``Retry-After`` header on 429 (per RFC 7231) — sleep that many
   seconds before the next attempt instead of using our backoff.
 * Backoff:   ``base * 2**attempt + jitter``  (default base=0.5s, max=20s).
-* Stream requests: NOT retried (responses are partially consumed; can't
-  safely replay). Tested via ``response.stream is not None`` heuristic.
-* Non-idempotent methods (POST, DELETE, PATCH): still retried because all
-  model-API providers are designed to be idempotent at the application
-  layer (same prompt → same completion; the SDK doesn't issue mutating
-  side effects to providers).
+* All requests are retried, including non-idempotent methods (POST, DELETE,
+  PATCH) and streaming completions. This is deliberate: model-API providers
+  are idempotent at the application layer (same prompt → same completion; the
+  SDK issues no mutating side effects), and retrying provider 429s/503s
+  mid-run is the whole point of this module. A retry fires only on an error
+  *status* (4xx/5xx) or a connect/read error — i.e. before any streamed body
+  has been consumed — so there is no partially-read response to "replay".
 
 Configurable via env so users can tune without code changes:
 
@@ -36,7 +37,6 @@ from __future__ import annotations
 import logging
 import os
 import random
-from typing import Iterable
 
 import anyio
 import httpx
@@ -123,9 +123,9 @@ class RetryTransport(httpx.AsyncBaseTransport):
         jitter: bool = True,
     ) -> None:
         self._inner = inner or httpx.AsyncHTTPTransport(http2=True, retries=0)
-        self._attempts = attempts if attempts is not None else _env_int(
+        self._attempts = max(1, attempts if attempts is not None else _env_int(
             "MANTIS_AGENT_RETRY_ATTEMPTS", 4
-        )
+        ))
         self._base_s = base_s if base_s is not None else _env_float(
             "MANTIS_AGENT_RETRY_BASE_S", 0.5
         )
@@ -143,9 +143,15 @@ class RetryTransport(httpx.AsyncBaseTransport):
                 response = await self._inner.handle_async_request(request)
             except _RETRY_EXCEPTIONS as e:
                 last_exc = e
-                sleep_for = self._backoff_seconds(attempt)
+                # On the final attempt there is no retry to wait for, so skip
+                # the backoff sleep entirely — otherwise we'd burn up to max_s
+                # of dead latency before surfacing the failure.
+                last_attempt = attempt + 1 >= self._attempts
+                sleep_for = 0.0 if last_attempt else self._backoff_seconds(attempt)
                 _emit_retry(request, _friendly_reason(exc=e),
                             attempt + 1, self._attempts, sleep_for)
+                if last_attempt:
+                    break
                 await anyio.sleep(sleep_for)
                 continue
 
@@ -156,7 +162,13 @@ class RetryTransport(httpx.AsyncBaseTransport):
                 retry_after = _parse_retry_after(
                     response.headers.get("retry-after")
                 )
-                sleep_for = retry_after if retry_after is not None else self._backoff_seconds(attempt)
+                # Clamp Retry-After to max_s so a hostile/misbehaving
+                # `Retry-After: 86400` can't freeze the turn for a day.
+                sleep_for = (
+                    min(retry_after, self._max_s)
+                    if retry_after is not None
+                    else self._backoff_seconds(attempt)
+                )
                 _emit_retry(request, _friendly_reason(status=response.status_code),
                             attempt + 1, self._attempts, sleep_for)
                 # Drain the response body before retrying so the connection

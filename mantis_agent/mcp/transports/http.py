@@ -113,10 +113,8 @@ class HttpTransport:
                 "POST", self.url, content=payload, headers=headers
             ) as response:
                 if response.status_code >= 400:
-                    await self._inbox_tx.send(
-                        TransportClosed(
-                            f"http POST failed: {response.status_code}"
-                        )
+                    await self._fail_request(
+                        message, f"http POST failed: {response.status_code}"
                     )
                     return
                 # Capture session id from initialize response.
@@ -152,11 +150,33 @@ class HttpTransport:
                                 await self._inbox_tx.send(item)
                     elif isinstance(decoded, dict):
                         await self._inbox_tx.send(decoded)
-        except Exception as exc:  # noqa: BLE001 — surface to receiver
-            try:
-                await self._inbox_tx.send(exc)
-            except Exception:  # noqa: BLE001
-                pass
+        except Exception as exc:  # noqa: BLE001 — correlate to this request
+            await self._fail_request(message, f"http transport error: {exc}")
+
+    async def _fail_request(self, message: dict[str, Any], detail: str) -> None:
+        """Correlate a per-POST failure to its originating JSON-RPC id.
+
+        A single failed POST (4xx/5xx, connection reset, etc.) must not tear
+        down the whole connection and abort every other in-flight request. We
+        synthesize a JSON-RPC error response keyed to *this* request's ``id``
+        so only the responsible caller fails; ``client.py`` dispatches it back
+        to that pending call. Notifications (no ``id``) have no caller to fail,
+        so their error is dropped.
+        """
+
+        mid = message.get("id")
+        if mid is None:
+            return
+        try:
+            await self._inbox_tx.send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "error": {"code": -32000, "message": detail},
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     async def receive(self) -> dict[str, Any]:
         if self._closed:
@@ -178,6 +198,26 @@ class HttpTransport:
                 self._task_group.cancel_scope.cancel()
                 await self._task_group.__aexit__(None, None, None)
             except Exception:  # noqa: BLE001
+                pass
+        # Terminate the server-side session (streamable-HTTP spec: the client
+        # SHOULD issue an HTTP DELETE carrying the session id so the server can
+        # release the session's state). Best-effort and time-bounded — a server
+        # may reject it (405 Method Not Allowed) or be unreachable, and teardown
+        # must never hang or crash on shutdown.
+        if self._session_id is not None and self._client is not None:
+            headers = {**self.headers, "Mcp-Session-Id": self._session_id}
+            # Shield the teardown DELETE. We just cancelled this transport's
+            # task-group cancel scope above, so a residual cancellation is
+            # pending on the current task; without the shield it fires inside
+            # ``move_on_after`` as a ``CancelledError`` — a ``BaseException``
+            # that slips past the ``except Exception`` below and aborts the
+            # whole shutdown path. The shield lets this bounded, best-effort
+            # request run to completion (or hit its own 5s timeout) regardless
+            # of any pending/external cancellation.
+            try:
+                with anyio.CancelScope(shield=True), anyio.move_on_after(5):
+                    await self._client.delete(self.url, headers=headers)
+            except Exception:  # noqa: BLE001 — best-effort session teardown
                 pass
         try:
             await self._inbox_tx.aclose()

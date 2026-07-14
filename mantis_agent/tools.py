@@ -16,9 +16,11 @@ Design
 from __future__ import annotations
 
 import inspect
+import re
+import types
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, get_type_hints
+from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 import anyio
 import msgspec
@@ -249,26 +251,86 @@ def _wrap_claude_style_fn(fn: ToolFn) -> ToolFn:
 def _derive_schema(fn: ToolFn) -> dict[str, Any]:
     """Build a JSON Schema from the function's annotations.
 
-    Keeps it simple: supports str/int/float/bool/list/dict primitives and
-    treats anything else as a generic object. For richer schemas, pass
-    ``input_schema=`` explicitly to ``@tool``.
+    Supports str/int/float/bool/list/dict primitives, unwraps
+    ``Optional``/``X | None``/``Union`` to the underlying type, and turns
+    ``Literal[...]`` into an ``enum``. Per-parameter ``description``s are
+    lifted from the function's ``Args:`` docstring block so weak models — which
+    lean on the wire schema more than prose — get field-level guidance. For
+    richer schemas, pass ``input_schema=`` explicitly to ``@tool``.
     """
 
     hints = get_type_hints(fn)
     sig = inspect.signature(fn)
+    descriptions = _parse_docstring_args(inspect.getdoc(fn) or "")
     props: dict[str, Any] = {}
     required: list[str] = []
     for param_name, param in sig.parameters.items():
         if param_name in ("self", "cls"):
             continue
         ann = hints.get(param_name, str)
-        props[param_name] = _type_to_schema(ann)
+        prop = _type_to_schema(ann)
+        desc = descriptions.get(param_name)
+        if desc:
+            prop = {**prop, "description": desc}
+        props[param_name] = prop
         if param.default is inspect.Parameter.empty:
             required.append(param_name)
     schema: dict[str, Any] = {"type": "object", "properties": props}
     if required:
         schema["required"] = required
     return schema
+
+
+def _parse_docstring_args(doc: str) -> dict[str, str]:
+    """Parse a Google-style ``Args:`` block into ``{param: description}``.
+
+    Recognizes ``name: description`` entries under an ``Args:`` (or
+    ``Arguments:``/``Parameters:``) heading, folding continuation lines (more
+    deeply indented) into the preceding description. Stops at the next
+    section heading (``Returns:``, ``Raises:``, …) or a dedent to column 0.
+    """
+
+    lines = doc.splitlines()
+    out: dict[str, str] = {}
+    in_args = False
+    args_indent = 0
+    current: str | None = None
+    _sections = ("returns:", "return:", "raises:", "yields:", "examples:",
+                 "example:", "note:", "notes:", "attributes:", "see also:")
+    for raw in lines:
+        stripped = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
+        low = stripped.lower()
+        if not in_args:
+            if low in ("args:", "arguments:", "parameters:"):
+                in_args = True
+                args_indent = indent
+                current = None
+            continue
+        # Inside the Args block.
+        if not stripped:
+            continue
+        # A new top-level section (at or left of the Args heading) ends the block.
+        if indent <= args_indent and low in _sections:
+            break
+        if indent <= args_indent and stripped.endswith(":") and " " not in low.rstrip(":"):
+            break
+        # ``name: description`` starts a new param entry; anything more indented
+        # is a continuation of the current description.
+        m = _ARG_LINE.match(stripped)
+        if m and indent <= args_indent + _ARG_ENTRY_INDENT:
+            current = m.group(1)
+            out[current] = m.group(2).strip()
+        elif current is not None:
+            out[current] = f"{out[current]} {stripped}".strip()
+    return out
+
+
+# ``name: rest`` or ``name (type): rest`` — the leading token of an Args entry.
+_ARG_LINE = re.compile(r"^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
+# Continuation lines are indented further than the entry itself; entries sit a
+# few columns in from the ``Args:`` heading. Kept loose to tolerate style drift.
+_ARG_ENTRY_INDENT = 8
 
 
 _SCALAR_MAP = {
@@ -278,13 +340,37 @@ _SCALAR_MAP = {
     bool: {"type": "boolean"},
 }
 
+# Python types of Literal members → JSON Schema type, for enum typing.
+_LITERAL_TYPE = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
 
 def _type_to_schema(t: Any) -> dict[str, Any]:
     if t in _SCALAR_MAP:
         return _SCALAR_MAP[t]
-    origin = getattr(t, "__origin__", None)
+    origin = get_origin(t) or getattr(t, "__origin__", None)
+    # Optional[X] / X | None / Union[...] — strip NoneType and recurse on the
+    # remaining member(s). Union types otherwise fall through to a bare object,
+    # mis-typing every optional parameter on the wire.
+    if origin is Union or origin is types.UnionType:
+        members = [a for a in get_args(t) if a is not type(None)]
+        if len(members) == 1:
+            return _type_to_schema(members[0])
+        if members:
+            # Heterogeneous union — advertise the alternatives so the model sees
+            # each valid shape rather than a generic object.
+            return {"anyOf": [_type_to_schema(m) for m in members]}
+        return {"type": "object"}
+    # Literal[...] — a closed set of scalar values becomes an enum.
+    if origin is Literal:
+        values = list(get_args(t))
+        schema: dict[str, Any] = {"enum": values}
+        member_types = {_LITERAL_TYPE.get(type(v)) for v in values}
+        member_types.discard(None)
+        if len(member_types) == 1:
+            schema["type"] = member_types.pop()
+        return schema
     if origin is list:
-        args = getattr(t, "__args__", ())
+        args = get_args(t) or getattr(t, "__args__", ())
         inner = _type_to_schema(args[0]) if args else {"type": "string"}
         return {"type": "array", "items": inner}
     if origin is dict:
@@ -404,9 +490,17 @@ async def dispatch_tool_calls(
     """Run every tool call in ``calls`` and return result blocks in order.
 
     Parallel by default; non-parallel-safe tools are serialized by tool name.
+    Tool names are resolved via ``registry.resolve`` so Claude-cased/aliased
+    names (``Read`` → ``read_file``, ``Bash`` → ``bash``) work the same as in
+    the agent loop.
 
     Order of returned results matches the order of ``calls`` — callers can
     pair them by ``tool_use_id``, but stable ordering keeps debugging sane.
+
+    NOTE: this is a bare dispatch helper — it does **no** permission checking or
+    ``PreToolUse`` hook gating. The production agent loop routes tool calls
+    through ``StreamingToolExecutor`` + the permission system instead; SDK
+    consumers calling this directly own approval/sandboxing themselves.
     """
 
     if not calls:
@@ -417,7 +511,7 @@ async def dispatch_tool_calls(
     locks: dict[str, anyio.Lock] = {}
 
     async def run_one(idx: int, call: ToolUseBlock) -> None:
-        t = registry.get(call.name)
+        t = registry.resolve(call.name)
         if t is None:
             results[idx] = ToolResultBlock(
                 tool_use_id=call.id,

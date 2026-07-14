@@ -189,6 +189,7 @@ class SimpleCompactor:
         "_micro_threshold",
         "_micro_keep",
         "_micro_min_chars",
+        "_summary_token_budget",
     )
 
     def __init__(
@@ -201,11 +202,14 @@ class SimpleCompactor:
         micro_threshold: float = 0.6,
         micro_keep_tool_results: int = 8,
         micro_min_chars: int = 800,
+        summary_token_budget: int = 2048,
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")
         if keep_recent_turns < 1:
             raise ValueError("keep_recent_turns must be >= 1")
+        if summary_token_budget < 128:
+            raise ValueError("summary_token_budget must be >= 128")
         self._summarizer = summarizer_fn
         self._threshold = threshold
         self._keep_recent = keep_recent_turns
@@ -217,6 +221,10 @@ class SimpleCompactor:
         self._micro_threshold = micro_threshold
         self._micro_keep = max(1, micro_keep_tool_results)
         self._micro_min_chars = micro_min_chars
+        # Dead-end guard: weak local models sometimes summarize by echoing the
+        # transcript. Bound the replacement text so compaction always creates
+        # headroom instead of burning the limited compaction retry budget.
+        self._summary_token_budget = summary_token_budget
 
     @staticmethod
     def _used(messages: list[Message], usage: Usage) -> int:
@@ -320,25 +328,45 @@ class SimpleCompactor:
         # gets summarized. (Claude Code pins the original request the same way.)
         anchor: list[Message] = []
         sum_start = 0
+        first_content = getattr(body[0], "content", None)
+        # Anchor the original request whether its content is a plain string or a
+        # list of text blocks (multimodal / block-shaped UserMessage). A blanket
+        # str-only check silently drops the goal anchor for block-form inputs and
+        # folds the original request into the lossy summary.
+        anchorable_content = isinstance(first_content, str) or (
+            isinstance(first_content, list)
+            and bool(first_content)
+            and all(isinstance(b, TextBlock) for b in first_content)
+        )
         if (
             getattr(body[0], "role", None) == "user"
             and not getattr(body[0], "isMeta", False)
-            and isinstance(getattr(body[0], "content", None), str)
+            and anchorable_content
         ):
             anchor = [body[0]]
             sum_start = 1
 
-        # Tool-pair-aware split: choose keep-last-K, then slide the split
-        # FORWARD so ``recent`` never begins on a tool_result message — its
-        # matching tool_use would be in the summarized half, orphaning the
-        # tool_result and 400-ing the next provider call. Folding the orphan
-        # into the summary keeps every surviving tool_result paired.
+        # Tool-pair-aware split: choose keep-last-K, then move the boundary so it
+        # never lands *between* an assistant tool_use and its following
+        # tool_result — that would orphan the tool_result and 400 the next
+        # provider call. Prefer sliding FORWARD (fold the whole round into the
+        # summary). But if the keep-window tail is nothing but tool_results, the
+        # forward slide runs off the end; rather than bail and never make
+        # headroom, slide BACKWARD to the start of that round so the pair rides
+        # along in ``recent``. Either way ``recent`` never begins on a
+        # tool_result and no pair is split.
         split = len(body) - self._keep_recent
-        while split < len(body) and _is_tool_result_message(body[split]):
-            split += 1
+        fwd = split
+        while fwd < len(body) and _is_tool_result_message(body[fwd]):
+            fwd += 1
+        if fwd < len(body):
+            split = fwd
+        else:
+            while split > 0 and _is_tool_result_message(body[split]):
+                split -= 1
         if split <= 0 or split >= len(body):
-            # Degenerate (nothing to summarize, or the guard ate the whole
-            # keep-window): leave history untouched.
+            # Degenerate (nothing to summarize, or the whole window is one
+            # unbreakable tool round): leave history untouched.
             return messages
 
         to_summarize = body[sum_start:split]
@@ -355,20 +383,45 @@ class SimpleCompactor:
             return messages
         if not summary or not summary.strip():
             return messages  # empty summary: never replace real turns with nothing
+        summary = _trim_summary_to_token_budget(summary.strip(), self._summary_token_budget)
 
         summary_msg = UserMessage(
             content=(
                 "[Earlier conversation compacted to save context. "
-                f"{len(to_summarize)} messages summarized below.]\n\n"
-                f"{summary.strip()}"
+                f"{len(to_summarize)} messages summarized below. "
+                f"Summary capped at ~{self._summary_token_budget} tokens to keep context headroom.]\n\n"
+                f"{summary}"
             )
         )
-        return [*head, *anchor, summary_msg, *recent]
+        out = [*head, *anchor, summary_msg, *recent]
+        # The line cap above is the dead-end guard for echoing summarizers: it
+        # bounds the replacement before it can consume the context window again.
+        return out
 
 
 # ---------------------------------------------------------------------------
 # Prompt construction
 # ---------------------------------------------------------------------------
+
+
+def _trim_summary_to_token_budget(summary: str, token_budget: int) -> str:
+    """Bound a lossy compaction summary to a coarse token budget.
+
+    Compaction is a safety mechanism, so its replacement message must be
+    smaller than the transcript slice it replaces. Preserve whole lines where
+    possible and add an explicit truncation marker rather than silently cutting
+    through the text.
+    """
+    if _estimate_tokens(summary) <= token_budget:
+        return summary
+    char_budget = max(1, token_budget * 4)
+    marker = "\n\n[summary truncated to preserve context headroom]"
+    available = max(1, char_budget - len(marker))
+    cut = summary[:available]
+    line_cut = cut.rfind("\n")
+    if line_cut >= available // 2:
+        cut = cut[:line_cut]
+    return cut.rstrip() + marker
 
 
 _SUMMARIZER_INSTRUCTIONS = """\
@@ -419,9 +472,15 @@ async def run_manual_compaction(
             return await _s(f"{prompt}\n\nFocus your summary especially on: {_f}")
 
     comp = SimpleCompactor(fn, keep_recent_turns=max(1, keep_recent))
-    before = len(messages)
-    out = await comp.compact(list(messages))
-    if len(out) < before:
+    snapshot = list(messages)
+    before = len(snapshot)
+    out = await comp.compact(snapshot)
+    # Detect real compaction by identity: compact() returns the SAME list it was
+    # handed on every no-op path and a freshly built list only when it actually
+    # summarized. A length check misfires when exactly one message is folded into
+    # the summary (len unchanged) and would report "nothing to compact" despite a
+    # completed — and paid-for — summarizer call.
+    if out is not snapshot:
         return out, f"compacted {before} → {len(out)} messages"
     return list(messages), "nothing to compact yet — the conversation is still short"
 

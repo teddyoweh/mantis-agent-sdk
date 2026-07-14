@@ -32,8 +32,8 @@ def test_strips_git_headers() -> None:
     out = split_git_diff(_TWO_FILE)
     for _p, lines in out:
         # No git header lines survive — only @@ hunks and +/- /space body.
-        assert not any(l.startswith(("+++", "---", "index ", "diff --git")) for l in lines)
-        assert all(l.startswith(("@@", "+", "-", " ")) for l in lines)
+        assert not any(ln.startswith(("+++", "---", "index ", "diff --git")) for ln in lines)
+        assert all(ln.startswith(("@@", "+", "-", " ")) for ln in lines)
 
 
 def test_keeps_body() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mantis_agent.tui import SLASH_COMMANDS, build_help_lines
+from mantis_agent.tui import SLASH_COMMANDS, MantisTUI, build_help_lines, search_help_lines
 
 
 def test_every_command_is_covered() -> None:
@@ -41,3 +41,63 @@ def test_category_order_stable() -> None:
     cats = [cat for cat, _c, _d in rows]
     # model rows precede session rows precede project rows
     assert cats.index("model") < cats.index("session") < cats.index("project")
+
+
+def test_help_search_matches_command_category_and_description() -> None:
+    assert [c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "resume")] == ["/resume"]
+    assert "/resume" in {c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "/resume")}
+    session = {c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "session")}
+    assert {"/resume", "/branch", "/rewind"}.issubset(session)
+    assert search_help_lines(SLASH_COMMANDS, "definitely-not-a-command") == []
+
+
+def test_classic_tui_help_uses_generated_commands() -> None:
+    import asyncio
+    import io
+
+    from rich.console import Console
+
+    tui = MantisTUI(
+        model="x",
+        backend="http://y",
+        api_key=None,
+        system=None,
+        max_tokens=1,
+        temperature=None,
+        max_turns=1,
+    )
+    buf = io.StringIO()
+    tui.console = Console(file=buf, force_terminal=False, width=120)
+
+    assert asyncio.run(tui._handle_slash("/help")) is True
+    out = buf.getvalue()
+    assert "/compact" in out
+    assert "/init" in out
+    assert "/learn" in out
+    assert SLASH_COMMANDS["/compact"] in out
+
+
+def test_classic_tui_help_search_filters_commands() -> None:
+    import asyncio
+    import io
+
+    from rich.console import Console
+
+    tui = MantisTUI(
+        model="x",
+        backend="http://y",
+        api_key=None,
+        system=None,
+        max_tokens=1,
+        temperature=None,
+        max_turns=1,
+    )
+    buf = io.StringIO()
+    tui.console = Console(file=buf, force_terminal=False, width=120)
+
+    assert asyncio.run(tui._handle_slash("/help resume")) is True
+    out = buf.getvalue()
+    assert "commands matching 'resume'" in out
+    assert "/resume" in out
+    assert "/models" not in out
+    assert "/help <term>" in out

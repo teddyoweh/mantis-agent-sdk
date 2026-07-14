@@ -42,8 +42,7 @@ prompt the user passed in.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import datetime
 
 from .types import UserMessage
 
@@ -209,8 +208,12 @@ def build_live_context_block(
     parts: list[str] = ["[Live context — at turn start]"]
 
     if local_time is not None:
-        # Match Claude's harness format: "Saturday, May 16, 2026 at 9:17 AM"
-        formatted = local_time.strftime("%A, %B %d, %Y at %-I:%M %p")
+        # Match Claude's harness format: "Saturday, May 16, 2026 at 9:17 AM".
+        # Build the 12-hour clock by hand — the ``%-I`` strip-leading-zero
+        # directive is a glibc/BSD extension and raises ValueError on the
+        # Windows C runtime.
+        hour12 = local_time.hour % 12 or 12
+        formatted = local_time.strftime(f"%A, %B %d, %Y at {hour12}:%M %p")
         suffix = f" ({timezone_name})" if timezone_name else ""
         parts.append(f"- User's local time: {formatted}{suffix}")
     if location:

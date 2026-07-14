@@ -27,11 +27,9 @@ import pytest
 
 from mantis_agent import (
     Agent,
-    AssistantMessage,
     MantisAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
-    SystemMessage,
     TextBlock,
     ToolUseBlock,
     Usage,
@@ -53,7 +51,6 @@ from mantis_agent.providers import base as provider_base
 from mantis_agent.providers.mock import MockProvider
 from mantis_agent.types import (
     AssistantMessage as InternalAssistantMessage,
-    ToolResultBlock,
     UserMessage as InternalUserMessage,
 )
 
@@ -408,7 +405,6 @@ def test_compat_query_streams_assistant_before_next_turn(_force_mock_provider):
 
         # Patch _build_agent so it uses our _TwoTurnMock instead of
         # the default MockProvider.
-        from mantis_agent import compat_query as _cq
         from mantis_agent.agent import Agent as _RealAgent
 
         def _make(opts_dict):

@@ -12,7 +12,7 @@ a family-based heuristic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Literal
 
 # ---------------------------------------------------------------------------
@@ -35,6 +35,17 @@ class ModelCapability:
                            capable backend (vLLM guided_json, llama.cpp GBNF,
                            TGI grammar). Per-MODEL bit is a hint; the actual
                            grammar path is gated on backend capability too.
+    supports_reasoning_effort:
+                           the model accepts a REQUEST-SIDE reasoning knob —
+                           OpenAI's ``reasoning_effort`` / a ``think`` flag /
+                           an adaptive-thinking budget. Providers gate on this
+                           before sending a thinking config so a model that
+                           400s on the field (e.g. plain gpt-4o, most local
+                           chat models) is never handed one. Distinct from
+                           ``emits_thinking_blocks`` / ``emits_inline_thinking``,
+                           which describe the RESPONSE side (does it emit
+                           reasoning) — a model can emit inline ``<think>`` tags
+                           yet accept no request-side switch.
     emits_thinking_blocks: server emits an out-of-band thinking field
     emits_inline_thinking: model emits <think>...</think> in content
     context_window:        max input tokens
@@ -48,6 +59,7 @@ class ModelCapability:
     family: str
     supports_native_tools: bool = False
     supports_grammar: bool = True  # most modern OSS backends support some form
+    supports_reasoning_effort: bool = False
     emits_thinking_blocks: bool = False
     emits_inline_thinking: bool = False
     # Inline reasoning-tag pairs this model uses. The default covers the
@@ -73,6 +85,15 @@ class ModelCapability:
 # ---------------------------------------------------------------------------
 
 _TABLE: dict[str, ModelCapability] = {
+    # GLM self-hosted checkpoints
+    "glm-4-9b-0414": ModelCapability(
+        name="glm-4-9b-0414",
+        family="glm",
+        supports_native_tools=True,
+        context_window=16384,
+        max_output_tokens=4096,
+        chat_template_id="chatml",
+    ),
     # Llama 3.3
     "llama-3.3-70b-instruct": ModelCapability(
         name="llama-3.3-70b-instruct",
@@ -178,6 +199,20 @@ _TABLE: dict[str, ModelCapability] = {
     ),
     "deepseek-r1": ModelCapability(
         name="deepseek-r1",
+        family="deepseek",
+        supports_native_tools=False,
+        emits_inline_thinking=True,
+        emits_thinking_blocks=True,
+        context_window=65536,
+        chat_template_id="deepseek",
+        recommended_temperature=0.6,
+    ),
+    # DeepSeek's official reasoner id (R1-class). Emits <think>/reasoning_content
+    # and is unreliable with tools — must mirror deepseek-r1, NOT the plain
+    # deepseek chat default it would otherwise resolve to ("deepseek-r1" is not a
+    # substring of "deepseek-reasoner").
+    "deepseek-reasoner": ModelCapability(
+        name="deepseek-reasoner",
         family="deepseek",
         supports_native_tools=False,
         emits_inline_thinking=True,
@@ -407,6 +442,19 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         chat_template_id="qwen2",
         family_specific_stops=("<|im_end|>",),
     ),
+    # Qwen3 (qwen3:8b, qwen3-235b-a22b, qwen3-coder-plus, qwen3-32b, …). Ships
+    # native tool_calls and a 40k–128k window; the ChatML-shaped qwen2 template
+    # + <|im_end|> stop still apply. Without this the ids fall through to the
+    # generic no-tools / 8192 fallback (tools disabled, premature compaction).
+    "qwen3": ModelCapability(
+        name="qwen3-unknown",
+        family="qwen3",
+        supports_native_tools=True,
+        context_window=131072,
+        max_output_tokens=8192,
+        chat_template_id="qwen2",
+        family_specific_stops=("<|im_end|>",),
+    ),
     "deepseek": ModelCapability(
         name="deepseek-unknown",
         family="deepseek",
@@ -450,6 +498,16 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         chat_template_id="kimi",
         family_specific_stops=("<|im_end|>",),
     ),
+    # IBM Granite uses a ChatML-style template with <|im_end|>-style delimiters
+    # (see the in-table granite row), NOT llama3 headers/<|eot_id|>. Give it its
+    # own default so unknown variants (granite-3.2-2b-instruct, …) template right.
+    "granite": ModelCapability(
+        name="granite-unknown",
+        family="granite",
+        supports_native_tools=True,
+        context_window=131072,
+        chat_template_id="chatml",
+    ),
     # Hosted flagships (OpenAI / Anthropic / Google / Zhipu). These are served
     # over their provider APIs (or the anthropic passthrough), so the chat
     # template is unused — but the capability drives native-tool routing (path A)
@@ -461,21 +519,28 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
     ),
     # o-series reasoning models (o1/o3/o4) have a 200k context, unlike the 128k
     # gpt-4o family — so track it accurately (understating it compacts early).
+    # They also take a request-side ``reasoning_effort`` (as does gpt-5.x, which
+    # the openai_compat adapter detects by name — the bare "openai" family below
+    # stays False so plain gpt-4o is never handed the field).
     "openai_reasoning": ModelCapability(
         name="openai-reasoning-unknown", family="openai",
-        supports_native_tools=True, context_window=200000,
+        supports_native_tools=True, supports_reasoning_effort=True,
+        context_window=200000,
     ),
     "claude": ModelCapability(
         name="claude-unknown", family="claude",
-        supports_native_tools=True, context_window=200000,
+        supports_native_tools=True, supports_reasoning_effort=True,
+        context_window=200000,
     ),
     "gemini": ModelCapability(
         name="gemini-unknown", family="gemini",
-        supports_native_tools=True, context_window=1000000,
+        supports_native_tools=True, supports_reasoning_effort=True,
+        context_window=1000000,
     ),
     "glm": ModelCapability(
         name="glm-unknown", family="glm",
-        supports_native_tools=True, context_window=128000,
+        supports_native_tools=True, supports_reasoning_effort=True,
+        context_window=128000,
     ),
 }
 
@@ -493,6 +558,11 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     ("llama3", "llama3"),
     ("hermes", "llama3"),
     ("functionary", "llama3"),
+    # Qwen3 before the qwen2 hints — "qwen2" is not a substring of "qwen3", so
+    # without these the qwen3 ids fall through to the generic no-tools / 8192
+    # default (tools disabled, premature compaction).
+    ("qwen3", "qwen3"),
+    ("qwen-3", "qwen3"),
     ("qwen2.5", "qwen2.5"),
     ("qwen-2.5", "qwen2.5"),
     ("qwq", "qwen2.5"),
@@ -507,7 +577,7 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     ("kimi", "kimi"),
     ("moonshot", "kimi"),
     ("internlm", "qwen2.5"),  # ChatML-shaped
-    ("granite", "llama3"),
+    ("granite", "granite"),
     ("yi", "qwen2.5"),
     # Hosted flagships — so gpt-4o/gpt-5.x, claude-*, o1/o3/o4, gemini, glm don't
     # fall through to the tiny 8192 / no-native-tools generic default.
@@ -545,6 +615,17 @@ def lookup_model(model_id: str) -> ModelCapability:
         if tail in _TABLE:
             return _TABLE[tail]
         key = tail
+
+    # DeepSeek-R1 distills wear a Llama or Qwen backbone, so their chat template
+    # and stop tokens must follow that backbone — NOT the "deepseek-r1" prefix
+    # the generic substring match below would greedily hit first. Only reached
+    # for sizes not already in _TABLE (the 70b/32b distills match exactly above);
+    # reuse those rows so the untabled sizes inherit the correct template.
+    if "distill" in key and "deepseek" in key:
+        if "qwen" in key:
+            return replace(_TABLE["deepseek-r1-distill-qwen-32b"], name=key)
+        if "llama" in key:
+            return replace(_TABLE["deepseek-r1-distill-llama-70b"], name=key)
 
     # Substring fuzzy match against the table keys.
     for table_key, cap in _TABLE.items():
@@ -761,7 +842,7 @@ def hosted_profile_from_url(base_url: str) -> BackendCapability | None:
         return HOSTED_PROFILES["anthropic"]
     if ".modal.run" in url:
         return HOSTED_PROFILES["modal"]
-    if "together" in url:
+    if "api.together." in url:  # api.together.xyz / api.together.ai
         return HOSTED_PROFILES["together"]
     if "fireworks" in url:
         return HOSTED_PROFILES["fireworks"]
@@ -775,9 +856,17 @@ def hosted_profile_from_url(base_url: str) -> BackendCapability | None:
         return HOSTED_PROFILES["cerebras"]
     if "anyscale" in url:
         return HOSTED_PROFILES["anyscale"]
-    if "deepseek" in url:
+    # Anchor to the real API host, not the bare vendor word: a self-hosted
+    # (vLLM/llama.cpp) box named after the model — e.g. http://deepseek-box:8000
+    # — must fall through to a grammar-capable profile, not the hosted deepseek
+    # profile (supports_grammar=False), which would downgrade its tool-use path.
+    if "api.deepseek.com" in url:
         return HOSTED_PROFILES["deepseek"]
-    if "moonshot" in url or "kimi" in url:
+    # Match Moonshot's real domains (api.moonshot.ai/.cn, kimi.moonshot.ai) —
+    # NOT a bare "kimi", which is a model name: a self-hosted Kimi box on
+    # vLLM/llama.cpp (e.g. http://kimi-box:8000/v1) must fall through to a
+    # grammar-capable profile, not the hosted moonshot profile (grammar=False).
+    if "moonshot.ai" in url or "moonshot.cn" in url:
         return HOSTED_PROFILES["moonshot"]
     if "api.openai.com" in url:
         return HOSTED_PROFILES["openai"]
@@ -789,7 +878,11 @@ def hosted_profile_from_url(base_url: str) -> BackendCapability | None:
         return HOSTED_PROFILES["qwen"]
     if "11434" in url or "ollama" in url:
         return HOSTED_PROFILES["ollama"]
-    if "8080" in url and "llama" in url:
+    # llama.cpp's canonical base_url is http://localhost:8080/v1 — it carries the
+    # port but not the word "llama", so match on the port alone. This branch is
+    # last, after every provider-specific host check has already returned, so a
+    # bare :8080 endpoint is the llama.cpp server by elimination.
+    if "8080" in url:
         return HOSTED_PROFILES["llamacpp"]
     return None
 
@@ -814,7 +907,11 @@ def resolve_tool_use_path(
 
     if model.supports_native_tools and backend.supports_native_tools:
         return "A"
-    if backend.supports_grammar:
+    # Path C (server-enforced grammar/JSON) requires BOTH the backend to offer
+    # grammar-constrained sampling and the model to be able to honor it — as the
+    # supports_grammar docstring promises. Gating on backend alone left the
+    # per-model bit dead and would route a grammar-incapable model to C anyway.
+    if model.supports_grammar and backend.supports_grammar:
         return "C"
     return "B"
 

@@ -34,7 +34,6 @@ from mantis_agent import (
     Agent,
     InMemoryTracer,
     OTelTracer,
-    Span,
     TextBlock,
     Tracer,
     UserMessage,

@@ -58,7 +58,6 @@ from mantis_agent.providers.mock import MockProvider  # noqa: E402
 from mantis_agent.query import (  # noqa: E402
     SDKAssistantMessage,
     SDKResultMessage,
-    SDKSystemMessage,
     SDKUserMessage,
     query,
 )

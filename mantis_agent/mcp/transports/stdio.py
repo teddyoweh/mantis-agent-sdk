@@ -32,6 +32,37 @@ from .base import TransportClosed
 _DECODER = msgspec.json.Decoder()
 _ENCODER = msgspec.json.Encoder()
 
+# Environment variable *names* containing any of these fragments are treated as
+# secrets and NOT inherited by spawned MCP servers. Otherwise a project-level
+# ``.mcp.json`` server (which can be checked into an untrusted repo) runs with
+# the user's full environment — API keys, tokens, cloud credentials — available
+# for exfiltration. Operational vars a server genuinely needs (PATH, HOME, …)
+# are still inherited; a secret a server legitimately needs must be declared
+# explicitly in the config's ``env``, which is layered back on top and wins.
+_SECRET_ENV_FRAGMENTS = (
+    "KEY",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "PASSPHRASE",
+    "CREDENTIAL",
+    "APIKEY",
+)
+
+
+def _is_secret_env_name(name: str) -> bool:
+    upper = name.upper()
+    return any(frag in upper for frag in _SECRET_ENV_FRAGMENTS)
+
+
+def _safe_child_env(config_env: dict[str, str]) -> dict[str, str]:
+    """Inherited parent env minus secret-shaped names, with the config's own
+    ``env`` layered on top (an explicitly configured secret is always honored)."""
+    env = {k: v for k, v in os.environ.items() if not _is_secret_env_name(k)}
+    env.update(config_env)
+    return env
+
 
 class StdioTransport:
     """Spawn ``command args...`` and exchange line-delimited JSON-RPC."""
@@ -70,10 +101,10 @@ class StdioTransport:
         await self.close()
 
     async def _spawn(self) -> None:
-        # Inherit parent env, layer in caller-provided keys. Many MCP
-        # servers need PATH; passing only ``env`` would strip it.
-        merged_env = dict(os.environ)
-        merged_env.update(self.env)
+        # Inherit parent env (minus secret-shaped names — see _safe_child_env),
+        # layer in caller-provided keys. Many MCP servers need PATH; passing
+        # only ``env`` would strip it.
+        merged_env = _safe_child_env(self.env)
 
         self._proc = await anyio.open_process(
             [self.command, *self.args],
@@ -120,14 +151,16 @@ class StdioTransport:
     async def receive(self) -> dict[str, Any]:
         if self._closed or self._stdout is None:
             raise TransportClosed("stdio transport is closed")
-        try:
-            line = await self._stdout.receive_until(b"\n", max_bytes=16 * 1024 * 1024)
-        except (anyio.EndOfStream, anyio.ClosedResourceError) as e:
-            raise TransportClosed("stdio peer closed stdout") from e
-        if not line:
-            # Empty line — keep reading. Some servers emit blank framing.
-            return await self.receive()
-        return _DECODER.decode(line)
+        # Loop (not recurse) past blank framing: a server that emits many
+        # consecutive newlines would otherwise blow the stack (RecursionError).
+        while True:
+            try:
+                line = await self._stdout.receive_until(b"\n", max_bytes=16 * 1024 * 1024)
+            except (anyio.EndOfStream, anyio.ClosedResourceError) as e:
+                raise TransportClosed("stdio peer closed stdout") from e
+            if line:
+                return _DECODER.decode(line)
+            # Empty line — some servers emit blank framing; keep reading.
 
     async def close(self) -> None:
         if self._closed:
@@ -144,13 +177,23 @@ class StdioTransport:
             except Exception:  # noqa: BLE001
                 pass
         try:
-            with anyio.fail_after(2.0):
-                await proc.wait()
+            with anyio.CancelScope(shield=True):
+                with anyio.fail_after(2.0):
+                    await proc.wait()
         except TimeoutError:
             try:
                 proc.terminate()
             except Exception:  # noqa: BLE001
                 pass
+            try:
+                with anyio.CancelScope(shield=True):
+                    with anyio.fail_after(1.0):
+                        await proc.wait()
+            except TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:  # noqa: BLE001
+                    pass
         if self._stderr_task_group is not None:
             try:
                 await self._stderr_task_group.__aexit__(None, None, None)

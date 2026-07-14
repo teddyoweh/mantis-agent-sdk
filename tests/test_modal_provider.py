@@ -30,9 +30,7 @@ What this suite proves:
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator
-from typing import Any
 
 import httpx
 import pytest
