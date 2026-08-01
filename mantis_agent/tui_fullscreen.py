@@ -16,17 +16,20 @@ back to the classic scrolling REPL, so ``mantis`` never ends up broken.
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import re
 import shutil
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from .tui import MODES, SLASH_COMMANDS, SPINNER_FRAMES, THINKING_WORDS, print_banner
 
 # ANSI 256/standard colors (work in Terminal.app — no truecolor needed).
 _GREEN = "\033[38;5;113m"
+_YELLOW = "\033[33m"
 _DIM = "\033[38;5;240m"
 _GREY = "\033[90m"
 _RESET = "\033[0m"
@@ -178,7 +181,10 @@ async def run_fullscreen(tui: Any) -> int:
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
         "awaiting_key": None, "picking_effort": None,
         "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
-        "agent_inspector": None, "workflows": None,
+        "agent_inspector": None, "workflows": None, "mcp_view": None,
+        # Label of whatever attachable thing is sitting on the system clipboard
+        # ("Image", "shot.png"), refreshed by _poll_clipboard.
+        "clip": None,
     }
 
     def _ctx_window() -> int:
@@ -414,6 +420,40 @@ async def run_fullscreen(tui: Any) -> int:
         state["ollama_models"] = (time.monotonic(), models)
         return models
 
+    # Open-weight model → Ollama library tag (curated, conservative — only
+    # families whose tag is unambiguous). This is what makes the picker's
+    # "open" tab live up to its name: installed → switch free, not installed
+    # → /pull <tag> downloads it, no vendor key either way. First fragment
+    # match wins, so more-specific fragments come first.
+    _OLLAMA_PULL_TAGS: tuple[tuple[str, str], ...] = (
+        ("gpt-oss-120b", "gpt-oss:120b"), ("gpt-oss-20b", "gpt-oss:20b"),
+        ("gpt-oss", "gpt-oss:20b"),
+        ("deepseek-reasoner", "deepseek-r1"), ("deepseek-r1", "deepseek-r1"),
+        ("deepseek-chat", "deepseek-v3.1"), ("deepseek-v3", "deepseek-v3.1"),
+        ("qwen3-coder", "qwen3-coder"), ("qwen3-235b", "qwen3:235b"),
+        ("qwen3", "qwen3"), ("qwq", "qwq"),
+        ("kimi-k2", "kimi-k2"),
+        ("llama-3.3", "llama3.3"), ("llama-3.1", "llama3.1"),
+        ("mixtral", "mixtral"), ("magistral", "magistral"), ("mistral", "mistral"),
+        ("gemma-3", "gemma3"), ("gemma", "gemma3"),
+        ("phi-4", "phi4"),
+    )
+
+    def _ollama_tag_for(model_id: str) -> str | None:
+        low = model_id.rsplit("/", 1)[-1].lower()
+        return next((tag for frag, tag in _OLLAMA_PULL_TAGS if frag in low), None)
+
+    def _installed_ollama_tag(tag: str, installed: set[str]) -> str | None:
+        """The installed tag to switch to, or None. An exact tag ("gpt-oss:20b")
+        must match exactly; a bare family tag ("qwen3") accepts any installed
+        size — but a sized tag never silently maps to a different size."""
+        if tag in installed:
+            return tag
+        if ":" in tag:
+            return None
+        return next((im for im in sorted(installed)
+                     if im.split(":")[0] == tag), None)
+
     # Short, lowercase tab names for the picker tab bar. Provider/model
     # families are intentionally distinct: Claude is not an OpenAI model.
     _TAB_LABELS = {"anthropic": "claude", "moonshot": "kimi"}
@@ -453,6 +493,19 @@ async def run_fullscreen(tui: Any) -> int:
                 "header": f"● active · {where}", "enabled": True,
                 "rows": [{"kind": "model", "model": m, "enabled": True,
                           "provider_id": None, "ctx": ctxlab(m)} for m in active_all]})
+        # Recent models (MRU) — the fast re-selection path. Deduped against the
+        # active list so nothing shows twice; provider is resolved on switch.
+        try:
+            recent = [m for m in catalog.get_recent_models()
+                      if _is_chat_model(m) and m not in active_set]
+        except Exception:  # noqa: BLE001
+            recent = []
+        if recent:
+            groups.append({
+                "tab": "recent", "tablabel": "recent", "tab_hidden": True,
+                "header": "↻ recent", "enabled": True,
+                "rows": [{"kind": "model", "model": m, "enabled": True,
+                          "provider_id": None, "ctx": ctxlab(m)} for m in recent[:8]]})
         # Local Ollama models (FREE, open-source) — always shown when Ollama is
         # running, even while the active backend is a hosted API. Selecting one
         # switches the backend to localhost with no key.
@@ -482,14 +535,17 @@ async def run_fullscreen(tui: Any) -> int:
                         for m in models]
                 for row in rows:
                     m = row["model"]
-                    if not _is_open_weight(m):
+                    if not _is_open_weight(m) or row["enabled"]:
+                        # Already reachable via its own (enabled) provider tab
+                        # with a live key — "open" is for the local-only paths
+                        # (pull / self-host), not a second listing of it.
                         continue
                     canon = m.rsplit("/", 1)[-1].lower()
                     if canon in seen_open:
                         continue
                     seen_open.add(canon)
-                    open_rows.append(dict(row))
-                tag = "" if g["enabled"] else "  · not enabled"
+                    open_rows.append({**row, "open": True})
+                tag = "" if g["enabled"] else "  🔒 not enabled — enter adds a key"
                 prov_groups.append({
                     "tab": g["provider_id"], "tablabel": _tab_label(g["provider_id"]),
                     "header": f"{g['label']}{tag}", "enabled": g["enabled"],
@@ -497,10 +553,25 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001
             pass
         if open_rows:
+            # Every remaining open-weight model has no live hosted path, so
+            # it's runnable WITHOUT a key: already installed in Ollama →
+            # switch straight to it (free); pullable → /pull <tag>; otherwise
+            # self-host via /connect.
+            installed = {m.lower() for m in _ollama_models()}
+            from . import paths as _pp  # noqa: PLC0415
+            for r in open_rows:
+                tag = _ollama_tag_for(r["model"])
+                inst = _installed_ollama_tag(tag, installed) if tag else None
+                if inst:
+                    r["enabled"] = True
+                    r["local_tag"] = inst
+                    r["backend"] = _pp.ollama_base_url()
+                elif tag:
+                    r["pull_tag"] = tag
             groups.append({
                 "tab": "open", "tablabel": "open",
-                "header": "Open-weight · self-hostable", "enabled": True,
-                "rows": open_rows})
+                "header": "Open-weight · free — run locally or self-host",
+                "enabled": True, "rows": open_rows})
         # Preferred tab order up front; any provider not listed keeps its
         # (enabled-first) catalog order after these. Stable sort makes it so, so
         # the bar reads: all · free.local · glm · qwen · kimi · openai · claude ·
@@ -509,21 +580,70 @@ async def run_fullscreen(tui: Any) -> int:
         _rank = {pid: i for i, pid in enumerate(_PREF)}
         prov_groups.sort(key=lambda g: _rank.get(g["tab"], len(_PREF)))
         groups.extend(prov_groups)
+        # Pinned self-host affordance — makes "any self-host" reachable without
+        # leaving the picker. Selecting it pre-fills /connect on the input line.
+        groups.append({
+            "tab": "selfhost", "tablabel": "self-host", "enabled": True,
+            "header": "Bring your own endpoint",
+            "rows": [{"kind": "selfhost", "model": "+ self-host / custom endpoint…",
+                      "enabled": True, "provider_id": None, "ctx": ""}]})
         return groups
 
     def _items_for(groups: list[dict], flt: str, tab: str) -> list[dict]:
         """Flatten ``groups`` into header+model rows for the active ``tab``
         ("all" keeps every group), applying the case-insensitive text filter and
-        dropping groups left with no surviving models."""
+        dropping groups left with no surviving models.
+
+        When a filter is active on the "all" tab, collapse into a single flat,
+        de-grouped "matches" list (each row tagged with its provider via
+        ``suffix``) — a cleaner, scannable "any model" search.
+
+        "available" is the same kind of flat, cross-provider list, but instead
+        of a text filter it keeps only rows that are ``enabled`` — i.e. Enter
+        switches to them right now, no key/pull/self-host step first."""
         fl = (flt or "").lower().strip()
+        if tab == "available":
+            flat: list[dict] = []
+            seen: set[str] = set()
+            for g in groups:
+                for r in g["rows"]:
+                    if r["kind"] != "model" or not r["enabled"]:
+                        continue
+                    if fl and fl not in r["model"].lower():
+                        continue
+                    key = (r["model"], r.get("provider_id"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    flat.append({**r, "suffix": g["tablabel"]})
+            if not flat:
+                return []
+            return [{"kind": "header", "label": f"available now · {len(flat)}"}, *flat]
+        if fl and tab == "all":
+            flat = []
+            seen = set()
+            for g in groups:
+                for r in g["rows"]:
+                    if r["kind"] != "model" or fl not in r["model"].lower():
+                        continue
+                    key = (r["model"], r.get("provider_id"))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    flat.append({**r, "suffix": g["tablabel"]})
+            if not flat:
+                return []
+            return [{"kind": "header", "label": f"matches · {len(flat)}"}, *flat]
         items: list[dict] = []
         for g in groups:
             if tab != "all" and g["tab"] != tab:
                 continue
-            rows = [r for r in g["rows"] if not fl or fl in r["model"].lower()]
-            if not rows:
+            rows = [r for r in g["rows"]
+                    if r["kind"] == "selfhost" or not fl or fl in r["model"].lower()]
+            if not rows or (fl and all(r["kind"] == "selfhost" for r in rows)):
                 continue
-            items.append({"kind": "header", "label": g["header"]})
+            items.append({"kind": "header", "label": g["header"],
+                          "count": sum(1 for r in rows if r["kind"] == "model")})
             items.extend(rows)
         return items
 
@@ -533,13 +653,22 @@ async def run_fullscreen(tui: Any) -> int:
 
     def _open_model_picker(flt: str = "") -> None:
         groups = _picker_groups()
+
+        def _nmodels(g: dict) -> int:
+            return sum(1 for r in g["rows"] if r["kind"] == "model")
+
+        def _navailable(g: dict) -> int:
+            return sum(1 for r in g["rows"] if r["kind"] == "model" and r["enabled"])
+
         tabs = [{"tab": "all", "label": "all",
-                 "count": sum(len(g["rows"]) for g in groups)}]
+                 "count": sum(_nmodels(g) for g in groups)},
+                {"tab": "available", "label": "available",
+                 "count": sum(_navailable(g) for g in groups)}]
         for g in groups:
             if g.get("tab_hidden"):  # e.g. the ● active group — shown only in "all"
                 continue
             tabs.append({"tab": g["tab"], "label": g["tablabel"],
-                         "count": len(g["rows"])})
+                         "count": _nmodels(g)})
         items = _items_for(groups, flt, "all")
         sel = next((i for i, it in enumerate(items)
                     if it["kind"] == "model" and it["model"] == tui.model), None)
@@ -610,7 +739,7 @@ async def run_fullscreen(tui: Any) -> int:
                                   "mode": "session"}
         get_app().invalidate()
 
-    _SELECTABLE_KINDS = ("model", "session", "rewind")
+    _SELECTABLE_KINDS = ("model", "session", "rewind", "selfhost")
 
     def _refilter_picker() -> None:
         p = state.get("picking_model")
@@ -642,65 +771,191 @@ async def run_fullscreen(tui: Any) -> int:
                 rows.append(f"  {_DIM}{v}{_RESET}")
         return ANSI("\n".join(rows))
 
+    _HL = "\033[30;48;5;113m"   # selected row — green background
+    _AMBER = "\033[30;48;5;179m"  # selected + locked — amber background
+    _AMBER_FG = "\033[38;5;179m"  # amber text (warnings, needs-trust)
+
+    def _tab_bar_rows(p: dict) -> list[str]:
+        """Every provider chip, wrapped across as many lines as it takes so
+        nothing hides behind a '+N ->' anymore. Shared by picker_ft (render)
+        and _picker_height (row count) so the two can never disagree about
+        how tall the tab bar is. Each returned string is exactly cw printable
+        chars, ready to hand to edge()."""
+        tabs = p.get("tabs")
+        if not tabs:
+            return []
+        W = _width()
+        cw = max(30, min(W - 2, 74))
+        curtab = p.get("tab", "all")
+
+        def _tlab(t: dict) -> str:
+            return t["label"] if t["count"] <= 0 else f"{t['label']} {t['count']}"
+
+        active = next((t for t in tabs if t["tab"] == curtab), tabs[0])
+        budget = cw - 4
+        lines: list[list[tuple[str, int]]] = [[]]
+        used = 0
+        for t in tabs:
+            lab = _tlab(t)
+            if t is active:
+                chip, plen = f"{_HL} {lab} \033[0m", len(lab) + 2
+            else:
+                chip, plen = f"{_DIM}{lab}{_RESET}", len(lab)
+            sep = 3 if lines[-1] else 0  # " · " before every chip but a line's first
+            if lines[-1] and used + sep + plen > budget:
+                lines.append([])
+                used, sep = 0, 0
+            lines[-1].append((chip, plen))
+            used += sep + plen
+        rows = []
+        for chips in lines:
+            bar = f" {_GREY}·{_RESET} ".join(c for c, _ in chips)
+            plen = sum(pl for _, pl in chips) + 3 * (len(chips) - 1)
+            rows.append(f"  {bar}{' ' * max(0, cw - 2 - plen)}")
+        return rows
+
     def picker_ft() -> Any:
+        """The picker overlay, drawn as a framed panel:
+
+        ╭─ select a model · gpt-5.6-sol ────────────────────────╮
+        │  all 124 · open 18 · claude 4 · kimi 4 · glm 4 · qwen 4│
+        │  openai 4 · gemini 4 · moonshot 4 · zai 4 · deepseek 4 │
+        ├─────────────────────────────────────────────────────────┤
+        │  open-weight · free — run locally or self-host     18 │
+        │ ❯ deepseek-chat                🔒 pull deepseek-v3.1  │
+        │   glm-4.7                                🔒 self-host │
+        ╰─ ↑↓ · ←→ tabs · type to filter · enter ─── 12 more ↓ ─╯
+
+        Width-capped so columns stay tight on wide terminals. Almost every
+        glyph used is single-cell — the plain-text length of a row IS its
+        printed width — except 🔒, which renders 2 cells wide; ``_xw()``
+        below is the compensation for that one wide glyph."""
+        from .tui import ellipsize  # noqa: PLC0415
         p = state.get("picking_model")
         if not p:
             return ANSI("")
         items, sel = p["items"], p["sel"]
         n = len(items)
         lo = max(0, min(sel - _PICKER_ROWS // 2, n - _PICKER_ROWS))
+        hi = min(lo + _PICKER_ROWS, n)
         flt = p.get("filter", "")
-        title = {"session": "Resume a conversation",
-                 "rewind": "Rewind to"}.get(p.get("mode"), "Select a model")
+        mode = p.get("mode")
+        title = {"session": "resume a conversation",
+                 "rewind": "rewind to"}.get(mode, "select a model")
         tabs = p.get("tabs")
-        nav = "↑/↓ · ←/→ tabs · type to filter · enter · esc" if tabs \
-            else "↑/↓ · type to filter · enter · esc"
-        _hdr = f"{_GREEN}{title}{_RESET}  {_GREY}({nav}){_RESET}"
-        if flt:
-            _hdr += f"   {_DIM}filter: {flt}{_RESET}"
+        W = _width()
+        cw = max(30, min(W - 2, 74))  # content width inside the frame
 
-        def _ctx(it: dict) -> str:
-            c = it.get("ctx")  # precomputed in _build_picker_items
-            return f"  {c}" if c else ""
+        out: list[str] = []
 
-        rows = [_hdr]
-        # Tab bar — one chip per provider/family (all · openai · claude · …) with
-        # a live model count; the active tab is highlighted. ←/→ switches tabs.
+        def edge(content: str) -> str:
+            # content must be exactly cw printable chars (ANSI codes aside)
+            return f"{_GREY}│{_RESET}{content}{_GREY}│{_RESET}"
+
+        # ── top border: title · current model · live filter ─────────────
+        t1 = f" {title} "
+        t2 = f"· {ellipsize(tui.model, 24)} " if (mode is None and tui.model) else ""
+        t3 = f"· /{flt} " if flt else ""
+        if len(t1) + len(t2) + len(t3) > cw - 2:
+            t2 = ""  # narrow terminal: drop the "now" segment first
+        if len(t1) + len(t3) > cw - 2:
+            t1, t3 = ellipsize(t1, cw - 2), ""
+        fill = "─" * max(0, cw - 1 - len(t1) - len(t2) - len(t3))
+        out.append(f"{_GREY}╭─{_RESET}{_GREEN}{t1}{_RESET}{_DIM}{t2}{_RESET}"
+                   f"{_GREEN}{t3}{_RESET}{_GREY}{fill}╮{_RESET}")
+
+        # ── tab bar — one chip per provider/family, active highlighted.
+        # Wraps across as many lines as it takes so every tab is visible at
+        # once, then a divider row separates it from the list below.
         if tabs:
-            curtab = p.get("tab", "all")
-            segs = []
-            for t in tabs:
-                lab = f"{t['label']}·{t['count']}"
-                if t["tab"] == curtab:
-                    segs.append(f"\033[30;48;5;113m {lab} \033[0m")
-                else:
-                    segs.append(f"{_DIM}{lab}{_RESET}")
-            rows.append("  ".join(segs))
-        for i in range(lo, min(lo + _PICKER_ROWS, n)):
+            for row in _tab_bar_rows(p):
+                out.append(edge(row))
+            out.append(f"{_GREY}├{'─' * cw}┤{_RESET}")
+
+        # ── list rows ────────────────────────────────────────────────────
+        for i in range(lo, hi):
             it = items[i]
-            if it["kind"] == "header":
-                rows.append(f"{_DIM}\033[1m{it['label']}\033[0m{_RESET}")
+            k = it["kind"]
+            selected = i == sel
+
+            def _xw(s: str) -> int:
+                # extra terminal cells beyond len(): 🔒 renders 2 cells wide
+                return s.count("🔒")
+
+            if k == "header":
+                cnt = str(it.get("count") or "")
+                lab = ellipsize(it["label"], cw - len(cnt) - 4)
+                gap = " " * max(0, cw - 2 - len(lab) - _xw(lab) - len(cnt))
+                out.append(edge(f" {_DIM}\033[1m{lab}\033[0m{_RESET}{gap}{_DIM}{cnt}{_RESET} "))
                 continue
-            m = it["model"]
-            cur = "  ← current" if m == tui.model else ""
-            if not it["enabled"]:
-                if i == sel:
-                    rows.append(f"\033[30;48;5;179m {m} 🔒 \033[0m{_DIM}{_ctx(it)} · enter to enable{_RESET}")
+            if k in ("selfhost", "session", "rewind"):  # single-column rows
+                name = ellipsize(it["model"], cw - 4)
+                if selected:
+                    out.append(edge(f"{_HL} ❯ {name.ljust(cw - 4)}\033[0m "))
                 else:
-                    rows.append(f"  {_DIM}{m} 🔒{_ctx(it)}{_RESET}")
-            elif i == sel:
-                rows.append(f"\033[30;48;5;113m {m} \033[0m{_DIM}{cur}{_ctx(it)}{_RESET}")
+                    col = _GREEN if k == "selfhost" else ""
+                    end = _RESET if col else ""
+                    out.append(edge(f"   {col}{name}{end}{' ' * max(0, cw - 4 - len(name))} "))
+                continue
+            # model row — name (left) + a right-aligned meta column that says
+            # HOW this model runs: local/free, pull tag, self-host, provider
+            # tag (flat search), needs-key, or its context window.
+            m = it["model"]
+            ctx = it.get("ctx") or ""
+            suffix = it.get("suffix")  # flat search only: provider tag
+            is_cur = m == tui.model or it.get("local_tag") == tui.model
+            # "not ready" = Enter can't switch to this one directly — it still
+            # needs a pull, a self-host connect, or an API key first. Padlock +
+            # dimmed row so it doesn't read as available like the live models.
+            not_ready = not it["enabled"]
+            if it.get("local_tag"):
+                right, rw = "● local · free", 15
+            elif it.get("pull_tag"):
+                right, rw = f"🔒 pull {it['pull_tag']}", 23
+            elif it.get("open") and not it["enabled"]:
+                right, rw = "🔒 self-host", 14
+            elif not_ready:
+                # a real padlock so inactive models read differently at a glance
+                right, rw = ("🔒 enter to add key", 20) if selected else ("🔒 needs key", 13)
+            elif suffix:
+                right, rw = f"{suffix} · {ctx}".strip(" ·"), 16
+            elif is_cur:
+                right, rw = "● now", 8
             else:
-                rows.append(f"  {m}{_DIM}{cur}{_ctx(it)}{_RESET}")
-        return ANSI("\n".join(rows))
+                right, rw = ctx, 6
+            name_w = max(8, cw - 4 - rw - _xw(right))
+            name = ellipsize(m, name_w)
+            if selected:
+                bg = _AMBER if not_ready else _HL
+                out.append(edge(f"{bg} ❯ {name.ljust(name_w)}{right.rjust(rw)}\033[0m "))
+            elif not_ready:
+                out.append(edge(f"   {_DIM}{name.ljust(name_w)}{right.rjust(rw)}{_RESET} "))
+            elif is_cur:
+                out.append(edge(f"   {_GREEN}{name.ljust(name_w)}{right.rjust(rw)}{_RESET} "))
+            else:
+                out.append(edge(f"   {name.ljust(name_w)}{_DIM}{right.rjust(rw)}{_RESET} "))
+
+        # ── bottom border: nav hints + scroll position ───────────────────
+        nav = " ↑↓ · ←→ tabs · type to filter · enter · esc " if tabs \
+            else " ↑↓ · type to filter · enter · esc "
+        below, above = n - hi, lo
+        info = f" {below} more ↓ " if below else (f" ↑ {above} above " if above else "")
+        if len(nav) + len(info) > cw - 2:
+            nav = ""
+        fill = "─" * max(0, cw - 1 - len(nav) - len(info) - (1 if info else 0))
+        tail = f"{_DIM}{info}{_RESET}{_GREY}─{_RESET}" if info else ""
+        out.append(f"{_GREY}╰─{_RESET}{_DIM}{nav}{_RESET}{_GREY}{fill}{_RESET}"
+                   f"{tail}{_GREY}╯{_RESET}")
+        return ANSI("\n".join(out))
 
     def _picker_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
         p = state.get("picking_model")
         if not p:
             return Dimension.exact(0)
-        extra = 1 if p.get("tabs") else 0  # tab bar row (model picker only)
-        return Dimension.exact(1 + extra + min(len(p["items"]), _PICKER_ROWS))
+        tab_rows = _tab_bar_rows(p)
+        extra = len(tab_rows) + 1 if tab_rows else 0  # tab bar line(s) + divider
+        return Dimension.exact(2 + extra + min(len(p["items"]), _PICKER_ROWS))
 
     def menu_ft() -> Any:
         opts = _menu_options()
@@ -721,29 +976,34 @@ async def run_fullscreen(tui: Any) -> int:
         n = min(len(_menu_options()), 8)
         return Dimension.exact(n) if n else Dimension.exact(0)
 
-    def _switch_model(model_id: str, *, provider_id: str | None = None,
-                      backend: str | None = None) -> None:
-        from . import catalog  # noqa: PLC0415
-
-        # Switching rebuilds the Agent with a fresh provider, which opens a new
-        # httpx client + connection pool. Retire the OUTGOING provider's client
-        # so its sockets/pool don't leak on every /model switch. aclose is async
-        # and we're inside the running TUI app, so fire-and-forget on the loop.
-        def _retire(old: Any, new: Any) -> None:
-            if old is None or old is new:
-                return
-            aclose = getattr(old, "aclose", None)
-            if aclose is None:
-                return
-            async def _run() -> None:
-                try:
-                    await aclose()
-                except Exception:  # noqa: BLE001 — best-effort cleanup
-                    pass
+    def _retire_provider(old: Any, new: Any) -> None:
+        """Rebuilding the agent (model switch OR an MCP reload) opens a fresh
+        provider — a new httpx client + connection pool. Retire the OUTGOING
+        one so its sockets don't leak every time. aclose is async and we're
+        inside the running TUI app, so fire-and-forget on the loop."""
+        if old is None or old is new:
+            return
+        aclose = getattr(old, "aclose", None)
+        if aclose is None:
+            return
+        async def _run() -> None:
             try:
-                asyncio.get_running_loop().create_task(_run())
-            except RuntimeError:
-                pass  # no running loop (shouldn't happen in the TUI)
+                await aclose()
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass
+        try:
+            asyncio.get_running_loop().create_task(_run())
+        except RuntimeError:
+            pass  # no running loop (shouldn't happen in the TUI)
+
+    async def _switch_model(model_id: str, *, provider_id: str | None = None,
+                             backend: str | None = None) -> None:
+        """Rebuild the agent for a new model. ``_build_agent`` is a heavy,
+        synchronous call (tool registry, permission rules, system prompt —
+        all disk I/O) that used to run inline on the render thread, freezing
+        the picker/menu on screen for the ~1s it took. Offloaded to a thread
+        so key handling and redraws keep going while it rebuilds."""
+        from . import catalog  # noqa: PLC0415
 
         # Sanitize first: a picker filter / pasted id can carry whitespace or a
         # trailing newline, and a blank id must never blow away the active model.
@@ -756,8 +1016,8 @@ async def run_fullscreen(tui: Any) -> int:
             _old = tui.agent.provider if tui.agent is not None else None
             tui.backend, tui.api_key = backend, None
             tui.model = model_id
-            tui.agent = tui._build_agent()
-            _retire(_old, tui.agent.provider if tui.agent is not None else None)
+            tui.agent = await asyncio.to_thread(tui._build_agent)
+            _retire_provider(_old, tui.agent.provider if tui.agent is not None else None)
             if tui.agent is not None and tui.agent.permissions is not None:
                 tui.agent.permissions.asker = _ask_permission
             try:
@@ -791,8 +1051,8 @@ async def run_fullscreen(tui: Any) -> int:
                     tui.backend, tui.api_key = wired, None
         _old = tui.agent.provider if tui.agent is not None else None
         tui.model = model_id
-        tui.agent = tui._build_agent()
-        _retire(_old, tui.agent.provider if tui.agent is not None else None)
+        tui.agent = await asyncio.to_thread(tui._build_agent)
+        _retire_provider(_old, tui.agent.provider if tui.agent is not None else None)
         if tui.agent is not None and tui.agent.permissions is not None:
             tui.agent.permissions.asker = _ask_permission
         try:
@@ -819,7 +1079,7 @@ async def run_fullscreen(tui: Any) -> int:
             catalog.clear_key(pid)
             await _announce(f"✗ {prov.label}: {detail} (key not saved)")
             return
-        _switch_model(model, provider_id=pid)
+        await _switch_model(model, provider_id=pid)
         # Fetch the provider's real /v1/models now (off-thread) so the next
         # /models shows its full catalog, not just the flagship starter list.
         try:
@@ -828,6 +1088,432 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001
             pass
         await _announce(f"✓ {prov.label} enabled · model → {model}")
+
+    # -- MCP servers — inspect / add / edit view (/mcp) ------------------------
+    # A state-driven overlay in the same family as the model picker, with two
+    # modes: a LIST of every configured server (live status, transport, origin,
+    # tool count) and a DETAIL card for one server showing its actual
+    # configuration — command/args/env/url/headers, the connected tool names,
+    # warnings, errors, and the raw JSON entry as it sits on disk. Credentials
+    # are masked until the user asks for them ("s").
+    #
+    # Writes go only to the user-level mcp.json, and accept anything a user is
+    # likely to have on the clipboard: a full {"mcpServers": {...}} blob, one
+    # entry object, a shell command, or a URL. Any mutation triggers a full
+    # reconnect + agent rebuild (the offloaded-rebuild pattern a model switch
+    # uses), so the new tool set is live with no restart.
+
+    def _mcp_view_rows() -> list[dict]:
+        """One row per configured server: on-disk config joined to live status."""
+        from .mcp.manager import mcp_entry_transport, mcp_raw_entries  # noqa: PLC0415
+        mgr = tui._mcp_manager
+        status = {r["name"]: r for r in (mgr.status_rows() if mgr else [])}
+        withheld = set(tui._withheld_mcp or [])
+        entries = mcp_raw_entries()
+        rows: list[dict] = []
+        for name in sorted(entries, key=str.lower):
+            rec = entries[name]
+            st = status.get(name)
+            if name in withheld:
+                s_state, s_detail = "withheld", "untrusted .mcp.json"
+            elif st is not None:
+                s_state, s_detail = st["state"], st["detail"]
+            else:
+                s_state, s_detail = "pending", ""
+            tools = [t.name.split("__", 2)[-1]
+                     for t in ((mgr.tools.get(name) if mgr else None) or [])]
+            rows.append({
+                "kind": "server", "name": name, "state": s_state, "detail": s_detail,
+                "origin": rec["origin"], "path": rec["path"], "entry": rec["entry"],
+                "transport": mcp_entry_transport(rec["entry"]), "tools": tools,
+                "warnings": list((mgr.warnings.get(name) if mgr else None) or []),
+                "error": (mgr.errors.get(name) if mgr else "") or "",
+            })
+        rows.append({"kind": "add"})
+        return rows
+
+    def _open_mcp_view() -> None:
+        rows = _mcp_view_rows()
+        sel = next((i for i, r in enumerate(rows) if r["kind"] == "server"), len(rows) - 1)
+        state["mcp_view"] = {"rows": rows, "sel": sel, "adding": None, "detail": None,
+                             "dscroll": 0, "reveal": False, "stamp": time.monotonic()}
+        get_app().invalidate()
+
+    def _mcp_row() -> dict | None:
+        """The server row the view is acting on: the detail subject when a card
+        is open, otherwise whatever the cursor sits on in the list."""
+        v = state.get("mcp_view")
+        if not v:
+            return None
+        if v.get("detail"):
+            return next((r for r in v["rows"]
+                         if r["kind"] == "server" and r["name"] == v["detail"]), None)
+        r = v["rows"][v["sel"]] if 0 <= v["sel"] < len(v["rows"]) else None
+        return r if r and r["kind"] == "server" else None
+
+    async def _reload_mcp(note: str) -> None:
+        """Reconnect every configured server and rebuild the agent so the new
+        tool set is live right away — the exact offloaded-rebuild pattern
+        _switch_model uses, so this never freezes the UI while it reconnects."""
+        old_provider = tui.agent.provider if tui.agent is not None else None
+        if tui._mcp_manager is not None:
+            # Short leash: a reload may land while the boot connect is still
+            # working through a slow server, and the user is waiting on a
+            # keystroke. Teardown of whatever did connect still runs.
+            await tui._mcp_manager.stop(timeout_s=5.0)
+        tui._mcp_manager = None
+        tui._mcp_tools = []
+        try:
+            summary = await tui._connect_mcp()
+        except Exception as e:  # noqa: BLE001 — MCP must never take the UI down
+            summary = f"reconnect failed: {e}"
+        tui.agent = await asyncio.to_thread(tui._build_agent)
+        _retire_provider(old_provider, tui.agent.provider if tui.agent is not None else None)
+        if tui.agent is not None and tui.agent.permissions is not None:
+            tui.agent.permissions.asker = _ask_permission
+        v = state.get("mcp_view")
+        if v is not None:
+            v["rows"] = _mcp_view_rows()
+            v["sel"] = min(v["sel"], len(v["rows"]) - 1)
+            if v.get("detail") and _mcp_row() is None:
+                v["detail"] = None  # the subject was removed out from under us
+        await _announce(f"{note} · {summary}" if summary else note)
+
+    def _mcp_start_add() -> None:
+        """Begin the add flow at the paste step — one field, any format."""
+        v = state.get("mcp_view")
+        if not v or v.get("adding"):
+            return
+        v["adding"] = {"step": "entry", "name": "", "edit": False}
+        input_buffer.reset()
+
+    def _mcp_start_edit() -> None:
+        """Edit the selected server's entry as JSON, prefilled with what's on
+        disk (unmasked — it's the user's own file and they're about to save it
+        back). Only user-level entries are writable from here."""
+        v, r = state.get("mcp_view"), _mcp_row()
+        if not v or v.get("adding") or r is None:
+            return
+        if r["origin"] != "user":
+            get_app().create_background_task(_announce(
+                f"{r['name']} is defined in {r['path']} — edit that file directly"))
+            return
+        v["adding"] = {"step": "entry", "name": r["name"], "edit": True}
+        js = json.dumps(r["entry"], ensure_ascii=False)
+        input_buffer.reset()
+        input_buffer.text = js
+        input_buffer.cursor_position = len(js)
+
+    _MCP_DOTS = {"connected": f"{_GREEN}●{_RESET}", "failed": f"\033[38;5;203m●{_RESET}",
+                 "pending": f"{_GREY}○{_RESET}", "withheld": f"{_AMBER_FG}◆{_RESET}"}
+
+    def _mcp_pretty_path(path: str) -> str:
+        home = str(Path.home())
+        return f"~{path[len(home):]}" if path.startswith(home) else path
+
+    def _mcp_detail_body(r: dict, cw: int, reveal: bool) -> list[str]:
+        """The detail card's contents: every configured field, then the raw
+        JSON entry. Wrapped, never truncated — long commands and URLs are
+        exactly what you open this view to read."""
+        import textwrap  # noqa: PLC0415
+
+        from .mcp.manager import redact_mcp_entry  # noqa: PLC0415
+        entry = r["entry"] if reveal else redact_mcp_entry(r["entry"])
+        lw, out = 10, []
+        avail = max(16, cw - 4 - lw)
+
+        def field(label: str, value: str, color: str = "") -> None:
+            chunks = textwrap.wrap(str(value), avail, break_long_words=True,
+                                   break_on_hyphens=False, drop_whitespace=False) or [""]
+            for i, ch in enumerate(chunks):
+                lab = (label if i == 0 else "").ljust(lw)
+                out.append(f"  {_DIM}{lab}{_RESET}{color}{ch.strip() if i else ch}{_RESET}")
+
+        dot = _MCP_DOTS.get(r["state"], f"{_GREY}○{_RESET}")
+        # A failed server's detail IS its error text, and that gets its own
+        # field below — don't print it twice.
+        bits = [r["state"]] + ([r["detail"]] if r["detail"] and not r["error"] else [])
+        field("status", f"{dot} {' · '.join(bits)}")
+        field("transport", r["transport"])
+        field("origin", f"{r['origin']} · {_mcp_pretty_path(r['path'])}")
+        if entry.get("command"):
+            field("command", str(entry["command"]))
+        if entry.get("args"):
+            field("args", " ".join(str(a) for a in entry["args"]))
+        if entry.get("url"):
+            field("url", str(entry["url"]))
+        for key in ("env", "headers"):
+            vals = entry.get(key)
+            if isinstance(vals, dict) and vals:
+                for i, (k, val) in enumerate(vals.items()):
+                    field(key if i == 0 else "", f"{k} = {val}")
+        # Anything else the entry carries (timeout, description, custom keys) —
+        # the inspector must never silently hide configuration.
+        known = {"command", "args", "url", "env", "headers", "type"}
+        for k, val in entry.items():
+            if k not in known:
+                field(k, val if isinstance(val, str) else json.dumps(val))
+        if r["tools"]:
+            field("tools", " · ".join(r["tools"]))   # count is in the card title
+        for w in r["warnings"]:
+            field("warning", w, color=_AMBER_FG)
+        if r["error"]:
+            field("error", r["error"], color="\033[38;5;203m")
+        out.append("")
+        secrets = "revealed" if reveal else "masked · s reveals"
+        out.append(f"  {_DIM}config json{_RESET}  {_GREY}({secrets}){_RESET}")
+        for ln in json.dumps(entry, indent=2, ensure_ascii=False).splitlines():
+            out.append(f"  {_GREY}{ln[:cw - 4]}{_RESET}")
+        return out
+
+    def _mcp_list_body(v: dict, cw: int) -> list[str]:
+        from .tui import ellipsize  # noqa: PLC0415
+        rows, sel = v["rows"], v["sel"]
+        servers = [r for r in rows if r["kind"] == "server"]
+        out: list[str] = []
+        if not servers:
+            out.append(f"  {_DIM}no servers configured yet{_RESET}")
+        # widths: gutter+dot(5) name(nw) transport(7) origin(10) status(rw) pad(1).
+        # Names get what they need up to 24; every spare column goes to the
+        # status cell, because that's where error text has to fit.
+        nw = max(8, min(24, cw - 35))
+        rw = max(12, cw - 23 - nw)
+        for i, r in enumerate(rows):
+            selected = i == sel
+            if r["kind"] == "add":
+                label = "+ add a server"
+                tip = "paste JSON, a command, or a URL"
+                pad = max(1, cw - 5 - len(label) - len(tip))
+                if selected:
+                    out.append(f"{_HL} ❯ {label}{' ' * pad}{tip} {_RESET}")
+                else:
+                    out.append(f"   {_GREEN}{label}{_RESET}{' ' * pad}{_DIM}{tip}{_RESET} ")
+                continue
+            if r["state"] == "withheld":
+                right = "needs trust · t"
+            elif r["state"] == "pending":
+                right = "connecting…"
+            elif r["state"] == "failed":
+                right = r["error"] or r["detail"] or "failed"
+            else:
+                right = r["detail"] or "connected"
+            cells = (f"{ellipsize(r['name'], nw).ljust(nw)}"
+                     f"{r['transport'][:6].ljust(7)}"
+                     f"{r['origin'][:9].ljust(10)}"
+                     f"{ellipsize(right, rw).rjust(rw)} ")
+            if selected:
+                # On the highlight bar the dot loses its color, so the glyph
+                # itself has to carry the state.
+                bg = _AMBER if r["state"] == "withheld" else _HL
+                glyph = {"connected": "●", "failed": "✗", "withheld": "◆"}.get(r["state"], "○")
+                out.append(f"{bg} ❯ {glyph} {cells}{_RESET}")
+            else:
+                dot = _MCP_DOTS.get(r["state"], f"{_GREY}○{_RESET}")
+                out.append(f"   {dot} {ellipsize(r['name'], nw).ljust(nw)}{_DIM}"
+                           f"{r['transport'][:6].ljust(7)}{r['origin'][:9].ljust(10)}"
+                           f"{ellipsize(right, rw).rjust(rw)}{_RESET} ")
+        return out
+
+    def _mcp_lines() -> list[str]:
+        """Every rendered line of the overlay. ``mcp_ft`` and ``_mcp_view_height``
+        both read it, so the drawn box and the reserved rows can't drift."""
+        from .workflow_view import _truncate_visible, _visible_len  # noqa: PLC0415
+        v = state.get("mcp_view")
+        if not v:
+            return []
+        # Re-read config + live status a couple of times a second while the
+        # overlay is up: servers finish connecting after boot, and an mcp.json
+        # edited in another window should show up without reopening the view.
+        now = time.monotonic()
+        if now - float(v.get("stamp") or 0.0) > 0.5:
+            v["stamp"] = now
+            v["rows"] = _mcp_view_rows()
+            v["sel"] = max(0, min(v["sel"], len(v["rows"]) - 1))
+            if v.get("detail") and _mcp_row() is None:
+                v["detail"] = None
+        cw = max(36, min(_width() - 2, 84))
+        adding, detail = v.get("adding"), v.get("detail")
+        row = _mcp_row()
+
+        if detail and row is not None:
+            n = len(row["tools"])
+            title = f" {row['name']} · {row['state']}" + (f" · {n} tools " if n else " ")
+            body = _mcp_detail_body(row, cw, bool(v.get("reveal")))
+            hint = " ↑↓ scroll · e edit json · s secrets · x remove · ←/esc back "
+        else:
+            servers = [r for r in v["rows"] if r["kind"] == "server"]
+            live = sum(1 for r in servers if r["state"] == "connected")
+            tools = sum(len(r["tools"]) for r in servers)
+            title = f" MCP servers · {len(servers)}"
+            title += f" · {live} live · {tools} tools " if servers else " "
+            body = _mcp_list_body(v, cw)
+            hint = " ↑↓ · enter inspect · a add · e edit · x remove · esc "
+            if any(r["state"] == "withheld" for r in servers):
+                hint = " ↑↓ · enter inspect · a add · t trust · x remove · esc "
+
+        head: list[str] = []
+        if adding:
+            if adding["step"] == "name":
+                prompt = "name this server, then enter"
+            elif adding.get("edit"):
+                prompt = f"edit {adding['name']} as JSON · enter saves"
+            else:
+                prompt = 'paste JSON ({"mcpServers": …}), a command, or a URL'
+            head = [f"  {_GREEN}{prompt}{_RESET}", "\x00rule"]
+            hint = " enter confirm · esc cancel "
+
+        # Scroll the body when the card is taller than the room we have; the
+        # header/footer/prompt always stay pinned.
+        rows_free = max(6, shutil.get_terminal_size((80, 24)).lines - 12 - len(head))
+        if len(body) > rows_free:
+            top = max(0, min(int(v.get("dscroll", 0)), len(body) - rows_free))
+            v["dscroll"] = top
+            hint = f" {top + 1}-{top + rows_free}/{len(body)} ·{hint}"
+            body = body[top:top + rows_free]
+        else:
+            v["dscroll"] = 0
+
+        out = [f"{_GREY}╭─{_RESET}{_GREEN}{title}{_RESET}{_GREY}"
+               f"{'─' * max(0, cw - 1 - len(title))}╮{_RESET}"]
+        for ln in head + body:
+            if ln == "\x00rule":
+                out.append(f"{_GREY}├{'─' * cw}┤{_RESET}")
+                continue
+            vis = _visible_len(ln)
+            content = _truncate_visible(ln, cw) if vis > cw else ln + " " * (cw - vis)
+            out.append(f"{_GREY}│{_RESET}{content}{_GREY}│{_RESET}")
+        out.append(f"{_GREY}╰─{_RESET}{_DIM}{hint}{_RESET}{_GREY}"
+                   f"{'─' * max(0, cw - 1 - len(hint))}╯{_RESET}")
+        return out
+
+    def mcp_ft() -> Any:
+        lines = _mcp_lines()
+        return ANSI("\n".join(lines)) if lines else ANSI("")
+
+    def _mcp_view_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        return Dimension.exact(len(_mcp_lines()))
+
+    # -- in-TUI ollama pull ---------------------------------------------------
+    # Picking an open model downloads it RIGHT HERE: streamed progress from
+    # Ollama's /api/pull rendered on a status line under the prompt (no
+    # subprocess, no screen tear, prompt stays usable), then auto-switch.
+
+    def _fmt_bytes(n: float) -> str:
+        return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+    def pull_ft() -> Any:
+        pl = state.get("pulling")
+        if not pl:
+            return ANSI("")
+        total, done = pl.get("total") or 0, pl.get("completed") or 0
+        if total > 0:
+            pct = min(100, done * 100 // total)
+            cells = 24
+            filled = pct * cells // 100
+            bar = "█" * filled + "░" * (cells - filled)
+            det = f"{bar} {pct:3d}% · {_fmt_bytes(done)} / {_fmt_bytes(total)}"
+        else:
+            det = pl.get("status") or "starting…"
+        return ANSI(f"{_GREEN}↓ pulling {pl['tag']}{_RESET}  {_DIM}{det} · esc cancels{_RESET}")
+
+    def _pull_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        return Dimension.exact(1 if state.get("pulling") else 0)
+
+    def _start_pull(tag: str) -> None:
+        """Download ``tag`` with Ollama inside the TUI, then switch to it."""
+        if state.get("pulling"):
+            get_app().create_background_task(_announce(
+                f"already pulling {state['pulling']['tag']} — esc cancels it"))
+            return
+        pl = {"tag": tag, "status": "starting…", "completed": 0, "total": 0}
+        state["pulling"] = pl
+
+        async def _run() -> None:
+            import json as _json  # noqa: PLC0415
+
+            import httpx  # noqa: PLC0415
+
+            from . import paths as _pp  # noqa: PLC0415
+            from .setup_local import (  # noqa: PLC0415
+                is_ollama_installed, start_ollama_server)
+            last_inv = 0.0
+
+            def _tick() -> None:
+                nonlocal last_inv
+                now = time.monotonic()
+                if now - last_inv > 0.15:
+                    last_inv = now
+                    get_app().invalidate()
+
+            try:
+                if not is_ollama_installed():
+                    state["pulling"] = None
+                    await _announce("ollama isn't installed — https://ollama.com/download"
+                                    " · or: mantis-agent setup-local --install-ollama")
+                    return
+                ok, _log = await asyncio.to_thread(start_ollama_server)
+                if not ok:
+                    state["pulling"] = None
+                    await _announce("couldn't start the ollama server — try `ollama serve`"
+                                    " in another terminal")
+                    return
+                base = _pp.ollama_base_url()
+                err: str | None = None
+                # "model" is the current field name, "name" the pre-0.5 one —
+                # sending both keeps old daemons working.
+                async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10)) as c, \
+                        c.stream("POST", f"{base}/api/pull",
+                                 json={"model": tag, "name": tag, "stream": True}) as r:
+                    if r.status_code != 200:
+                        body = (await r.aread()).decode("utf-8", "replace")
+                        try:
+                            err = _json.loads(body).get("error") or body
+                        except Exception:  # noqa: BLE001
+                            err = body
+                    else:
+                        async for line in r.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                ev = _json.loads(line)
+                            except Exception:  # noqa: BLE001
+                                continue
+                            if ev.get("error"):
+                                err = ev["error"]
+                                break
+                            pl["status"] = ev.get("status") or pl["status"]
+                            if ev.get("total"):
+                                pl["total"] = ev["total"]
+                                pl["completed"] = ev.get("completed") or 0
+                            _tick()
+                state["pulling"] = None
+                if err:
+                    low = err.lower()
+                    if "newer version" in low:
+                        await _announce(
+                            f"your ollama is too old for {tag} — update it "
+                            "(https://ollama.com/download · brew upgrade ollama), then pick it again")
+                    elif "does not exist" in low or "not found" in low:
+                        await _announce(f"{tag} isn't in the ollama library — see ollama.com/library")
+                    else:
+                        await _announce(f"pull failed: {err.splitlines()[0][:120]}")
+                    return
+                state["ollama_models"] = None  # picker caches: show the new model
+                state["model_cache"] = None
+                await _switch_model(tag, backend=base)
+                await _announce(f"model → {tag} · local (free)")
+            except asyncio.CancelledError:
+                state["pulling"] = None
+                raise  # ollama keeps finished layers; a re-pull resumes
+            except Exception as e:  # noqa: BLE001
+                state["pulling"] = None
+                await _announce(f"pull failed: {e}")
+            finally:
+                get_app().invalidate()
+
+        state["pulling_task"] = get_app().create_background_task(_run())
 
     def _width() -> int:
         return shutil.get_terminal_size((80, 24)).columns
@@ -840,23 +1526,63 @@ async def run_fullscreen(tui: Any) -> int:
             return ANSI(f"{_GREY}🔑{_RESET} ")  # inline key-entry mode
         return ANSI(f"{_GREEN}❯{_RESET} ")
 
+    def spinner_ft() -> Any:
+        """The working status (✻ Mulling… (34s)), rendered ABOVE the input —
+        the reply streams in right over it, the prompt stays anchored below.
+        A leading blank line keeps it off the streamed text above."""
+        if not state["working"]:
+            return ANSI("")
+        el = int(time.monotonic() - state["started"])
+        frame = SPINNER_FRAMES[state["frame"] % len(SPINNER_FRAMES)]
+        # A transient connection problem shows as ONE in-place note on the
+        # spinner line (set by the retry hook) — not printed lines tearing
+        # through the frame. It disappears once its window passes.
+        note = state.get("retry_note")
+        extra = ""
+        if note and time.monotonic() < note[1]:
+            extra = f"  \033[33m{note[0]}\033[0m"
+        nq = len(state.get("queue") or [])
+        queued = f" {_DIM}· {nq} queued{_RESET}" if nq else ""
+        return ANSI(
+            f"\n{_GREEN}{frame} {state['word']}…{_RESET} "
+            f"{_DIM}({el}s · esc to interrupt){_RESET}{queued}{extra}"
+        )
+
+    def _spinner_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        return Dimension.exact(2 if state["working"] else 0)  # blank + spinner
+
+    def attach_ft() -> Any:
+        """The line directly above the prompt: what's staged for the next
+        message, or an offer to take what's on the clipboard.
+
+        Ctrl+V is otherwise undiscoverable — on macOS ⌘V cannot carry an image
+        into a terminal at all, so someone with a screenshot copied has no way
+        to find out the app would take it. This is the whole affordance."""
+        pending = getattr(tui, "pending_attachments", None) or []
+        if pending:
+            n = len(pending)
+            imgs = sum(1 for p, _ in pending if p.startswith("[Image"))
+            what = (f"{imgs} image{'s' if imgs != 1 else ''}" if imgs == n
+                    else f"{n} attachment{'s' if n != 1 else ''}")
+            warn = ""
+            from .tui import model_supports_vision  # noqa: PLC0415
+            if imgs and not model_supports_vision(tui.model):
+                warn = f"  {_YELLOW}⚠ {tui.model} can't see images{_RESET}"
+            return ANSI(f"{_GREEN}◫{_RESET} {_DIM}{what} attached · "
+                        f"sends with your next message{_RESET}{warn}")
+        clip = state.get("clip")
+        if clip:
+            verb = "paste" if clip == "Image" else "attach"
+            return ANSI(f"{_DIM}{clip} in clipboard · ctrl+v to {verb}{_RESET}")
+        return ANSI("")
+
+    def _attach_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        showing = bool(getattr(tui, "pending_attachments", None)) or bool(state.get("clip"))
+        return Dimension.exact(1 if showing else 0)
+
     def footer_ft() -> Any:
-        if state["working"]:
-            el = int(time.monotonic() - state["started"])
-            frame = SPINNER_FRAMES[state["frame"] % len(SPINNER_FRAMES)]
-            # A transient connection problem shows as ONE in-place note on the
-            # spinner line (set by the retry hook) — not printed lines tearing
-            # through the frame. It disappears once its window passes.
-            note = state.get("retry_note")
-            extra = ""
-            if note and time.monotonic() < note[1]:
-                extra = f"  \033[33m{note[0]}\033[0m"
-            nq = len(state.get("queue") or [])
-            queued = f" {_DIM}· {nq} queued{_RESET}" if nq else ""
-            return ANSI(
-                f"{_GREEN}{frame} {state['word']}…{_RESET} "
-                f"{_DIM}({el}s · esc to interrupt){_RESET}{queued}{extra}"
-            )
         label, symbol, color = MODES[tui.mode_idx]
         left = "" if tui.mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
         col = _MODE_ANSI.get(color, "90")
@@ -1245,23 +1971,22 @@ async def run_fullscreen(tui: Any) -> int:
     async def _print(fn: Any) -> None:
         await run_in_terminal(fn)
 
-    # Spacing model: every block prints a TRAILING blank line (so the separation
-    # is part of the block's own run_in_terminal call and can't be dropped),
-    # EXCEPT a tool call — which prints none, so its result hugs it directly.
+    # Spacing model: each assistant block prints a LEADING blank line to
+    # separate itself from whatever came before; nothing prints a trailing
+    # blank. Mid-turn the rhythm is identical, but the turn ENDS tight —
+    # no stray gap between the last reply line and the input rule. A tool
+    # result prints no separator at all so it hugs its call directly.
 
     def _echo(t: str) -> None:
         from .tui import echo_user_message  # noqa: PLC0415
         echo_user_message(tui.console, t)  # grey bar, Claude-Code style
-        tui.console.print()
 
     def _assist(m: Any) -> None:
-        had_tool_call = tui._render_assistant(m, ToolUseBlock)
-        if not had_tool_call:  # text block → blank below; tool call → hug result
-            tui.console.print()
+        tui.console.print()
+        tui._render_assistant(m, ToolUseBlock)
 
     def _result(m: Any) -> None:
         tui._render_tool_results(m, ToolResultBlock)
-        tui.console.print()
 
     async def _handle(text: str) -> None:
         state["suggested_prompt"] = None  # a submitted turn invalidates the ghost
@@ -1835,6 +2560,33 @@ async def run_fullscreen(tui: Any) -> int:
             msg = "copied last reply to clipboard" if ok else "no clipboard tool found (pbcopy/xclip/wl-copy)"
             await _print(lambda m=msg: tui.console.print(f"[ansibrightblack]({m})[/]"))
             return True
+        if cmd == "/paste":
+            # Same staging as Ctrl+V, for terminals that swallow it (plenty bind
+            # ctrl+v to their own paste) and for anyone who reads /help first.
+            # ``arg`` lets you attach a file by path: /paste ~/shot.png
+            # (Path is imported locally because a later branch does the same,
+            # which makes the module-level name a function local here.)
+            from pathlib import Path  # noqa: PLC0415
+
+            if arg:
+                from . import clipboard as _clip  # noqa: PLC0415
+                try:
+                    blocks = _clip.file_to_blocks(Path(arg.strip().strip("'\"")).expanduser())
+                except (OSError, ValueError) as e:
+                    await _print(lambda e=e: tui.console.print(f"[ansibrightblack]({e})[/]"))
+                    return True
+                label = "Image" if _clip.is_image_path(arg.strip()) else "File"
+                for b in blocks:
+                    n = len(tui.pending_attachments) + 1
+                    tui.pending_attachments.append((f"[{label} #{n}]", b))
+                note = f"attached {Path(arg.strip()).name} — sends with your next message"
+            else:
+                placeholder = tui._capture_clipboard_attachment()
+                note = (f"attached {placeholder} — sends with your next message"
+                        if placeholder else "no image or file on the clipboard")
+            await _print(lambda n=note: tui.console.print(f"[ansibrightblack]({n})[/]"))
+            get_app().invalidate()
+            return True
         if cmd == "/export":
             from pathlib import Path  # noqa: PLC0415
 
@@ -1920,7 +2672,7 @@ async def run_fullscreen(tui: Any) -> int:
                 from . import catalog  # noqa: PLC0415
                 res = catalog.resolve_model_query(arg, _chat_models())
                 if res.model:
-                    _switch_model(res.model, provider_id=res.provider_id)
+                    await _switch_model(res.model, provider_id=res.provider_id)
                     await _print(lambda m=res.model: tui.console.print(
                         f"[ansibrightblack](model → [white]{m}[/])[/]"))
                 elif res.candidates:
@@ -1935,6 +2687,16 @@ async def run_fullscreen(tui: Any) -> int:
             else:
                 # /models [partial] → picker overlay, pre-filtered if given.
                 _open_model_picker(arg or "")
+            return True
+        if cmd == "/pull":
+            # Download an open model with ollama and switch to it — same
+            # in-TUI streamed-progress flow the picker's "open" tab uses.
+            tag = arg.strip()
+            if not tag:
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack]usage: /pull <ollama-tag> — e.g. /pull gpt-oss:20b[/]"))
+                return True
+            _start_pull(tag)
             return True
         if cmd == "/agents":
             parts = arg.strip().split(maxsplit=1)
@@ -2076,12 +2838,25 @@ async def run_fullscreen(tui: Any) -> int:
             watches: dict[int, dict] = state.setdefault("watches", {})
             sub = arg.strip()
             if not sub or sub == "list":
-                if not watches:
+                # Two different things are called "watch": these interval polls
+                # (/watch, user-started, re-runs a command and wakes the agent
+                # when it starts failing) and streaming watch JOBS (the `watch`
+                # tool, model-started, one notification per output line). List
+                # both here so /watch is never a half-answer.
+                stream_jobs = [j for j in tui._jobs.all()
+                               if str(getattr(j, "kind", "") or "").startswith("watch")]
+                if not watches and not stream_jobs:
                     await _announce("no watches — /watch [interval] <command> "
                                     "(fires the agent when it starts failing)")
                 for wid, w in watches.items():
                     await _announce(f"watch #{wid} · every {format_loop_interval(w['interval'])} "
                                     f"· {w.get('state', '?')} · {w['cmd'][:50]}")
+                for j in stream_jobs:
+                    n = getattr(j, "stream_count", 0)
+                    await _announce(
+                        f"watch job #{j.id} · streaming · {j.status} · "
+                        f"{n} event{'s' if n != 1 else ''} · {j.desc[:50]} "
+                        f"(stop: /jobs kill {j.id})")
                 return True
             if sub.split()[0] == "stop":
                 which = sub.split()[1] if len(sub.split()) > 1 else "all"
@@ -2189,7 +2964,10 @@ async def run_fullscreen(tui: Any) -> int:
                 await _print(lambda: tui._cmd_jobs(arg))
             return True
         if cmd == "/mcp":
-            await _print(lambda: tui._show_mcp())
+            if arg.strip() == "trust":
+                await _print(lambda: tui._cmd_mcp_trust())
+            else:
+                _open_mcp_view()
             return True
         if cmd == "/skills":
             await _print(lambda: tui._show_skills())
@@ -2318,6 +3096,9 @@ async def run_fullscreen(tui: Any) -> int:
     _effort_open = Condition(lambda: state.get("picking_effort") is not None)
     _agent_open = Condition(lambda: state.get("agent_inspector") is not None)
     _workflows_open = Condition(lambda: state.get("workflows") is not None)
+    _mcp_view_open = Condition(lambda: state.get("mcp_view") is not None)
+    _mcp_adding = Condition(lambda: bool((state.get("mcp_view") or {}).get("adding")))
+    _mcp_view_idle = _mcp_view_open & ~_mcp_adding
 
     def _can_enter_agents_fn() -> bool:
         """True when ↓ from the prompt should step into the live subagent list.
@@ -2329,13 +3110,110 @@ async def run_fullscreen(tui: Any) -> int:
             return False
         if any(state.get(k) for k in (
                 "pending_perm", "pending_question", "picking_model",
-                "picking_effort", "workflows", "awaiting_key")):
+                "picking_effort", "workflows", "awaiting_key", "mcp_view")):
             return False
         if input_buffer.text.strip() or _menu_options():
             return False
         return bool(_live_agent_items())
 
     _can_enter_agents = Condition(_can_enter_agents_fn)
+
+    def _mcp_move(delta: int) -> None:
+        """↑↓ walks the list — or scrolls the detail card when one is open."""
+        v = state.get("mcp_view")
+        if not v:
+            return
+        if v.get("detail"):
+            v["dscroll"] = max(0, int(v.get("dscroll", 0)) + delta)
+        elif v["rows"]:
+            v["sel"] = (v["sel"] + delta) % len(v["rows"])
+
+    @kb.add("up", filter=_mcp_view_idle)
+    @kb.add("c-p", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        _mcp_move(-1)
+        event.app.invalidate()
+
+    @kb.add("down", filter=_mcp_view_idle)
+    @kb.add("c-n", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        _mcp_move(1)
+        event.app.invalidate()
+
+    def _mcp_open_detail() -> None:
+        v, r = state.get("mcp_view"), _mcp_row()
+        if v is not None and r is not None:
+            v["detail"], v["dscroll"] = r["name"], 0
+
+    @kb.add("right", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        _mcp_open_detail()
+        event.app.invalidate()
+
+    @kb.add("left", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        v = state["mcp_view"]
+        v["detail"], v["dscroll"] = None, 0
+        event.app.invalidate()
+
+    @kb.add("a", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        _mcp_start_add()
+        event.app.invalidate()
+
+    @kb.add("e", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        _mcp_start_edit()
+        event.app.invalidate()
+
+    @kb.add("s", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        """Toggle plaintext credentials — masked again as soon as it's off."""
+        v = state["mcp_view"]
+        v["reveal"] = not v.get("reveal")
+        event.app.invalidate()
+
+    @kb.add("r", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        event.app.create_background_task(_reload_mcp("reconnected"))
+        event.app.invalidate()
+
+    @kb.add("x", filter=_mcp_view_idle)
+    @kb.add("d", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        v, r = state["mcp_view"], _mcp_row()
+        if r is None:
+            return
+        if r["origin"] != "user":
+            event.app.create_background_task(_announce(
+                f"{r['name']} is defined in {r['path']} — edit that file to remove it"))
+            return
+        from .mcp.manager import remove_user_mcp_server  # noqa: PLC0415
+        if not remove_user_mcp_server(r["name"]):
+            event.app.create_background_task(_announce(f"{r['name']}: nothing to remove"))
+            return
+        v["detail"], v["dscroll"] = None, 0
+        event.app.create_background_task(_reload_mcp(f"removed {r['name']}"))
+        event.app.invalidate()
+
+    @kb.add("t", filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        from .mcp.manager import trust_project_mcp  # noqa: PLC0415
+        if trust_project_mcp():
+            event.app.create_background_task(_reload_mcp("trusted .mcp.json"))
+        else:
+            event.app.create_background_task(_announce("no .mcp.json in this directory to trust"))
+        event.app.invalidate()
+
+    # While browsing (not adding), the view owns every keystroke — like the
+    # model picker, letters must never leak into the input line behind it.
+    # Specific bindings above (a/x/d/t/arrows) still win over this catch-all.
+    from prompt_toolkit.keys import Keys as _Keys  # noqa: PLC0415
+
+    @kb.add(_Keys.Any, filter=_mcp_view_idle)
+    def _(event: Any) -> None:
+        pass
+
     _q_open = Condition(
         lambda: state.get("pending_question") is not None
         and not state["pending_question"]["typing"]
@@ -2506,10 +3384,16 @@ async def run_fullscreen(tui: Any) -> int:
             return False
         kind, value, _meta = opts[state["slash_sel"] % len(opts)]
         if kind == "model":
-            _switch_model(value)
             input_buffer.reset()
             state["slash_sel"] = 0
-            event.app.create_background_task(_announce(f"model → {value}"))
+            # Close the menu and redraw NOW; the rebuild itself (tool registry,
+            # permission rules, system prompt — disk I/O) runs off-thread in
+            # _switch_model, so it no longer freezes the UI while it completes.
+            async def _run(value: str = value) -> None:
+                await _switch_model(value)
+                await _announce(f"model → {value}")
+            event.app.create_background_task(_run())
+            event.app.invalidate()
             return True
         if kind == "file":
             # Replace the trailing @<partial> token with the chosen path.
@@ -2716,6 +3600,66 @@ async def run_fullscreen(tui: Any) -> int:
             else:
                 _q_resolve([opts[pq["sel"]]["label"]])
             return
+        # The /mcp view steals Enter: confirm whichever add/edit step is active,
+        # otherwise drill into the highlighted server (or the add tile).
+        mv = state.get("mcp_view")
+        if mv is not None:
+            adding = mv.get("adding")
+            if adding is None:
+                r = mv["rows"][mv["sel"]] if 0 <= mv["sel"] < len(mv["rows"]) else None
+                if mv.get("detail"):
+                    _mcp_start_edit()          # enter on a card = edit its JSON
+                elif r and r["kind"] == "add":
+                    _mcp_start_add()
+                elif r:
+                    _mcp_open_detail()
+                event.app.invalidate()
+                return
+            from .mcp.manager import (  # noqa: PLC0415
+                parse_mcp_paste,
+                save_user_mcp_servers,
+            )
+            text = input_buffer.text.strip()
+            taken = {row["name"] for row in mv["rows"] if row["kind"] == "server"}
+            # Step two, reached only when the pasted config carried no name.
+            if adding["step"] == "name":
+                if not text:
+                    event.app.create_background_task(_announce("a server needs a name"))
+                    return
+                if text in taken:
+                    event.app.create_background_task(_announce(f"{text!r} is already configured"))
+                    return
+                save_user_mcp_servers({text: adding["entry"]})
+                mv["adding"] = None
+                input_buffer.reset()
+                event.app.create_background_task(_reload_mcp(f"added {text}"))
+                event.app.invalidate()
+                return
+            servers, err = parse_mcp_paste(text)
+            if err is not None:
+                event.app.create_background_task(_announce(err))
+                return
+            target = adding.get("name") or ""
+            if target:
+                # Editing a known server: whatever shape they pasted, the entry
+                # for THIS name wins (a single object, or the matching key).
+                entry = servers.get(target) or next(iter(servers.values()))
+                save_user_mcp_servers({target: entry})
+                note = f"updated {target}"
+            elif "" in servers:
+                mv["adding"] = {"step": "name", "entry": servers[""], "edit": False}
+                input_buffer.reset()
+                event.app.create_background_task(_announce("name it, then enter"))
+                event.app.invalidate()
+                return
+            else:
+                save_user_mcp_servers(servers)
+                note = f"added {', '.join(sorted(servers))}"
+            mv["adding"] = None
+            input_buffer.reset()
+            event.app.create_background_task(_reload_mcp(note))
+            event.app.invalidate()
+            return
         # Inline provider-enable: the line holds a pasted API key for a locked
         # provider picked from /models. Validate + enable + switch.
         ak = state.get("awaiting_key")
@@ -2735,6 +3679,15 @@ async def run_fullscreen(tui: Any) -> int:
             items = p["items"]
             it = items[p["sel"]] if 0 <= p["sel"] < len(items) else None
             state["picking_model"] = None
+            if it and it["kind"] == "selfhost":
+                # Pre-fill /connect on the input line so the user completes the
+                # URL + model there — reuses the existing _cmd_connect flow.
+                input_buffer.text = "/connect "
+                input_buffer.cursor_position = len(input_buffer.text)
+                event.app.create_background_task(_announce(
+                    "self-host: /connect <url> <model>  ·  e.g. /connect http://localhost:8000/v1 my-model"))
+                event.app.invalidate()
+                return
             if it and it["kind"] == "rewind":
                 idx = it["msg_index"]
                 tui.messages = tui.messages[:idx]
@@ -2766,12 +3719,34 @@ async def run_fullscreen(tui: Any) -> int:
                 event.app.invalidate()
                 return
             if it and it["kind"] == "model":
-                if it["enabled"]:
-                    _switch_model(it["model"], provider_id=it.get("provider_id"),
-                                  backend=it.get("backend"))
-                    where = " · local (free)" if it.get("backend") else ""
-                    event.app.create_background_task(
-                        _announce(f"model → {it['model']}{where}"))
+                if it.get("local_tag"):
+                    # Open model already installed in Ollama → run it there, free.
+                    # Rebuild happens off-thread in _switch_model so the picker
+                    # closes (invalidate below) instead of freezing on screen
+                    # for the ~1s _build_agent used to take inline.
+                    tag, backend = it["local_tag"], it["backend"]
+                    async def _run(tag: str = tag, backend: str = backend) -> None:
+                        await _switch_model(tag, backend=backend)
+                        await _announce(f"model → {tag} · local (free)")
+                    event.app.create_background_task(_run())
+                elif it["enabled"]:
+                    model, provider_id, backend = it["model"], it.get("provider_id"), it.get("backend")
+                    async def _run(model: str = model, provider_id: Any = provider_id,
+                                   backend: Any = backend) -> None:
+                        await _switch_model(model, provider_id=provider_id, backend=backend)
+                        where = " · local (free)" if backend else ""
+                        await _announce(f"model → {model}{where}")
+                    event.app.create_background_task(_run())
+                elif it.get("pull_tag"):
+                    # Open model, not installed → download it RIGHT HERE with
+                    # live progress, then auto-switch. No key, no command.
+                    _start_pull(it["pull_tag"])
+                elif it.get("open"):
+                    # Open weights with no curated ollama tag → self-host them.
+                    input_buffer.text = "/connect "
+                    input_buffer.cursor_position = len(input_buffer.text)
+                    event.app.create_background_task(_announce(
+                        f"open weights — run them yourself: /connect <url> {it['model']} · no key needed"))
                 else:
                     # Locked provider → ask for its key inline, then enable+switch.
                     pid = it.get("provider_id")
@@ -2831,6 +3806,32 @@ async def run_fullscreen(tui: Any) -> int:
     def _(event: Any) -> None:
         if state.get("agent_inspector") is not None:
             state["agent_inspector"] = None
+            event.app.invalidate()
+            return
+        # /mcp view: esc unwinds one layer at a time — add/edit flow, then the
+        # detail card, then the overlay itself.
+        mv = state.get("mcp_view")
+        if mv is not None:
+            if mv.get("adding"):
+                mv["adding"] = None
+                input_buffer.reset()
+            elif mv.get("detail"):
+                mv["detail"], mv["dscroll"] = None, 0
+            else:
+                state["mcp_view"] = None
+            event.app.invalidate()
+            return
+        # A running ollama pull: esc cancels it — but only when no overlay is
+        # claiming esc for itself (picker/permission/question close first).
+        if (state.get("pulling") is not None
+                and state.get("picking_model") is None
+                and state.get("pending_perm") is None
+                and state.get("pending_question") is None):
+            t = state.pop("pulling_task", None)
+            if t is not None:
+                t.cancel()
+            state["pulling"] = None
+            event.app.create_background_task(_announce("pull cancelled — a re-pull resumes where it left off"))
             event.app.invalidate()
             return
         # /workflows overlay: esc backs out of detail → list → closed. Closing
@@ -2959,6 +3960,14 @@ async def run_fullscreen(tui: Any) -> int:
     )
     layout = Layout(
         HSplit([
+            # Working status + live checklist sit ABOVE the input (the reply
+            # streams into scrollback right on top of them); the prompt stays
+            # anchored below, always ready for the next message.
+            Window(FormattedTextControl(spinner_ft), height=_spinner_height),
+            Window(FormattedTextControl(live_todos_ft), height=_live_todos_height),
+            # Staged attachments / "image on the clipboard" offer — height 0
+            # when there's neither.
+            Window(FormattedTextControl(attach_ft), height=_attach_height),
             Window(FormattedTextControl(rule_ft), height=1),
             VSplit([Window(FormattedTextControl(prompt_ft), width=2), input_window], height=1),
             Window(FormattedTextControl(rule_ft), height=1),
@@ -2971,6 +3980,10 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(question_ft), height=_question_height),
             # Model picker overlay — height 0 unless /models opened it.
             Window(FormattedTextControl(picker_ft), height=_picker_height),
+            # /mcp server view — height 0 unless opened.
+            Window(FormattedTextControl(mcp_ft), height=_mcp_view_height),
+            # Live ollama pull progress — height 0 unless a pull is running.
+            Window(FormattedTextControl(pull_ft), height=_pull_height),
             Window(FormattedTextControl(effort_ft), height=Condition(
                 lambda: (1 + len(state["picking_effort"]["items"]))
                 if state.get("picking_effort") else 0)), 
@@ -2980,9 +3993,6 @@ async def run_fullscreen(tui: Any) -> int:
             # height 0 unless opened. Pass the height CALLABLE, never its call.
             Window(FormattedTextControl(_workflows_ft), height=_workflows_height),
             Window(FormattedTextControl(footer_ft), height=1),
-            # Live task checklist — pinned under the spinner while working
-            # (Claude Code's ⎿ □/✔ block); height 0 when idle.
-            Window(FormattedTextControl(live_todos_ft), height=_live_todos_height),
         ]),
         focused_element=input_window,
     )
@@ -3001,6 +4011,36 @@ async def run_fullscreen(tui: Any) -> int:
                 state["frame"] += 1
                 app.invalidate()
             await asyncio.sleep(0.12)
+
+    async def _poll_clipboard() -> None:
+        """Watch the system clipboard so the paste hint can appear on its own.
+
+        The probe shells out (osascript / xclip), so it runs in a worker thread
+        — never on the event loop — and only repaints when the answer actually
+        changes. Skipped while a turn is working (the user isn't typing) and
+        while attachments are already staged (the hint is replaced by them)."""
+        import os  # noqa: PLC0415
+
+        if os.environ.get("MANTIS_NO_CLIPBOARD_HINT"):
+            return
+        from . import clipboard as _clip  # noqa: PLC0415
+
+        while True:
+            await asyncio.sleep(2.0)
+            if state["working"] or getattr(tui, "pending_attachments", None):
+                if state.get("clip") is not None:
+                    state["clip"] = None
+                continue
+            try:
+                label = await asyncio.to_thread(_clip.describe_clipboard_attachment)
+            except Exception:  # noqa: BLE001 — a clipboard probe must never kill the UI
+                label = None
+            if label != state.get("clip"):
+                state["clip"] = label
+                try:
+                    get_app().invalidate()
+                except Exception:  # noqa: BLE001 — app torn down mid-poll
+                    return
 
     async def _mcp_startup() -> None:
         # Connect configured MCP servers in the background so a slow server
@@ -3037,6 +4077,19 @@ async def run_fullscreen(tui: Any) -> int:
 
     tui._job_notify = _notify_job
 
+    def _notify_watch(job: Any, text: str) -> None:
+        # A watch event, unlike a job completion, can arrive mid-turn and
+        # repeatedly — announce it on its own line so a burst reads as a stream
+        # rather than overwriting itself in the spinner.
+        from .tui import format_watch_event_line  # noqa: PLC0415
+
+        line = format_watch_event_line(
+            job, text, width=shutil.get_terminal_size((80, 24)).columns)
+        get_app().create_background_task(_announce(line))
+        get_app().invalidate()
+
+    tui._watch_notify = _notify_watch
+
     # Test hook: seed fake live subagents so the ↓-into-inspector path is
     # drivable in a PTY test without spawning a real model. Harmless in prod
     # (only fires when the env var is explicitly set).
@@ -3052,6 +4105,7 @@ async def run_fullscreen(tui: Any) -> int:
 
     anim = asyncio.ensure_future(_animate())
     mcp_boot = asyncio.ensure_future(_mcp_startup())
+    clip_poll = asyncio.ensure_future(_poll_clipboard())
     try:
         await app.run_async()
     finally:
@@ -3060,9 +4114,10 @@ async def run_fullscreen(tui: Any) -> int:
         # so the cancellation actually propagates to each task's next await —
         # subprocess termination / transport close only happen there. Merely
         # calling .cancel() and returning leaves orphaned child processes.
-        pending: list[Any] = [anim, mcp_boot]
+        pending: list[Any] = [anim, mcp_boot, clip_poll]
         anim.cancel()
         mcp_boot.cancel()
+        clip_poll.cancel()
         if state.get("agi"):
             state["agi"]["stopped"].set()
         for loop in (state.get("loops") or {}).values():  # stop /loop timers

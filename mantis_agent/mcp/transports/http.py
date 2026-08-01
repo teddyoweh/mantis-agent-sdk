@@ -36,6 +36,14 @@ from ...http import iter_sse, make_client
 from .base import TransportClosed
 
 
+# MCP servers are interactive infrastructure, not a model API. ``make_client``'s
+# defaults (10s connect, four backed-off retries) turn one wrong URL into a
+# ~40s stall before /mcp can say "failed", so the MCP transports connect fast
+# and fail fast instead. The read budget stays generous: a live session may sit
+# idle between server events.
+_MCP_TIMEOUT = httpx.Timeout(connect=5.0, read=600.0, write=10.0, pool=5.0)
+
+
 _DECODER = msgspec.json.Decoder()
 _ENCODER = msgspec.json.Encoder()
 
@@ -78,7 +86,8 @@ class HttpTransport:
 
     async def __aenter__(self) -> "HttpTransport":
         if self._client is None:
-            self._client = make_client(headers=self.headers)
+            self._client = make_client(headers=self.headers, timeout=_MCP_TIMEOUT,
+                                       retries=False)
         self._task_group = anyio.create_task_group()
         await self._task_group.__aenter__()
         return self

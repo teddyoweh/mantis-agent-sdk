@@ -67,10 +67,10 @@ def test_accept_edits_allows_edits_asks_bash() -> None:
     assert isinstance(_decide(tui, "accept edits on", _FakeTool("bash", False)), Ask)
 
 
-def test_bypass_mode_allows_everything() -> None:
+def test_god_mode_allows_everything() -> None:
     tui = _tui()
     assert isinstance(
-        _decide(tui, "bypass permissions on", _FakeTool("write_file", False)), Allow
+        _decide(tui, "god mode on", _FakeTool("write_file", False)), Allow
     )
 
 
@@ -119,16 +119,17 @@ def test_permission_mode_label_accepts_cli_and_settings_spellings() -> None:
     assert permission_mode_label("acceptEdits") == "accept edits on"
     assert permission_mode_label("accept-edits") == "accept edits on"
     assert permission_mode_label("plan") == "plan mode on"
-    assert permission_mode_label("bypass permissions on") == "bypass permissions on"
+    assert permission_mode_label("bypass permissions on") == "god mode on"
+    assert permission_mode_label("godmode") == "god mode on"
     assert permission_mode_label("future-mode") is None
 
 
-def test_permission_mode_summary_explains_safe_bypass_distinction() -> None:
-    assert "dangerous shell commands still ask" in permission_mode_summary(
-        "bypass permissions on"
+def test_permission_mode_summary_explains_god_mode() -> None:
+    assert "including dangerous shell commands" in permission_mode_summary(
+        "god mode on"
     )
     assert "including dangerous shell commands" in permission_mode_summary(
-        "bypass permissions on", force_bypass=True
+        "god mode on", force_bypass=True
     )
 
 

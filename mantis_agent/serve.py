@@ -274,15 +274,106 @@ def models_state() -> dict[str, Any]:
             "guide": provider_guides.GUIDES.get(pid),
             "docs_url": f"{_DOCS_BASE}/providers/{pid}" if pid else None,
         })
+    # What each model can actually do, straight from the SDK's own capability
+    # table — a model list is just strings until you can compare context
+    # windows and tool support side by side.
+    info: dict[str, Any] = {}
+    seen: set[str] = set()
+    for p in provs:
+        for mid in p["models"]:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            info[mid] = _model_info(mid)
+    cur_model = last.get("model")
+    if cur_model and cur_model not in info:
+        info[cur_model] = _model_info(cur_model)
+
     return {
         "current": last,
         "recent": recent,
         "providers": provs,
+        "model_info": info,
         "enabled_count": sum(1 for p in provs if p["enabled"]),
         "hosting": _hosting_summary(last, backend_now),
         "selfhost_guide": provider_guides.SELFHOST,
         "selfhost_docs_url": f"{_DOCS_BASE}/guides/self-hosting",
     }
+
+
+def _model_info(model_id: str) -> dict[str, Any]:
+    """Context window + tool/reasoning support for one model id."""
+    try:
+        from .capabilities import lookup_model  # noqa: PLC0415
+
+        cap = lookup_model(model_id)
+        return {
+            "ctx": cap.context_window,
+            "tools": bool(cap.supports_native_tools),
+            "effort": bool(cap.supports_reasoning_effort),
+            "thinking": bool(cap.emits_thinking_blocks or cap.emits_inline_thinking),
+            "family": cap.family,
+        }
+    except Exception:  # noqa: BLE001 — an unknown model just shows no badges
+        return {}
+
+
+def test_provider(provider_id: str | None, backend: str | None = None,
+                  key: str | None = None) -> dict[str, Any]:
+    """Can we actually reach this provider with the key we have?
+
+    Same promise the MCP page makes: prove the wiring works before you depend
+    on it. One ``GET {base}/models`` with a short timeout — cheap, read-only,
+    and supported by every OpenAI-compatible endpoint we list."""
+    import time  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+
+    base = (backend or "").rstrip("/")
+    label = backend or provider_id or "endpoint"
+    if provider_id:
+        prov = catalog.BY_ID.get(provider_id)
+        if prov is None:
+            return {"ok": False, "error": f"unknown provider '{provider_id}'"}
+        base = prov.base_url.rstrip("/")
+        label = prov.label
+        if not key:
+            key = (_provider_hosting(prov) or {}).get("key_masked") and None
+            try:
+                key = catalog.api_key_for(prov)
+            except Exception:  # noqa: BLE001
+                key = None
+    if not base:
+        return {"ok": False, "error": "no endpoint to test"}
+
+    headers = {"Accept": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+        headers["x-api-key"] = key            # Anthropic-style auth
+        headers["anthropic-version"] = "2023-06-01"
+    t0 = time.monotonic()
+    try:
+        with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=12.0, write=5.0, pool=5.0)) as c:
+            r = c.get(f"{base}/models", headers=headers)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 401 or r.status_code == 403:
+            return {"ok": False, "ms": ms, "label": label, "status": r.status_code,
+                    "error": "the endpoint rejected this key"}
+        if r.status_code >= 400:
+            return {"ok": False, "ms": ms, "label": label, "status": r.status_code,
+                    "error": f"HTTP {r.status_code} from {base}/models"}
+        try:
+            data = r.json()
+            listed = data.get("data") if isinstance(data, dict) else None
+            count = len(listed) if isinstance(listed, list) else None
+        except ValueError:
+            count = None
+        return {"ok": True, "ms": ms, "label": label, "count": count, "base_url": base}
+    except Exception as e:  # noqa: BLE001 — an unreachable host is an answer
+        return {"ok": False, "ms": int((time.monotonic() - t0) * 1000), "label": label,
+                "error": f"{type(e).__name__}: {e}".strip()}
 
 
 _SECRET_KEY_RE = re.compile(r"key|token|secret|password|apikey", re.I)
@@ -420,7 +511,7 @@ def _read_skill(md: Path) -> dict[str, Any] | None:
         "category": meta.get("category"),
         "always_load": str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
         "body": body,
-        "path": str(md),
+        "path": short_path(md),
     }
 
 
@@ -439,7 +530,8 @@ def skills_state() -> dict[str, Any]:
         return out
 
     return {"global": scan(g), "project": scan(p),
-            "global_dir": str(g), "project_dir": str(p), "cwd": os.getcwd()}
+            "global_dir": short_path(g), "project_dir": short_path(p),
+            "cwd": os.getcwd()}
 
 
 def _slugify(name: str) -> str:
@@ -448,18 +540,39 @@ def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-") or "skill"
 
 
-def add_skill(scope: str, name: str, description: str, body: str) -> dict[str, Any]:
+def _skill_md(name: str, description: str, body: str,
+              category: str = "", always_load: bool = False) -> str:
+    """Render a SKILL.md. Front-matter keys are only written when set, so a
+    round-trip through the editor doesn't sprout empty fields."""
+    lines = [f"name: {name}", f"description: {(description or '').strip()}"]
+    if (category or "").strip():
+        lines.append(f"category: {category.strip()}")
+    if always_load:
+        lines.append("always_load: true")
+    return "---\n" + "\n".join(lines) + "\n---\n\n" + (body or "").strip() + "\n"
+
+
+def add_skill(scope: str, name: str, description: str, body: str,
+              category: str = "", always_load: bool = False,
+              slug: str | None = None) -> dict[str, Any]:
+    """Create a skill — or overwrite one when ``slug`` names an existing skill
+    (the editor's save path). Renaming keeps the original directory so links
+    and the agent's own references stay valid."""
     name = (name or "").strip()
     if not name:
         return {"ok": False, "error": "name required"}
     g, p = _skills_dirs()
-    base = p if scope == "project" else g
-    slug = _slugify(name)
-    d = base / slug
+    base = (p if scope == "project" else g).resolve()
+    target_slug = _slugify(slug) if slug else _slugify(name)
+    d = (base / target_slug).resolve()
+    if d.parent != base:
+        return {"ok": False, "error": "bad skill name"}
+    if slug and not (d / "SKILL.md").exists():
+        return {"ok": False, "error": f"'{slug}' not found in {scope}"}
     d.mkdir(parents=True, exist_ok=True)
-    fm = f"---\nname: {name}\ndescription: {(description or '').strip()}\n---\n\n{(body or '').strip()}\n"
-    (d / "SKILL.md").write_text(fm, encoding="utf-8")
-    return {"ok": True, "scope": scope, "slug": slug}
+    (d / "SKILL.md").write_text(
+        _skill_md(name, description, body, category, always_load), encoding="utf-8")
+    return {"ok": True, "scope": scope, "slug": target_slug}
 
 
 def delete_skill(scope: str, slug: str) -> dict[str, Any]:
@@ -506,10 +619,52 @@ def _entry_summary(entry: Any) -> dict[str, str]:
     return {"transport": "?", "detail": ""}
 
 
+def short_path(p: Any) -> str:
+    """``/Users/me/.mantis-agent/mcp.json`` → ``~/.mantis-agent/mcp.json``.
+
+    Absolute home paths are noise in a UI — and a screenshot of the dashboard
+    shouldn't broadcast the account name either."""
+    s = str(p)
+    home = str(Path.home())
+    return "~" + s[len(home):] if home and s.startswith(home) else s
+
+
+def _secret_fields(entry: Any) -> list[str]:
+    """Which parts of an entry were masked, so the UI can label the reveal."""
+    if not isinstance(entry, dict):
+        return []
+    out = []
+    for key in ("env", "headers"):
+        vals = entry.get(key)
+        if isinstance(vals, dict) and any(str(v) for v in vals.values()):
+            out.append(key)
+    url = str(entry.get("url") or "")
+    if url and redact_url_value(url) != url:
+        out.append("url")
+    return out
+
+
+def redact_url_value(url: str) -> str:
+    from .mcp.manager import redact_mcp_entry  # noqa: PLC0415
+
+    return str(redact_mcp_entry({"url": url}).get("url") or url)
+
+
 def mcp_state() -> dict[str, Any]:
+    """Every configured MCP server with its FULL entry, credentials masked.
+
+    The dashboard is an inspector, not just a list: it shows what each server
+    actually runs (command/args/env keys, url/headers) and where that entry
+    lives. Values that look like credentials never leave the process in the
+    clear here — ``/api/mcp/entry`` serves the raw entry only when the editor
+    explicitly asks for it."""
     import os  # noqa: PLC0415
 
     from . import paths  # noqa: PLC0415
+    from .mcp.manager import (  # noqa: PLC0415
+        project_mcp_is_trusted,
+        redact_mcp_entry,
+    )
 
     settings_servers: dict[str, Any] = {}
     try:
@@ -520,12 +675,38 @@ def mcp_state() -> dict[str, Any]:
     gfile = paths.get_mantis_agent_dir() / "mcp.json"
     pfile = Path(os.getcwd()) / ".mcp.json"
     merged: dict[str, dict[str, Any]] = {}
-    for scope, servers in (("settings", settings_servers), ("global", _read_mcp(gfile)),
-                           ("project", _read_mcp(pfile))):
+    for scope, servers, path in (("settings", settings_servers, "settings.json"),
+                                 ("global", _read_mcp(gfile), str(gfile)),
+                                 ("project", _read_mcp(pfile), str(pfile))):
         for name, entry in (servers or {}).items():
-            merged[name] = {"name": name, "scope": scope, **_entry_summary(entry)}
-    return {"servers": list(merged.values()), "global_file": str(gfile),
-            "project_file": str(pfile), "cwd": os.getcwd()}
+            safe = redact_mcp_entry(entry) if isinstance(entry, dict) else {}
+            merged[name] = {"name": name, "scope": scope, "path": path,
+                            "display_path": short_path(path),
+                            "entry": safe, "secrets": _secret_fields(entry),
+                            "editable": scope in ("global", "project"),
+                            **_entry_summary(safe)}
+    servers_out = sorted(merged.values(), key=lambda s: str(s["name"]).lower())
+    trusted = project_mcp_is_trusted()
+    return {"servers": servers_out,
+            "global_file": short_path(gfile), "project_file": short_path(pfile),
+            "cwd": os.getcwd(),
+            "project_exists": pfile.exists(), "project_trusted": trusted,
+            # Project stdio servers stay withheld until the file is trusted —
+            # surface that here so the page can offer the one-click fix.
+            "withheld": [s["name"] for s in servers_out
+                         if s["scope"] == "project" and s["transport"] == "stdio"
+                         and not trusted]}
+
+
+def mcp_entry_raw(name: str, scope: str) -> dict[str, Any]:
+    """The unredacted entry for one editable server, for the JSON editor."""
+    if scope not in ("global", "project"):
+        return {"ok": False, "error": "only global/project entries are editable here"}
+    servers = _read_mcp(_mcp_file(scope))
+    entry = servers.get(name or "")
+    if not isinstance(entry, dict):
+        return {"ok": False, "error": f"'{name}' not found in {scope}"}
+    return {"ok": True, "name": name, "scope": scope, "entry": entry}
 
 
 # The server is threaded (a thread per request), so the read-modify-write of the
@@ -558,6 +739,82 @@ def add_mcp(scope: str, name: str, entry: Any) -> dict[str, Any]:
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return {"ok": True, "scope": scope, "name": name}
+
+
+def add_mcp_paste(scope: str, text: str) -> dict[str, Any]:
+    """Add server(s) from one pasted blob — the dashboard's version of the
+    terminal's ``/mcp`` add field. Accepts a whole ``{"mcpServers": {...}}``
+    document, a bare ``{name: entry}`` map, a single entry object, a shell
+    command, or a URL. Unnamed input needs a name, which the UI supplies."""
+    from .mcp.manager import parse_mcp_paste  # noqa: PLC0415
+
+    servers, err = parse_mcp_paste(text or "")
+    if err is not None:
+        return {"ok": False, "error": err}
+    if "" in servers:
+        return {"ok": False, "error": "that config has no server name — add one",
+                "needs_name": True}
+    added = []
+    for name, entry in servers.items():
+        r = add_mcp(scope, name, entry)
+        if not r.get("ok"):
+            return r
+        added.append(name)
+    return {"ok": True, "added": added, "scope": scope}
+
+
+def test_mcp(name: str) -> dict[str, Any]:
+    """Actually connect to a configured server and report what it exposes.
+
+    This is the question a config page can't answer by reading JSON — does this
+    thing work? Runs one real handshake + ``tools/list`` with a short timeout in
+    the request thread and tears the connection straight back down."""
+    import time  # noqa: PLC0415
+
+    import anyio  # noqa: PLC0415
+
+    from .mcp.client import MCPClient  # noqa: PLC0415
+    from .mcp.manager import load_mcp_server_configs  # noqa: PLC0415
+
+    cfg = load_mcp_server_configs().get(name or "")
+    if cfg is None:
+        return {"ok": False, "error": f"'{name}' is not configured"}
+
+    result: dict[str, Any] = {}
+
+    async def go() -> None:
+        client = MCPClient(cfg, server_id=name, request_timeout_s=12.0)
+        t0 = time.monotonic()
+        try:
+            await client.__aenter__()
+            tools = await client.list_tools()
+            result.update(ok=True, tools=[{"name": t.name, "description": (t.description or "")[:220]}
+                                          for t in tools])
+        except BaseException as e:  # noqa: BLE001 — a dead server must not 500
+            msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            result.update(ok=False, error=msg)
+        finally:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            result["ms"] = int((time.monotonic() - t0) * 1000)
+
+    try:
+        anyio.run(go)
+    except BaseException as e:  # noqa: BLE001
+        result.setdefault("ok", False)
+        result.setdefault("error", f"{type(e).__name__}: {e}")
+    return {"name": name, **result}
+
+
+def trust_project_mcp_file() -> dict[str, Any]:
+    """Approve this project's .mcp.json so its stdio servers may spawn."""
+    from .mcp.manager import trust_project_mcp  # noqa: PLC0415
+
+    if not trust_project_mcp():
+        return {"ok": False, "error": "no .mcp.json in this directory to trust"}
+    return {"ok": True}
 
 
 def delete_mcp(scope: str, name: str) -> dict[str, Any]:
@@ -631,6 +888,7 @@ def _analytics_compute() -> dict[str, Any]:
     daily: dict[str, dict[str, int]] = {}        # 'YYYY-MM-DD' -> {msgs, tools}
     by_hour = [0] * 24
     by_weekday = [0] * 7
+    punchcard = [[0] * 24 for _ in range(7)]     # weekday × hour
     tools: dict[str, int] = {}
     projects: dict[str, dict[str, Any]] = {}
     total = user_m = asst_m = tool_calls = 0
@@ -691,6 +949,7 @@ def _analytics_compute() -> dict[str, Any]:
                                 slot["tools"] += n_tools
                                 by_hour[dt.hour] += 1
                                 by_weekday[dt.weekday()] += 1
+                                punchcard[dt.weekday()][dt.hour] += 1
                                 ep = dt.timestamp()
                                 first_ts = ep if first_ts is None else min(first_ts, ep)
                                 last_ts = ep if last_ts is None else max(last_ts, ep)
@@ -702,6 +961,7 @@ def _analytics_compute() -> dict[str, Any]:
 
     top_tools = sorted(({"name": k, "count": v} for k, v in tools.items()),
                        key=lambda x: x["count"], reverse=True)[:10]
+    tool_total = sum(tools.values())
     top_projects = sorted(
         (p for p in projects.values() if p["sessions"]),
         key=lambda p: p["msgs"], reverse=True)[:8]
@@ -716,6 +976,7 @@ def _analytics_compute() -> dict[str, Any]:
             "assistant_messages": asst_m,
             "tool_calls": tool_calls,
             "unique_tools": len(tools),
+            "tool_total": tool_total,
             "active_days": len(daily),
             "first_seen": first_ts,
             "last_seen": last_ts,
@@ -726,22 +987,38 @@ def _analytics_compute() -> dict[str, Any]:
         "daily": daily,
         "by_hour": by_hour,
         "by_weekday": by_weekday,
+        "punchcard": punchcard,
         "top_tools": top_tools,
         "top_projects": top_projects,
     }
 
 
 def overview() -> dict[str, Any]:
+    import os  # noqa: PLC0415
+
     projects = list_projects()
     m = models_state()
+    try:
+        sk = skills_state()
+        skill_count = len(sk["global"]) + len(sk["project"])
+    except Exception:  # noqa: BLE001 — the header must render regardless
+        skill_count = 0
+    try:
+        mcp_count = len(mcp_state()["servers"])
+    except Exception:  # noqa: BLE001
+        mcp_count = 0
     return {
         "version": _version(),
         "home": str(_base_dir()),
+        "cwd": os.getcwd(),
         "current": m["current"],
+        "hosting": m.get("hosting") or {},
         "project_count": len(projects),
         "session_count": sum(p["session_count"] for p in projects),
         "enabled_providers": m["enabled_count"],
         "provider_count": len(m["providers"]),
+        "skill_count": skill_count,
+        "mcp_count": mcp_count,
     }
 
 
@@ -856,13 +1133,29 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/skill":
                 self._json(add_skill(body.get("scope"), body.get("name"),
-                                     body.get("description"), body.get("body")))
+                                     body.get("description"), body.get("body"),
+                                     body.get("category") or "",
+                                     bool(body.get("always_load")),
+                                     body.get("slug")))
                 return
             if path == "/api/skill/delete":
                 self._json(delete_skill(body.get("scope"), body.get("slug")))
                 return
             if path == "/api/mcp":
                 self._json(add_mcp(body.get("scope"), body.get("name"), body.get("entry")))
+                return
+            if path == "/api/mcp/paste":
+                self._json(add_mcp_paste(body.get("scope"), body.get("text")))
+                return
+            if path == "/api/mcp/test":
+                self._json(test_mcp(body.get("name")))
+                return
+            if path == "/api/mcp/trust":
+                self._json(trust_project_mcp_file())
+                return
+            if path == "/api/model/test":
+                self._json(test_provider(body.get("provider"), body.get("backend"),
+                                         body.get("key")))
                 return
             if path == "/api/mcp/delete":
                 self._json(delete_mcp(body.get("scope"), body.get("name")))
@@ -873,9 +1166,13 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _route(self, path: str, q: dict[str, list[str]]) -> None:
         if path in ("/", "/index.html"):
+            from .serve_logos import PROVIDER_LOGOS  # noqa: PLC0415
             from .serve_ui import INDEX_HTML  # noqa: PLC0415
 
             html = INDEX_HTML.replace("__TOKEN__", getattr(self.server, "token", "") or "")
+            # Provider logos are inlined so the page stays offline and doesn't
+            # phone twelve CDNs. json.dumps also escapes </script> safely.
+            html = html.replace("__LOGOS__", json.dumps(PROVIDER_LOGOS).replace("</", "<\\/"))
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/overview":
@@ -889,6 +1186,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/mcp":
             self._json(mcp_state())
+            return
+        if path == "/api/mcp/entry":
+            self._json(mcp_entry_raw((q.get("name") or [""])[0],
+                                     (q.get("scope") or [""])[0]))
             return
         if path == "/api/projects":
             self._json({"projects": list_projects()})

@@ -26,6 +26,7 @@ from .client import (
     MCPElicitationRequest,
     MCPError,
     MCPProtocolError,
+    NotificationHandler,
 )
 from .manager import (
     MCPManager,
@@ -72,6 +73,7 @@ __all__ = [
     "MCPPrompt",
     "MCPResource",
     "MCPTool",
+    "NotificationHandler",
     "SamplingHandler",
     "SamplingMessage",
     "SamplingNotSupportedError",

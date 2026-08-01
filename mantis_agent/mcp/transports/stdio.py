@@ -171,9 +171,17 @@ class StdioTransport:
             return
         # Close stdin to signal EOF, then give the process a moment to
         # exit cleanly before we terminate.
+        #
+        # Shielded like the waits below: we are routinely called while a
+        # cancellation is already pending on this task — a server that dies
+        # during the handshake kills the client's read loop, which cancels the
+        # surrounding task group's scope. Unshielded, ``aclose()``'s checkpoint
+        # would deliver that CancelledError here and abort teardown mid-way
+        # (leaking the child process, and crashing the caller on the way out).
         if proc.stdin is not None:
             try:
-                await proc.stdin.aclose()
+                with anyio.CancelScope(shield=True):
+                    await proc.stdin.aclose()
             except Exception:  # noqa: BLE001
                 pass
         try:

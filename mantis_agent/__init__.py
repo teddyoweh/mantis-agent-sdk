@@ -152,6 +152,7 @@ from .tracing import (
 from .types import (
     AssistantMessage,
     ContentBlock,
+    ImageBlock,
     Message,
     ModelUsage,
     SystemMessage as InternalSystemMessage,  # keep accessible for advanced use
@@ -201,6 +202,7 @@ __all__ = [
     # Messages — internal flat shapes
     "AssistantMessage",
     "ContentBlock",
+    "ImageBlock",
     "Message",
     "ModelUsage",
     "TextBlock",
@@ -294,7 +296,7 @@ def _detect_version() -> str:
 
         return version("mantis-agent-sdk")
     except Exception:  # pragma: no cover - extremely defensive
-        return "2.59.0"
+        return "2.60.0"
 
 
 __version__ = _detect_version()

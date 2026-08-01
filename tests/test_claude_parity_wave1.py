@@ -396,3 +396,27 @@ def test_build_user_content_flushes_attachments(monkeypatch) -> None:
 def test_build_user_content_plain_stays_string() -> None:
     t = _tui()
     assert t._build_user_content("just text") == "just text"
+
+
+def test_build_user_content_attaches_dragged_image_path(tmp_path) -> None:
+    """A path dragged into the MIDDLE of a sentence still attaches the image —
+    the whole-line check missed it, so the model answered blind."""
+    import base64
+
+    from mantis_agent.types import ImageBlock, TextBlock
+    png = tmp_path / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+        "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+    t = _tui()
+    out = t._build_user_content(f"what's wrong with {png} here?")
+    assert any(isinstance(b, ImageBlock) for b in out)
+    # The path stays in the prose — it's how the user refers to the file.
+    assert str(png) in next(b for b in out if isinstance(b, TextBlock)).text
+
+
+def test_build_user_content_leaves_non_image_paths_alone(tmp_path) -> None:
+    f = tmp_path / "notes.txt"
+    f.write_text("hi")
+    t = _tui()
+    assert t._build_user_content(f"read {f} for me") == f"read {f} for me"

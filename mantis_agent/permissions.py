@@ -352,6 +352,10 @@ _SHELL_TOOL_NAMES = {
     "bash", "sh", "shell", "zsh", "fish", "ksh",
     "exec", "run", "run_command", "runcommand", "command", "cmd",
     "system", "powershell", "pwsh",
+    # `watch` runs its argument through ``bash -lc`` exactly as ``bash`` does —
+    # it is a shell surface that happens to stream, and must face the same
+    # danger classifier rather than becoming a way around it.
+    "watch",
 }
 
 # Fields a shell tool conventionally carries its command in.

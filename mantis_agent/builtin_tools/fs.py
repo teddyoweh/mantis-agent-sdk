@@ -246,6 +246,10 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     search), and grep (not grep/rg for content search). Output text directly to
     the user; don't use echo/printf as communication.
 
+    This is also your capability escape hatch: when no tool does what you need,
+    install the package and run a script you wrote yourself. Anything the machine
+    can do, you can do from here.
+
     Runs through ``bash -lc`` in the current working directory.
 
     Set ``run_in_background=True`` for a long-running command (a dev server, a

@@ -22,6 +22,7 @@ ContentBlockStop
 HookInput
 HookJSONOutput
 HookMatcher
+ImageBlock
 InMemorySessionStore
 InMemoryTracer
 InputJsonDelta

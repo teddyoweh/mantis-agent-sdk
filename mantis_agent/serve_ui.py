@@ -14,22 +14,33 @@ INDEX_HTML = r"""<!doctype html>
 <title>mantis · dashboard</title>
 <link rel="icon" type="image/svg+xml" href="/mantis.svg">
 <style>
+  /* ==========================================================================
+     mantis serve — an instrument panel for a local agent runtime.
+     Everything on these pages mirrors a file on this machine, so the design
+     leans on the product's own materials: monospace as the DISPLAY face (the
+     nouns here are `mcp.json`, `npx -y …`, `claude-opus-5`), an olive-cast
+     paper/ink palette taken from the mantis mark rather than neutral grey,
+     and one signature device — the signal path: a live wiring diagram of what
+     the agent is actually plugged into, drawn at the top of every page.
+     ========================================================================== */
   :root {
-    --bg: #f2f1ef; --panel: #ffffff; --panel-2: #f6f5f3; --fill: #eeedea; --line: #e9e8e5;
-    --ink: #1c1b19; --ink-2: #6b6a66; --ink-3: #9b9993;
-    --accent: #4f7a2f; --accent-soft: #eaf1e0;
-    --user: #2d5fa8; --tool: #7a5cc0; --err: #c0392b;
-    --shadow: 0 1px 2px rgba(20,18,10,.04), 0 2px 8px rgba(20,18,10,.05);
-    --radius: 14px; --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --bg: #efece5; --panel: #ffffff; --panel-2: #f7f5f0; --fill: #e8e4da; --line: #e4e0d6;
+    --ink: #14160f; --ink-2: #5c6055; --ink-3: #8b8f82;
+    --accent: #3e6b24; --accent-soft: #e6eeda;
+    --caution: #a8720f; --caution-soft: #f7ebd5;
+    --user: #2d5fa8; --tool: #6b4fb0; --err: #b23f2b;
+    --shadow: 0 1px 2px rgba(24,26,16,.05), 0 8px 24px rgba(24,26,16,.06);
+    --radius: 12px; --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #131209; --panel: #1d1c15; --panel-2: #191811; --fill: #272519; --line: #2a2820;
-      --ink: #eceae3; --ink-2: #a5a299; --ink-3: #72706a;
-      --accent: #9ccc65; --accent-soft: #262f1a;
+      --bg: #0d0f0a; --panel: #1a1d15; --panel-2: #15180f; --fill: #242819; --line: #22261a;
+      --ink: #e9ece1; --ink-2: #9ba091; --ink-3: #6b7062;
+      --accent: #a6d96a; --accent-soft: #1d2614;
+      --caution: #e0a94e; --caution-soft: #2c2413;
       --user: #7db0f2; --tool: #b79cf0; --err: #e8756a;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.22);
+      --shadow: 0 1px 2px rgba(0,0,0,.32), 0 8px 24px rgba(0,0,0,.24);
     }
   }
   * { box-sizing: border-box; }
@@ -37,47 +48,74 @@ INDEX_HTML = r"""<!doctype html>
   body {
     font-family: var(--sans); background: var(--bg); color: var(--ink);
     font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
-    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    display: grid; grid-template-columns: 214px 1fr; height: 100vh; overflow: hidden;
   }
   a { color: var(--accent); text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
-  /* top bar */
-  header {
-    display: flex; align-items: center; gap: 18px; padding: 10px 18px;
-    border-bottom: 1px solid var(--line); background: var(--panel); flex: none;
-  }
-  .brand { font-weight: 700; letter-spacing: .04em; font-size: 15px;
-    display: inline-flex; align-items: center; gap: 8px; }
-  .brand .logo { width: 24px; height: 24px; display: block; }
-  .brand b { color: var(--accent); }
-  .pills { display: flex; gap: 14px; flex-wrap: wrap; }
-  .pill { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
-  .pill b { color: var(--ink); font-weight: 600; }
-  nav { margin-left: auto; display: flex; gap: 4px; }
-  nav button {
-    font: inherit; font-size: 13px; padding: 6px 14px; border: 0; cursor: pointer;
-    background: transparent; color: var(--ink-2); border-radius: 8px;
-  }
-  nav button:hover { background: var(--panel-2); color: var(--ink); }
-  nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  /* left rail — nav plus a live readout of what the agent is wired to */
+  #rail { background: var(--panel-2);
+    display: flex; flex-direction: column; padding: 15px 11px 11px; overflow: hidden; }
+  .mark { display: flex; align-items: center; gap: 9px; padding: 2px 7px 17px; }
+  .mark img { width: 25px; height: 25px; display: block; }
+  .mark span { font-family: var(--mono); font-weight: 700; font-size: 14px; letter-spacing: -.03em; }
+  #nav { display: flex; flex-direction: column; gap: 1px; }
+  #nav button { display: flex; align-items: center; width: 100%; text-align: left; font: inherit;
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: -.01em; padding: 8px 10px;
+    border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); cursor: pointer;
+    transition: background .12s, color .12s; }
+  #nav button .k { margin-left: auto; font-size: 10.5px; color: var(--ink-3); opacity: 0; }
+  #nav button:hover { background: var(--fill); color: var(--ink); }
+  #nav button:hover .k { opacity: 1; }
+  #nav button.on { background: var(--fill); color: var(--ink); font-weight: 700; }
+  #nav button.on:hover .k { opacity: 1; color: var(--accent); }
+  .railfoot { margin-top: auto; padding: 15px 10px 4px; }
+  .rf-l { font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3); }
+  .rf-v { font-family: var(--mono); font-size: 12.5px; font-weight: 700; letter-spacing: -.02em;
+    margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rf-s { font-size: 11.5px; color: var(--ink-2); display: flex; align-items: center; gap: 6px;
+    margin-top: 2px; }
+  .rf-c { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 12px; font-size: 11.5px;
+    color: var(--ink-3); }
+  .rf-c span { cursor: pointer; white-space: nowrap; }
+  .rf-c span:hover { color: var(--ink); }
+  .rf-c b { font-family: var(--mono); font-weight: 700; color: var(--ink-2); }
+  .rf-c span:hover b { color: var(--accent); }
+  /* a live dot that breathes, so "connected" reads as present tense */
+  .live { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none;
+    animation: pulse 2.6s ease-in-out infinite; }
+  .live.off { background: var(--ink-3); animation: none; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
-  main { flex: 1; overflow: hidden; }
+  main { overflow: hidden; }
   .view { display: none; height: 100%; }
   .view.on { display: block; }
 
+  @media (max-width: 860px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    #rail { flex-direction: row; align-items: center; gap: 10px; overflow-x: auto;
+      padding: 8px 10px; }
+    .mark { padding: 0 6px 0 2px; }
+    #nav { flex-direction: row; }
+    #nav button .k { display: none; }
+    .railfoot { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+
   /* sessions: three panes */
   #sessions.on { display: grid; grid-template-columns: 256px 336px 1fr; height: 100%; }
-  .col { overflow-y: auto; border-right: 1px solid var(--line); height: 100%; }
-  .col:last-child { border-right: 0; }
+  .col { overflow-y: auto; height: 100%; background: var(--panel-2); }
+  .col:last-child { background: var(--bg); }
   .col-head {
-    position: sticky; top: 0; background: var(--panel); z-index: 1;
-    padding: 12px 14px 8px; font-size: 11px; letter-spacing: .08em;
-    text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: inherit; z-index: 1;
+    padding: 14px 16px 9px; font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-3);
   }
-  .row {
-    padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer;
-  }
-  .row:hover { background: var(--panel-2); }
+  .row { padding: 10px 12px; cursor: pointer; border-radius: 9px; margin: 0 8px 2px; }
+  .row:hover { background: var(--fill); }
   .row.on { background: var(--accent-soft); }
   .row .t { font-weight: 600; font-size: 13px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
@@ -98,29 +136,26 @@ INDEX_HTML = r"""<!doctype html>
   .msg.user .who { color: var(--user); }
   .msg.assistant .who { color: var(--accent); }
   .text { white-space: pre-wrap; word-wrap: break-word; }
-  .thinking { border-left: 2px solid var(--line); padding: 2px 0 2px 12px;
+  .thinking { box-shadow: inset 2px 0 0 var(--fill); padding: 2px 0 2px 12px;
     color: var(--ink-2); font-style: italic; white-space: pre-wrap; margin: 8px 0; }
-  .block {
-    border: 1px solid var(--line); border-radius: 8px; margin: 8px 0;
-    background: var(--panel-2); overflow: hidden;
-  }
-  .block .bh { padding: 6px 12px; font-family: var(--mono); font-size: 12px;
-    border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+  .block { border-radius: 9px; margin: 8px 0; background: var(--panel-2); overflow: hidden; }
+  .block .bh { padding: 7px 12px; font-family: var(--mono); font-size: 12px;
+    display: flex; gap: 8px; align-items: center; }
   .block.tool .bh { color: var(--tool); }
   .block.result .bh { color: var(--ink-2); }
   .block.result.err .bh { color: var(--err); }
   .block pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--mono);
     font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 340px; }
   .badge { font-size: 10px; padding: 1px 6px; border-radius: 20px;
-    background: var(--line); color: var(--ink-2); font-family: var(--mono); }
+    background: var(--fill); color: var(--ink-3); font-family: var(--mono); }
 
   /* models + config */
   .pad { padding: 22px 26px; overflow-y: auto; height: 100%; }
   .pad h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--ink-3); margin: 0 0 14px; }
   .now { display: flex; gap: 10px; align-items: center; margin-bottom: 22px;
-    padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--panel); }
+    padding: 14px 16px; border-radius: var(--radius);
+    background: var(--panel); box-shadow: var(--shadow); }
   .now .k { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
   .now .v { font-family: var(--mono); font-size: 14px; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 14px; }
@@ -142,6 +177,9 @@ INDEX_HTML = r"""<!doctype html>
     background: var(--fill); color: var(--ink-2); }
   .chip.cur { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .chip.more { color: var(--ink-3); }
+  .chip.clk { cursor: pointer; transition: background .12s, color .12s, box-shadow .12s; }
+  .chip.clk:hover { background: var(--accent-soft); color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent); }
   .recent { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 26px; }
   details.layer { border-radius: var(--radius); box-shadow: var(--shadow);
     margin-bottom: 10px; background: var(--panel); }
@@ -167,6 +205,45 @@ INDEX_HTML = r"""<!doctype html>
   .host .hb { font-family: var(--mono); font-size: 12px; color: var(--ink-2);
     margin-left: auto; word-break: break-all; }
 
+  /* hero — "any model, any provider, any self-host" */
+  .hero { padding: 20px 22px; border-radius: var(--radius); background: var(--panel);
+    box-shadow: var(--shadow); margin-bottom: 24px; }
+  .hero-t { font-size: 21px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 5px; }
+  .hero-s { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; max-width: 62ch; }
+  .hero-now { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .hero-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--ink-3); font-weight: 700; }
+  .hero-m { font-family: var(--mono); font-weight: 700; font-size: 15px; }
+  .hero-via { font-size: 12px; color: var(--ink-2); }
+  .hero .hb { font-family: var(--mono); font-size: 12px; color: var(--ink-3);
+    margin-left: auto; word-break: break-all; }
+
+  /* browse all models — one flat, searchable list */
+  .browse-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 12px; }
+  .browse-head h2 { margin: 0; }
+  .cnt2 { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+    background: var(--fill); padding: 1px 9px; border-radius: 20px; }
+  input.in.search { width: 100%; margin-bottom: 12px; padding: 11px 13px; font-family: var(--sans); font-size: 13px; }
+  .browse { border-radius: var(--radius); overflow: hidden auto; max-height: 340px;
+    box-shadow: var(--shadow); background: var(--panel); margin-bottom: 26px; }
+  .brow { display: flex; align-items: center; gap: 12px; padding: 9px 13px; cursor: pointer;
+    border-radius: 8px; margin: 1px 4px; }
+  .brow:hover { background: var(--panel-2); }
+  .brow.cur { background: var(--accent-soft); }
+  .brow .bm { font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .brow.cur .bm { color: var(--accent); font-weight: 600; }
+  .brow .bp { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  .brow .bx { font-size: 11px; color: var(--ink-3); white-space: nowrap; min-width: 62px; text-align: right; }
+  .brow:hover .bx { color: var(--accent); }
+  .brow.locked { cursor: pointer; }
+  .brow.locked .bm { color: var(--ink-2); }
+  .browse-empty { padding: 14px 15px; font-size: 12.5px; color: var(--ink-3); font-style: italic; }
+  .selfhost-card { gap: 10px; margin-bottom: 24px; }
+  .selfhost-card .fields { display: flex; flex-direction: column; gap: 8px; }
+  .selfhost-card .fields .r { display: flex; gap: 8px; }
+  .card.flash, .lrow.flash { box-shadow: 0 0 0 2px var(--accent); transition: box-shadow .3s;
+    border-radius: 9px; }
+
   /* key status (enabled provider) */
   .keyline { display: flex; align-items: center; gap: 8px; font-family: var(--mono);
     font-size: 12px; }
@@ -186,10 +263,10 @@ INDEX_HTML = r"""<!doctype html>
 
   /* config table */
   .cfg { border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
-    background: var(--panel); margin-bottom: 24px; }
-  .cfg .kv { display: grid; grid-template-columns: 200px 1fr; gap: 12px;
-    padding: 11px 16px; border-bottom: 1px solid var(--line); }
-  .cfg .kv:last-child { border-bottom: 0; }
+    background: var(--panel); margin-bottom: 24px; padding: 5px; }
+  .cfg .kv { display: grid; grid-template-columns: 200px 1fr; gap: 12px; padding: 10px 16px;
+    border-radius: 8px; }
+  .cfg .kv:nth-child(odd) { background: var(--panel-2); }
   .cfg .kv .ck { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
   .cfg .kv .cv { font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
     word-break: break-word; }
@@ -205,7 +282,8 @@ INDEX_HTML = r"""<!doctype html>
   input.in:focus, textarea.in:focus { outline: none; box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent); }
   input.in::placeholder, textarea.in::placeholder { color: var(--ink-3); }
   .btn { font: inherit; font-size: 12px; font-weight: 600; padding: 8px 15px; border: 0;
-    border-radius: 7px; background: var(--accent); color: #12240a; cursor: pointer; white-space: nowrap; }
+    border-radius: 7px; background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
+  @media (prefers-color-scheme: dark) { .btn { color: #10220a; } }
   .btn:hover { filter: brightness(1.06); }
   .btn:disabled { opacity: .5; cursor: default; }
   .selfhost { border-radius: var(--radius); padding: 17px 19px;
@@ -225,6 +303,7 @@ INDEX_HTML = r"""<!doctype html>
   .sheet { position: relative; background: var(--panel);
     border-radius: 18px; max-width: 540px; width: 100%; max-height: 86vh; overflow-y: auto;
     padding: 26px 28px; box-shadow: 0 24px 70px rgba(0,0,0,.4); }
+  .sheet.wide { max-width: 780px; }
   .sheet h3 { margin: 0 0 3px; font-size: 19px; letter-spacing: -.01em; }
   .sheet h4 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase;
     letter-spacing: .06em; color: var(--ink-3); }
@@ -265,110 +344,316 @@ INDEX_HTML = r"""<!doctype html>
   #toast.on { opacity: 1; }
   #toast.err { background: var(--err); color: #fff; }
 
-  /* ---- home / analytics ---- */
-  .home-wrap { padding: 20px 22px 36px; overflow-y: auto; height: 100%; }
-  .hero-h { font-size: 20px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 3px; }
-  .hero-s { color: var(--ink-2); font-size: 12.5px; }
-  .hero-s b { color: var(--ink); font-weight: 700; }
-  .insight { font-size: 12.5px; color: var(--ink-3); margin: 6px 0 16px; }
-  .insight b { color: var(--accent); font-weight: 600; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 11px; }
-  .tile { background: var(--panel); box-shadow: var(--shadow); border-radius: 13px; padding: 13px 15px; }
-  .tile .n { font-size: 25px; font-weight: 800; letter-spacing: -.03em; line-height: 1;
+  /* ==========================================================================
+     ACTIVITY — the record of you working with an agent on this machine.
+     One hero (the trace), one honest answer to "when do I do this" (the
+     punchcard), one to "what does it actually do" (the tool spectrum). The
+     six-panel grid this replaced showed the same numbers four times over.
+     ========================================================================== */
+  .lcd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 26px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); margin: 0 0 22px; }
+  .lcd i { font-style: normal; color: var(--ink); font-weight: 700; font-size: 15px;
+    letter-spacing: -.03em; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .lcd .hot i { color: var(--accent); }
+
+  .trace { position: relative; background: var(--panel); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px 18px 10px; margin-bottom: 14px; }
+  .trace-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .trace-t { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-3); }
+  .trace-pk { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+  .trace-pk b { color: var(--ink); }
+  .trace svg { display: block; width: 100%; height: auto; }
+  .trace .env { fill: var(--accent); opacity: .1; }
+  .trace .sig { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round;
+    stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .trace .raw { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .34;
+    vector-effect: non-scaling-stroke; }
+  .trace .pk { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
+  .trace .pkd { fill: var(--accent); }
+  .trace .base { stroke: var(--fill); stroke-width: 1; }
+  .trace text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .trace .lbl { fill: var(--ink-2); font-weight: 700; }
+  @media (prefers-reduced-motion: no-preference) {
+    .trace .sig { animation: draw 1.15s cubic-bezier(.22,.7,.2,1) forwards; }
+    .trace .env, .trace .raw { animation: fadein .8s .35s both ease-out; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    @keyframes fadein { from { opacity: 0; } }
+  }
+
+  .duo { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; }
+  @media (max-width: 980px) { .duo { grid-template-columns: 1fr; } }
+  .card2 { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 16px 18px 18px; }
+  .card2 h3 { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px; }
+  .card2 .note2 { font-size: 11.5px; color: var(--ink-3); margin-bottom: 14px; }
+  .card2 .note2 b { color: var(--ink-2); font-family: var(--mono); }
+
+  /* punchcard — weekday × hour, area-encoded. Marginal bar charts couldn't
+     say "Sunday night", which is exactly what people want to know. */
+  .punch { width: 100%; height: auto; display: block; }
+  .punch .cell { fill: var(--accent); }
+  .punch text { fill: var(--ink-3); font-family: var(--mono); font-size: 8.5px; }
+  .punch .pknow { fill: var(--accent); font-weight: 700; }
+
+  /* tool spectrum — one bar that is the whole hand, then the parts */
+  .spec { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px;
+    margin-bottom: 15px; }
+  .spec i { display: block; background: var(--accent); }
+  .tl { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; align-items: baseline;
+    font-family: var(--mono); font-size: 12px; }
+  .tl .tn { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tl .tc { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .tl .tp { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right;
+    min-width: 34px; }
+  .tl .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--accent);
+    display: inline-block; margin-right: 8px; }
+
+  /* projects — a share bar behind mono text, no chartjunk */
+  .plist { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+  .prow { position: relative; display: flex; align-items: center; gap: 12px; padding: 9px 12px;
+    border-radius: 9px; font-family: var(--mono); font-size: 12.5px; overflow: hidden; }
+  /* the share bar is anchored left and square-ended, so it reads as a
+     measurement rather than as a highlighted chip */
+  .prow .fillbar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent);
+    opacity: .09; border-radius: 9px 2px 2px 9px; }
+  .prow:hover .fillbar { opacity: .16; }
+  .prow .pn { position: relative; font-weight: 700; letter-spacing: -.02em; }
+  .prow .pp { position: relative; color: var(--ink-3); font-size: 11px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .prow .pv { position: relative; margin-left: auto; color: var(--ink-2); white-space: nowrap;
     font-variant-numeric: tabular-nums; }
-  .tile .l { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; margin-top: 7px; }
-  .tile .sub { font-size: 10.5px; color: var(--accent); margin-top: 3px; }
-  .tile .spark { display: block; width: 100%; height: 24px; margin-top: 9px; }
-  .panels { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; margin-top: 12px; }
-  .panel { background: var(--panel); box-shadow: var(--shadow); border-radius: 13px; padding: 15px 17px; overflow: hidden; }
-  .panel .ph { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
-  .panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); margin: 0; }
-  .panel .ph-sub { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-  .span8 { grid-column: span 8; } .span7 { grid-column: span 7; } .span6 { grid-column: span 6; }
-  .span5 { grid-column: span 5; } .span4 { grid-column: span 4; }
-  @media (max-width: 920px) { .panels > .panel { grid-column: span 12 !important; } }
 
-  .hm { width: 100%; height: auto; display: block; }
-  .hm rect.c { rx: 2.5; }
-  .hc0 { fill: var(--fill); } .hc1 { fill: var(--accent); opacity: .32; }
-  .hc2 { fill: var(--accent); opacity: .54; } .hc3 { fill: var(--accent); opacity: .76; }
-  .hc4 { fill: var(--accent); opacity: 1; }
-  .hm rect.c:hover { stroke: var(--ink); stroke-width: 1.2; }
-  .hm text { fill: var(--ink-3); font-size: 9px; font-family: var(--sans); }
-  .hm-legend { display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--ink-3); }
-  .hm-legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-
-  .area { width: 100%; display: block; }
-  .area .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-  .area .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
-  .area text { fill: var(--ink-3); font-size: 8.5px; font-family: var(--mono); }
-
-  .radial .spoke { stroke: var(--accent); stroke-linecap: round; }
-  .radial .ring { fill: none; stroke: var(--line); }
-  .radial .spoke:hover { stroke: var(--ink); }
-  .radial text { fill: var(--ink-3); font-size: 9px; font-family: var(--mono); }
-  .radial .ctr { fill: var(--ink); font-size: 16px; font-weight: 800; font-family: var(--sans); }
-  .radial .ctr2 { fill: var(--ink-3); font-size: 8px; }
-
-  .bars { display: flex; flex-direction: column; gap: 8px; }
-  .bar { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
-  .bar .bn { font-family: var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bar .bt { height: 7px; border-radius: 4px; background: var(--fill); overflow: hidden; }
-  .bar .bt i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
-  .bar .bv { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
-
-  .wk { display: flex; align-items: flex-end; gap: 7px; height: 96px; }
-  .wk .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end; }
-  .wk .col i { width: 100%; max-width: 26px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 3px; }
-  .wk .col.dim i { opacity: .32; }
-  .wk .col span { font-size: 10px; color: var(--ink-3); font-family: var(--mono); }
-
-  .donut-wrap { display: flex; align-items: center; gap: 16px; }
-  .legend { font-size: 12px; color: var(--ink-2); }
-  .legend .dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; margin-right: 7px; }
-
-  /* ---- skills & mcp ---- */
-  .sec-head { display: flex; align-items: center; gap: 11px; margin: 2px 0 3px; }
-  .sec-head.mt { margin-top: 32px; }
-  .sec-head h2 { font-size: 15px; font-weight: 800; letter-spacing: -.01em; margin: 0; color: var(--ink); text-transform: none; }
-  .sec-head .cnt { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums;
-    background: var(--fill); padding: 1px 9px; border-radius: 20px; }
-  .sec-head .sp { flex: 1; }
-  .addbtn { font: inherit; font-size: 12px; font-weight: 600; padding: 7px 13px; border-radius: 8px;
-    background: var(--fill); color: var(--ink-2); border: 0; cursor: pointer; }
-  .addbtn:hover, .addbtn.on { background: var(--accent-soft); color: var(--accent); }
-  .sec-note { font-size: 12px; color: var(--ink-3); margin: 0 0 14px; }
-  .addform { background: var(--panel); box-shadow: var(--shadow); border-radius: 13px; padding: 15px 16px; margin-bottom: 16px; }
-  .addform .r { display: flex; gap: 8px; margin-bottom: 8px; }
-  .addform textarea.in { min-height: 78px; resize: vertical; line-height: 1.5; width: 100%; }
-  .addform .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
   select.in { font: inherit; font-family: var(--mono); font-size: 12px; padding: 8px 10px;
     border: 0; border-radius: 8px; background: var(--fill); color: var(--ink); cursor: pointer; }
-  .grp-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3);
-    font-weight: 700; margin: 15px 0 8px; }
-  .grp-label span { color: var(--ink-3); font-weight: 400; letter-spacing: 0; text-transform: none;
-    font-family: var(--mono); margin-left: 8px; }
-  .grp-empty { font-size: 12px; color: var(--ink-3); font-style: italic; padding: 2px 0 4px; }
-  .item { background: var(--panel); box-shadow: var(--shadow); border-radius: 12px;
-    padding: 13px 15px; margin-bottom: 9px; display: flex; align-items: flex-start; gap: 12px; }
-  .item .main { flex: 1; min-width: 0; }
-  .item .tt { font-weight: 700; font-size: 13.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .item .dd { font-size: 12px; color: var(--ink-2); margin-top: 3px; line-height: 1.45; }
-  .item .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 5px; }
-  .tag { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
-    padding: 2px 7px; border-radius: 5px; font-family: var(--sans); }
-  .tag.global { background: var(--fill); color: var(--ink-2); }
-  .tag.project { background: var(--accent-soft); color: var(--accent); }
-  .tag.settings { background: #e6f3f8; color: #2277a0; }
-  .tag.al { background: #f0e9ff; color: #6b3fd0; }
-  .tag.tp { background: var(--fill); color: var(--ink-2); }
-  @media (prefers-color-scheme: dark) { .tag.settings { background:#16303a; color:#74c0e0; } .tag.al { background:#2a2140; color:#b79cf0; } }
-  .item .acts { display: flex; gap: 6px; flex: none; }
-  .iconbtn { background: none; border: 0; font: inherit; font-size: 12px; color: var(--ink-3);
-    cursor: pointer; padding: 4px 8px; border-radius: 6px; }
-  .iconbtn:hover { background: var(--fill); color: var(--ink); }
-  .iconbtn.danger:hover { color: var(--err); }
-  .iconbtn.armed { color: var(--err); background: var(--fill); font-weight: 600; }
+
+  /* ==========================================================================
+     Page system — every non-session view is a `.page`: a width-capped column
+     with one header (title · count · description · actions) and a stack of
+     sections. Before this each view invented its own headings and spacing;
+     sharing these makes Models, Skills and MCP read as one product.
+     ========================================================================== */
+  .scroll { overflow-y: auto; height: 100%; }
+  .page { max-width: 1000px; margin: 0 auto; padding: 34px 30px 70px; }
+  .page.wide { max-width: 1280px; }
+  .page-h { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 7px; }
+  /* Mono as the display face: this product's proper nouns are file paths and
+     model ids, so the titles are set in the same tongue. */
+  .page-t { font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: -.035em;
+    margin: 0; display: flex; align-items: center; gap: 10px; }
+  .count { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--ink-2);
+    background: var(--fill); padding: 2px 8px; border-radius: 6px;
+    font-variant-numeric: tabular-nums; letter-spacing: 0; }
+  .page-d { color: var(--ink-2); font-size: 13px; line-height: 1.6; max-width: 68ch; margin: 0 0 22px; }
+  .page-d code, .mono { font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+    background: var(--fill); padding: 1px 6px; border-radius: 5px; }
+  .page-a { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
+
+  /* THE SIGNATURE — signal path. Not decoration: each node is a real count of
+     what's wired up right now, and its colour is that link's actual state. */
+  .path { display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 12px; padding: 13px 16px; margin-bottom: 26px;
+    border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow); }
+  .path .n { display: inline-flex; align-items: center; gap: 7px; color: var(--ink);
+    letter-spacing: -.01em; }
+  .path .n b { font-weight: 700; }
+  .path .n.dim { color: var(--ink-3); }
+  .path .n.warn { color: var(--caution); }
+  .path .n.bad { color: var(--err); }
+  .path .arw { color: var(--ink-3); opacity: .5; letter-spacing: .18em; font-size: 11px; }
+  .path .n.clk { cursor: pointer; }
+  .path .n.clk:hover { color: var(--accent); }
+
+  .sec { margin-top: 30px; }
+  .sec-t { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--ink-3); margin: 0 0 11px;
+    display: flex; align-items: center; gap: 11px; }
+  /* a hairline that runs out to the edge — a labelled channel on a bench */
+  .sec-t .fp { font-family: var(--mono); font-size: 10.5px; letter-spacing: .02em;
+    text-transform: none; color: var(--ink-3); font-weight: 400; flex: none; max-width: 46%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sec-t .fp + ::after { flex: 1; }
+
+  /* buttons — one shape, three intents */
+  .b { font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: 8px;
+    border: 0; cursor: pointer; white-space: nowrap; line-height: 1.2;
+    background: var(--fill); color: var(--ink-2); transition: background .12s, color .12s; }
+  .b:hover { background: var(--accent-soft); color: var(--accent); }
+  .b.pri { background: var(--accent); color: #fff; border-color: transparent; }
+  .b.pri:hover { filter: brightness(1.07); background: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .b.pri, .b.pri:hover { color: #10220a; } }
+  .b.gho { background: transparent; color: var(--ink-2); }
+  .b.gho:hover { background: var(--fill); color: var(--ink); }
+  .b.dan:hover { color: #fff; background: var(--err); }
+  .b.armed { color: #fff; background: var(--err); }
+  .b:disabled { opacity: .5; cursor: default; filter: none; }
+  .b.on { background: var(--accent-soft); color: var(--accent); }
+
+  /* search field */
+  .find { position: relative; margin-bottom: 14px; }
+  .find input { width: 100%; font: inherit; font-size: 13px; padding: 11px 12px 11px 34px;
+    border: 0; border-radius: 10px; background: var(--fill); color: var(--ink); }
+  .find input:focus { outline: none; background: var(--panel); box-shadow: var(--shadow), 0 0 0 2px var(--accent-soft); }
+  .find::before { content: "⌕"; position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+    color: var(--ink-3); font-size: 15px; pointer-events: none; }
+
+  /* list rows — the shared shape for servers, skills, anything enumerable.
+     The green tick on hover is the only movement: it reads as selecting a
+     channel on the bench rather than as a generic hover state. */
+  .list { border-radius: var(--radius); background: var(--panel); overflow: hidden;
+    box-shadow: var(--shadow); padding: 4px; }
+  .lrow { border-radius: 9px; }
+  .lrow-top { display: flex; align-items: center; gap: 11px; padding: 13px 15px 13px 17px;
+    cursor: pointer; position: relative; }
+  .lrow-top::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px;
+    background: var(--accent); border-radius: 0 2px 2px 0; opacity: 0; transition: opacity .12s; }
+  .lrow:hover .lrow-top::before, .lrow.open .lrow-top::before { opacity: 1; }
+  .lrow-top:hover { background: var(--panel-2); }
+  .lrow.open .lrow-top { background: var(--panel-2); }
+  .lrow .nm { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: -.025em;
+    flex: none; }
+  .lrow .sub { color: var(--ink-3); font-size: 12px; font-family: var(--mono); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .lrow .sub.sans { font-family: var(--sans); color: var(--ink-2); }
+  .lrow .acts { display: flex; gap: 6px; flex: none; opacity: .55; transition: opacity .12s; }
+  .lrow:hover .acts, .lrow.open .acts { opacity: 1; }
+  .lrow .caret { color: var(--ink-3); font-size: 9px; width: 9px; flex: none; transition: transform .15s; }
+  .lrow.open .caret { transform: rotate(90deg); }
+  .lbody { display: none; padding: 4px 17px 16px 37px; }
+  .lrow.open .lbody { display: block; animation: drawer .16s ease-out; }
+  @keyframes drawer { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+
+  /* dot + tag vocabulary shared by every list */
+  .dot2 { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
+  .dot2.ok { background: var(--accent); } .dot2.bad { background: var(--err); }
+  .dot2.warn { background: #d69d34; }
+  .t2 { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 5px; background: var(--fill); color: var(--ink-2); flex: none; }
+  .t2.acc { background: var(--accent-soft); color: var(--accent); }
+  .t2.vio { background: #f0e9ff; color: #6b3fd0; }
+  .t2.blu { background: #e6f3f8; color: #2277a0; }
+  .t2.amb { background: #fbf0d9; color: #966a10; }
+  @media (prefers-color-scheme: dark) {
+    .t2.vio { background: #2a2140; color: #b79cf0; }
+    .t2.blu { background: #16303a; color: #74c0e0; }
+    .t2.amb { background: #382d13; color: #e0b957; }
+  }
+
+  /* key/value detail — "what is this thing actually configured as" */
+  .kvs { display: grid; grid-template-columns: 104px 1fr; gap: 4px 14px; align-items: baseline;
+    font-size: 12.5px; margin: 10px 0 0; }
+  .kvs dt { color: var(--ink-3); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+    font-weight: 700; padding-top: 2px; }
+  .kvs dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-word; }
+  .kvs dd.wrap { white-space: pre-wrap; font-family: var(--sans); }
+  .secret { color: var(--ink-3); letter-spacing: .12em; }
+  .jsonbox { margin-top: 14px; }
+  .jsonbox pre { margin: 0; background: var(--panel-2); border-radius: 10px; padding: 13px 14px; font-family: var(--mono); font-size: 11.5px;
+    line-height: 1.55; overflow: auto; max-height: 320px; white-space: pre; }
+  .jsonbox .jh { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+  .jsonbox .jt { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-3); }
+
+  /* live probe result */
+  .probe { margin-top: 14px; border-radius: 10px; padding: 12px 14px; font-size: 12.5px;
+    background: var(--panel-2); box-shadow: inset 3px 0 0 var(--ink-3); }
+  .probe.ok { box-shadow: inset 3px 0 0 var(--accent); }
+  .probe.bad { box-shadow: inset 3px 0 0 var(--err); }
+  .probe .ph2 { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+  .probe .pe { font-family: var(--mono); font-size: 11.5px; color: var(--err); margin-top: 7px;
+    word-break: break-word; }
+  .toolgrid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .toolgrid .tk { font-family: var(--mono); font-size: 11px; background: var(--fill);
+    color: var(--ink-2); padding: 3px 8px; border-radius: 6px; }
+
+  /* banner (trust prompt, warnings) */
+  .banner { display: flex; align-items: center; gap: 13px; padding: 13px 16px; border-radius: 12px;
+    margin-bottom: 18px; font-size: 13px; background: #fbf0d9; color: #6d4d0c; }
+  @media (prefers-color-scheme: dark) { .banner { background: #382d13; color: #e0b957; } }
+  .banner b { font-weight: 700; }
+  .banner code { font-family: var(--mono); font-size: 12px; }
+  .banner .sp { flex: 1; }
+
+  /* composer — the add/paste form */
+  .comp { border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow);
+    padding: 16px 17px; margin-bottom: 18px; display: none; }
+  .comp.on { display: block; }
+  .comp .r { display: flex; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
+  .comp .r > * { flex: 1; min-width: 150px; }
+  .comp .r > .fit { flex: none; min-width: 0; }
+  .comp textarea.in { width: 100%; min-height: 118px; resize: vertical; line-height: 1.55; }
+  .comp .foot { display: flex; align-items: center; gap: 12px; margin-top: 11px; }
+  .comp .hint { font-size: 11.5px; color: var(--ink-3); flex: 1; line-height: 1.5; }
+  .comp .hint code { font-family: var(--mono); background: var(--fill); padding: 1px 5px; border-radius: 4px; }
+  label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+    color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+
+  /* provider marks — the vendor's own logo on a neutral 22px tile */
+  .mark2 { width: 22px; height: 22px; border-radius: 6px; flex: none; display: inline-flex;
+    align-items: center; justify-content: center; background: var(--fill); color: var(--ink);
+    font-family: var(--mono); font-size: 11px; font-weight: 700; overflow: hidden; }
+  .mark2 svg { width: 14px; height: 14px; display: block; }
+
+  /* setup progress — this section is a task, so it shows how far along it is */
+  .setup { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 15px 17px 16px; margin-bottom: 12px; }
+  .setup-h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .setup-n { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: -.02em; }
+  .setup-s { font-size: 12.5px; color: var(--ink-2); }
+  .setup-bar { height: 5px; border-radius: 3px; background: var(--fill); margin: 11px 0 10px;
+    overflow: hidden; }
+  .setup-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width .5s cubic-bezier(.2,.7,.2,1); }
+  .setup-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.55; }
+  .ready { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px;
+    color: var(--ink-3); font-family: var(--mono); white-space: nowrap; }
+
+  /* the key you already have — shown, not asked for again */
+  .keyheld { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+    padding: 10px 13px; border-radius: 10px; background: var(--panel-2); }
+  .kh-l { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-3); }
+  .kh-v { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: .02em; }
+  .kh-n { font-size: 11px; color: var(--ink-3); }
+
+  /* ---- model table: a comparison, not a list of strings ---- */
+  .filters { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .fchips { display: flex; gap: 4px; flex: none; }
+  .fchip { font: inherit; font-family: var(--mono); font-size: 11.5px; padding: 7px 11px;
+    border: 0; border-radius: 8px; background: var(--fill); color: var(--ink-3); cursor: pointer;
+    white-space: nowrap; }
+  .fchip:hover { color: var(--ink); }
+  .fchip.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+  .mtable { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 4px; max-height: 420px; overflow-y: auto; }
+  .mrow { display: grid; grid-template-columns: minmax(0,1fr) 116px 52px 132px 62px;
+    align-items: center; gap: 12px; padding: 9px 12px; border-radius: 9px; cursor: pointer;
+    font-family: var(--mono); font-size: 12.5px; }
+  .mrow:hover, .mrow.kb { background: var(--fill); }
+  .mrow.kb { box-shadow: inset 2px 0 0 var(--accent); }
+  .mrow.cur { background: var(--accent-soft); }
+  .mrow .mn { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    letter-spacing: -.02em; }
+  .mrow.cur .mn { color: var(--accent); font-weight: 700; }
+  .mrow.locked .mn { color: var(--ink-2); }
+  .mrow .mp { color: var(--ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .mrow .mctx { color: var(--ink-2); font-size: 11.5px; text-align: right;
+    font-variant-numeric: tabular-nums; }
+  .mrow .mcaps { display: flex; gap: 4px; }
+  .cap { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; font-weight: 700;
+    padding: 2px 6px; border-radius: 4px; background: var(--fill); color: var(--ink-3);
+    font-family: var(--sans); }
+  .mrow.cur .cap { background: var(--panel); }
+  .mrow .mgo { font-size: 11px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+  .mrow:hover .mgo { color: var(--accent); }
+  .mrow.locked .mgo { color: var(--caution); }
+
+  /* empty states that suggest, rather than shrug */
+  .zero { border-radius: var(--radius); background: var(--panel-2); padding: 32px 22px; text-align: center; }
+  .zero .zt { font-weight: 700; font-size: 13.5px; margin-bottom: 5px; }
+  .zero .zd { font-size: 12.5px; color: var(--ink-3); max-width: 52ch; margin: 0 auto; line-height: 1.6; }
 
   .empty { color: var(--ink-3); padding: 40px 20px; text-align: center; font-size: 13px; }
   .col::-webkit-scrollbar, .pad::-webkit-scrollbar { width: 10px; }
@@ -382,29 +667,29 @@ INDEX_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<header>
-  <div class="brand"><img src="/mantis.svg" class="logo" alt="mantis"> <b>mantis</b></div>
-  <div class="pills" id="pills"></div>
+<aside id="rail">
+  <div class="mark"><img src="/mantis.svg" alt=""> <span>mantis</span></div>
   <nav id="nav">
-    <button data-v="home" class="on">Home</button>
-    <button data-v="sessions">Sessions</button>
-    <button data-v="models">Models</button>
-    <button data-v="skills">Skills</button>
-    <button data-v="mcp">MCP</button>
-    <button data-v="config">Config</button>
+    <button data-v="home" class="on">activity<span class="k">1</span></button>
+    <button data-v="sessions">sessions<span class="k">2</span></button>
+    <button data-v="models">models<span class="k">3</span></button>
+    <button data-v="mcp">mcp<span class="k">4</span></button>
+    <button data-v="skills">skills<span class="k">5</span></button>
+    <button data-v="config">config<span class="k">6</span></button>
   </nav>
-</header>
+  <div class="railfoot" id="railfoot"></div>
+</aside>
 <main>
-  <section id="home" class="view on"><div class="home-wrap" id="homepad"></div></section>
-  <section id="skills" class="view"><div class="pad" id="skillspad"></div></section>
-  <section id="mcp" class="view"><div class="pad" id="mcppad"></div></section>
+  <section id="home" class="view on"><div class="scroll"><div class="page wide" id="homepad"></div></div></section>
+  <section id="skills" class="view"><div class="scroll"><div class="page" id="skillspad"></div></div></section>
+  <section id="mcp" class="view"><div class="scroll"><div class="page" id="mcppad"></div></div></section>
   <section id="sessions" class="view">
     <div class="col" id="projects"><div class="col-head">Projects</div></div>
     <div class="col" id="sessionlist"><div class="col-head">Sessions</div></div>
     <div class="col" id="convcol"><div id="transcript"><div class="empty">Pick a session.</div></div></div>
   </section>
-  <section id="models" class="view"><div class="pad" id="modelspad"></div></section>
-  <section id="config" class="view"><div class="pad" id="configpad"></div></section>
+  <section id="models" class="view"><div class="scroll"><div class="page" id="modelspad"></div></div></section>
+  <section id="config" class="view"><div class="scroll"><div class="page" id="configpad"></div></div></section>
 </main>
 <div id="modal"><div class="sheet"><button class="x" onclick="hideModal()">✕</button><div id="sheet"></div></div></div>
 <div id="toast"></div>
@@ -456,7 +741,31 @@ function removeKeyFn(p, btn) {
     catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
   };
 }
-function showModal() { document.getElementById("modal").className = "on"; }
+// Switch the current model. Passing the provider's base_url as backend keeps
+// routing correct for a cross-provider pick. Takes effect on the next launch.
+async function useModel(model, backend) {
+  try {
+    const r = await post("/api/use", { model, backend: backend || "" });
+    if (r.ok) { toast("current model → " + (r.model || model)); loadOverview(); loadModels(); }
+    else toast(r.error || "failed", true);
+  } catch (e) { toast(e.message, true); }
+}
+// Clicking a locked model should land you in that provider's setup, not just
+// near it: open the row, scroll it into view, focus the key field.
+function focusProvider(pid) {
+  const row = document.getElementById("prov-" + pid);
+  if (!row) return;
+  if (row.openDrawer) row.openDrawer();
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1200);
+  const inp = row.querySelector(".lbody input");
+  if (inp) setTimeout(() => inp.focus(), 380);
+}
+function showModal(wide) {
+  document.getElementById("modal").className = "on";
+  document.querySelector("#modal .sheet").classList.toggle("wide", !!wide);
+}
 function hideModal() { document.getElementById("modal").className = ""; }
 document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") hideModal(); });
 window.addEventListener("keydown", e => { if (e.key === "Escape") hideModal(); });
@@ -534,14 +843,18 @@ const ago = (sec) => {
 };
 const q = (o) => Object.entries(o).map(([k,v]) => k+"="+encodeURIComponent(v)).join("&");
 
-// ---- home / analytics ----
+// ---- activity ----
+// The page is a record of you working with an agent on this machine, so it is
+// built like an instrument read-out rather than a BI dashboard: one trace, one
+// punchcard, one spectrum, one ledger of projects. Every number here is
+// computed from local transcripts — nothing leaves the machine.
 const fmt = n => (n || 0).toLocaleString();
 const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WD = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 function dkey(d) { return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
 function calcStreak(daily) {
-  // consecutive days with activity, ending at the most recent active day
   let s = 0; const d = new Date(); d.setHours(0,0,0,0);
-  if (!(daily[dkey(d)] && daily[dkey(d)].msgs > 0)) d.setDate(d.getDate()-1);  // grace: today may be empty
+  if (!(daily[dkey(d)] && daily[dkey(d)].msgs > 0)) d.setDate(d.getDate()-1);  // today may still be empty
   while (daily[dkey(d)] && daily[dkey(d)].msgs > 0) { s++; d.setDate(d.getDate()-1); }
   return s;
 }
@@ -550,111 +863,88 @@ function dailySeries(daily, n) {
   for (let i = 0; i < n; i++) { const k = dkey(d); out.push({ date: k, msgs: (daily[k] && daily[k].msgs) || 0 }); d.setDate(d.getDate()+1); }
   return out;
 }
-const WD = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-function insight(a) {
-  const t = a.totals, bits = [];
-  if (a.by_weekday.some(x => x)) {
-    const wi = a.by_weekday.indexOf(Math.max(...a.by_weekday));
-    const ph = a.by_hour.indexOf(Math.max(...a.by_hour));
-    const part = ph < 12 ? "mornings" : ph < 17 ? "afternoons" : "evenings";
-    bits.push(`Most active <b>${WD[wi]} ${part}</b>`);
+// THE TRACE — raw daily volume as a faint envelope, a 7-day mean as the signal
+// line on top, the peak annotated in place. Spiky data plus a calm mean reads
+// the way an instrument does: the noise and the trend at once.
+function traceSVG(series, box) {
+  const W = 1000, H = 190, PL = 6, PR = 6, PT = 14, PB = 20;
+  const n = series.length, iw = W - PL - PR, ih = H - PT - PB;
+  const vals = series.map(s => s.msgs);
+  const mean = vals.map((_, i) => {
+    const a = Math.max(0, i-3), b = Math.min(n-1, i+3);
+    let t = 0; for (let j = a; j <= b; j++) t += vals[j];
+    return t / (b - a + 1);
+  });
+  const max = Math.max(1, ...vals);
+  const X = i => PL + (n <= 1 ? 0 : i/(n-1)*iw);
+  const Y = v => PT + ih - (v/max)*ih;
+  const path = (arr) => "M" + arr.map((v,i) => X(i).toFixed(1)+","+Y(v).toFixed(1)).join(" L");
+  const rawLine = path(vals), sigLine = path(mean);
+  const area = sigLine + ` L${(PL+iw).toFixed(1)},${(PT+ih).toFixed(1)} L${PL.toFixed(1)},${(PT+ih).toFixed(1)} Z`;
+  const pi = vals.reduce((b,v,i) => v > vals[b] ? i : b, 0);
+  // Month ticks, but never two labels on top of each other at the left edge
+  // where the series starts mid-month.
+  let ticks = "", lastM = -1, lastX = -999;
+  series.forEach((s,i) => {
+    const dt = new Date(s.date+"T00:00:00"), m = dt.getMonth(), x = X(i);
+    if (m !== lastM && i > 3 && i < n-3 && x - lastX > 60) {
+      lastM = m; lastX = x;
+      ticks += `<text x="${x.toFixed(1)}" y="${H-5}" text-anchor="middle">${MON[m]}</text>`;
+    } else if (m !== lastM) { lastM = m; }
+  });
+  const peak = vals[pi] ? `<line class="pk" x1="${X(pi).toFixed(1)}" y1="${(PT-6).toFixed(1)}" x2="${X(pi).toFixed(1)}" y2="${(PT+ih).toFixed(1)}"/>` +
+    `<circle class="pkd" cx="${X(pi).toFixed(1)}" cy="${Y(vals[pi]).toFixed(1)}" r="3"/>` : "";
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="messages per day">` +
+    `<line class="base" x1="${PL}" y1="${PT+ih}" x2="${PL+iw}" y2="${PT+ih}"/>` +
+    `<path class="env" d="${area}"/><path class="raw" d="${rawLine}"/>${peak}` +
+    `<path class="sig" d="${sigLine}"/>${ticks}</svg>`;
+  const sig = box.querySelector(".sig");
+  try { const L = sig.getTotalLength(); sig.style.strokeDasharray = L; sig.style.strokeDashoffset = L; }
+  catch (e) { /* jsdom / no layout — the line just appears */ }
+  return { peakIdx: pi, peakVal: vals[pi] };
+}
+// PUNCHCARD — weekday × hour, area-encoded. by_hour and by_weekday separately
+// can't tell you about Sunday nights; the joint distribution can.
+function punchSVG(grid) {
+  const cell = 15, left = 26, top = 15, W = left + 24*cell + 4, H = top + 7*cell + 6;
+  let max = 1;
+  grid.forEach(r => r.forEach(v => { if (v > max) max = v; }));
+  let cells = "", labels = "";
+  for (let d = 0; d < 7; d++) {
+    labels += `<text x="0" y="${top + d*cell + cell/2 + 3}">${WD[d][0]}</text>`;
+    for (let h = 0; h < 24; h++) {
+      const v = grid[d][h];
+      if (!v) continue;
+      const r = 1.6 + Math.sqrt(v/max) * (cell/2 - 1.4);
+      cells += `<circle class="cell" cx="${left + h*cell + cell/2}" cy="${top + d*cell + cell/2}" r="${r.toFixed(2)}" opacity="${(0.45 + 0.55*v/max).toFixed(2)}"><title>${WD[d]} ${h}:00 — ${v} messages</title></circle>`;
+    }
   }
-  if (a.top_tools[0] && t.tool_calls) {
-    bits.push(`<b>${esc(a.top_tools[0].name)}</b> is ${Math.round(a.top_tools[0].count/t.tool_calls*100)}% of your tool calls`);
-  }
-  bits.push(`<b>${t.avg_msgs_per_session}</b> messages per session`);
-  return bits.join("&nbsp;&nbsp;·&nbsp;&nbsp;");
+  for (let h = 0; h < 24; h += 3)
+    labels += `<text x="${left + h*cell + cell/2}" y="9" text-anchor="middle">${h}</text>`;
+  return `<svg class="punch" viewBox="0 0 ${W} ${H}">${labels}${cells}</svg>`;
 }
-function sparkSVG(vals) {
-  if (!vals.length) return "";
-  const w = 130, h = 26, max = Math.max(1, ...vals), n = vals.length;
-  const pts = vals.map((v,i) => [(n<=1?0:i/(n-1))*w, h - (v/max)*(h-3) - 1.5]);
-  const d = "M" + pts.map(p => p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L");
-  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">` +
-    `<path d="${d} L${w},${h} L0,${h} Z" style="fill:var(--accent);opacity:.12"/>` +
-    `<path d="${d}" style="fill:none;stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke"/></svg>`;
-}
-function areaSVG(series) {
-  const w = 660, h = 148, pl = 4, pb = 15, pt = 8;
-  const iw = w - pl*2, ih = h - pt - pb, n = series.length;
-  const max = Math.max(1, ...series.map(s => s.msgs));
-  const X = i => pl + (n<=1?0:i/(n-1)*iw), Y = v => pt + ih - (v/max)*ih;
-  const pts = series.map((s,i) => [X(i), Y(s.msgs)]);
-  const line = "M" + pts.map(p => p[0].toFixed(1)+","+p[1].toFixed(1)).join(" L");
-  const area = line + ` L${(pl+iw).toFixed(1)},${(pt+ih).toFixed(1)} L${pl},${(pt+ih).toFixed(1)} Z`;
-  let ticks = "", lastM = -1;
-  series.forEach((s,i) => { const dt = new Date(s.date+"T00:00:00"); const m = dt.getMonth();
-    if (m !== lastM && i > 2) { lastM = m; ticks += `<text x="${X(i).toFixed(1)}" y="${h-3}" text-anchor="middle">${MON[m]}</text>`; } });
-  const pi = series.reduce((b,s,i) => s.msgs > series[b].msgs ? i : b, 0);
-  const peak = series[pi].msgs ? `<circle class="dot" cx="${X(pi).toFixed(1)}" cy="${Y(series[pi].msgs).toFixed(1)}" r="3.2"><title>${series[pi].date}: ${series[pi].msgs} msgs</title></circle>` : "";
-  return `<svg class="area" viewBox="0 0 ${w} ${h}"><defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">` +
-    `<stop offset="0" style="stop-color:var(--accent);stop-opacity:.26"/><stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/>` +
-    `</linearGradient></defs><path d="${area}" fill="url(#ag)"/><path class="ln" d="${line}"/>${peak}${ticks}</svg>`;
-}
-function heatmapSVG(daily) {
-  const weeks = 18, cell = 13, gap = 4, top = 16, left = 20;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const start = new Date(today); start.setDate(start.getDate()-(weeks*7-1)); start.setDate(start.getDate()-start.getDay());
-  let max = 1; for (const k in daily) max = Math.max(max, daily[k].msgs);
-  const lvl = v => v===0?0 : v<=max*0.25?1 : v<=max*0.5?2 : v<=max*0.75?3 : 4;
-  let cells = "", months = "", lastM = -1;
-  for (let w = 0; w < weeks; w++) for (let dow = 0; dow < 7; dow++) {
-    const d = new Date(start); d.setDate(start.getDate()+w*7+dow);
-    if (d > today) continue;
-    const k = dkey(d), v = (daily[k] && daily[k].msgs) || 0;
-    const x = left + w*(cell+gap), y = top + dow*(cell+gap);
-    cells += `<rect class="c hc${lvl(v)}" x="${x}" y="${y}" width="${cell}" height="${cell}"><title>${k}: ${v} msgs</title></rect>`;
-    if (dow===0) { const m = d.getMonth(); if (m!==lastM) { lastM = m; months += `<text x="${x}" y="${top-4}">${MON[m]}</text>`; } }
-  }
-  const wl = `<text x="0" y="${top+1*(cell+gap)+cell-3}">M</text><text x="0" y="${top+3*(cell+gap)+cell-3}">W</text><text x="0" y="${top+5*(cell+gap)+cell-3}">F</text>`;
-  const W = left + weeks*(cell+gap), H = top + 7*(cell+gap);
-  return `<svg class="hm" viewBox="0 0 ${W} ${H}">${months}${wl}${cells}</svg>`;
-}
-function heatmapLegend() {
-  const sw = o => `<i style="background:var(--accent);opacity:${o}"></i>`;
-  return `<div class="hm-legend">less <i style="background:var(--fill)"></i>${sw(.32)}${sw(.54)}${sw(.76)}${sw(1)} more</div>`;
-}
-function radialSVG(bh) {
-  const max = Math.max(...bh, 1), cx = 110, cy = 108, r0 = 30, rmax = 96;
-  let spokes = "";
-  for (let h = 0; h < 24; h++) {
-    const ang = (h/24)*2*Math.PI - Math.PI/2, len = r0 + (bh[h]/max)*(rmax-r0);
-    const x1 = cx+Math.cos(ang)*r0, y1 = cy+Math.sin(ang)*r0, x2 = cx+Math.cos(ang)*len, y2 = cy+Math.sin(ang)*len;
-    spokes += `<line class="spoke" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke-width="5" opacity="${(0.35+0.65*bh[h]/max).toFixed(2)}"><title>${h}:00 — ${bh[h]} msgs</title></line>`;
-  }
-  const labels = [0,6,12,18].map(h => { const a = (h/24)*2*Math.PI-Math.PI/2, r = rmax+9; return `<text text-anchor="middle" x="${(cx+Math.cos(a)*r).toFixed(1)}" y="${(cy+Math.sin(a)*r+3).toFixed(1)}">${h}</text>`; }).join("");
-  const peak = bh.indexOf(max);
-  return `<svg class="radial" viewBox="0 0 220 220" style="max-height:230px"><circle class="ring" cx="${cx}" cy="${cy}" r="${r0}"/>${spokes}${labels}<text class="ctr" text-anchor="middle" x="${cx}" y="${cy-1}">${peak}:00</text><text class="ctr2" text-anchor="middle" x="${cx}" y="${cy+11}">peak hour</text></svg>`;
-}
-function barsHTML(items) {
-  const max = Math.max(1, ...items.map(i => i.val));
-  return `<div class="bars">` + items.map(i =>
-    `<div class="bar" title="${esc(i.name)} — ${fmt(i.val)}"><span class="bn">${esc(i.name)}</span>` +
-    `<span class="bt"><i style="width:${Math.max(3, i.val/max*100)}%"></i></span>` +
-    `<span class="bv">${fmt(i.val)}${i.sub ? " · " + i.sub : ""}</span></div>`).join("") + `</div>`;
-}
-function weekdayHTML(bw) {
-  const L = ["M","T","W","T","F","S","S"], max = Math.max(1, ...bw);
-  return `<div class="wk">` + bw.map((v,i) =>
-    `<div class="col${v===max?"":" dim"}"><i style="height:${Math.max(3, v/max*100)}%" title="${L[i]}: ${v} msgs"></i><span>${L[i]}</span></div>`).join("") + `</div>`;
-}
-function donutHTML(u, a) {
-  const tot = Math.max(1, u+a), C = 2*Math.PI*42, uLen = u/tot*C, aLen = a/tot*C;
-  return `<div class="donut-wrap"><svg width="122" height="122" viewBox="0 0 120 120">
-    <circle cx="60" cy="60" r="42" style="fill:none;stroke:var(--fill);stroke-width:14"/>
-    <circle cx="60" cy="60" r="42" transform="rotate(-90 60 60)" stroke-dasharray="${uLen.toFixed(1)} ${C.toFixed(1)}" style="fill:none;stroke:var(--user);stroke-width:14;stroke-linecap:round"/>
-    <circle cx="60" cy="60" r="42" transform="rotate(-90 60 60)" stroke-dasharray="${aLen.toFixed(1)} ${C.toFixed(1)}" stroke-dashoffset="${(-uLen).toFixed(1)}" style="fill:none;stroke:var(--accent);stroke-width:14;stroke-linecap:round"/>
-    <text x="60" y="57" text-anchor="middle" style="fill:var(--ink);font-weight:800" font-size="18">${Math.round(u/tot*100)}%</text>
-    <text x="60" y="73" text-anchor="middle" style="fill:var(--ink-3)" font-size="9">human</text>
-  </svg><div class="legend"><div><span class="dot" style="background:var(--user)"></span>You · ${fmt(u)}</div><div style="margin-top:8px"><span class="dot" style="background:var(--accent)"></span>Agent · ${fmt(a)}</div></div></div>`;
-}
-function panel(title, sub, innerHTML, span) {
-  const p = el("div","panel " + span);
-  const ph = el("div","ph"); ph.append(el("h3", null, title));
-  if (sub != null) { const s = el("div","ph-sub"); if (sub && sub.nodeType) s.append(sub); else s.textContent = sub || ""; ph.append(s); }
-  p.append(ph);
-  const body = el("div"); body.innerHTML = innerHTML; p.append(body);
-  return p;
+function loadHomeSpectrum(card, top, total) {
+  const shown = top.slice(0, 6);
+  const rest = total - shown.reduce((a,t) => a + t.count, 0);
+  const parts = shown.map((t,i) => ({ name: t.name, count: t.count, op: 1 - i*0.13 }));
+  if (rest > 0) parts.push({ name: "everything else", count: rest, op: 0.18 });
+  const bar = el("div","spec");
+  parts.forEach(p => {
+    const i = el("i"); i.style.width = (p.count/Math.max(1,total)*100).toFixed(2) + "%";
+    i.style.opacity = p.op; i.title = p.name + " · " + fmt(p.count);
+    bar.append(i);
+  });
+  card.append(bar);
+  const list = el("div","tl");
+  parts.forEach(p => {
+    const n = el("div","tn");
+    const sw = el("span","sw"); sw.style.opacity = p.op; n.append(sw);
+    n.append(document.createTextNode(p.name));
+    list.append(n);
+    list.append(el("div","tc", fmt(p.count)));
+    list.append(el("div","tp", Math.round(p.count/Math.max(1,total)*100) + "%"));
+  });
+  card.append(list);
 }
 let homeReq = 0;
 async function loadHome() {
@@ -664,58 +954,124 @@ async function loadHome() {
   if (my !== homeReq) return;
   pad.innerHTML = "";
   const t = a.totals;
-  pad.append(el("div","hero-h", "Your mantis activity"));
-  const hs = el("div","hero-s");
-  hs.innerHTML = `<b>${fmt(t.tool_calls)}</b> tool calls · <b>${fmt(t.messages)}</b> messages · <b>${fmt(t.sessions)}</b> sessions · <b>${fmt(t.projects)}</b> project${t.projects===1?"":"s"}`;
-  pad.append(hs);
-  const ins = el("div","insight"); ins.innerHTML = insight(a); pad.append(ins);
+  pageHead(pad, "activity", null, null);
+  if (!t.messages) {
+    pad.append(zero("Nothing recorded yet",
+      "Run mantis in a project and come back — every session is logged locally, and this page " +
+      "turns into your trace, your working hours, and the tools the agent actually reaches for."));
+    return;
+  }
+  signalPath(pad, [
+    { value: t.projects, label: "project" + (t.projects===1?"":"s"), view: "sessions" },
+    { value: t.sessions, label: "sessions", view: "sessions" },
+    { value: t.messages, label: "messages", state: "dim" },
+    { value: t.tool_calls, label: "tool calls", state: "dim",
+      title: t.unique_tools + " distinct tools" },
+  ]);
 
+  // the trace
   const streak = calcStreak(a.daily);
-  const spark = dailySeries(a.daily, 21).map(x => x.msgs);
-  const tiles = el("div","tiles");
-  const tile = (n, l, sub, sparkHTML) => {
-    const d = el("div","tile"); d.append(el("div","n", n)); d.append(el("div","l", l));
-    if (sub) d.append(el("div","sub", sub));
-    if (sparkHTML) { const w = el("div"); w.innerHTML = sparkHTML; if (w.firstElementChild) d.append(w.firstElementChild); }
-    return d;
+  const series = dailySeries(a.daily, 182);
+  const box = el("div","trace");
+  const th = el("div","trace-h");
+  th.append(el("span","trace-t", "trace · last 26 weeks"));
+  const pk = el("div","trace-pk"); th.append(pk);
+  box.append(th);
+  const svgWrap = el("div");
+  box.append(svgWrap);
+  pad.append(box);
+  const info = traceSVG(series, svgWrap);
+  pk.innerHTML = info.peakVal
+    ? "peak <b>" + fmt(info.peakVal) + "</b> messages · " + series[info.peakIdx].date
+    : "";
+
+  // the read-out strip
+  const lcd = el("div","lcd");
+  const cell = (v, label, hot) => {
+    const d = el("div", hot ? "hot" : null);
+    d.append(el("i", null, v)); d.append(document.createTextNode(label));
+    lcd.append(d);
   };
-  tiles.append(tile(fmt(t.sessions), "sessions", t.avg_msgs_per_session + " avg"));
-  tiles.append(tile(fmt(t.messages), "messages", null, sparkSVG(spark)));
-  tiles.append(tile(fmt(t.tool_calls), "tool calls", t.unique_tools + " tools"));
-  tiles.append(tile(fmt(t.projects), "projects"));
-  tiles.append(tile(fmt(t.active_days), "active days", streak ? streak + "🔥 streak" : null));
-  tiles.append(tile(fmt(t.busiest_day_msgs), "peak day", t.busiest_day || "—"));
-  pad.append(tiles);
+  cell(fmt(t.sessions), "sessions");
+  cell(t.avg_msgs_per_session, "msgs / session");
+  cell(fmt(t.active_days), "active days");
+  if (streak) cell(streak, "day streak", true);
+  cell(Math.round(t.user_messages / Math.max(1, t.messages) * 100) + "%", "you, " +
+    (100 - Math.round(t.user_messages / Math.max(1, t.messages) * 100)) + "% agent");
+  cell(t.unique_tools, "distinct tools");
+  pad.append(lcd);
 
-  const peakH = a.by_hour.indexOf(Math.max(...a.by_hour));
-  const topShare = a.top_tools[0] && t.tool_calls ? Math.round(a.top_tools[0].count/t.tool_calls*100) : 0;
-  const panels = el("div","panels");
+  // when · what
+  const duo = el("div","duo");
+  const when = el("div","card2");
+  when.append(el("h3", null, "when you work"));
+  const ph = a.by_hour.indexOf(Math.max(...a.by_hour));
+  const pw = a.by_weekday.indexOf(Math.max(...a.by_weekday));
+  const n2 = el("div","note2");
+  n2.innerHTML = "Busiest at <b>" + ph + ":00</b> on <b>" + WD[pw] + "</b> · one dot per hour, sized by volume";
+  when.append(n2);
+  const pw2 = el("div"); pw2.innerHTML = punchSVG(a.punchcard || [[]]); when.append(pw2);
+  duo.append(when);
 
-  // Activity heatmap — legend in the header row (compact)
-  const actLeg = document.createElement("div"); actLeg.innerHTML = heatmapLegend();
-  panels.append(panel("Activity · last 18 weeks", actLeg.firstElementChild, heatmapSVG(a.daily), "span8"));
-  panels.append(panel("When you work", "peak " + peakH + ":00", radialSVG(a.by_hour), "span4"));
-  panels.append(panel("Messages / day", "last 8 weeks", areaSVG(dailySeries(a.daily, 56)), "span8"));
-  panels.append(panel("Human vs agent", null, donutHTML(t.user_messages, t.assistant_messages), "span4"));
-  panels.append(panel("Top tools", topShare + "% " + (a.top_tools[0] ? a.top_tools[0].name : ""), barsHTML(a.top_tools.map(x => ({ name: x.name, val: x.count }))), "span7"));
-  panels.append(panel("By weekday", "Mon–Sun", weekdayHTML(a.by_weekday), "span5"));
-  panels.append(panel("Top projects", t.projects + " active", barsHTML(a.top_projects.map(p => ({ name: p.name, val: p.msgs, sub: p.sessions + " sess" }))), "span12"));
-  pad.append(panels);
+  const what = el("div","card2");
+  what.append(el("h3", null, "what it reaches for"));
+  const n3 = el("div","note2");
+  n3.innerHTML = "<b>" + fmt(t.tool_calls) + "</b> tool calls across <b>" + t.unique_tools + "</b> tools";
+  what.append(n3);
+  loadHomeSpectrum(what, a.top_tools || [], t.tool_total || t.tool_calls || 1);
+  duo.append(what);
+  pad.append(duo);
+
+  // projects ledger
+  if ((a.top_projects || []).length) {
+    const sec = section(pad, "projects · by volume");
+    const card = el("div","card2");
+    const maxM = Math.max(1, ...a.top_projects.map(p => p.msgs));
+    const list = el("div","plist");
+    a.top_projects.forEach(p => {
+      const row = el("div","prow");
+      const f = el("div","fillbar"); f.style.width = (p.msgs/maxM*100).toFixed(1) + "%"; row.append(f);
+      row.append(el("span","pn", p.name));
+      row.append(el("span","pp", p.cwd || ""));
+      row.append(el("span","pv", fmt(p.msgs) + " msgs · " + p.sessions + " sessions"));
+      list.append(row);
+    });
+    card.append(list);
+    sec.append(card);
+  }
 }
 
 // ---- top bar + nav ----
+// The rail's foot is the one always-visible answer to "what is this agent
+// wired to right now" — the model it will use, how that model is reached, and
+// how much is plugged in. Every number is a link to the page that changes it.
+let OVERVIEW = {};
 async function loadOverview() {
   const o = await api("/api/overview");
-  const p = document.getElementById("pills");
-  const cur = (o.current && o.current.model) ? o.current.model : "—";
-  p.innerHTML = "";
-  const add = (label, val) => { const s = el("span","pill"); s.append(label+" "); s.append(el("b",null,val)); p.append(s); };
-  add("projects", o.project_count);
-  add("sessions", o.session_count);
-  add("model", cur);
-  add("providers", o.enabled_providers + "/" + o.provider_count);
+  OVERVIEW = o;
+  const f = document.getElementById("railfoot");
+  const cur = (o.current && o.current.model) ? o.current.model : "not set";
+  const h = o.hosting || {};
+  f.innerHTML = "";
+  f.append(el("div","rf-l","model"));
+  const v = el("div","rf-v", cur); v.title = cur; f.append(v);
+  const s = el("div","rf-s");
+  s.append(el("span","live" + (h.label ? "" : " off")));
+  s.append(document.createTextNode(h.label || (h.kind === "selfhost" ? "self-hosted" : "no provider")));
+  f.append(s);
+  const c = el("div","rf-c");
+  const stat = (label, val, view) => {
+    const x = el("span"); x.append(el("b", null, String(val)));
+    x.append(document.createTextNode(" " + label));
+    x.onclick = () => showTab(view); c.append(x);
+  };
+  stat("providers", o.enabled_providers + "/" + o.provider_count, "models");
+  stat("servers", o.mcp_count == null ? "—" : o.mcp_count, "mcp");
+  stat("skills", o.skill_count == null ? "—" : o.skill_count, "skills");
+  stat("sessions", o.session_count, "sessions");
+  f.append(c);
 }
-const VIEWS = ["home","sessions","models","skills","mcp","config"];
+const VIEWS = ["home","sessions","models","mcp","skills","config"];
 let curView = "home";
 function showTab(name) {
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
@@ -723,6 +1079,7 @@ function showTab(name) {
   curView = name;
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === name));
+  hideModal();                       // a sheet must never outlive its page
   if (location.hash !== "#" + name) location.hash = name;  // fires hashchange; guarded below
   if (name === "home") loadHome();
   if (name === "models") loadModels();
@@ -733,6 +1090,15 @@ function showTab(name) {
 document.getElementById("nav").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   showTab(b.dataset.v);
+});
+// 1–6 jump between pages. The rail shows each key, so the shortcut is
+// discoverable rather than folklore.
+window.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+  const i = "123456".indexOf(e.key);
+  if (i >= 0) { showTab(VIEWS[i]); e.preventDefault(); }
 });
 window.addEventListener("hashchange", () => {
   const t = location.hash.slice(1);
@@ -746,8 +1112,15 @@ let curProject = null;
 async function loadProjects() {
   const { projects } = await api("/api/projects");
   const c = document.getElementById("projects");
-  c.querySelectorAll(".row").forEach(r => r.remove());
-  if (!projects.length) { c.append(el("div","empty","No sessions yet.")); return; }
+  c.querySelectorAll(".row, .empty").forEach(r => r.remove());
+  c.querySelector(".col-head").textContent = "Projects · " + projects.length;
+  if (!projects.length) {
+    c.append(el("div","empty","No sessions recorded yet."));
+    document.querySelector("#sessionlist .col-head").textContent = "Sessions";
+    return;
+  }
+  const hint = document.getElementById("sessionlist");
+  if (!hint.querySelector(".row")) hint.append(el("div","empty","Pick a project."));
   projects.forEach(pr => {
     const row = el("div","row");
     row.append(el("div","t", pr.name || pr.digest));
@@ -772,6 +1145,7 @@ async function loadSessions(pr) {
   const { sessions } = await api("/api/sessions?" + q({ cwd: pr.cwd }));
   if (my !== sessionsReq) return;   // a newer project selection superseded this
   clear();
+  c.querySelector(".col-head").textContent = "Sessions · " + sessions.length;
   if (!sessions.length) { c.append(el("div","empty","No sessions.")); return; }
   sessions.forEach(s => {
     const row = el("div","row");
@@ -854,7 +1228,29 @@ function renderBlock(b) {
   return null;
 }
 
+// ---- provider marks ----------------------------------------------------
+// The vendors' real logos, inlined at build time (see serve_logos.py). They
+// ship with the wheel rather than loading from a CDN: a local dashboard
+// shouldn't tell twelve companies which of them you're looking at, and the
+// page has to work with the wifi off. Monochrome marks carry a tint; the
+// colour ones are used as their owners draw them.
+const MARKS = __LOGOS__;
+function providerMark(pid, label) {
+  const m = MARKS[pid];
+  const w = el("span","mark2");
+  if (m && m.svg) {
+    w.innerHTML = m.svg;
+    if (m.tint) w.style.color = m.tint;
+  } else {
+    w.textContent = (label || pid || "?").slice(0, 1).toUpperCase();
+  }
+  return w;
+}
+
 // ---- models & hosting ----
+// Context windows read as "200k", not "200000" — the unit people actually say.
+const fmtCtx = (n) => n >= 1000000 ? (n/1000000).toFixed(n % 1000000 ? 1 : 0) + "m"
+                    : n >= 1000 ? Math.round(n/1000) + "k" : String(n);
 let modelsReq = 0;
 async function loadModels() {
   const pad = document.getElementById("modelspad");
@@ -865,27 +1261,201 @@ async function loadModels() {
   const cur = (m.current && m.current.model) || "—";
   const h = m.hosting || {};
 
-  // hosting banner
-  pad.append(el("h2", null, "Now serving"));
-  const host = el("div","host");
-  host.append(el("span","kbadge " + (h.kind||"default"), h.kind || "default"));
-  host.append(el("span","hm", cur));
-  host.append(el("span",null, h.label ? "via " + h.label : ""));
-  if (h.backend) host.append(el("span","hb", h.backend));
-  pad.append(host);
+  pageHead(pad, "models", null,
+    "Any model, any provider, any self-host. Enable a provider with its key, or point mantis " +
+    "at a server you run. Picking a model here sets it as current for the next session.");
+  const nModels = m.providers.reduce((a, p) => a + ((p.models || []).length), 0);
+  signalPath(pad, [
+    { label: "mantis", state: "dim" },
+    { label: h.label || (h.kind === "selfhost" ? "your server" : "no provider"),
+      state: h.label || h.kind === "selfhost" ? "" : "warn" },
+    { label: cur, state: cur === "—" ? "warn" : "" },
+    { value: nModels, label: "models available", state: "dim",
+      title: m.enabled_count + " of " + m.providers.length + " providers enabled" },
+  ]);
 
-  if (m.recent && m.recent.length) {
-    pad.append(el("h2", null, "Recent"));
-    const r = el("div","recent");
-    m.recent.forEach(x => r.append(el("span","chip" + (x===cur?" cur":""), x)));
-    pad.append(r);
+  // The route, provable. Same promise the MCP page makes: don't just show the
+  // wiring, let the user check it.
+  const routeWrap = el("div"); pad.append(routeWrap);
+  const routeBtn = btn("Test this route", "", async () => {
+    routeBtn.disabled = true; routeBtn.textContent = "Reaching…";
+    routeWrap.innerHTML = "";
+    try {
+      const body = h.kind === "selfhost" ? { backend: h.backend }
+                                         : { provider: (m.providers.find(p => p.is_current) || {}).id };
+      if (!body.provider && !body.backend) { toast("nothing to test yet — enable a provider first", true); return; }
+      const r = await post("/api/model/test", body);
+      const p = el("div","probe " + (r.ok ? "ok" : "bad"));
+      const hd = el("div","ph2");
+      hd.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
+      hd.append(document.createTextNode(r.ok
+        ? "Reached " + (r.label || "endpoint") + (r.count != null ? " · " + r.count + " models live" : "") + " · " + r.ms + "ms"
+        : "Couldn't reach " + (r.label || "endpoint") + (r.ms != null ? " · " + r.ms + "ms" : "")));
+      p.append(hd);
+      if (!r.ok) p.append(el("div","pe", r.error || "unknown error"));
+      routeWrap.append(p);
+    } catch (e) { toast(e.message, true); }
+    finally { routeBtn.disabled = false; routeBtn.textContent = "Test this route"; }
+  });
+  const routeBar = el("div"); routeBar.style = "display:flex;gap:8px;align-items:center;margin:-12px 0 24px";
+  routeBar.append(routeBtn);
+  if (m.recent && m.recent.length > 1) {
+    const r = el("div","recent"); r.style.margin = "0";
+    r.append(el("span","hero-lbl", "recent"));
+    m.recent.slice(0, 4).forEach(x => {
+      const c = el("span","chip clk" + (x===cur?" cur":""), x);
+      c.onclick = () => useModel(x, "");
+      r.append(c);
+    });
+    routeBar.append(r);
+  }
+  pad.insertBefore(routeBar, routeWrap);
+
+  // ---- the model table ------------------------------------------------
+  // Not a list of strings: what each model can do, side by side, from the
+  // SDK's own capability table. Filter chips answer the three questions people
+  // actually arrive with — what can I use now, what's free, what's locked.
+  const info = m.model_info || {};
+  const allModels = [];
+  m.providers.forEach(p => (p.models || []).forEach(x =>
+    allModels.push({ model: x, label: p.label || p.id, pid: p.id,
+                     backend: p.base_url, enabled: p.enabled, info: info[x] || {} })));
+  if (allModels.length) {
+    const sec = section(pad, "choose a model", allModels.length + " across " + m.providers.length + " providers");
+    const bar = el("div","filters");
+    const find = findBox("Filter — gpt, claude, 200k, qwen…  ( / )");
+    find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1";
+    bar.append(find.wrap);
+    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","needs a key"]];
+    let mode = "all";
+    const chips = el("div","fchips");
+    FILTERS.forEach(([k, lab]) => {
+      const c = el("button","fchip" + (k === mode ? " on" : ""), lab);
+      c.onclick = () => {
+        mode = k;
+        chips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
+        apply();
+      };
+      chips.append(c);
+    });
+    bar.append(chips);
+    sec.append(bar);
+
+    const list = el("div","mtable");
+    allModels.forEach(a => {
+      const row = el("div","mrow" + (a.model===cur ? " cur" : "") + (a.enabled ? "" : " locked"));
+      row.dataset.q = (a.model + " " + a.label + " " + (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "")).toLowerCase();
+      row.dataset.state = a.enabled ? "ready" : "locked";
+      row.append(el("span","mn", a.model));
+      row.append(el("span","mp", a.label));
+      row.append(el("span","mctx", a.info.ctx ? fmtCtx(a.info.ctx) : ""));
+      const caps = el("span","mcaps");
+      if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
+      if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
+      if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
+      row.append(caps);
+      row.append(el("span","mgo", a.model===cur ? "current" : (a.enabled ? "use →" : "unlock")));
+      row.onclick = () => a.enabled ? useModel(a.model, a.backend) : focusProvider(a.pid);
+      list.append(row);
+    });
+    sec.append(list);
+    const apply = () => {
+      const q = find.input.value.trim().toLowerCase();
+      let shown = 0;
+      list.querySelectorAll(".mrow").forEach(r => {
+        const okQ = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
+        const okF = mode === "all" || r.dataset.state === mode;
+        r.style.display = okQ && okF ? "" : "none";
+        r.classList.remove("kb");
+        if (okQ && okF) shown++;
+      });
+      let e = list.querySelector(".find-none");
+      if (!shown) { if (!e) { e = el("div","find-none empty",
+        "Nothing matches. Self-host below to run something that isn't on this list."); list.append(e); } }
+      else if (e) e.remove();
+    };
+    find.input.oninput = apply;
+    // Keyboard: / focuses, ↑↓ walk the visible rows, Enter switches to one.
+    let kbi = -1;
+    const visible = () => [...list.querySelectorAll(".mrow")].filter(r => r.style.display !== "none");
+    find.input.onkeydown = (e) => {
+      const rows = visible();
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        kbi = Math.max(0, Math.min(rows.length - 1, kbi + (e.key === "ArrowDown" ? 1 : -1)));
+        rows.forEach((r,i) => r.classList.toggle("kb", i === kbi));
+        if (rows[kbi]) rows[kbi].scrollIntoView({ block: "nearest" });
+        e.preventDefault();
+      } else if (e.key === "Enter" && rows[kbi]) { rows[kbi].click(); }
+      else if (e.key === "Escape") { find.input.value = ""; kbi = -1; apply(); }
+    };
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && curView === "models" && document.activeElement !== find.input
+          && !document.getElementById("modal").className) {
+        find.input.focus(); e.preventDefault();
+      }
+    });
   }
 
-  // self-host / custom endpoint form
-  pad.append(el("h2", null, "Self-host / custom endpoint"));
-  const sh = el("div","selfhost");
-  const shNote = el("div","note-sec");
-  shNote.append(document.createTextNode("Point mantis at any OpenAI-compatible URL you run — vLLM, llama.cpp, a Modal/RunPod box. This sets it as your current model.  "));
+  // ---- connect a provider ----------------------------------------------
+  // This is setup, so it reads as setup: a progress bar over the twelve, the
+  // connected ones first, and every unconnected row offering the one action
+  // that changes its state. Expanding a row IS the setup form.
+  const provSec = section(pad, "connect a provider");
+  const prog = el("div","setup");
+  const ph2 = el("div","setup-h");
+  ph2.append(el("span","setup-n", m.enabled_count + " of " + m.providers.length + " connected"));
+  const need = el("span","setup-s", m.enabled_count
+    ? "Add another to switch between them mid-session."
+    : "Paste one key and mantis is ready to run.");
+  ph2.append(need);
+  prog.append(ph2);
+  const track = el("div","setup-bar");
+  const fillp = el("i");
+  fillp.style.width = Math.round(m.enabled_count / Math.max(1, m.providers.length) * 100) + "%";
+  track.append(fillp); prog.append(track);
+  prog.append(el("div","setup-note",
+    "Keys are written to ~/.mantis-agent (chmod 600) on this machine and are only ever shown " +
+    "masked. Nothing is sent anywhere except the provider you're calling."));
+  provSec.append(prog);
+
+  const plist = el("div","list");
+  const ordered = [...m.providers].sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
+  ordered.forEach(p => {
+    const tags = [];
+    if (p.is_current) tags.push({ text: "in use", cls: "acc" });
+    const acts = [];
+    if (p.enabled) {
+      const st = el("span","ready");
+      st.append(el("span","dot2 ok"));
+      st.append(document.createTextNode("connected" + (p.key_source === "env" ? " · from env" : "")));
+      acts.push(st);
+    } else {
+      acts.push(btn("Add key", "pri", null));   // click bubbles to the row → opens setup
+    }
+    const row = listRow({
+      name: p.label || p.id,
+      sub: (p.base_url || "").replace(/^https?:\/\//, ""),
+      tags, actions: acts, mark: providerMark(p.id, p.label),
+      build: (body) => providerDetail(p, body, cur, m),
+    });
+    row.id = "prov-" + p.id;
+    row.dataset.q = ((p.label || "") + " " + p.id + " " + (p.base_url || "")).toLowerCase();
+    // The "Add key" button and the row open the same drawer, then focus the field.
+    if (!p.enabled) {
+      row.querySelector(".acts").onclick = (e) => {
+        e.stopPropagation(); row.openDrawer();
+        const i = row.querySelector(".lbody input"); if (i) i.focus();
+      };
+    }
+    plist.append(row);
+  });
+  provSec.append(plist);
+
+  // self-host / custom endpoint — a first-class card in the same visual system
+  const shSec = section(pad, "or bring your own server");
+  const sh = el("div","card selfhost-card");
+  const shNote = el("div","note");
+  shNote.append(document.createTextNode("Point mantis at any OpenAI-compatible URL you run — vLLM, llama.cpp, a Modal/RunPod box. Sets it as your current model.  "));
   const shGuide = el("button","guide-link","How to self-host ↗");
   shGuide.onclick = () => openSelfhostGuide(m.selfhost_guide, m.selfhost_docs_url);
   shNote.append(shGuide);
@@ -911,86 +1481,7 @@ async function loadModels() {
   const f = el("div","fields");
   const r1 = el("div","r"); r1.append(inUrl, inModel);
   const r2 = el("div","r"); r2.append(inKey, connectBtn);
-  f.append(r1, r2); sh.append(f); pad.append(sh);
-
-  pad.append(el("h2", null, "Providers · " + m.enabled_count + " of " + m.providers.length + " enabled"));
-  pad.append(el("div","note-sec", "Paste a key to enable a provider. Keys are stored locally (chmod 600) and only ever shown masked."));
-  const g = el("div","grid");
-  m.providers.forEach(p => {
-    const card = el("div","card" + (p.is_current ? " cur" : ""));
-
-    // header: name + status pill
-    const head = el("div","head");
-    head.append(el("span","name", p.label || p.id));
-    const st = el("span","status " + (p.enabled ? "on" : "off"));
-    st.append(el("span","d"));
-    st.append(document.createTextNode(p.enabled ? "enabled" : "off"));
-    head.append(st);
-    card.append(head);
-
-    // endpoint (scheme stripped, single line, full URL on hover)
-    if (p.base_url) {
-      const u = el("div","url", p.base_url.replace(/^https?:\/\//, ""));
-      u.title = p.base_url; card.append(u);
-    }
-
-    // key area
-    if (p.enabled && p.key_masked) {
-      const kl = el("div","keyline");
-      kl.append(el("span","env", p.api_key_env || "API key"));
-      kl.append(el("span","val", p.key_masked));
-      kl.append(el("span","src " + (p.key_source || ""), p.key_source || ""));
-      card.append(kl);
-
-      const acts = el("div","actions");
-      const upd = el("button", null, "Update key");
-      acts.append(upd);
-      let rm = null;
-      if (p.key_source === "saved") { rm = el("button","danger","Remove"); acts.append(rm); }
-      card.append(acts);
-
-      const ed = el("div","enable"); ed.style.display = "none";
-      const inp = input("paste new key", true);
-      const save = el("button","btn","Save");
-      ed.append(inp, save); card.append(ed);
-      const doSave = saveKeyFn(p, inp, save);
-      upd.onclick = () => {
-        const open = ed.style.display === "none";
-        ed.style.display = open ? "flex" : "none";
-        if (open) inp.focus();
-      };
-      save.onclick = doSave;
-      inp.onkeydown = e => { if (e.key === "Enter") doSave(); };
-      if (rm) rm.onclick = removeKeyFn(p, rm);
-    } else {
-      const en = el("div","enable");
-      const inp = input("paste " + (p.api_key_env || "API key"), true);
-      const btn = el("button","btn","Enable");
-      en.append(inp, btn); card.append(en);
-      const doSave = saveKeyFn(p, inp, btn);
-      btn.onclick = doSave;
-      inp.onkeydown = e => { if (e.key === "Enter") doSave(); };
-    }
-
-    // "how to get a key" — opens the guide modal
-    if (p.guide) {
-      const gl = el("button","guide-link", "How to get a key ↗");
-      gl.onclick = () => openGuide(p);
-      card.append(gl);
-    }
-
-    if (p.note) card.append(el("div","note", p.note));
-
-    const models = p.models || [];
-    if (models.length) {
-      const chips = el("div","chips");
-      models.slice(0,6).forEach(x => chips.append(el("span","chip" + (x===cur?" cur":""), x)));
-      if (models.length > 6) chips.append(el("span","chip more", "+" + (models.length-6) + " more"));
-      card.append(chips);
-    }
-    g.append(card);
-  });
-  pad.append(g);
+  f.append(r1, r2); sh.append(f); shSec.append(sh);
 
   // deep-link: /?guide=<provider|selfhost> opens that guide directly
   const gp = new URLSearchParams(location.search).get("guide");
@@ -998,7 +1489,162 @@ async function loadModels() {
   else if (gp) { const pp = m.providers.find(x => x.id === gp); if (pp) openGuide(pp); }
 }
 
-// ---- skills & mcp ----
+// One provider, expanded: where it points, what key it's using, whether that
+// key actually works, and its models one click from being current.
+function providerDetail(p, body, cur, m) {
+  const dl = el("dl","kvs");
+  kvRow(dl, "endpoint", p.base_url || "—");
+  kvRow(dl, "key env", p.api_key_env || "—");
+  if (p.note) kvRow(dl, "note", p.note, false);
+  body.append(dl);
+
+  // A provider that already has a key shows the key — masked, with where it
+  // came from — and replacing it is an opt-in. Only an unconnected provider
+  // gets a paste field up front, because that's the only one that needs one.
+  const keyRow = el("div"); keyRow.style = "display:flex;gap:8px;margin-top:14px";
+  const inp = input("paste your " + (p.api_key_env || "API key"), true);
+  const save = el("button","b pri", p.key_masked ? "Save new key" : "Enable provider");
+  const doSave = saveKeyFn(p, inp, save);
+  save.onclick = doSave;
+  inp.onkeydown = e => { if (e.key === "Enter") doSave(); };
+  keyRow.append(inp, save);
+
+  if (p.key_masked) {
+    const held = el("div","keyheld");
+    held.append(el("span","kh-l", p.api_key_env || "key"));
+    held.append(el("span","kh-v", p.key_masked));
+    held.append(el("span","t2 " + (p.key_source === "env" ? "blu" : "acc"),
+      p.key_source === "env" ? "from your environment" : "saved on this machine"));
+    const sp = el("span"); sp.style.flex = "1"; held.append(sp);
+    keyRow.style.display = "none";
+    const rep = btn("Replace", "gho", () => {
+      const open = keyRow.style.display === "none";
+      keyRow.style.display = open ? "flex" : "none";
+      rep.textContent = open ? "Cancel" : "Replace";
+      rep.classList.toggle("on", open);
+      if (open) inp.focus();
+    });
+    held.append(rep);
+    if (p.key_source === "saved") {
+      const rm = btn("Forget", "gho dan", null);
+      rm.onclick = () => armDelete(rm, removeKeyFn(p, rm));
+      held.append(rm);
+    } else {
+      held.append(el("span","kh-n", "unset the env var to change it"));
+    }
+    body.append(held);
+  }
+  body.append(keyRow);
+
+  const acts = el("div"); acts.style = "display:flex;gap:8px;margin-top:12px;flex-wrap:wrap";
+  const out = el("div");
+  const test = btn("Check reachability", "", async () => {
+    test.disabled = true; test.textContent = "Reaching…"; out.innerHTML = "";
+    try {
+      const r = await post("/api/model/test", { provider: p.id });
+      const box = el("div","probe " + (r.ok ? "ok" : "bad"));
+      const hd = el("div","ph2");
+      hd.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
+      hd.append(document.createTextNode(r.ok
+        ? "Reachable · " + (r.count != null ? r.count + " models live · " : "") + r.ms + "ms"
+        : "Not reachable · " + r.ms + "ms"));
+      box.append(hd);
+      if (!r.ok) box.append(el("div","pe", r.error || "unknown error"));
+      out.append(box);
+    } catch (e) { toast(e.message, true); }
+    finally { test.disabled = false; test.textContent = "Check reachability"; }
+  });
+  acts.append(test);
+  if (p.docs_url) acts.append(extLink("b gho", "Provider docs ↗", p.docs_url));
+  body.append(acts, out);
+
+  const models = p.models || [];
+  if (models.length) {
+    const lab = el("div","kvs"); lab.style.marginTop = "14px";
+    kvRow(lab, "models", String(models.length) + (p.live_count ? " listed · " + p.live_count + " live" : ""));
+    body.append(lab);
+    const chips = el("div","chips"); chips.style.marginTop = "8px";
+    models.forEach(x => {
+      const c = el("span","chip" + (p.enabled ? " clk" : "") + (x===cur ? " cur" : ""), x);
+      if (p.enabled) c.onclick = () => useModel(x, p.base_url);
+      else { c.title = "enable " + (p.label||p.id) + " first"; c.onclick = () => inp.focus(); }
+      chips.append(c);
+    });
+    body.append(chips);
+  }
+}
+
+// ---- shared page furniture ----
+// Every non-session view is built from these four helpers, so Models, Skills,
+// MCP and Config share one header rhythm, one row shape and one empty state.
+function pageHead(pad, title, count, desc, actions) {
+  const h = el("div","page-h");
+  const t = el("h1","page-t"); t.append(document.createTextNode(title));
+  if (count != null) t.append(el("span","count", String(count)));
+  h.append(t);
+  if (actions && actions.length) { const a = el("div","page-a"); actions.forEach(x => a.append(x)); h.append(a); }
+  pad.append(h);
+  if (desc) { const d = el("p","page-d"); if (desc.nodeType) d.append(desc); else d.innerHTML = desc; pad.append(d); }
+}
+// The signal path: what this page's subject is actually plugged into, drawn as
+// the chain it really is. Nodes carry live state (a dead server is red here,
+// an untrusted file is amber) so the summary can never disagree with the list
+// below it. `nodes` = [{label, value, state, view}].
+function signalPath(pad, nodes) {
+  const p = el("div","path");
+  nodes.forEach((n, i) => {
+    if (i) p.append(el("span","arw","──▶"));
+    const node = el("span","n" + (n.state ? " " + n.state : "") + (n.view ? " clk" : ""));
+    if (n.value != null) node.append(el("b", null, String(n.value)));
+    node.append(document.createTextNode((n.value != null ? " " : "") + n.label));
+    if (n.view) node.onclick = () => showTab(n.view);
+    if (n.title) node.title = n.title;
+    p.append(node);
+  });
+  pad.append(p);
+}
+function section(pad, title, filePath) {
+  const s = el("div","sec");
+  const h = el("div","sec-t"); h.append(document.createTextNode(title));
+  if (filePath) { const f = el("span","fp", filePath); f.title = filePath; h.append(f); }
+  s.append(h);
+  pad.append(s);
+  return s;
+}
+function zero(title, detail) {
+  const z = el("div","zero"); z.append(el("div","zt", title)); z.append(el("div","zd", detail));
+  return z;
+}
+function btn(label, cls, onclick) {
+  const b = el("button", "b" + (cls ? " " + cls : ""), label);
+  if (onclick) b.onclick = onclick;
+  return b;
+}
+// A row that can expand in place. `build(body)` fills the drawer the first time
+// it opens, so inspecting one server never renders the other twenty.
+function listRow(opts) {
+  const row = el("div","lrow");
+  const top = el("div","lrow-top");
+  top.append(el("span","caret","▶"));
+  if (opts.mark) top.append(opts.mark);
+  if (opts.dot) top.append(el("span","dot2 " + opts.dot));
+  top.append(el("span","nm", opts.name));
+  (opts.tags || []).forEach(t => top.append(el("span","t2 " + (t.cls||""), t.text)));
+  const sub = el("span","sub" + (opts.subSans ? " sans" : ""), opts.sub || "");
+  sub.title = opts.sub || ""; top.append(sub);
+  const acts = el("div","acts"); (opts.actions || []).forEach(a => acts.append(a)); top.append(acts);
+  acts.onclick = e => e.stopPropagation();
+  const body = el("div","lbody");
+  let built = false;
+  top.onclick = () => {
+    const open = !row.classList.contains("open");
+    if (open && !built) { built = true; opts.build && opts.build(body); }
+    row.classList.toggle("open", open);
+  };
+  row.append(top, body);
+  row.openDrawer = () => { if (!built) { built = true; opts.build && opts.build(body); } row.classList.add("open"); };
+  return row;
+}
 function armDelete(btn, onConfirm) {
   // Two-step delete: first click arms ("Confirm?"), second within 3s deletes.
   if (btn.dataset.armed) { onConfirm(); return; }
@@ -1007,123 +1653,252 @@ function armDelete(btn, onConfirm) {
   const reset = () => { btn.textContent = orig; btn.classList.remove("armed"); delete btn.dataset.armed; };
   btn._resetT = setTimeout(reset, 3000);
 }
-function skillItem(sk, scope) {
-  const it = el("div","item");
-  const main = el("div","main");
-  const tt = el("div","tt"); tt.append(document.createTextNode(sk.name));
-  tt.append(el("span","tag " + scope, scope));
-  if (sk.always_load) tt.append(el("span","tag al", "always"));
-  if (sk.category) tt.append(el("span","tag tp", sk.category));
-  main.append(tt);
-  if (sk.description) main.append(el("div","dd", sk.description));
-  main.append(el("div","meta", ".mantis" + (scope==="global"?"":"/…") + "/skills/" + sk.slug + "/SKILL.md"));
-  it.append(main);
-  const acts = el("div","acts");
-  const view = el("button","iconbtn","View");
-  view.onclick = () => openSkillBody(sk);
-  const del = el("button","iconbtn danger","Delete");
-  del.onclick = () => armDelete(del, async () => {
-    try { const r = await post("/api/skill/delete", { scope, slug: sk.slug });
-      if (r.ok) { toast("deleted " + sk.name); loadSkills(); } else toast(r.error||"failed", true); }
-    catch(e){ toast(e.message, true); }
-  });
-  acts.append(view, del); it.append(acts);
-  return it;
-}
-function openSkillBody(sk) {
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(el("h3", null, sk.name));
-  s.append(el("div","sub", sk.description || ""));
-  const pre = el("pre"); pre.style = "white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12px;background:var(--fill);padding:14px;border-radius:9px;max-height:60vh;overflow:auto";
-  pre.textContent = sk.body || "(empty)"; s.append(pre);
-  showModal();
-}
-function mcpItem(sv) {
-  const it = el("div","item");
-  const main = el("div","main");
-  const tt = el("div","tt"); tt.append(document.createTextNode(sv.name));
-  tt.append(el("span","tag tp", sv.transport));
-  tt.append(el("span","tag " + sv.scope, sv.scope));
-  main.append(tt);
-  if (sv.detail) main.append(el("div","meta", sv.detail));
-  it.append(main);
-  const acts = el("div","acts");
-  if (sv.scope === "global" || sv.scope === "project") {
-    const del = el("button","iconbtn danger","Delete");
-    del.onclick = () => armDelete(del, async () => {
-      try { const r = await post("/api/mcp/delete", { scope: sv.scope, name: sv.name });
-        if (r.ok) { toast("removed " + sv.name); loadMcp(); } else toast(r.error||"failed", true); }
-      catch(e){ toast(e.message, true); }
+// Live filter over rows carrying a data-q haystack.
+function wireFind(input, container, emptyText) {
+  const apply = () => {
+    const q = input.value.trim().toLowerCase();
+    let shown = 0;
+    container.querySelectorAll("[data-q]").forEach(r => {
+      const ok = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
+      r.style.display = ok ? "" : "none"; if (ok) shown++;
     });
-    acts.append(del);
-  } else {
-    acts.append(el("span","meta","edit settings.json"));
-  }
-  it.append(acts);
-  return it;
-}
-function sectionHead(title, count, addLabel, mt) {
-  const head = el("div","sec-head" + (mt ? " mt" : ""));
-  head.append(el("h2", null, title));
-  head.append(el("span","cnt", String(count)));
-  head.append(el("div","sp"));
-  const btn = el("button","addbtn", "+ " + addLabel);
-  head.append(btn);
-  return { head, btn };
-}
-function wireToggle(btn, form, addLabel) {
-  form.style.display = "none";
-  btn.onclick = () => {
-    const open = form.style.display === "none";
-    form.style.display = open ? "" : "none";
-    btn.textContent = open ? "Cancel" : "+ " + addLabel;
-    btn.classList.toggle("on", open);
-    if (open) { const f = form.querySelector("input,textarea"); if (f) f.focus(); }
+    let e = container.querySelector(".find-none");
+    if (!shown) { if (!e) { e = el("div","find-none empty", emptyText || "Nothing matches that search."); container.append(e); } }
+    else if (e) e.remove();
   };
+  input.oninput = apply;
+  return apply;
 }
-function skillForm(onDone) {
-  const f = el("div","addform");
-  const name = input("skill name  ·  e.g. deploy-checklist");
-  const desc = input("one-line description — what it's for");
-  const scope = el("select","in"); scope.innerHTML = '<option value="global">global</option><option value="project">project</option>';
-  const body = el("textarea","in"); body.placeholder = "SKILL.md body — the how-to the agent reads (markdown)";
-  const create = el("button","btn","Create skill");
-  create.onclick = async () => {
-    if (!name.value.trim()) { toast("name required", true); return; }
-    create.disabled = true;
-    try { const r = await post("/api/skill", { scope: scope.value, name: name.value, description: desc.value, body: body.value });
-      if (r.ok) { toast("created " + name.value.trim()); onDone(); } else toast(r.error||"failed", true); }
-    catch(e){ toast(e.message, true); } finally { create.disabled = false; }
+function findBox(placeholder) {
+  const w = el("div","find"); const i = document.createElement("input");
+  i.placeholder = placeholder; i.type = "search"; w.append(i);
+  return { wrap: w, input: i };
+}
+// ---- skills ----
+// A skill is a SKILL.md the agent pulls in on demand. The page shows what each
+// one tells the agent (expand to read it) and lets you write one right here —
+// the same file the terminal reads, no round trip through an editor.
+function skillDetail(sk, scope, body, reload) {
+  const dl = el("dl","kvs");
+  kvRow(dl, "file", sk.path);
+  if (sk.category) kvRow(dl, "category", sk.category);
+  kvRow(dl, "loading", sk.always_load ? "always — injected into every session"
+                                      : "on demand — the agent opens it when relevant");
+  body.append(dl);
+  const pre = el("div","jsonbox");
+  const h = el("div","jh"); h.append(el("span","jt", "SKILL.md"));
+  pre.append(h);
+  const p = el("pre"); p.style.whiteSpace = "pre-wrap";
+  p.textContent = sk.body || "(empty)"; pre.append(p);
+  body.append(pre);
+  const acts = el("div"); acts.style = "display:flex;gap:8px;margin-top:13px";
+  acts.append(btn("Edit skill", "", () => openSkillEditor(sk, scope, reload)));
+  body.append(acts);
+}
+function openSkillEditor(sk, scope, reload) {
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, sk ? "Edit " + sk.name : "New skill"));
+  s.append(el("div","sub", sk ? sk.path : "written to " + scope + " skills"));
+  const name = input("skill name  ·  e.g. deploy-checklist"); name.value = sk ? sk.name : "";
+  const desc = input("one line — when should the agent reach for this?");
+  desc.value = sk ? (sk.description || "") : "";
+  const cat = input("category (optional)"); cat.value = sk ? (sk.category || "") : "";
+  const always = document.createElement("input"); always.type = "checkbox";
+  always.checked = !!(sk && sk.always_load);
+  const alwaysL = el("label","chk"); alwaysL.append(always, document.createTextNode("always load"));
+  const ta = el("textarea","in");
+  ta.style = "width:100%;min-height:240px;line-height:1.6;resize:vertical;margin-top:9px";
+  ta.placeholder = "The how-to the agent reads. Markdown: steps, commands, gotchas.";
+  ta.value = sk ? (sk.body || "") : "";
+  const r1 = el("div"); r1.style = "display:flex;gap:8px;margin:14px 0 8px"; r1.append(name, cat);
+  const r2 = el("div"); r2.style = "display:flex;gap:12px;align-items:center"; r2.append(desc, alwaysL);
+  s.append(r1, r2, ta);
+  const foot = el("div","cta");
+  const save = btn(sk ? "Save changes" : "Create skill", "pri", async () => {
+    if (!name.value.trim()) { toast("name required", true); name.focus(); return; }
+    save.disabled = true;
+    try {
+      const r = await post("/api/skill", { scope, name: name.value, description: desc.value,
+        body: ta.value, category: cat.value, always_load: always.checked,
+        slug: sk ? sk.slug : undefined });
+      if (r.ok) { toast(sk ? "saved " + name.value.trim() : "created " + name.value.trim()); hideModal(); reload(); }
+      else toast(r.error || "failed", true);
+    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
+  });
+  foot.append(save, btn("Cancel", "gho", hideModal));
+  s.append(foot);
+  showModal(true);
+  setTimeout(() => (sk ? ta : name).focus(), 60);
+}
+// ---- MCP: an inspector, not a list ----
+// Each row expands into the server's real configuration — command, args, env
+// keys, url, headers, plus the raw JSON entry exactly as it sits on disk.
+// Credentials arrive masked from the server; "Reveal" re-fetches the raw entry
+// on demand so a screenshot of this page never leaks a token by default.
+const SCOPE_TAG = { global: "", project: "acc", settings: "blu" };
+function jsonBox(title, obj, extra) {
+  const w = el("div","jsonbox");
+  const h = el("div","jh"); h.append(el("span","jt", title));
+  if (extra) h.append(extra);
+  w.append(h);
+  const pre = el("pre"); pre.textContent = JSON.stringify(obj, null, 2); w.append(pre);
+  return { box: w, pre };
+}
+function kvRow(dl, key, value, mono) {
+  dl.append(el("dt", null, key));
+  const dd = el("dd", mono === false ? "wrap" : null);
+  if (value && value.nodeType) dd.append(value); else dd.textContent = value;
+  dl.append(dd);
+}
+function mcpDetail(sv, body, reload) {
+  let revealed = null;                       // raw entry once the user asks
+  const dl = el("dl","kvs");
+  const render = () => {
+    const e = revealed || sv.entry || {};
+    dl.innerHTML = "";
+    kvRow(dl, "transport", sv.transport);
+    kvRow(dl, "defined in", sv.display_path || sv.path);
+    if (e.command) kvRow(dl, "command", String(e.command));
+    if (e.args && e.args.length) kvRow(dl, "args", e.args.map(String).join(" "));
+    if (e.url) kvRow(dl, "url", String(e.url));
+    ["env","headers"].forEach(k => {
+      const v = e[k];
+      if (v && typeof v === "object" && Object.keys(v).length) {
+        const box = el("div");
+        Object.entries(v).forEach(([kk, vv]) => {
+          const line = el("div");
+          line.append(document.createTextNode(kk + " = "));
+          line.append(el("span", revealed ? null : "secret", String(vv)));
+          box.append(line);
+        });
+        kvRow(dl, k, box);
+      }
+    });
+    const known = { command:1, args:1, url:1, env:1, headers:1, type:1 };
+    Object.keys(e).forEach(k => { if (!known[k]) kvRow(dl, k, typeof e[k] === "string" ? e[k] : JSON.stringify(e[k])); });
+    jb.pre.textContent = JSON.stringify(e, null, 2);
+    revBtn.textContent = revealed ? "Hide secrets" : "Reveal secrets";
+    revBtn.classList.toggle("on", !!revealed);
   };
-  const r1 = el("div","r"); r1.append(name, desc, scope);
-  const foot = el("div","foot"); foot.append(create);
-  f.append(r1, body, foot);
+  const revBtn = btn("Reveal secrets", "gho", async () => {
+    if (revealed) { revealed = null; render(); return; }
+    try {
+      const r = await api("/api/mcp/entry?" + q({ name: sv.name, scope: sv.scope }));
+      if (!r.ok) { toast(r.error || "cannot read that entry", true); return; }
+      revealed = r.entry; render();
+    } catch (e) { toast(e.message, true); }
+  });
+  const jb = jsonBox("config json", sv.entry || {}, sv.secrets && sv.secrets.length ? revBtn : null);
+  body.append(dl, jb.box);
+  render();
+
+  // Live probe: connect for real and show what the server exposes. The buttons
+  // sit above their own output, so a result never reads as belonging to the row
+  // below it.
+  const acts = el("div"); acts.style = "display:flex;gap:8px;margin-top:14px;flex-wrap:wrap";
+  const probeWrap = el("div");
+  body.append(acts, probeWrap);
+  const testBtn = btn("Test connection", "", async () => {
+    testBtn.disabled = true; testBtn.textContent = "Connecting…";
+    probeWrap.innerHTML = "";
+    try {
+      const r = await post("/api/mcp/test", { name: sv.name });
+      const p = el("div","probe " + (r.ok ? "ok" : "bad"));
+      const h = el("div","ph2");
+      h.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
+      h.append(document.createTextNode(r.ok
+        ? "Connected · " + (r.tools || []).length + " tool" + ((r.tools||[]).length===1?"":"s") + " · " + r.ms + "ms"
+        : "Failed to connect" + (r.ms != null ? " · " + r.ms + "ms" : "")));
+      p.append(h);
+      if (r.ok) {
+        const g = el("div","toolgrid");
+        (r.tools || []).forEach(t => { const k = el("span","tk", t.name); if (t.description) k.title = t.description; g.append(k); });
+        p.append(g);
+        if (!(r.tools || []).length) p.append(el("div","zd","The server connected but exposes no tools."));
+      } else p.append(el("div","pe", r.error || "unknown error"));
+      probeWrap.append(p);
+    } catch (e) { toast(e.message, true); }
+    finally { testBtn.disabled = false; testBtn.textContent = "Test connection"; }
+  });
+  acts.append(testBtn);
+  if (sv.editable) acts.append(btn("Edit JSON", "", () => openMcpEditor(sv, reload)));
+}
+async function openMcpEditor(sv, reload) {
+  let entry = sv.entry || {};
+  try {
+    const r = await api("/api/mcp/entry?" + q({ name: sv.name, scope: sv.scope }));
+    if (r.ok) entry = r.entry;                     // edit the real thing, not the mask
+  } catch (e) { /* fall back to the redacted copy */ }
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, "Edit " + sv.name));
+  s.append(el("div","sub", sv.display_path || sv.path));
+  const ta = el("textarea","in");
+  ta.style = "width:100%;min-height:230px;line-height:1.55;resize:vertical";
+  ta.value = JSON.stringify(entry, null, 2);
+  s.append(ta);
+  const foot = el("div","cta");
+  const save = btn("Save changes", "pri", async () => {
+    let parsed;
+    try { parsed = JSON.parse(ta.value); }
+    catch (e) { toast("that isn't valid JSON: " + e.message, true); return; }
+    save.disabled = true;
+    try {
+      const r = await post("/api/mcp", { scope: sv.scope, name: sv.name, entry: parsed });
+      if (r.ok) { toast("saved " + sv.name); hideModal(); reload(); }
+      else toast(r.error || "failed", true);
+    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
+  });
+  foot.append(save, btn("Cancel", "gho", hideModal));
+  s.append(foot);
+  showModal(true);
+  setTimeout(() => ta.focus(), 60);
+}
+// One field that takes whatever the user already has on their clipboard: the
+// {"mcpServers": …} blob every MCP README ships, a lone entry object, a shell
+// command, or a URL. The server parses it (same code path as the terminal's
+// /mcp add), so the two surfaces can never disagree about what's valid.
+function mcpComposer(onDone) {
+  const f = el("div","comp");
+  const scope = el("select","in fit");
+  scope.innerHTML = '<option value="global">global · every project</option>' +
+                    '<option value="project">project · this repo</option>';
+  const name = input("name (only needed if your paste has none)");
+  const r1 = el("div","r"); r1.append(name, scope); f.append(r1);
+  const ta = el("textarea","in");
+  ta.placeholder = '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-github"],\n      "env": { "GITHUB_TOKEN": "ghp_…" }\n    }\n  }\n}';
+  f.append(ta);
+  const add = btn("Add server", "pri", async () => {
+    const text = ta.value.trim();
+    if (!text) { toast("paste a config, a command, or a URL", true); return; }
+    add.disabled = true;
+    try {
+      let r = await post("/api/mcp/paste", { scope: scope.value, text });
+      if (!r.ok && r.needs_name) {
+        // A bare command/URL: name it here and post it as a single entry.
+        const nm = name.value.trim();
+        if (!nm) { toast("give it a name — the paste doesn't include one", true); name.focus(); return; }
+        r = await post("/api/mcp", { scope: scope.value, name: nm, entry: entryFromText(text) });
+        if (r.ok) r.added = [nm];
+      }
+      if (r.ok) { toast("added " + (r.added || []).join(", ")); ta.value = ""; name.value = ""; onDone(); }
+      else toast(r.error || "failed", true);
+    } catch (e) { toast(e.message, true); } finally { add.disabled = false; }
+  });
+  const foot = el("div","foot");
+  const hint = el("div","hint");
+  hint.innerHTML = "Takes a whole <code>mcpServers</code> blob, one entry object, a command " +
+    "(<code>npx -y pkg</code>) or an <code>https://</code> URL. Comments and trailing commas are fine.";
+  foot.append(hint, add);
+  f.append(foot);
   return f;
 }
-function mcpForm(onDone) {
-  const f = el("div","addform");
-  const name = input("server name  ·  e.g. github");
-  const type = el("select","in"); type.innerHTML = '<option value="stdio">stdio · command</option><option value="http">http · url</option><option value="sse">sse · url</option>';
-  const scope = el("select","in"); scope.innerHTML = '<option value="global">global</option><option value="project">project</option>';
-  const cmd = input("command + args  ·  npx -y @modelcontextprotocol/server-github");
-  const url = input("https://server.example.com/mcp"); url.style.display = "none";
-  type.onchange = () => { const stdio = type.value === "stdio"; cmd.style.display = stdio?"":"none"; url.style.display = stdio?"none":""; };
-  const btn = el("button","btn","Add server");
-  btn.onclick = async () => {
-    if (!name.value.trim()) { toast("name required", true); return; }
-    let entry;
-    if (type.value === "stdio") { const p = cmd.value.trim().split(/\s+/); if (!p[0]) { toast("command required", true); return; } entry = { command: p[0], args: p.slice(1) }; }
-    else { if (!url.value.trim()) { toast("url required", true); return; } entry = { type: type.value, url: url.value.trim() }; }
-    btn.disabled = true;
-    try { const r = await post("/api/mcp", { scope: scope.value, name: name.value, entry });
-      if (r.ok) { toast("added " + name.value.trim()); onDone(); } else toast(r.error||"failed", true); }
-    catch(e){ toast(e.message, true); } finally { btn.disabled = false; }
-  };
-  const r1 = el("div","r"); r1.append(name, type, scope);
-  const r2 = el("div","r"); r2.append(cmd, url);
-  const foot = el("div","foot"); foot.append(btn);
-  f.append(r1, r2, foot);
-  return f;
+// Mirror of the server's quick-parse for the "needs a name" case.
+function entryFromText(s) {
+  s = s.trim();
+  if (s.startsWith("{")) { try { return JSON.parse(s); } catch (e) { return {}; } }
+  if (/^https?:\/\//.test(s)) return { type: s.replace(/\/$/,"").endsWith("/sse") ? "sse" : "http", url: s };
+  const p = s.split(/\s+/);
+  return { command: p[0], args: p.slice(1) };
 }
 let skillsReq = 0;
 async function loadSkills() {
@@ -1134,16 +1909,61 @@ async function loadSkills() {
   catch (e) { if (my !== skillsReq) return; pad.innerHTML = ""; pad.append(el("div","empty","Error: " + e.message)); return; }
   if (my !== skillsReq) return;
   pad.innerHTML = "";
+  const reload = () => loadSkills();
+  const total = sk.global.length + sk.project.length;
 
-  const skH = sectionHead("Skills", sk.global.length + sk.project.length, "New skill", false);
-  pad.append(skH.head);
-  pad.append(el("div","sec-note", "Reusable SKILL.md the agent pulls in on demand — global (every project) or project-only."));
-  const skf = skillForm(() => loadSkills()); wireToggle(skH.btn, skf, "New skill"); pad.append(skf);
-  [["global", sk.global, sk.global_dir], ["project", sk.project, sk.project_dir]].forEach(([scope, list, dir]) => {
-    const g = el("div","grp-label"); g.append(document.createTextNode(scope + " · " + list.length)); g.append(el("span", null, dir)); pad.append(g);
-    if (!list.length) pad.append(el("div","grp-empty", "no " + scope + " skills yet"));
-    else list.forEach(s => pad.append(skillItem(s, scope)));
+  const newG = btn("+ New global skill", "pri", () => openSkillEditor(null, "global", reload));
+  const newP = btn("+ project", "", () => openSkillEditor(null, "project", reload));
+  pageHead(pad, "skills", total,
+    "Playbooks the agent reads when a task matches — a deploy checklist, your review rules, " +
+    "how to talk to a flaky internal API. Global ones follow you everywhere; project ones " +
+    "live in the repo and travel with it.", [newP, newG]);
+  const always = [...sk.global, ...sk.project].filter(x => x.always_load).length;
+  signalPath(pad, [
+    { label: "session", state: "dim" },
+    { value: always, label: "always loaded",
+      title: "injected into every session's context" },
+    { value: total - always, label: "on demand", state: "dim",
+      title: "opened when the task matches" },
+    { value: sk.project.length, label: "from this repo", state: "dim" },
+  ]);
+
+  if (!total) {
+    pad.append(zero("No skills yet",
+      "Write down something you explain to the agent twice a week — the steps, the commands, " +
+      "the gotchas. It'll pull the file in the next time the task looks like that one."));
+    return;
+  }
+  const find = findBox("Filter skills — name, description, category…");
+  if (total > 5) pad.append(find.wrap);
+
+  [["global", sk.global, sk.global_dir, "global · every project"],
+   ["project", sk.project, sk.project_dir, "project · this repo"]].forEach(([scope, list, dir, label]) => {
+    const sec = section(pad, label, dir);
+    if (!list.length) { sec.append(zero("No " + scope + " skills",
+      "New ones land in " + dir + ".")); return; }
+    const box = el("div","list");
+    list.forEach(s => {
+      const tags = [];
+      if (s.always_load) tags.push({ text: "always", cls: "vio" });
+      if (s.category) tags.push({ text: s.category, cls: "" });
+      const del = btn("Delete", "gho dan", null);
+      del.onclick = () => armDelete(del, async () => {
+        try { const r = await post("/api/skill/delete", { scope, slug: s.slug });
+          if (r.ok) { toast("deleted " + s.name); reload(); } else toast(r.error||"failed", true); }
+        catch (e) { toast(e.message, true); }
+      });
+      const row = listRow({
+        name: s.name, sub: s.description || "(no description)", subSans: true, tags,
+        actions: [btn("Edit", "gho", () => openSkillEditor(s, scope, reload)), del],
+        build: (body) => skillDetail(s, scope, body, reload),
+      });
+      row.dataset.q = (s.name + " " + (s.description||"") + " " + (s.category||"")).toLowerCase();
+      box.append(row);
+    });
+    sec.append(box);
   });
+  wireFind(find.input, pad, "No skill matches that filter.");
 }
 let mcpReq = 0;
 async function loadMcp() {
@@ -1154,23 +1974,94 @@ async function loadMcp() {
   catch (e) { if (my !== mcpReq) return; pad.innerHTML = ""; pad.append(el("div","empty","Error: " + e.message)); return; }
   if (my !== mcpReq) return;
   pad.innerHTML = "";
+  const reload = () => loadMcp();
 
-  const mcH = sectionHead("MCP servers", mc.servers.length, "Add server", false);
-  pad.append(mcH.head);
-  pad.append(el("div","sec-note", "Model Context Protocol servers add tools to the agent. Global: ~/.mantis-agent/mcp.json · project: ./.mcp.json"));
-  const mcf = mcpForm(() => loadMcp()); wireToggle(mcH.btn, mcf, "Add server"); pad.append(mcf);
+  const composer = mcpComposer(reload);
+  const addBtn = btn("+ Add server", "pri", () => {
+    const on = composer.classList.toggle("on");
+    addBtn.textContent = on ? "Cancel" : "+ Add server";
+    addBtn.classList.toggle("pri", !on);
+    if (on) composer.querySelector("textarea").focus();
+  });
+  pageHead(pad, "mcp servers", mc.servers.length,
+    "Servers that hand the agent extra tools. Paste any <code>mcpServers</code> config to add one, " +
+    "expand a row to see exactly what it runs, and test it live before you rely on it.", [addBtn]);
+  const stdio = mc.servers.filter(s => s.transport === "stdio").length;
+  const held = (mc.withheld || []).length;
+  signalPath(pad, [
+    { label: "agent", state: "dim" },
+    { value: mc.servers.length, label: "server" + (mc.servers.length===1?"":"s") },
+    { value: stdio, label: "local", state: "dim",
+      title: stdio + " run a command on this machine" },
+    { value: mc.servers.length - stdio, label: "remote", state: "dim" },
+    held ? { value: held, label: "withheld", state: "warn", title: "untrusted .mcp.json" }
+         : { label: "all trusted", state: "dim" },
+  ]);
+  pad.append(composer);
+
+  // Project .mcp.json is attacker-controlled data — offer the trust gate here
+  // rather than making the user go find the terminal command.
+  if (mc.project_exists && !mc.project_trusted) {
+    const b = el("div","banner");
+    const txt = el("div","sp");
+    txt.innerHTML = "<b>This project's <code>.mcp.json</code> isn't trusted yet.</b> " +
+      "Its stdio servers won't start until you approve the file — they run local commands.";
+    b.append(txt);
+    b.append(btn("Trust this file", "", async () => {
+      try { const r = await post("/api/mcp/trust", {});
+        if (r.ok) { toast("trusted this project's .mcp.json"); reload(); } else toast(r.error||"failed", true); }
+      catch (e) { toast(e.message, true); }
+    }));
+    pad.append(b);
+  }
+
+  if (!mc.servers.length) {
+    pad.append(zero("No MCP servers configured",
+      "Add one to give the agent tools it doesn't ship with — GitHub, a database, your " +
+      "internal API. Paste a server's config blob straight from its README."));
+    return;
+  }
+
+  const find = findBox("Filter servers — name, command, url…");
+  if (mc.servers.length > 5) pad.append(find.wrap);
 
   const byScope = { global: [], project: [], settings: [] };
   mc.servers.forEach(sv => (byScope[sv.scope] || (byScope[sv.scope] = [])).push(sv));
   const files = { global: mc.global_file, project: mc.project_file, settings: "settings.json" };
+  const labels = { global: "global · every project", project: "project · this repo",
+                   settings: "settings.json · read-only here" };
   ["global","project","settings"].forEach(scope => {
     const list = byScope[scope] || [];
-    if (scope === "settings" && !list.length) return;  // only show settings group if used
-    const g = el("div","grp-label"); g.append(document.createTextNode(scope + " · " + list.length));
-    g.append(el("span", null, files[scope])); pad.append(g);
-    if (!list.length) pad.append(el("div","grp-empty", "no " + scope + " servers yet"));
-    else list.forEach(sv => pad.append(mcpItem(sv)));
+    if (!list.length && scope === "settings") return;
+    const sec = section(pad, labels[scope], files[scope]);
+    if (!list.length) { sec.append(zero("Nothing here yet", "Servers added with the “" + scope +
+      "” scope land in " + files[scope] + ".")); return; }
+    const box = el("div","list");
+    list.forEach(sv => {
+      const withheld = (mc.withheld || []).includes(sv.name);
+      const tags = [{ text: sv.transport, cls: sv.transport === "stdio" ? "" : "blu" }];
+      if (withheld) tags.push({ text: "needs trust", cls: "amb" });
+      const acts = [];
+      if (sv.editable) {
+        acts.push(btn("Edit", "gho", () => openMcpEditor(sv, reload)));
+        const del = btn("Delete", "gho dan", null);
+        del.onclick = () => armDelete(del, async () => {
+          try { const r = await post("/api/mcp/delete", { scope: sv.scope, name: sv.name });
+            if (r.ok) { toast("removed " + sv.name); reload(); } else toast(r.error||"failed", true); }
+          catch (e) { toast(e.message, true); }
+        });
+        acts.push(del);
+      }
+      const row = listRow({
+        name: sv.name, sub: sv.detail, dot: withheld ? "warn" : "ok", tags, actions: acts,
+        build: (body) => mcpDetail(sv, body, reload),
+      });
+      row.dataset.q = (sv.name + " " + sv.detail + " " + sv.transport + " " + sv.scope).toLowerCase();
+      box.append(row);
+    });
+    sec.append(box);
   });
+  wireFind(find.input, pad, "No server matches that filter.");
 }
 
 // ---- config ----
@@ -1189,9 +2080,21 @@ async function loadConfig() {
   const merged = c.merged || {};
   const keys = Object.keys(merged).sort();
 
-  pad.append(el("h2", null, "Effective config · merged"));
+  pageHead(pad, "config", keys.length,
+    "The settings mantis is actually running with, and which file each one came from. " +
+    "Secrets are redacted here.");
+  const lc = (src) => Object.keys((c.layers || {})[src] || {}).length;
+  signalPath(pad, [
+    { label: "defaults", state: "dim" },
+    { value: lc("user"), label: "user" },
+    { value: lc("project"), label: "project" },
+    { value: lc("local"), label: "local" },
+    { value: keys.length, label: "effective", state: "dim" },
+  ]);
   if (!keys.length) {
-    pad.append(el("div","note-sec", "No settings set — mantis runs on built-in defaults."));
+    pad.append(zero("Running on defaults",
+      "No settings files found — mantis is using its built-in defaults. Anything you set in " +
+      "settings.json will show up here with the layer it came from."));
   } else {
     const t = el("div","cfg");
     keys.forEach(k => {
@@ -1203,8 +2106,7 @@ async function loadConfig() {
     pad.append(t);
   }
 
-  pad.append(el("h2", null, "Layers"));
-  pad.append(el("div","note-sec", "Later layers override earlier ones: user → project → local."));
+  const laySec = section(pad, "Layers · later overrides earlier");
   ["user","project","local"].forEach(src => {
     const layer = (c.layers||{})[src] || {};
     const d = el("details","layer");
@@ -1212,7 +2114,7 @@ async function loadConfig() {
     d.append(el("summary", null, src + "  ·  " + n + " setting" + (n===1?"":"s")));
     if ((c.paths||{})[src]) d.append(el("div","layerpath", (c.paths)[src]));
     d.append(el("pre", null, JSON.stringify(layer, null, 2)));
-    pad.append(d);
+    laySec.append(d);
   });
 }
 

@@ -7,6 +7,14 @@ TUI announces it and injects the result as context so the model learns the
 outcome on its next turn. This is Claude Code's background-task pattern:
 "stuff that would normally time out" runs here instead.
 
+Jobs come in two shapes, distinguished by ``kind``. Most are *one-shot*: they
+run, finish, and fire ``on_event`` exactly once. A ``watch`` job (see
+``mantis_agent.watch``) is *streaming*: it stays alive and pushes many events
+through ``on_stream`` before its single terminal ``on_event``. The two callbacks
+are deliberately separate — Claude Code makes the same split, and for the same
+reason: only the terminal notification carries a status, so a mid-stream event
+can never be mistaken for the job closing.
+
 Pure asyncio, no threads: jobs share the TUI's event loop (and the parent's
 HTTP pool via the subagent machinery). One manager per session; the TUI owns
 it and cancels leftovers on exit.
@@ -39,6 +47,7 @@ class Job:
     task: Any = None                 # the asyncio.Task
     tool_count: int = 0
     turn_count: int = 0
+    stream_count: int = 0            # notifications pushed mid-run (watch jobs)
     last_event: str = "starting"
     last_tool: str = ""
     events: Any = field(default_factory=lambda: deque(maxlen=40))
@@ -65,11 +74,14 @@ class JobManager:
     """Owns the session's background jobs.
 
     ``on_event(job)`` fires exactly once per job, on any terminal state —
-    the UI hook for announcements + context injection. Callback errors are
-    swallowed; a broken notifier must never kill the job result."""
+    the UI hook for announcements + context injection. ``on_stream(job, text)``
+    fires zero-or-more times *before* that, for jobs that push events as they
+    run (watches). Callback errors are swallowed; a broken notifier must never
+    kill the job result."""
 
-    def __init__(self, on_event: Any = None) -> None:
+    def __init__(self, on_event: Any = None, on_stream: Any = None) -> None:
         self.on_event = on_event
+        self.on_stream = on_stream
         self.jobs: dict[int, Job] = {}
         self._counter = itertools.count(1)
 
@@ -89,9 +101,33 @@ class JobManager:
         except Exception:  # noqa: BLE001
             pass
 
+    async def emit(self, job: Job, text: str) -> None:
+        """Push a mid-run event from ``job`` to the UI.
+
+        Used by streaming jobs (watches) for each batch of output. The event is
+        recorded on the job — so ``/job <id>`` shows recent activity even for a
+        session that has scrolled past the notification — and handed to
+        ``on_stream``. Deliberately carries no status: this is a progress ping,
+        not a terminal state, and must never be read as the job finishing."""
+        job.stream_count += 1
+        job.record_event(text)
+        cb = self.on_stream
+        if cb is None:
+            return
+        try:
+            res = cb(job, text)
+            if inspect.isawaitable(res):
+                await res
+        except Exception:  # noqa: BLE001 — a broken notifier must not end the stream
+            pass
+
     def spawn(self, coro: Any, *, desc: str, kind: str = "task",
-              max_runtime_s: float = _MAX_RUNTIME_S) -> Job:
-        """Detach ``coro`` as a job. Returns the Job (id assigned) immediately."""
+              max_runtime_s: float | None = _MAX_RUNTIME_S) -> Job:
+        """Detach ``coro`` as a job. Returns the Job (id assigned) immediately.
+
+        ``max_runtime_s=None`` disables the backstop — only for jobs whose whole
+        point is to outlive it (a ``persistent`` watch), which instead end with
+        the session via :meth:`cancel_all`."""
         job = Job(id=next(self._counter), desc=desc, kind=kind)
         self.jobs[job.id] = job
         self._prune()
@@ -104,7 +140,8 @@ class JobManager:
                 job.record_event("done", update_last=False)
             except TimeoutError:
                 job.status = "timeout"
-                job.result = f"(job exceeded {max_runtime_s / 60:.0f} min and was stopped)"
+                mins = (max_runtime_s or _MAX_RUNTIME_S) / 60
+                job.result = f"(job exceeded {mins:.0f} min and was stopped)"
                 job.record_event("timeout", update_last=False)
             except asyncio.CancelledError:
                 job.status, job.result = "cancelled", "(cancelled)"

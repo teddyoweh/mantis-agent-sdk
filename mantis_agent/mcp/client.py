@@ -19,10 +19,9 @@ incoming message is one of:
 * a *response* to a request we sent (``id`` matches an entry in
   ``_pending``) — we stash the response and signal the awaiting task via
   an ``anyio.Event``.
-* a *notification* from the server (no ``id``) — handled inline. v0
-  drops everything except ``notifications/cancelled``; future work hooks
-  ``notifications/progress`` and ``notifications/message`` into the agent's
-  hook system.
+* a *notification* from the server (no ``id``) — routed to an optional
+  ``notification_handler``. Progress and logging notifications can therefore
+  update a UI while a long-running tool call is still in flight.
 * a *request* from the server (``id`` + ``method``) — currently we
   recognize ``elicitation/create`` and route it to the client-supplied
   ``elicitation_handler``. Any other server-initiated method gets a
@@ -39,6 +38,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import anyio
@@ -92,6 +92,8 @@ _MAX_LIST_PAGES = 1000
 # handlers complete, spawning unbounded handler tasks and exhausting memory.
 # Requests beyond the cap are rejected with -32603 instead of queued.
 _MAX_INFLIGHT_SERVER_REQUESTS = 16
+
+NotificationHandler = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +163,7 @@ class MCPClient:
         "server_capabilities",
         "elicitation_handler",
         "sampling_handler",
+        "notification_handler",
         "request_timeout_s",
         "_transport",
         "_id_counter",
@@ -178,6 +181,7 @@ class MCPClient:
         server_id: str | None = None,
         elicitation_handler: ElicitationHandler | None = None,
         sampling_handler: SamplingHandler | None = None,
+        notification_handler: NotificationHandler | None = None,
         request_timeout_s: float | None = 60.0,
     ) -> None:
         self.config = config
@@ -196,6 +200,10 @@ class MCPClient:
         # registered rule as elicitation: a polite server won't ask
         # unless we said we could answer.
         self.sampling_handler: SamplingHandler | None = sampling_handler
+        # Optional sink for server notifications such as progress and logging.
+        # It runs in the client task group so a slow UI callback never blocks
+        # response dispatch in the transport read loop.
+        self.notification_handler = notification_handler
         # Cap on how long ONE request may wait for its response — covers the
         # initialize handshake, tools/list, and every tools/call. ``None`` waits
         # forever (pre-existing behavior). Scoped around the response event only,
@@ -232,16 +240,24 @@ class MCPClient:
             pending.error = TransportClosed("MCP client closing")
             pending.event.set()
         self._pending.clear()
-        if self._transport is not None:
-            try:
-                await self._transport.close()
-            except Exception:  # noqa: BLE001 — best-effort
-                pass
+        # Unwind in reverse order of __aenter__: the transport's task group was
+        # entered FIRST (inside _open_transport) and ours second, so ours has to
+        # exit first. Closing the transport before exiting our own group tears
+        # scopes down out of order — anyio raises "attempted to exit a cancel
+        # scope that isn't the current task's", we swallow it, and the calling
+        # task is left with a live cancelled scope that cancels every await it
+        # makes afterwards (which is how one unreachable MCP server used to
+        # take the next one down with it).
         if self._task_group is not None:
             try:
                 self._task_group.cancel_scope.cancel()
                 await self._task_group.__aexit__(None, None, None)
             except Exception:  # noqa: BLE001
+                pass
+        if self._transport is not None:
+            try:
+                await self._transport.close()
+            except Exception:  # noqa: BLE001 — best-effort
                 pass
 
     # -- public API ---------------------------------------------------------
@@ -585,12 +601,26 @@ class MCPClient:
             self._inflight_server_requests += 1
             self._task_group.start_soon(self._handle_server_request, message)
             return
-        # Server-initiated NOTIFICATION (no id, has method). v0: log and
-        # ignore everything except notifications/cancelled, which the
-        # spec lets either side send. Future hook integration goes here.
-        if method == "notifications/cancelled":
+        # Server-initiated NOTIFICATION (no id, has method). Dispatch it away
+        # from the read loop: handlers may redraw a terminal or write logs, but
+        # responses to in-flight requests must continue to be correlated.
+        params = message.get("params")
+        if self.notification_handler is not None and self._task_group is not None:
+            self._task_group.start_soon(
+                self._handle_notification,
+                str(method),
+                params if isinstance(params, dict) else {},
+            )
             return
-        _log.debug("mcp: dropping server notification %r", method)
+        if method != "notifications/cancelled":
+            _log.debug("mcp: dropping server notification %r", method)
+
+    async def _handle_notification(self, method: str, params: dict[str, Any]) -> None:
+        try:
+            assert self.notification_handler is not None
+            await self.notification_handler(method, params)
+        except Exception as exc:  # noqa: BLE001 — notifications cannot kill the client
+            _log.warning("mcp: notification handler raised for %r: %r", method, exc)
 
     async def _handle_server_request(self, message: dict[str, Any]) -> None:
         """Dispatch a server-initiated request to the right handler.

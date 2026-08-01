@@ -110,6 +110,25 @@ path.
 | `/loop 5m <prompt>` | re-run a prompt on an interval, never overlapping a running turn |
 | `/jobs` | background jobs — the model detaches long work with `task(run_in_background=true)`; you get a notification and the result auto-injects into context. `/jobs kill <id>` |
 
+The model has two ways to keep an eye on something itself:
+
+- **`monitor`** waits for *one* condition and returns — a port opening, a file
+  appearing, a log line matching, a background shell exiting. Blocking, one
+  answer.
+- **`watch`** streams: it starts a long-running script and **every stdout line
+  becomes a notification** in the conversation, so the agent reacts to a failing
+  test or a new log error without being asked to go look. Lines printed within
+  200ms coalesce into one message (a traceback stays one event), stderr goes to
+  a log file without notifying, and a watch that fires too fast is stopped
+  rather than allowed to flood the context. `persistent=true` runs it for the
+  whole session. It shows up in `/jobs` with a `◈` glyph and an event count;
+  stop it with `/jobs kill <id>`.
+
+```
+watch(command="tail -f dev.log | grep --line-buffered -E 'ERROR|Traceback'",
+      description="errors in dev.log", persistent=true)
+```
+
 ## Sessions
 
 - `/resume` opens an arrow-key picker (titles auto-generated after the first

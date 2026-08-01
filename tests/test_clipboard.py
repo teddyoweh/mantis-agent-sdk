@@ -10,7 +10,9 @@ import pytest
 
 from mantis_agent.clipboard import (
     _detect_media_type,
+    describe_clipboard_attachment,
     file_to_blocks,
+    find_image_paths,
     has_clipboard_image,
     is_image_path,
     looks_like_path,
@@ -77,3 +79,35 @@ def test_looks_like_path(tmp_path):
 def test_has_clipboard_image_never_raises():
     # Must degrade to False, not explode, when clipboard tools are missing.
     assert isinstance(has_clipboard_image(), bool)
+
+
+def test_find_image_paths_mid_sentence(tmp_path):
+    """A dragged screenshot lands in the middle of a sentence, not alone."""
+    f = tmp_path / "shot.png"
+    f.write_bytes(_PNG)
+    found = find_image_paths(f"what's wrong with {f} here?")
+    assert found == [(str(f), str(f))]
+
+
+def test_find_image_paths_handles_escaped_spaces(tmp_path):
+    f = tmp_path / "my shot.png"
+    f.write_bytes(_PNG)
+    escaped = str(f).replace(" ", "\\ ")
+    found = find_image_paths(f"look at {escaped} please")
+    assert found and found[0][1] == str(f)
+
+
+def test_find_image_paths_ignores_non_images(tmp_path):
+    """"read /etc/hosts" must not silently inline the file — that's a tool's job."""
+    f = tmp_path / "notes.txt"
+    f.write_text("hi")
+    assert find_image_paths(f"read {f}") == []
+
+
+def test_find_image_paths_ignores_missing_files():
+    assert find_image_paths("see /nope/missing.png") == []
+
+
+def test_describe_clipboard_attachment_never_raises():
+    out = describe_clipboard_attachment()
+    assert out is None or isinstance(out, str)

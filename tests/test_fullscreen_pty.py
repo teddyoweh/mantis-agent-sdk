@@ -5,12 +5,15 @@ run_fullscreen and can't be unit-called)."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 import pty
 import select
 import signal
+import struct
 import subprocess
 import sys
+import termios
 import time
 
 import pytest
@@ -33,6 +36,11 @@ class Term:
         if env_extra:
             env.update(env_extra)
         self.master, slave = pty.openpty()
+        # Give the pty the same window size we advertise in COLUMNS/LINES. A
+        # bare openpty() is 80x24, so without this the app lays out for 100x30
+        # and the terminal wraps every wide panel — a tall overlay then renders
+        # past the bottom of the real screen and its last rows never appear.
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "mantis_agent.tui",
              "--model", "gpt-5.4", "--backend", "http://127.0.0.1:9", "--api-key", "k"],
@@ -131,6 +139,76 @@ def term_with_agents(tmp_path):
     t.close()
 
 
+@pytest.fixture()
+def term_with_mcp(tmp_path):
+    """A mantis process whose user-level mcp.json already holds two servers —
+    one stdio, one remote with a credential — so /mcp has something to inspect.
+    ``echo`` is a real binary that immediately fails the MCP handshake, which
+    is exactly the failed-server row we want rendered."""
+    import json
+
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "mcp.json").write_text(json.dumps({"mcpServers": {
+        "alpha": {"command": "echo", "args": ["-y", "alpha-mcp-server"]},
+        "beta": {"type": "http", "url": "http://127.0.0.1:9/mcp",   # refused, fast
+                 "headers": {"Authorization": "Bearer tok-plaintext-123"}},
+    }}), encoding="utf-8")
+    t = Term(str(home), str(tmp_path))
+    yield t
+    if t.proc.poll() is None:
+        t.proc.kill()
+    t.close()
+
+
+def test_mcp_view_inspects_config_masks_secrets_and_adds_json(
+    term_with_mcp, tmp_path
+) -> None:
+    """One session over the whole /mcp surface, because booting a pty app is the
+    expensive part: the list, the detail card (real config + raw JSON, secrets
+    masked until 's'), esc unwinding a layer at a time, and the add flow taking
+    a pasted {"mcpServers": …} blob straight into the user config."""
+    import json
+
+    term = term_with_mcp
+    term.ready()
+    term.expect("mcp:", timeout=40.0)          # boot connect settled
+    term.send("/mcp\r")
+    term.expect("MCP servers")                 # list header with counts
+    # Sync on the list FOOTER, not on a server name: "alpha"/"beta" are already
+    # in the buffer from the boot summary, so expecting those would race ahead
+    # of the overlay's first paint and send Enter into the bare prompt.
+    term.expect("enter inspect")
+    term.pump(0.4)
+    term.send("\r")                            # Enter — inspect the first row
+    term.expect("transport")                   # detail card fields
+    term.expect("config json")                 # raw entry, as configured
+    term.expect("masked")                      # credentials hidden by default
+    term.esc()                                 # esc — back to the list
+    term.expect("enter inspect")               # list footer hint again
+    term.send("\x1b[B")                        # ↓ to the remote server
+    term.pump(0.4)
+    term.send("\r")
+    term.expect("Authorization")               # header key shown…
+    term.expect("••••")                        # …value is not
+    term.send("s")                             # reveal
+    term.expect("tok-plaintext-123")
+    term.esc()                                 # card → list
+    term.expect("enter inspect")
+    term.send("a")                             # add flow: one paste field
+    term.expect("enter confirm")               # add-mode footer (the row's own
+                                               # "paste JSON…" tip is always up)
+    term.send('{"mcpServers":{"gamma":{"command":"echo","args":["gamma"]}}}')
+    term.send("\r")
+    term.expect("added gamma", timeout=60.0)   # announced after the reconnect
+    saved = json.loads((tmp_path / "home" / "mcp.json").read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["gamma"] == {"command": "echo", "args": ["gamma"]}
+    assert set(saved["mcpServers"]) == {"alpha", "beta", "gamma"}  # existing kept
+    term.esc()                                 # overlay closed
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
 def test_down_arrow_enters_live_subagent_inspector(term_with_agents) -> None:
     """↓ enters the inspector list; Enter drills into a focused detail view;
     ← goes back to the list; esc closes."""
@@ -163,7 +241,7 @@ def test_boots_help_status_and_exits(term) -> None:
 def test_model_picker_opens_and_escapes(term) -> None:
     term.ready()
     term.send("/models\r")
-    term.expect("Select a model")             # picker overlay up
+    term.expect("select a model")             # picker overlay up (framed title)
     term.esc()                                # esc closes it
     term.send("/agents\r")
     term.expect("general-purpose")            # agent types render
@@ -182,7 +260,7 @@ def test_workflows_overlay_opens_navigates_and_escapes(term) -> None:
     term.expect("no active workflows yet")     # still up, nothing crashed
     term.esc()                                 # esc closes the overlay
     term.send("/models\r")                     # app still interactive afterward
-    term.expect("Select a model")              # picker header up again
+    term.expect("select a model")              # picker header up again
     term.esc()
     term.send("/exit\r")
     assert term.close() == 0
@@ -218,3 +296,30 @@ def test_crash_recovery_hint_appears(tmp_path) -> None:
     t2.ready()
     t2.send("/exit\r")
     assert t2.close() == 0
+
+
+def test_paste_command_stages_an_image(tmp_path) -> None:
+    """`/paste <path>` attaches without touching the system clipboard, and the
+    staged-attachment line appears above the prompt so it's obvious the image
+    will actually be sent."""
+    import base64
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+        "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+    # The clipboard hint polls the real OS clipboard; keep it out of the test so
+    # a developer's copied screenshot can't change what's on screen.
+    t = Term(str(tmp_path / "home"), str(tmp_path),
+             env_extra={"MANTIS_NO_CLIPBOARD_HINT": "1"})
+    try:
+        t.ready()
+        t.send(f"/paste {png}\r")
+        t.expect("sends with your next message")
+        t.expect("1 image attached")
+        t.send("/exit\r")
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()

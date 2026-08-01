@@ -23,6 +23,7 @@ from __future__ import annotations
 import base64
 import os
 import platform
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -74,7 +75,13 @@ def has_clipboard_image() -> bool:
     system = platform.system()
     try:
         if system == "Darwin":
-            return _run(["osascript", "-e", "the clipboard as «class PNGf»"]).returncode == 0
+            # ``clipboard info for «class PNGf»`` reports the flavor WITHOUT
+            # decoding it; ``the clipboard as «class PNGf»`` converts the whole
+            # image (~130ms for a screenshot vs ~50ms). The UI polls this on a
+            # timer to show the paste hint, so the cheap form matters. Empty
+            # stdout — not a non-zero exit — is how "no image" comes back.
+            r = _run(["osascript", "-e", "clipboard info for «class PNGf»"])
+            return r.returncode == 0 and b"PNGf" in r.stdout
         if system == "Linux":
             r = _run(["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"])
             if r.returncode == 0 and b"image/" in r.stdout:
@@ -142,6 +149,27 @@ def grab_clipboard_image() -> ImageBlock | None:
             pass
 
 
+def describe_clipboard_attachment() -> str | None:
+    """A short label for whatever attachable thing is on the clipboard, or
+    ``None``. Drives the "Image in clipboard · ctrl+v to paste" hint — without
+    it, Ctrl+V is undiscoverable: on macOS ⌘V can't carry an image into a
+    terminal, so a user who copies a screenshot has no way to learn the app
+    would happily take it.
+
+    Kept cheap on purpose (probe only, never decodes) — the UI polls it."""
+
+    try:
+        if has_clipboard_image():
+            return "Image"
+        path = grab_clipboard_file_path()
+        if path:
+            name = Path(path).name
+            return name if len(name) <= 40 else name[:37] + "…"
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    return None
+
+
 def grab_clipboard_file_path() -> str | None:
     """If the clipboard holds a file reference (a copied/dragged file), return
     its path (macOS only via ``«class furl»``)."""
@@ -183,6 +211,33 @@ def file_to_blocks(path: str | Path) -> list:
     text = raw.decode("utf-8", "replace")
     note = "" if len(raw) < _MAX_TEXT_BYTES else "\n… [truncated]"
     return [TextBlock(text=f"[Attached file: {p}]\n```\n{text}{note}\n```")]
+
+
+# A filesystem path as a terminal hands it over: absolute, ~-relative or
+# ./-relative, with drag-and-drop's backslash-escaped spaces allowed.
+_PATH_TOKEN_RE = re.compile(r"(?:~|\.{1,2})?/(?:\\.|[^\s])+")
+
+
+def find_image_paths(text: str) -> list[tuple[str, str]]:
+    """Find image-file paths embedded ANYWHERE in ``text`` — returns
+    ``(matched_token, resolved_path)`` pairs.
+
+    Dragging a screenshot into the terminal drops its path into the middle of a
+    sentence ("what's wrong with /tmp/shot.png here"), which a whole-line path
+    check misses entirely. Deliberately limited to IMAGES: inlining every
+    mentioned file would hijack ordinary references like "read /etc/hosts",
+    which the agent should open with a tool instead."""
+
+    out: list[tuple[str, str]] = []
+    for m in _PATH_TOKEN_RE.finditer(text):
+        token = m.group(0)
+        cleaned = token.replace("\\ ", " ").strip("'\"")
+        if not is_image_path(cleaned):
+            continue
+        p = Path(cleaned).expanduser()
+        if p.is_file():
+            out.append((token, str(p)))
+    return out
 
 
 def looks_like_path(text: str) -> str | None:

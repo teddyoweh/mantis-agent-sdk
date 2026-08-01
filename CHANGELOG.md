@@ -6,6 +6,231 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [2.60.0] - 2026-08-01
+
+### Added
+
+- **Image attachment is discoverable.** Ctrl+V has staged images for a while,
+  but nothing ever said so — and on macOS ⌘V physically cannot carry an image
+  into a terminal, so anyone with a screenshot copied had no way to find out
+  the app would take it. A line above the prompt now offers
+  `Image in clipboard · ctrl+v to paste` whenever the clipboard holds one, and
+  once attached it becomes `◫ 1 image attached · sends with your next message`
+  (with a `⚠ <model> can't see images` tail when the current model is
+  text-only). Polled off the event loop in a worker thread, repainting only on
+  change; set `MANTIS_NO_CLIPBOARD_HINT=1` to switch it off.
+
+- **`/paste`** — stages the clipboard attachment without Ctrl+V (plenty of
+  terminals bind it to their own paste), and `/paste <path>` attaches a file
+  directly.
+
+- **Dragged image paths attach from mid-sentence.** "what's wrong with
+  /tmp/shot.png here?" now sends the image; previously only a message that was
+  *nothing but* a path attached anything, so the model answered blind.
+  Deliberately images-only — "read /etc/hosts" still means read it with a tool.
+
+- `ImageBlock` is exported from the package root, alongside the other content
+  block types.
+
+
+- **`watch` — streaming background monitors.** The push counterpart to
+  `bash(run_in_background=True)`: a long-running script whose every stdout line
+  arrives in the conversation as a notification, so the agent learns about a
+  failing test, a new PR comment, or a file change without remembering to go
+  look. Ports Claude Code's Monitor tool, including the non-obvious parts —
+  lines printed within 200ms coalesce into one notification (a traceback stays
+  one message); stream events deliberately carry **no** terminal status, so a
+  progress ping can never be mistaken for the job closing; stdout is the event
+  stream while stderr goes to a log file without notifying; a watch that emits
+  too fast is stopped rather than allowed to flood the context; and
+  `persistent=true` opts out of the timeout for session-length watches. Stop one
+  with `watch_stop(job_id=N)` or `/jobs kill N`. Named `watch` because mantis's
+  existing `monitor` already covers the *wait for one condition* case that
+  Claude's Monitor docs send elsewhere — the two are complementary.
+  `JobManager` grew an `on_stream` callback and `Job.stream_count` to carry it;
+  `/jobs` and `/job` show watches with a distinct `◈` glyph and an event count.
+
+- **Click-to-switch models on the dashboard.** The `mantis serve` Models page is
+  no longer read-only — every model chip (in provider cards and in the new browse
+  list) is clickable and switches the current model via `POST /api/use`, wiring
+  the provider's backend so routing stays correct. Recent-model chips are
+  clickable too. Clicking a locked provider's model reveals + focuses that
+  provider's key field.
+- **Unified "any model" search (both surfaces).** A single fuzzy search across
+  every model / provider / self-host in one flat, scannable list — in the TUI
+  model picker (type to collapse the grouped view into a ranked "matches" list
+  tagged by provider) and on the dashboard (a "Browse all models" search box over
+  all providers).
+- **Self-host from inside the TUI picker.** A pinned `＋ self-host / custom
+  endpoint…` row (and a `self-host` tab) in `/models` pre-fills `/connect` so
+  bringing your own OpenAI-compatible endpoint never means leaving the picker.
+- **Recent models in the TUI picker.** An `↻ recent` group at the top of
+  `/models` for one-keystroke re-selection.
+- **Open-weight models are actually free now — one-keystroke in-TUI pull.**
+  The picker's "open" tab no longer dead-ends in a provider key lock: a model
+  already installed in Ollama switches instantly (`● local · free`); a
+  pullable one shows `↓ pull <tag>` and **Enter downloads it right there** —
+  streamed progress from Ollama's `/api/pull` rendered as a live progress bar
+  under the prompt (`↓ pulling qwen3 ████░░ 68% · 185 MB / 271 MB · esc
+  cancels`), prompt stays usable, auto-switches when done, esc cancels
+  (re-pull resumes). No key, no shelling out, no leaving the TUI. Models
+  without a curated tag offer the `/connect` self-host path. Actionable
+  errors (too-old Ollama → update hint; unknown tag → library pointer).
+  Curated model→Ollama-tag map (gpt-oss, deepseek, qwen3, kimi-k2, llama,
+  mistral, gemma, phi…); `/pull <tag>` also works as a command in both TUIs.
+
+- **`mantis serve` redesigned as an instrument panel.** The dashboard was a
+  tidy admin page; it's now built out of the product's own materials. A left
+  rail replaces the tab strip and always shows what the agent is wired to
+  (model, how it's reached, providers / servers / skills / sessions), with
+  `1`–`6` jumping between pages. Monospace is the display face — this
+  product's proper nouns are `mcp.json` and `claude-opus-5` — and every page
+  opens with a **signal path**: a live wiring diagram (`agent ──▶ 4 servers
+  ──▶ 3 local ──▶ 1 withheld`) whose nodes carry real state. No hairline
+  borders anywhere: surfaces are layered instead. Everything enumerable —
+  servers, skills, providers — is the same expand-in-place row.
+- **MCP page: an inspector that proves itself.** Rows expand into the server's
+  real configuration (command, args, env keys, url, headers, extra fields, and
+  the raw JSON entry as it sits on disk) with credentials masked and a
+  **Reveal secrets** toggle. **Test connection** runs an actual handshake and
+  lists the tools that came back, with latency. **Edit** opens the entry as
+  JSON. Adding takes a whole `{"mcpServers": …}` blob, one entry object, a
+  command, or a URL in a single field. An untrusted project `.mcp.json` gets a
+  banner with one-click **Trust this file**.
+- **Models page: a comparison and a setup flow, not a list.** Every model now
+  shows its context window and whether it supports native tools, reasoning
+  effort, or visible thinking — read from the SDK's own capability table —
+  with filter chips (all / ready to use / needs a key), `/` to focus the
+  filter, and arrow-key selection. **Test this route** proves the current
+  wiring end to end. Providers became a setup task with a progress bar
+  (`2 of 12 connected`), each vendor's real logo (inlined in the wheel — a
+  local dashboard shouldn't tell twelve CDNs which providers you're looking
+  at, and the page has to work offline), a one-click **Add key** that opens
+  the field, and a per-provider reachability check. A provider that already
+  has a key shows the masked key and where it came from, with **Replace** as
+  an opt-in rather than a paste box in your face.
+- **Activity page rebuilt.** Six overlapping panels became one composition:
+  the **trace** (26 weeks of daily volume as a raw envelope under a 7-day mean,
+  peak annotated, drawn on load), a read-out strip, a **punchcard** of
+  weekday × hour (the joint distribution, so "Sunday night" is finally
+  answerable), a tool-mix spectrum, and a project ledger.
+- **Skills page** gained search and a real editor — name, description,
+  category, always-load, body — writing the same `SKILL.md` the agent reads.
+- New endpoints behind all of this: `GET /api/mcp/entry`,
+  `POST /api/mcp/paste|test|trust`, `POST /api/model/test`, plus a
+  `punchcard` and per-model capability info in the existing payloads.
+- **`/mcp` is a full MCP inspector.** The fullscreen view went from a status
+  list to a two-level browser: a clean table of every configured server (status
+  dot, transport, origin, live tool count / error text), and — on Enter — a
+  detail card showing that server's *actual* configuration: command, args,
+  env keys, url, headers, any extra fields, the connected tool names, warnings,
+  errors, which file defines it, and the raw JSON entry as it sits on disk
+  (scrollable when it's long). Credentials — env values, header values,
+  `?apiKey=` URL params, `--api-key` argv values — are masked by default;
+  `s` reveals them for the current view.
+- **`/mcp` takes JSON.** `a` opens one paste field that accepts whatever's on
+  your clipboard: a full `{"mcpServers": {…}}` blob (adds all of them at once),
+  a bare `{name: entry}` map, a single entry object, `claude mcp add-json`'s
+  named shape, a shell command, or a URL — comments and trailing commas
+  tolerated. `e` edits the selected server's entry as JSON, prefilled from
+  disk. `x` removes, `t` trusts a project `.mcp.json`, `r` reconnects
+  everything. Parse failures explain themselves instead of saying "couldn't
+  parse that". Writes still go only to `~/.mantis-agent/mcp.json`; project- and
+  settings-defined servers are read-only and say which file to edit.
+
+### Changed
+
+- **Working status moved above the input.** The spinner line (`✻ Mulling… (34s
+  · esc to interrupt)`), the retry note, and the live task checklist now render
+  *above* the prompt (with a blank line of breathing room), like Claude Code —
+  the reply streams in right over them and the input stays anchored at the
+  bottom. The footer below the prompt now always shows mode · model · knobs,
+  even mid-turn. Transcript spacing switched to leading separators — same
+  rhythm mid-turn, but a turn now ends tight against the input rule (one
+  blank, not two).
+- **Model picker + Models page visual refresh** ("any model, any provider, any
+  self-host"). TUI picker: redrawn as a framed panel — title/current model in
+  the top border, nav hints + a live scroll indicator ("12 more ↓") in the
+  bottom border, width-capped table-aligned rows with a right-aligned "how it
+  runs" column (`● local · free` / `↓ pull <tag>` / `self-host` / `needs key`
+  / context window / `● now`), a clamped tab bar that collapses overflow into
+  "+N →", and single-cell glyphs throughout (no emoji width drift). Dashboard:
+  a hero banner, the self-host form presented as a first-class card, and
+  clearer hosting state — all within the existing design system.
+
+### Fixed
+
+- **The macOS clipboard probe no longer decodes the image.** It ran
+  `the clipboard as «class PNGf»`, converting the entire screenshot just to
+  answer yes/no (~130ms); `clipboard info for «class PNGf»` reports the flavor
+  without decoding (~50ms), which is what makes polling it affordable.
+
+- **More vision models recognized.** The paste-time warning missed Grok, Llama
+  4, InternVL, GLM-4V, Phi-4-multimodal, o1 and gpt-4-turbo, so attaching to a
+  perfectly capable model claimed it couldn't see.
+
+- **Images no longer blow past auto-compaction.** The token estimator scored
+  every `ImageBlock` as **zero**, so a screenshot-heavy run — browser
+  automation, repeated `Read` of a PNG — could carry millions of base64
+  characters while the estimator still reported plenty of headroom. Neither
+  microcompaction nor full compaction ever fired, and the turn died on a
+  provider context-overflow error. Images are now estimated from the payload
+  actually shipped (base64 length, or a ~1600-token floor for remote URLs).
+
+- **Structured tool results are compactable.** Microcompaction only cleared
+  tool results whose content was a *string*, so the list-shaped results that
+  image-returning tools produce were skipped no matter how old or how large.
+  It now clears structured results and bare `ImageBlock`s too, keeping
+  `tool_use_id` intact so the tool pair still matches.
+
+- **An overflowed session can recover instead of wedging.** Both compaction
+  paths deliberately protect the recent window — exactly where a sudden
+  oversized turn lands — so after a real overflow the retry re-sent the same
+  rejected prompt, and every following message (including a manual `/compact`)
+  hit the same wall. Emergency compaction now escalates to
+  `SimpleCompactor.emergency_clear`, dropping heavy payloads in the recent
+  window as well, keeping only the newest tool result. A degraded run beats a
+  dead one.
+
+- **The summarizer prompt can't overflow on its own.** A transcript large
+  enough to need compaction could exceed the window it had to be summarized
+  *in*; the call failed, `compact` swallowed the exception, and compaction
+  silently no-opped precisely when it mattered. The prompt is now bounded per
+  message and in total, eliding the middle, and never renders base64.
+
+
+- **Dashboard details that were quietly wrong.** Primary buttons rendered
+  near-black text on the dark-green light-mode accent (unreadable); the
+  "when you work" dial showed `-1:00` as the peak hour with no data; the
+  Activity page drew a full grid of empty charts on a fresh install instead of
+  saying there's nothing recorded yet; a modal survived a tab switch; and
+  absolute home paths (`/Users/you/…`) are shortened to `~/…` so a screenshot
+  of the page doesn't broadcast your account name.
+- **One broken MCP server no longer takes down the ones behind it.** A server
+  that died around the handshake (a command that exits instantly, a URL with
+  nothing listening) tore down its client's task group — whose host task was
+  the connect loop itself — so the cancellation sailed past `except Exception`
+  and silently aborted every server queued after it: no tools, no errors, no
+  status rows, and `/mcp` stuck on "connecting…". Root cause was
+  `MCPClient.close()` unwinding its scopes in the wrong order (transport before
+  its own task group), leaving the caller with a live cancelled scope that
+  cancelled everything it did next. Close order is fixed, `connect_all()`
+  isolates per-server failures for real, and `MCPManager.aclose()` is safe
+  against two teardowns overlapping.
+- **Quitting with MCP servers configured no longer prints a traceback.** A
+  server that dies during (or after) the handshake cancels the client's task
+  group, and that cancellation escaped teardown as an `asyncio.CancelledError`
+  splattered over the shell — with a non-zero exit code. The stdio transport
+  now shields its stdin close like it already shielded process waits, and
+  `MCPManager.stop()` is bounded (15s, 5s on an in-session reload) and total:
+  it always closes what connected, and never raises.
+- **A wrong MCP URL fails in seconds, not a minute.** The MCP HTTP/SSE
+  transports were using the model-API HTTP client (10s connect × four
+  backed-off retries), so one unreachable server stalled startup — and any
+  `/mcp` mutation behind it — for ~40s. They now connect fast and fail fast
+  (5s connect, no retries), keeping the generous read budget a live streaming
+  session needs.
+
 ## [2.59.0] - 2026-07-14
 
 ### Added

@@ -427,6 +427,13 @@ _EXPLORE_SYSTEM = (
     "stop), 'medium' (confirm across the obvious files), or 'very thorough' "
     "(trace every relevant path and edge). Default to medium.\n"
     "\n"
+    "'Not found' is a claim you must EARN. Before reporting something doesn't "
+    "exist, try at least three angles: alternate names and casing, the "
+    "abbreviated/plural form, and a content grep for a distinctive substring "
+    "rather than the symbol name. Coming back empty-handed after one search is a "
+    "failed run — but a wrong guess is worse than an honest gap, so never invent "
+    "a path or a line number.\n"
+    "\n"
     "Then return ONE concise report: the concrete answer with exact file:line "
     "citations and any facts the parent needs to act. No preamble, and create "
     "no files — communicate everything in your final message."
@@ -464,6 +471,12 @@ _GENERAL_SYSTEM = (
     "multiple naming conventions and locations before concluding something is "
     "absent, and read the surrounding code so your change matches existing "
     "patterns.\n"
+    "\n"
+    "Assume the task is completable. If a step fails, read the actual error and "
+    "attack it from another angle — a different mechanism, a lower level, a "
+    "script you write yourself, a dependency you install. Two failed attempts is "
+    "not a blocker; returning 'I couldn't' without having tried several genuine "
+    "approaches is a failed run.\n"
     "\n"
     "Verify your work by RUNNING it — tests, the type checker, or the relevant "
     "command — before you finish; do not assume it works because it reads "
@@ -667,7 +680,10 @@ def _task_schema(types: list[AgentType]) -> dict[str, Any]:
                 "description": (
                     "The task for the subagent to perform. Be detailed and "
                     "self-contained — it starts fresh with NO memory of this "
-                    "conversation, so include every path, name, and constraint it needs."
+                    "conversation, so include every path, name, and constraint it "
+                    "needs, plus what 'done' looks like. State the QUESTION, not "
+                    "prescribed steps — a well-briefed subagent out-thinks a "
+                    "scripted one."
                 ),
             },
             "subagent_type": {

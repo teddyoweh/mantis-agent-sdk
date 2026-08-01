@@ -210,6 +210,170 @@ def test_mcp_crud(seeded_home, tmp_path, monkeypatch):
     assert serve.delete_mcp("settings", "x")["ok"] is False  # settings not editable here
 
 
+def test_mcp_state_shows_the_whole_entry_with_secrets_masked(seeded_home, tmp_path, monkeypatch):
+    """The dashboard's MCP page is an inspector: it needs each server's real
+    configuration, but a screenshot of it must not leak a token."""
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    serve.add_mcp("global", "exa", {"command": "npx", "args": ["-y", "exa-mcp"],
+                                    "env": {"EXA_API_KEY": "sk-live-secret"}})
+    serve.add_mcp("global", "linear", {"type": "http", "url": "https://m.co/mcp?apiKey=tok-secret",
+                                       "headers": {"Authorization": "Bearer hush"}})
+    by_name = {s["name"]: s for s in serve.mcp_state()["servers"]}
+
+    exa = by_name["exa"]
+    assert exa["entry"]["command"] == "npx" and exa["entry"]["args"] == ["-y", "exa-mcp"]
+    assert "sk-live-secret" not in json.dumps(exa)          # masked on the wire
+    assert "EXA_API_KEY" in json.dumps(exa["entry"])        # …but the key name shows
+    assert exa["secrets"] == ["env"] and exa["editable"] is True
+
+    lin = by_name["linear"]
+    blob = json.dumps(lin)
+    assert "tok-secret" not in blob and "hush" not in blob
+    assert lin["transport"] == "http" and set(lin["secrets"]) == {"headers", "url"}
+
+    # The editor asks for the raw entry explicitly; that one is unmasked.
+    raw = serve.mcp_entry_raw("exa", "global")
+    assert raw["ok"] and raw["entry"]["env"]["EXA_API_KEY"] == "sk-live-secret"
+    assert serve.mcp_entry_raw("exa", "settings")["ok"] is False   # not editable here
+    assert serve.mcp_entry_raw("nope", "global")["ok"] is False
+
+
+def test_mcp_paste_accepts_a_config_blob(seeded_home, tmp_path, monkeypatch):
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    r = serve.add_mcp_paste("global",
+        '{"mcpServers": {"a": {"command": "x"}, "b": {"url": "https://b/mcp"}}}')
+    assert r["ok"] and sorted(r["added"]) == ["a", "b"]
+    assert {s["name"] for s in serve.mcp_state()["servers"]} == {"a", "b"}
+
+    # A bare command has no name in it — the UI is told to ask for one.
+    bare = serve.add_mcp_paste("global", "npx -y thing")
+    assert bare["ok"] is False and bare["needs_name"] is True
+    assert serve.add_mcp_paste("global", "{oops")["ok"] is False
+
+
+def test_mcp_trust_gate_is_reported_and_settable(seeded_home, tmp_path, monkeypatch):
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MANTIS_MCP_TRUST_PROJECT", raising=False)
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"repo": {"command": "./run.sh"}}}), encoding="utf-8")
+
+    st = serve.mcp_state()
+    assert st["project_exists"] and st["project_trusted"] is False
+    assert st["withheld"] == ["repo"]           # stdio, untrusted → won't start
+
+    assert serve.trust_project_mcp_file()["ok"]
+    st = serve.mcp_state()
+    assert st["project_trusted"] and st["withheld"] == []
+
+
+def test_mcp_test_endpoint_connects_and_reports(seeded_home, tmp_path, monkeypatch):
+    """'Does this server actually work' is the question a config page can't
+    answer by reading JSON — so the dashboard runs a real handshake."""
+    import sys
+
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    server = tmp_path / "srv.py"
+    server.write_text(
+        "import json, sys\n"
+        "def send(m): sys.stdout.write(json.dumps(m) + '\\n'); sys.stdout.flush()\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line: continue\n"
+        "    m = json.loads(line); mid, meth = m.get('id'), m.get('method')\n"
+        "    if meth == 'initialize':\n"
+        "        send({'jsonrpc':'2.0','id':mid,'result':{'protocolVersion':'2024-11-05',"
+        "'capabilities':{'tools':{}},'serverInfo':{'name':'t','version':'1'}}})\n"
+        "    elif meth == 'tools/list':\n"
+        "        send({'jsonrpc':'2.0','id':mid,'result':{'tools':[{'name':'ping',"
+        "'description':'Ping.','inputSchema':{'type':'object'}}]}})\n"
+        "    elif mid is not None:\n"
+        "        send({'jsonrpc':'2.0','id':mid,'error':{'code':-32601,'message':'no'}})\n",
+        encoding="utf-8")
+    serve.add_mcp("global", "live", {"command": sys.executable, "args": [str(server)]})
+    serve.add_mcp("global", "dead", {"command": "echo", "args": ["bye"]})
+
+    ok = serve.test_mcp("live")
+    assert ok["ok"] and [t["name"] for t in ok["tools"]] == ["ping"] and ok["ms"] >= 0
+
+    bad = serve.test_mcp("dead")
+    assert bad["ok"] is False and bad["error"]
+    assert serve.test_mcp("missing")["ok"] is False
+
+
+def test_skill_edit_preserves_metadata_and_slug(seeded_home, tmp_path, monkeypatch):
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    serve.add_skill("global", "Deploy", "ship it", "1. build", "ops", True)
+    s = serve.skills_state()["global"][0]
+    assert s["category"] == "ops" and s["always_load"] is True
+
+    # Saving from the editor renames in place — the directory (and every
+    # reference to it) stays put.
+    r = serve.add_skill("global", "Deploy v2", "ship it twice", "1. build\n2. ship",
+                        "ops", False, slug="deploy")
+    assert r["ok"] and r["slug"] == "deploy"
+    s = serve.skills_state()["global"][0]
+    assert s["name"] == "Deploy v2" and s["always_load"] is False
+    assert s["body"].endswith("2. ship")
+    assert serve.add_skill("global", "x", "d", "b", slug="ghost")["ok"] is False
+
+
+def test_every_provider_has_a_mark() -> None:
+    """Each catalogued provider ships its own logo, so the setup list is
+    scannable by mark. A new provider without one falls back to a letter tile —
+    this test is the nudge to add it."""
+    from mantis_agent import catalog
+    from mantis_agent.serve_logos import PROVIDER_LOGOS
+
+    missing = [p.id for p in catalog.CATALOG if p.id not in PROVIDER_LOGOS]
+    assert not missing, f"no logo for: {missing} — see tools/gen_provider_logos.py"
+    for pid, mark in PROVIDER_LOGOS.items():
+        assert mark["svg"].startswith("<svg"), pid
+        assert "<script" not in mark["svg"].lower(), pid
+
+
+def test_model_probe_reports_unreachable_endpoints(seeded_home) -> None:
+    from mantis_agent import serve
+
+    r = serve.test_provider(None, "http://127.0.0.1:9/v1")   # nothing listening
+    assert r["ok"] is False and r["error"] and r["ms"] >= 0
+    assert serve.test_provider("not-a-provider")["ok"] is False
+    assert serve.test_provider(None, "")["ok"] is False
+
+
+def test_models_state_carries_capability_info(seeded_home) -> None:
+    from mantis_agent import serve
+
+    m = serve.models_state()
+    info = m["model_info"]
+    assert info, "expected per-model capability info"
+    # every listed model resolves to something the table can compare on
+    for p in m["providers"]:
+        for mid in p["models"]:
+            assert mid in info
+            assert info[mid].get("ctx", 0) > 0
+
+
+def test_overview_counts_skills_and_servers(seeded_home, tmp_path, monkeypatch):
+    from mantis_agent import serve
+
+    monkeypatch.chdir(tmp_path)
+    serve.add_mcp("global", "a", {"command": "x"})
+    serve.add_skill("global", "S", "d", "b")
+    o = serve.overview()
+    assert o["mcp_count"] == 1 and o["skill_count"] == 1
+    assert o["cwd"] and "hosting" in o
+
+
 def test_http_boot_and_endpoints(seeded_home):
     """Boot the real handler on an ephemeral port and hit the API + index."""
     from mantis_agent import serve
@@ -236,6 +400,12 @@ def test_http_boot_and_endpoints(seeded_home):
         code, body = get("/")
         assert code == 200
         assert b"<title>mantis" in body
+        # Provider logos ship inside the page: a local dashboard must not fetch
+        # third-party assets (it would leak which providers you look at, and
+        # break offline), so no placeholder may survive and the marks must be
+        # real inline SVG.
+        assert b"__LOGOS__" not in body and b"__TOKEN__" not in body
+        assert body.count(b"<svg") > 10
 
         code, body = get("/api/models")
         assert "providers" in json.loads(body)

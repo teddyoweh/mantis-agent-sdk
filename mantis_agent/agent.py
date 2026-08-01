@@ -2292,6 +2292,20 @@ class Agent:
         except Exception:  # noqa: BLE001 — summarizer failed; microcompaction may still help
             _log.debug("emergency summarize failed", exc_info=True)
         after_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+        # Escalate when the normal path barely dented it. Both microcompaction
+        # and summarization protect the RECENT window — which is exactly where a
+        # sudden oversized turn (a screenshot, a whole-page dump) lands, so the
+        # retry would re-send the same rejected prompt and the session wedges:
+        # every subsequent message, including a manual /compact, overflows too.
+        # The provider has already refused this transcript; a degraded run beats
+        # a dead one.
+        if after_chars > before_chars * 0.5:
+            clear = getattr(self._compactor, "emergency_clear", None)
+            if clear is not None and clear(messages):
+                _log.warning(
+                    "context overflow persisted after compaction; cleared recent "
+                    "tool-result payloads to recover the session")
+                after_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
         return len(messages) < before or after_chars < before_chars
 
     def _activate_fallback(self, error: BaseException) -> None:

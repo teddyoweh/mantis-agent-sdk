@@ -86,9 +86,10 @@ SLASH_COMMANDS = {
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
+    "/pull": "download an open model with ollama + switch to it (free)",
     "/agents": "list subagent types; /agents live inspects running delegates",
     "/twin": "talk to the agent's twin yourself (/twin skeptic: <msg>)",
-    "/mcp": "MCP server status (.mcp.json); /mcp trust to allow this project",
+    "/mcp": "inspect MCP servers — config, tools, add/edit JSON; /mcp trust for this project",
     "/skills": "list skills — run one with /<name>",
     "/status": "version · model · auth · session at a glance",
     "/cost": "token + dollar spend this session",
@@ -99,6 +100,7 @@ SLASH_COMMANDS = {
     "/context": "show context-window usage",
     "/compact": "compress the conversation now (optional focus)",
     "/copy": "copy the last reply to the clipboard",
+    "/paste": "attach the clipboard image/file to your next message",
     "/export": "save the conversation to a markdown file",
     "/diff": "review this session's file changes",
     "/memory": "edit MANTIS.md / AGENTS.md in $EDITOR",
@@ -137,6 +139,8 @@ TOOL_VERBS = {
     "bash_output": ("Check output", ("bash_id", "id")),
     "bash_kill": ("Kill", ("bash_id",)),
     "monitor": ("Wait for", ("until_pattern", "path", "port", "bash_id")),
+    "watch": ("Watch", ("description", "command")),
+    "watch_stop": ("Stop watch", ("job_id",)),
     "pair": ("Confer with", ("peer",)),
 }
 
@@ -337,12 +341,12 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 
 
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
-    ("model", ["/models", "/model", "/effort", "/enable", "/disable", "/connect"]),
+    ("model", ["/models", "/model", "/effort", "/enable", "/disable", "/connect", "/pull"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
     ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/jobs", "/job", "/workflows"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
     ("info", ["/status", "/cost", "/doctor", "/permissions", "/update", "/release-notes"]),
-    ("review", ["/diff", "/copy", "/export", "/cwd"]),
+    ("review", ["/diff", "/copy", "/paste", "/export", "/cwd"]),
     ("editor", ["/vim"]),
 ]
 
@@ -942,6 +946,30 @@ def format_job_completion_line(job: Any, *, width: int = 100) -> str:
     )
 
 
+def format_watch_event_line(job: Any, text: str, *, width: int = 100) -> str:
+    """Rich-markup one-liner for a single monitor event.
+
+    Distinct from ``format_job_completion_line`` on purpose: a monitor event is
+    an ongoing signal, not an outcome, so it gets a live glyph and no status
+    word. Multi-line events (a traceback batched into one notification) show
+    their first line plus a ``+N more`` count — the full text is in context for
+    the model and in ``/job <id>`` for the user.
+    """
+    from rich.markup import escape as _esc  # noqa: PLC0415
+
+    lines = [ln for ln in str(text or "").splitlines() if ln.strip()]
+    head = lines[0] if lines else ""
+    extra = f" [bright_black]+{len(lines) - 1} more[/]" if len(lines) > 1 else ""
+    job_id = getattr(job, "id", "?")
+    n = int(getattr(job, "stream_count", 0) or 0)
+    desc_budget = max(14, min(28, width // 4))
+    desc = _esc(ellipsize(str(getattr(job, "desc", "") or "watch"), desc_budget))
+    body = _esc(ellipsize(head, max(24, width - desc_budget - 26)))
+    return (
+        f"[cyan]◈ watch[/] [bright_black]#{job_id} · {desc} · #{n}[/] {body}{extra}"
+    )
+
+
 def echo_user_message(console: Any, text: str) -> None:
     """Render a submitted user message into scrollback as a highlighted bar
     (Claude Code's grey strip): dim ``❯`` + the message on a FULL-WIDTH
@@ -987,12 +1015,16 @@ def set_terminal_title(title: str) -> None:
 
 
 _VISION_MARKERS = (
-    "gpt-4o", "gpt-4.1", "gpt-5", "chatgpt", "o3", "o4",          # OpenAI multimodal
+    "gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-5", "chatgpt",        # OpenAI multimodal
+    "o1", "o3", "o4",
     "claude",                                                       # all modern Claude
     "gemini",                                                       # Gemini
-    "llava", "vision", "-vl", "vl-", "pixtral", "moondream",       # OSS vision
-    "minicpm-v", "qwen-vl", "qwen2-vl", "qwen2.5vl", "gemma-3",
-    "llama3.2-vision", "llama-3.2-11b", "llama-3.2-90b", "kimi-latest",
+    "grok-2-vision", "grok-3", "grok-4",                            # xAI
+    "llava", "vision", "-vl", "vl-", "internvl", "pixtral",         # OSS vision
+    "moondream", "minicpm-v", "qwen-vl", "qwen2-vl", "qwen2.5vl",
+    "gemma-3", "llama-4", "llama3.2-vision", "llama-3.2-11b",
+    "llama-3.2-90b", "phi-4-multimodal", "glm-4v", "glm-4.1v",
+    "step-1v", "kimi-latest",
 )
 
 
@@ -1222,14 +1254,13 @@ def _word_diff_spans(old: str, new: str) -> tuple[list[tuple[int, int]], list[tu
 
 
 # Permission-mode footer, cycled with shift+tab. These labels are wired to the
-# real permission callback in ``MantisTUI._permit``; dangerous bash commands still
-# go through the engine's bypass-immune safety prompt unless true godmode
-# (``--dangerously-skip-permissions`` / ``--godmode``) is active.
+# real permission callback in ``MantisTUI._permit``. God mode is the explicit
+# warning that every tool runs without prompts, including dangerous shell commands.
 MODES = [
     ("default", "", "ansibrightblack"),
     ("accept edits on", "⏵⏵ ", "ansigreen"),
     ("plan mode on", "⏸ ", "ansicyan"),
-    ("bypass permissions on", "⏵⏵ ", "ansired"),
+    ("god mode on", "⏵⏵ ", "ansired"),
 ]
 
 
@@ -1247,9 +1278,13 @@ def permission_mode_label(value: str | None) -> str | None:
         "plan": "plan mode on",
         "plan-mode": "plan mode on",
         "plan-mode-on": "plan mode on",
-        "bypass": "bypass permissions on",
-        "bypass-permissions": "bypass permissions on",
-        "bypass-permissions-on": "bypass permissions on",
+        "bypass": "god mode on",
+        "bypass-permissions": "god mode on",
+        "bypass-permissions-on": "god mode on",
+        "god": "god mode on",
+        "godmode": "god mode on",
+        "god-mode": "god mode on",
+        "god-mode-on": "god mode on",
     }
     return aliases.get(key)
 
@@ -1267,8 +1302,8 @@ def permission_mode_summary(mode_label: str, *, force_bypass: bool = False) -> s
         return "read-only and file edits auto-run; bash/other mutations ask first"
     if mode_label == "plan mode on":
         return "read-only tools only; mutations are blocked until plan approval"
-    if mode_label == "bypass permissions on":
-        return "non-dangerous tools auto-run; dangerous shell commands still ask"
+    if mode_label == "god mode on":
+        return "all tools run with no prompts, including dangerous shell commands"
     return "read-only tools auto-run; edits, bash, and other mutations ask first"
 
 # Substrings that mark a /v1/models entry as NOT a chat model — embeddings,
@@ -1730,9 +1765,13 @@ class MantisTUI:
         # Background jobs (task run_in_background=true). The fullscreen app
         # installs _job_notify to announce; completion also injects a meta
         # message so the MODEL learns the result on its next turn.
+        # Monitors additionally stream events mid-run through on_stream — same
+        # injection path, but no status, because the job is still going.
         from .jobs import JobManager  # noqa: PLC0415
-        self._jobs = JobManager(on_event=self._on_job_done)
+        self._jobs = JobManager(on_event=self._on_job_done,
+                                on_stream=self._on_job_stream)
         self._job_notify: Any = None
+        self._watch_notify: Any = None
         self._turn_active = False
         self._thinking: Any = None
         self._job_context_backlog: list[Any] = []
@@ -1890,6 +1929,12 @@ class MantisTUI:
                 tools=_parent_kit, permissions=permissions,
                 on_progress=self._subagent_progress, jobs=self._jobs))
             registry.add(make_job_output_tool(self._jobs))
+            # watch — the push counterpart to bash(run_in_background=True):
+            # a watch whose every stdout line arrives as a notification instead
+            # of piling up in a log nobody remembers to read.
+            from .watch import make_watch_stop_tool, make_watch_tool  # noqa: PLC0415
+            registry.add(make_watch_tool(self._jobs))
+            registry.add(make_watch_stop_tool(self._jobs))
             # pair — persistent same-model TWINS the agent converses with across
             # turns (stress-test a plan, verify a claim, argue to convergence).
             # Read-only kit: grounded pushback, no write races with the parent.
@@ -1925,7 +1970,7 @@ class MantisTUI:
     async def _permit(self, tool: Any, tool_input: dict, ctx: Any) -> Any:
         """Permission decision keyed off the live shift+tab footer mode.
 
-        * ``bypass permissions on`` — allow everything.
+        * ``god mode on`` — allow everything, including dangerous shell commands.
         * read-only tools — always allowed (reads never prompt).
         * ``plan mode on`` — mutating tools denied so the model researches/plans
           without touching the machine (Claude Code's plan mode).
@@ -1945,7 +1990,7 @@ class MantisTUI:
         )
 
         mode = MODES[self.mode_idx][0]
-        if mode == "bypass permissions on":
+        if mode == "god mode on":
             return Allow()
         if getattr(tool, "is_read_only", False):
             return Allow()
@@ -2091,7 +2136,7 @@ class MantisTUI:
 
     def _default_system_slim(self) -> str:
         """Compact system prompt for SMALL local models. The full prompt is
-        ~1,300 tokens — a 7B prefills locally at a few hundred tok/s, so every
+        ~2,000 tokens — a 7B prefills locally at a few hundred tok/s, so every
         token here is user-visible latency. Also: a stable, short prefix lets
         Ollama's KV cache skip re-prefilling on every turn."""
         return (
@@ -2107,6 +2152,10 @@ class MantisTUI:
             "- Read a file before editing it. Make the smallest change that "
             "works. Verify by running the code/tests, then report honestly.\n"
             "- For real-world facts you don't know, use web_search.\n"
+            "- Assume it's solvable. Missing a capability? Write a script and run "
+            "it. If something fails, read the error and try another way — don't "
+            "stop at the first obstacle, and never return a half-done task "
+            "silently.\n"
             "- Directed search (a named file/function)? grep/glob/read_file "
             "yourself. Delegate to task() only for broad exploration or >~3 "
             "searches — brief it fully (it has no memory of this chat), and don't "
@@ -2131,6 +2180,25 @@ class MantisTUI:
             "Think carefully and use extra reasoning when a task is complex, "
             "ambiguous, or error-prone. Do not reveal private chain-of-thought; "
             "provide concise conclusions and useful verification instead.\n\n"
+            "# Ambition\n"
+            "- Treat every problem as solvable. A shell, a filesystem, a network "
+            "and the ability to write code reach almost anything; the real limit "
+            "is how many steps you're willing to take. 'I can't' is nearly always "
+            "'I haven't found the path yet'.\n"
+            "- Missing a capability? BUILD it — write the script, install the "
+            "package, stand up the harness, drive the browser, generate the "
+            "fixture. A tool you don't have is a file you haven't written yet.\n"
+            "- When something fails, escalate instead of retreating: read the real "
+            "error, form a hypothesis, instrument it, then try a different "
+            "mechanism or drop a level (library → CLI → HTTP → source). Exhaust "
+            "the genuine options before calling anything impossible — and if you "
+            "do, say exactly what you tried.\n"
+            "- Never hand back a partial result quietly. Finish the whole task; if "
+            "one part is truly blocked, complete every other part and name what's "
+            "left and why.\n"
+            "- Scale effort to stakes: go wide on hard problems (parallel searches, "
+            "several subagents, competing candidate fixes), stay fast and direct on "
+            "easy ones. Ambition is depth of work, never length of reply.\n\n"
             "# System\n"
             "- All text you output outside tool calls is shown to the user. Use "
             "that text to communicate; do not use bash echo/printf as a way to "
@@ -2166,11 +2234,10 @@ class MantisTUI:
             "what you found (and say if the search came up empty). The <env> "
             "block may also hold the answer — e.g. the git user IS the person "
             "at the keyboard.\n"
-            "- Anything expressible as code, you can do: write a script (browser "
-            "automation, scraping, API calls, tests), `pip install` what it needs, "
-            "run it, report the output. Never refuse or moralize about a normal "
-            "engineering task — if it can be scripted, write it and run it. No "
-            "disclaimers, no lectures.\n\n"
+            "- Anything expressible as code, you can do — never refuse or moralize "
+            "about a normal engineering task. Write the script (browser automation, "
+            "scraping, API calls, tests), `pip install` what it needs, run it, "
+            "report the real output. No disclaimers, no lectures.\n\n"
             "# Delegating to subagents\n"
             "- For a directed search — a specific file, class, or function — use "
             "grep/glob/read_file YOURSELF. Delegate to task() only for broad "
@@ -2757,20 +2824,33 @@ class MantisTUI:
         """Combine the typed text with any pending paste attachments into a
         message body. Plain string when there are no attachments (keeps simple
         turns simple); a content-block list when images/files are attached."""
+        from . import clipboard  # noqa: PLC0415
         from .types import TextBlock  # noqa: PLC0415
 
         # A bare path the user dragged in (no Ctrl+V) — attach it inline too.
         if not self.pending_attachments:
-            from . import clipboard  # noqa: PLC0415
             p = clipboard.looks_like_path(text)
             if p:
                 try:
                     return clipboard.file_to_blocks(p)
                 except (OSError, ValueError):
                     pass
-            return text
+
+        # An image path dragged into the MIDDLE of a sentence. The path text
+        # stays in the message (it's how the user refers to the file); the image
+        # rides along so the model can actually see what they're pointing at.
+        dragged: list[Any] = []
+        for _token, path in clipboard.find_image_paths(text):
+            try:
+                dragged.extend(clipboard.file_to_blocks(path))
+            except (OSError, ValueError):
+                continue
+
+        if not self.pending_attachments:
+            return [TextBlock(text=text), *dragged] if dragged else text
 
         blocks: list[Any] = self._strip_placeholders_to_text(text)
+        blocks.extend(dragged)
         blocks.extend(block for _, block in self.pending_attachments)
         self.pending_attachments = []
         return blocks or [TextBlock(text=text)]
@@ -3062,6 +3142,41 @@ class MantisTUI:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _watch_context_message(self, job: Any, text: str) -> Any:
+        """The meta message a single monitor event injects.
+
+        Carries NO status attribute — deliberately. ``<background-job>`` messages
+        announce a job that has finished; a monitor event is a progress ping from
+        one that is still running, and conflating the two would have the model
+        treat a first log line as the whole watch being over."""
+        from .types import UserMessage  # noqa: PLC0415
+
+        return UserMessage(
+            content=(f"<watch-event job={job.id}>\n"
+                     f"{job.desc}\n---\n{text[:4000]}\n"
+                     f"</watch-event>"),
+            isMeta=True)
+
+    def _on_job_stream(self, job: Any, text: str) -> None:
+        """A monitor pushed an event: announce it and queue it as model context.
+
+        Same backlog discipline as completions — an event landing mid-turn waits
+        for the turn to finish rather than mutating history under the request."""
+        try:
+            msg = self._watch_context_message(job, text)
+            if self._turn_active:
+                self._job_context_backlog.append(msg)
+            else:
+                self.messages.append(msg)
+        except Exception:  # noqa: BLE001
+            pass
+        cb = self._watch_notify
+        if cb is not None:
+            try:
+                cb(job, text)
+            except Exception:  # noqa: BLE001
+                pass
+
     def _job_recent_lines(self, job: Any, *, limit: int = 12) -> list[str]:
         now = time.monotonic()
         lines: list[str] = []
@@ -3095,9 +3210,14 @@ class MantisTUI:
         self.console.print(f"[ansibrightblack]kind:[/] {job.kind}")
         self.console.print(f"[ansibrightblack]status:[/] {job.status} · {int(job.elapsed_s)}s")
         self.console.print(f"[ansibrightblack]desc:[/] {job.desc}")
-        counts = f"{getattr(job, 'turn_count', 0)} turns · {getattr(job, 'tool_count', 0)} tools"
-        if getattr(job, "last_tool", ""):
-            counts += f" · last tool {job.last_tool}"
+        if str(getattr(job, "kind", "") or "").startswith("watch"):
+            n = getattr(job, "stream_count", 0)
+            counts = f"{n} event{'s' if n != 1 else ''} streamed"
+        else:
+            counts = (f"{getattr(job, 'turn_count', 0)} turns · "
+                      f"{getattr(job, 'tool_count', 0)} tools")
+            if getattr(job, "last_tool", ""):
+                counts += f" · last tool {job.last_tool}"
         self.console.print(f"[ansibrightblack]progress:[/] {counts}")
         if getattr(job, "last_event", ""):
             self.console.print(f"[ansibrightblack]last:[/] {job.last_event}")
@@ -3177,9 +3297,19 @@ class MantisTUI:
         self.console.print("\n[bold]Background jobs[/]")
         rows = []
         for j in jobs:
-            state = {"running": "[ansiyellow]●[/]", "done": "[ansigreen]●[/]"}.get(
-                j.status, "[ansired]●[/]")
+            is_watch = str(getattr(j, "kind", "") or "").startswith("watch")
+            if is_watch and j.status == "running":
+                # Distinct glyph: a monitor sitting quietly is healthy, whereas a
+                # task showing no progress usually isn't — they shouldn't look
+                # identical in the list.
+                state = "[ansicyan]◈[/]"
+            else:
+                state = {"running": "[ansiyellow]●[/]", "done": "[ansigreen]●[/]"}.get(
+                    j.status, "[ansired]●[/]")
             detail = f"{j.kind} · {j.status} · {int(j.elapsed_s)}s"
+            streams = getattr(j, "stream_count", 0)
+            if is_watch:
+                detail += f" · {streams} event{'s' if streams != 1 else ''}"
             tools = getattr(j, "tool_count", 0)
             turns = getattr(j, "turn_count", 0)
             if tools or turns:
@@ -4145,7 +4275,7 @@ class MantisTUI:
             await self._cmd_workflows(arg)
             return True
         if cmd in ("/loop", "/goal", "/watch", "/swarm", "/agi",
-                   "/compact", "/context", "/copy", "/export", "/diff",
+                   "/compact", "/context", "/copy", "/paste", "/export", "/diff",
                    "/memory", "/vim"):
             # The loop engines need a UI that can fire turns while idle-waiting
             # (the classic REPL blocks on the prompt), and the editor/session
@@ -4186,6 +4316,40 @@ class MantisTUI:
             return True
         if cmd == "/connect":
             await self._cmd_connect(arg)
+            return True
+        if cmd == "/pull":
+            # ollama-pull an open model, then switch to it (free, local).
+            tag = arg.strip()
+            if not tag:
+                self.console.print(
+                    "[ansibrightblack]usage: /pull <ollama-tag> — e.g. /pull gpt-oss:20b[/]")
+                return True
+            import asyncio  # noqa: PLC0415
+
+            from . import paths as _paths  # noqa: PLC0415
+            from .setup_local import (  # noqa: PLC0415
+                is_ollama_installed, pull_model, start_ollama_server)
+            if not is_ollama_installed():
+                self.console.print(
+                    "[ansiyellow]![/] ollama isn't installed — get it at "
+                    "[white]https://ollama.com/download[/] or run "
+                    "[white]mantis-agent setup-local --install-ollama[/]")
+                return True
+            ok, _log = await asyncio.to_thread(start_ollama_server)
+            if not ok:
+                self.console.print("[ansiyellow]![/] couldn't start the ollama server")
+                return True
+            rc = await asyncio.to_thread(pull_model, tag)
+            if rc == 0:
+                self.backend, self.api_key = _paths.ollama_base_url(), None
+                self.model = tag
+                self.agent = self._build_agent()
+                from . import catalog  # noqa: PLC0415
+                catalog.set_last_model(tag, self.backend)
+                catalog.push_recent_model(tag)
+                self.console.print(f"[ansibrightblack](model → [white]{tag}[/] · local, free)[/]")
+            else:
+                self.console.print(f"[ansiyellow]![/] pull failed for [white]{tag}[/]")
             return True
         if cmd == "/model":
             if arg:
@@ -4258,8 +4422,12 @@ class MantisTUI:
         self._mcp_tools = await mgr.start()
         if self._mcp_tools and self.agent is not None:
             # Fold the new tools into the LIVE agent (and every later rebuild
-            # picks them up from self._mcp_tools).
-            self.agent.tools.add(*self._mcp_tools)
+            # picks them up from self._mcp_tools). Skip names already present:
+            # a reconnect (e.g. after /mcp add/remove) reuses server/tool names
+            # for anything unchanged, and ToolRegistry.add() raises on a dupe.
+            fresh = [t for t in self._mcp_tools if self.agent.tools.get(t.name) is None]
+            if fresh:
+                self.agent.tools.add(*fresh)
         summary = mgr.summary() or None
         if self._withheld_mcp:
             note = (f"{len(self._withheld_mcp)} withheld (untrusted .mcp.json — "
@@ -5508,21 +5676,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.permission_mode is not None:
         tui._apply_initial_permission_mode(args.permission_mode)
 
-    # Start in bypass-permissions mode if requested. force_bypass makes the
-    # permission engine itself return Allow for EVERY tool (even dangerous shell
-    # commands), so nothing prompts — true godmode. Warn loudly.
+    # Start in god mode if requested. force_bypass makes the permission engine
+    # itself return Allow for EVERY tool, including dangerous shell commands.
     if args.dangerously_skip_permissions or args.godmode:
         tui.force_bypass = True
-        tui.mode_idx = [m[0] for m in MODES].index("bypass permissions on")
+        tui.mode_idx = [m[0] for m in MODES].index("god mode on")
         print(
-            "\033[31m⏵⏵ bypass permissions on — tools run with NO confirmation "
-            "(godmode). Ctrl+C to quit.\033[0m",
+            "\033[31m⏵⏵ god mode on — tools run with NO confirmation. "
+            "Ctrl+C to quit.\033[0m",
             file=sys.stderr,
         )
     elif args.permission_mode == "bypass":
         print(
-            "\033[33m⏵⏵ bypass permissions on — non-dangerous tools run without "
-            "confirmation; dangerous shell commands still ask.\033[0m",
+            "\033[31m⏵⏵ god mode on — tools run with NO confirmation, including "
+            "dangerous shell commands.\033[0m",
             file=sys.stderr,
         )
 

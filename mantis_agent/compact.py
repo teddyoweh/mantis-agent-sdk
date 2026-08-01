@@ -36,6 +36,7 @@ import msgspec
 from .types import (
     AssistantMessage,
     ContentBlock,
+    ImageBlock,
     Message,
     TextBlock,
     ThinkingBlock,
@@ -144,6 +145,8 @@ def _block_token_estimate(blk: ContentBlock) -> int:
     if isinstance(blk, ToolUseBlock):
         # Approximate the JSON-serialized input length.
         return _estimate_tokens(repr(blk.input)) + _estimate_tokens(blk.name) + 8
+    if isinstance(blk, ImageBlock):
+        return _image_token_estimate(blk)
     if isinstance(blk, ToolResultBlock):
         if isinstance(blk.content, str):
             return _estimate_tokens(blk.content)
@@ -151,6 +154,75 @@ def _block_token_estimate(blk: ContentBlock) -> int:
             return sum(_block_token_estimate(b) for b in blk.content)
         return 0
     return 0
+
+
+# A remote-URL image we can't measure: assume roughly Anthropic's per-image
+# ceiling (~1590 tokens) rather than zero.
+_REMOTE_IMAGE_TOKENS = 1600
+
+
+def _image_token_estimate(blk: ImageBlock) -> int:
+    """Estimate an image's context cost from the payload we actually ship.
+
+    Images are the single biggest thing this estimator used to get wrong: a
+    2 MB screenshot carries ~2.9M base64 characters, and every provider bills
+    for what it receives. Falling through to ``0`` (the old behaviour) meant a
+    screenshot-heavy loop — browser automation, repeated ``Read`` of a PNG —
+    could push the real prompt past the window while the estimator still read
+    "plenty of headroom", so neither micro- nor full compaction ever fired.
+    """
+
+    src = blk.source if isinstance(blk.source, dict) else {}
+    data = src.get("data")
+    if isinstance(data, str):
+        return _estimate_tokens(data)
+    url = src.get("url")
+    if isinstance(url, str):
+        # Inline data: URI — the base64 rides in the URL itself.
+        return _estimate_tokens(url) if url.startswith("data:") else _REMOTE_IMAGE_TOKENS
+    return _REMOTE_IMAGE_TOKENS
+
+
+_CLEARED_TOOL_RESULT = "[old tool result cleared to save context]"
+_CLEARED_IMAGE = "[old image cleared to save context]"
+
+
+def _strip_heavy_blocks(
+    msg: Message, min_chars: int, *, images_only: bool = False
+) -> Message | None:
+    """Return ``msg`` with oversized payloads replaced by placeholders, or None
+    if nothing was heavy enough to clear.
+
+    Handles all three shapes that carry weight: string tool results, STRUCTURED
+    tool results (a list of blocks — how image-returning tools like ``Read`` on
+    a PNG come back, and previously invisible to microcompaction), and bare
+    image blocks. Tool results keep their ``tool_use_id`` so the tool_use pair
+    still matches and the provider won't 400."""
+
+    content = getattr(msg, "content", None)
+    if not isinstance(content, list):
+        return None
+    new_blocks: list[ContentBlock] = []
+    touched = False
+    for b in content:
+        if isinstance(b, ImageBlock) and _block_token_estimate(b) * 4 > min_chars:
+            new_blocks.append(TextBlock(text=_CLEARED_IMAGE))
+            touched = True
+            continue
+        if (
+            not images_only
+            and isinstance(b, ToolResultBlock)
+            and b.content != _CLEARED_TOOL_RESULT
+            and isinstance(b.content, (str, list))
+            and _block_token_estimate(b) * 4 > min_chars
+        ):
+            new_blocks.append(msgspec.structs.replace(b, content=_CLEARED_TOOL_RESULT))
+            touched = True
+            continue
+        new_blocks.append(b)
+    if not touched:
+        return None
+    return msgspec.structs.replace(msg, content=new_blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -252,34 +324,54 @@ class SimpleCompactor:
         return self._used(messages, usage) >= self._micro_threshold * ctx_window
 
     def microcompact(self, messages: list[Message]) -> bool:
-        """Clear the content of tool results older than the last
-        ``micro_keep`` (only those over ``micro_min_chars``), in place. Keeps the
-        block + its tool_use_id so pairing is untouched. Returns True if anything
-        changed. Cheap (no model call), idempotent."""
-        import msgspec  # noqa: PLC0415
+        """Clear the payload of tool results older than the last ``micro_keep``
+        (only those over ``micro_min_chars``), in place. Keeps the block + its
+        tool_use_id so pairing is untouched. Returns True if anything changed.
+        Cheap (no model call), idempotent."""
 
         tr_idx = [i for i, m in enumerate(messages) if _is_tool_result_message(m)]
         if len(tr_idx) <= self._micro_keep:
             return False
-        cleared = "[old tool result cleared to save context]"
+        cutoff = tr_idx[-self._micro_keep]
         changed = False
         for i in tr_idx[: -self._micro_keep]:
-            m = messages[i]
-            new_blocks = []
-            touched = False
-            for b in m.content:  # type: ignore[union-attr]
-                if (
-                    isinstance(b, ToolResultBlock)
-                    and isinstance(b.content, str)
-                    and len(b.content) > self._micro_min_chars
-                    and b.content != cleared
-                ):
-                    new_blocks.append(msgspec.structs.replace(b, content=cleared))
-                    touched = True
-                else:
-                    new_blocks.append(b)
-            if touched:
-                messages[i] = msgspec.structs.replace(m, content=new_blocks)
+            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars)
+            if stripped is not None:
+                messages[i] = stripped
+                changed = True
+        # Bare images — pasted attachments, screenshots handed straight to the
+        # model — live OUTSIDE tool results, so the sweep above never saw them
+        # even though they are routinely the heaviest thing in the transcript.
+        # Clear the ones older than the keep-window too.
+        for i in range(cutoff):
+            if _is_tool_result_message(messages[i]):
+                continue
+            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars, images_only=True)
+            if stripped is not None:
+                messages[i] = stripped
+                changed = True
+        return changed
+
+    def emergency_clear(self, messages: list[Message], *, keep_last: int = 1) -> bool:
+        """Last resort after a real context-overflow error: clear heavy payloads
+        everywhere EXCEPT the last ``keep_last`` tool results, in place.
+
+        ``microcompact`` and ``compact`` both deliberately protect the recent
+        window — which is exactly where a sudden 2 MB screenshot lands. When the
+        provider has already rejected the prompt, that protection is what wedges
+        the session: every retry re-sends the same oversized turn. This drops the
+        recent window's payloads too, so the run can continue in a degraded but
+        living state rather than dying on an unrecoverable transcript."""
+
+        tr_idx = [i for i, m in enumerate(messages) if _is_tool_result_message(m)]
+        keep = {*tr_idx[-keep_last:]} if keep_last > 0 else set()
+        changed = False
+        for i in range(len(messages)):
+            if i in keep:
+                continue
+            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars)
+            if stripped is not None:
+                messages[i] = stripped
                 changed = True
         return changed
 
@@ -485,12 +577,52 @@ async def run_manual_compaction(
     return list(messages), "nothing to compact yet — the conversation is still short"
 
 
-def _build_summarization_prompt(messages: list[Message]) -> str:
-    """Stitch messages into a textual prompt the summarizer model can chew on."""
+# Bound what we feed the summarizer. A transcript large enough to need
+# compaction can easily exceed the window it must be summarized *in* — sending
+# it whole makes the summarizer call itself overflow, ``compact`` swallows the
+# exception, and compaction silently no-ops exactly when it's needed most.
+_MAX_RENDER_CHARS = 4_000
+_MAX_PROMPT_CHARS = 240_000
+_ELISION = "\n[... transcript middle elided — too large to summarize whole ...]\n"
 
-    parts: list[str] = [_SUMMARIZER_INSTRUCTIONS, "\n--- Transcript ---\n"]
-    for msg in messages:
-        parts.append(_render_message(msg))
+
+def _truncate_middle(text: str, limit: int) -> str:
+    """Keep the head and tail of ``text``, drop the middle. Intent lives at the
+    start of a message and the outcome at the end; the bulk in between (a file
+    dump, a page of HTML) is what we can afford to lose."""
+
+    if len(text) <= limit:
+        return text
+    half = max(1, (limit - len(_ELISION)) // 2)
+    return text[:half] + _ELISION + text[-half:]
+
+
+def _build_summarization_prompt(messages: list[Message]) -> str:
+    """Stitch messages into a textual prompt the summarizer model can chew on,
+    bounded so the summarization call can't overflow the window itself."""
+
+    rendered = [_truncate_middle(_render_message(m), _MAX_RENDER_CHARS) for m in messages]
+    total = sum(len(r) for r in rendered) + len(_SUMMARIZER_INSTRUCTIONS)
+    if total > _MAX_PROMPT_CHARS:
+        # Keep the oldest turns (where the goal was set) and the newest (where
+        # the current state lives); elide the middle.
+        budget = _MAX_PROMPT_CHARS // 2
+        head: list[str] = []
+        used = 0
+        for r in rendered:
+            if used + len(r) > budget:
+                break
+            head.append(r)
+            used += len(r)
+        tail: list[str] = []
+        used = 0
+        for r in reversed(rendered[len(head):]):
+            if used + len(r) > budget:
+                break
+            tail.append(r)
+            used += len(r)
+        rendered = [*head, _ELISION, *reversed(tail)]
+    parts: list[str] = [_SUMMARIZER_INSTRUCTIONS, "\n--- Transcript ---\n", *rendered]
     return "\n".join(parts)
 
 
@@ -518,8 +650,17 @@ def _render_block(blk: ContentBlock) -> str:
         return f"(thinking: {blk.thinking})"
     if isinstance(blk, ToolUseBlock):
         return f"(tool_use {blk.name}={blk.input!r})"
+    if isinstance(blk, ImageBlock):
+        # Never render the base64 — the whole point is to keep it out of the
+        # summarizer prompt. The model only needs to know an image was here.
+        return "(image)"
     if isinstance(blk, ToolResultBlock):
-        body = blk.content if isinstance(blk.content, str) else "<structured>"
+        if isinstance(blk.content, str):
+            body = blk.content
+        elif isinstance(blk.content, list):
+            body = " ".join(c for c in (_render_block(b) for b in blk.content) if c)
+        else:
+            body = "<structured>"
         tag = "tool_error" if blk.is_error else "tool_result"
         return f"({tag} {blk.tool_use_id}: {body})"
     return ""
