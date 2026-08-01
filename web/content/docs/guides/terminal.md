@@ -72,6 +72,19 @@ For automation there's `mantis --dangerously-skip-permissions`
 trusted CI, and see [Headless & CI](headless.md) for the safer scripted
 path.
 
+## Images
+
+Copy a screenshot and mantis offers it: `Image in clipboard · ctrl+v to
+paste` appears above the prompt, and `ctrl+v` stages it for your next
+message. (On macOS `⌘V` can't carry an image into a terminal at all — that's
+why the hint exists.) Once staged you'll see `◫ 1 image attached`, plus a
+warning if the current model can't see images.
+
+Terminals that bind `ctrl+v` to their own paste can use `/paste`, and
+`/paste <path>` attaches a file directly. Dragging an image into the prompt
+works too, even mid-sentence — "what's wrong with ~/shot.png here?" sends the
+picture along with the question.
+
 ## Odds and ends
 
 - `/export` writes the transcript; `/copy` copies the last reply.
