@@ -28,6 +28,7 @@ from mantis_agent.types import AssistantMessage, TextBlock, UserMessage, Usage
     ("context_length_exceeded", True),
     ("prompt is too long", True),
     ("too many tokens in the request", True),
+    ("Input tokens exceed the configured limit of 922000 tokens", True),
     ("connection refused", False),
     ("invalid api key", False),
 ])
@@ -93,6 +94,27 @@ def test_only_retries_overflow_once() -> None:
     with pytest.raises(ProviderError):
         _drain(agent, _long_msgs())
     assert prov.calls == 2                                    # one emergency retry, then give up
+
+
+def test_recovery_clears_a_single_recent_oversized_tool_result() -> None:
+    from mantis_agent.types import ToolResultBlock
+
+    prov = _Overflow(fail_times=1)
+    agent = Agent(model="mock", provider=prov,
+                  compactor=SimpleCompactor(_summ, keep_recent_turns=8),
+                  include_recall=False, include_env=False, include_memory=False)
+    msgs = [
+        UserMessage(content="record a demo"),
+        UserMessage(content=[ToolResultBlock(
+            tool_use_id="read-progress", content="x" * 2_000_000,
+        )]),
+    ]
+    events = _drain(agent, msgs)
+    assert any(isinstance(e, MessageStop) for e in events)
+    assert prov.calls == 2
+    result = msgs[-1].content[0]
+    assert isinstance(result, ToolResultBlock)
+    assert result.content == "[old tool result cleared to save context]"
 
 
 def test_no_compactor_no_recovery() -> None:

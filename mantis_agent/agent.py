@@ -194,7 +194,8 @@ def _retry_delay(
 _OVERFLOW_MARKERS = (
     "context length", "context window", "maximum context", "too many tokens",
     "context_length_exceeded", "reduce the length", "prompt is too long",
-    "input is too long", "maximum context length",
+    "input is too long", "maximum context length", "input tokens exceed",
+    "configured limit of",
 )
 
 
@@ -2301,7 +2302,7 @@ class Agent:
         # a dead one.
         if after_chars > before_chars * 0.5:
             clear = getattr(self._compactor, "emergency_clear", None)
-            if clear is not None and clear(messages):
+            if clear is not None and clear(messages, keep_last=0):
                 _log.warning(
                     "context overflow persisted after compaction; cleared recent "
                     "tool-result payloads to recover the session")
