@@ -378,6 +378,7 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         "permission_mode",
         "mcp_servers",
         "agents",
+        "messages",          # prior history for a resumed run (see below)
     }
     extra = {k: v for k, v in opts.items() if k not in consumed}
     if isinstance(extra.get("extra"), dict):
@@ -603,7 +604,13 @@ async def query(
     # is the cheapest test that "this is the EXACT instance we passed in",
     # so we don't accidentally drop a freshly-built duplicate.
     seed_ids = {id(s) for s in seeds}
-    running: list[Message] = list(seeds)
+    # ``options["messages"]`` seeds PRIOR history (a resumed conversation). It
+    # is deliberately not echoed on the stream the way the new prompt is: a
+    # consumer resuming a session already has those turns, and re-emitting them
+    # would look like the model just said them again.
+    history: list[Message] = list(opts.get("messages") or [])
+    running: list[Message] = [*history, *seeds]
+    seed_ids |= {id(h) for h in history}
 
     try:
         # Streaming-mode dispatch: yield each SDK-shape message as

@@ -22,6 +22,11 @@ from .fs import (
     read_file,
     write_file,
 )
+from .tool_search import (
+    deferred_prompt_section,
+    make_tool_search,
+    search_deferred,
+)
 from .web import WebFetch, WebSearch, aclose_builtin_clients, web_fetch, web_search
 
 __all__ = [
@@ -30,13 +35,16 @@ __all__ = [
     "WebSearch",
     "aclose_builtin_clients",
     "bash",
+    "deferred_prompt_section",
     "edit_file",
     "glob",
     "grep",
     "ls",
+    "make_tool_search",
     "monitor",
     "multi_edit",
     "read_file",
+    "search_deferred",
     "web_fetch",
     "web_search",
     "write_file",

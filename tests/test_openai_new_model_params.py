@@ -224,7 +224,9 @@ def test_openai_thinking_aliases_map_to_payload() -> None:
         path="A",
     )
     assert pl["reasoning_effort"] == "low"
-    assert pl["max_thinking_tokens"] == 2048
+    # The alias maps to effort only; the budget has no Chat Completions field
+    # and must not be invented (`400 Unknown parameter: 'max_thinking_tokens'`).
+    assert "max_thinking_tokens" not in pl
     assert "thinking" not in pl
 
 

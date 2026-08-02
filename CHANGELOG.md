@@ -6,6 +6,93 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and from 1.0.0 on the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 The full versioning policy is in [SEMVER.md](SEMVER.md).
 
+## [Unreleased]
+
+## [2.61.0] - 2026-08-01
+
+### Changed
+
+- Support and continuously test Python 3.9 through 3.14, with compatibility
+  backports for exception groups, modern annotations, asyncio timeouts, dataclass
+  slots, and newer built-in APIs.
+
+### Added
+
+- **Advisor — pair a stronger model to consult at decision points.** Most
+  turns of a long task are routine; a handful decide whether it works.
+  `mantis --advisor opus`, `/advisor opus`, `advisorModel` in settings or
+  `MANTIS_ADVISOR` pairs a second model, and the agent calls `consult_advisor`
+  before committing to an approach, on a repeated failure, and before calling a
+  hard task done. The advisor reads the live conversation (the tool holds the
+  session's own message list, not a copy) and returns judgement — it gets no
+  tools, so it can't race the main agent over the same files. `/advisor` shows
+  the pairing, `/advisor off` clears it, `/status` carries a line, and each
+  consult prints `⤴ consulting <model>` so spend on a second model is never
+  invisible. A consult that fails comes back as "proceed on your own judgement"
+  instead of taking the session down.
+
+  The advisor **resolves its own provider, base URL and key**, independently of
+  whatever the session is running — so a local model can escalate to a hosted
+  one (Qwen on your box, three decisions an hour to Opus). Aliases work the way
+  `/model` accepts them (`opus`, `sonnet`); an id the catalog doesn't know falls
+  back to the session's backend rather than failing. Available headless too,
+  where it matters most: nobody is watching a `-p` run, so "check this before
+  you commit to it" is the only review it gets. Off by default, and off for
+  small local models.
+
+### Fixed
+
+- **`error: unsupported message type: CompactBoundaryMessage` — a compaction
+  permanently bricked the session.** `CompactBoundaryMessage` is not a wire
+  type and no provider's encoder knew it, so the first request after an
+  auto-compact raised on *every* backend (`TypeError` on openai_compat and
+  ollama, `ProviderError` on anthropic). The boundary stays in the history, so
+  every retry hit it again and the conversation could not be continued at all.
+  A shared `normalize_messages()` in `providers/base.py` now folds a boundary
+  into a `SystemMessage` carrying its `[previous summary]` — the placement the
+  type's own docstring anticipated — before any encoder sees it.
+- **`error: Unknown parameter: 'max_thinking_tokens'` on every reasoning
+  request.** 2.59.0's adaptive thinking wrote `max_thinking_tokens` into the
+  OpenAI-compat payload, but that is the Claude SDK's option name — Chat
+  Completions has no per-request thinking budget, and OpenAI 400s on any
+  unrecognized field. The budget is now dropped and `reasoning_effort` carries
+  the intent, which is the only knob the endpoint actually has. The tests that
+  should have caught it asserted `_build_payload` against itself, so they
+  locked the invented field in instead.
+- **SDK control keys leaked onto the Anthropic and Ollama wires.** Both
+  providers shallow-merged `extra` onto the payload with no filter, so
+  `max_thinking_tokens`, `verbosity`, `reasoning_mode`, `reasoning_context` —
+  and `allowed_tools` / `disallowed_tools`, which are permission decisions
+  mantis enforces locally — were sent to the vendor. On Anthropic that 400s the
+  request outright. There is now one shared `PROVIDER_CONTROL_KEYS` set in
+  `providers/base.py`: providers translate these into their native knob
+  (Anthropic's `thinking` block, OpenAI's `reasoning_effort`, Ollama's `think`)
+  and drop the alias. Opaque vendor parameters still pass through.
+- **A non-empty `extra` silently disabled reasoning** in openai_compat: a local
+  named `thinking` shadowed the `thinking=` parameter, so `extra={"verbosity":
+  …}` with no `"thinking"` key erased the universal config before it was read.
+- `verbosity` is now sent only to GPT-5 ids, where it is a real field; it was
+  going to gpt-4o and OSS servers that reject it.
+- Switching to a small local model with `/model` left a stale advisor pairing
+  showing in `/status` after the tool had already been dropped from the belt.
+- **Every image paste wrote a duplicate line into the transcript.** Attaching
+  already reports itself in the input — the `[Image #N]` chip lands in the line
+  and the indicator above the prompt counts what's staged (with the
+  can't-see-images warning) — so the extra `attached [Image #1] — sends with
+  your next message` in the scrollback was pure noise, once per paste. Ctrl+V
+  and `/paste` are now silent on success and speak only on failure.
+
+### Changed
+
+- **⌘V now attaches a copied image file.** A terminal can only deliver text, so
+  raw screenshot bytes genuinely cannot ride in on ⌘V — but a file copied in
+  Finder pastes as its POSIX path, which is the common "paste my screenshot"
+  flow. The bracketed-paste handler recognizes a path (or `file://` URL) to a
+  real file and attaches it exactly as Ctrl+V would, instead of dropping a bare
+  path string in the buffer. Ordinary pasted text is untouched. The clipboard
+  hint now reads `⌘v / ctrl+v to attach` for a copied file, and stays
+  `ctrl+v to paste` for raw image bytes, where ⌘V truly cannot work.
+
 ## [2.60.0] - 2026-08-01
 
 ### Added
@@ -79,6 +166,65 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   Curated model→Ollama-tag map (gpt-oss, deepseek, qwen3, kimi-k2, llama,
   mistral, gemma, phi…); `/pull <tag>` also works as a command in both TUIs.
 
+- **Deferred tool schemas (`tool_search`).** Every tool costs tokens on every
+  request — mantis's own belt is ~4.2k, and a single 26-tool MCP server adds
+  ~5.2k more, on every turn, whether or not the model touches it. Past a dozen
+  tools the MCP ones are now **deferred**: listed by name in the system prompt,
+  with their schemas loaded on demand by a new `tool_search` tool
+  (`select:name`, keyword search, or `+term` to require a term in the name).
+  That 26-tool server drops from ~5,200 tokens per request to ~790 — about
+  175k tokens saved over a 40-turn session, and the difference between "MCP
+  works" and "MCP works on a 7B model". Deferring hides the schema, it never
+  disables the tool: a blind call still executes. `/status` reports how many
+  are deferred; `{"toolSearch": {"mode": "off"|"always", "threshold": 12}}`
+  overrides the policy.
+- **OS-level sandboxing for shell commands.** `--godmode`, `/goal`, `mantis -p`
+  in CI and scheduled runs all exist so nobody has to watch — which is exactly
+  where "we'll ask the user" stops being a safety story. `/sandbox on` (or
+  `--sandbox`, or `{"sandbox": {"enabled": true}}`) wraps every shell command
+  in the OS's own sandbox: **Seatbelt** on macOS, **bubblewrap** on Linux.
+  Writes are confined to the project plus temp; the rest of the disk stays
+  readable but read-only, and `--sandbox-no-network` cuts the network too.
+  These are kernel-level refusals, not prompts — the tests prove a write to
+  `$HOME` fails and the file never appears. Off by default (silently shrinking
+  what a shell can do would be its own surprise), `failIfUnavailable` refuses
+  to run rather than falling back to unconfined, and the setting rides on the
+  environment so it reaches subagents and background shells.
+- **`/cron` — scheduled runs that outlive the session.** `/loop` and `/watch`
+  die when you close the terminal; these don't. `/cron every 30m triage new
+  failures`, or from the shell `mantis cron add "daily 09:00" "summarize
+  yesterday's commits"`, plus `list` / `logs` / `run` / `pause` / `remove`.
+  Schedules read as `every 30m`, `daily 09:00`, `mon 09:00`, or a 5-field cron
+  expression. **`mantis cron install`** registers a one-minute tick with
+  launchd or a systemd user timer, so jobs fire with nothing open. Each run
+  goes through the same headless path as `mantis -p`, in its own directory,
+  with a per-run log — and is **sandboxed by default**. Nothing fires on
+  import: only an explicit `tick` or `daemon` runs a job.
+- **`mantis -p` — headless print mode.** One prompt, the answer, exit:
+  `mantis -p "fix the failing test"`. The prompt comes from the argument, from
+  `-`, or from piped stdin. Unlike `mantis-agent run`, it resolves the model
+  the way an interactive session does — the one you last used, with its
+  provider key and backend already wired — so scripts stop repeating
+  `--model`, and it carries the terminal's full tool belt.
+  `--output-format text|json|stream-json` (`--json` shorthand): text prints the
+  reply, json prints one result object (`--verbose` → the whole message array),
+  stream-json emits NDJSON — a `system`/`init` event, every assistant/user
+  message including tool calls and results, then the final `result` — and
+  requires `--verbose`, matching Claude Code's rule. Exit code is 1 exactly
+  when the result is an error; stdout carries only the result so a pipeline can
+  parse it, with everything else on stderr. Also `--allowed-tools` /
+  `--disallowed-tools` (both `--allowedTools` spellings), `--append-system-prompt`,
+  `--session-id`, and `--godmode` for unattended runs. Piping into `head` exits
+  quietly instead of printing a broken-pipe traceback.
+- **Headless runs share the terminal's sessions.** A `mantis -p` run is
+  recorded in the same store `mantis --resume` reads, so a CI run shows up in
+  your session picker and you can pick up where a script left off:
+  `--resume <id>` reloads that conversation's turns (the model doesn't redo
+  work it already did), `--continue` grabs the most recent session in this
+  directory, and `--session-id` pins one for correlating runs. Under the hood
+  `query()` gained an `options["messages"]` seed for prior history — it's
+  threaded into the loop but not re-emitted on the stream, since a resuming
+  consumer already has those turns.
 - **`mantis serve` redesigned as an instrument panel.** The dashboard was a
   tidy admin page; it's now built out of the product's own materials. A left
   rail replaces the tab strip and always shows what the agent is wired to

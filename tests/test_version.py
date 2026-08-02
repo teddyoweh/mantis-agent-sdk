@@ -12,8 +12,12 @@ from __future__ import annotations
 
 import re
 import sys
-import tomllib
 from importlib import metadata as importlib_metadata
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
+    import tomli as tomllib
 from pathlib import Path
 
 import mantis_agent
@@ -112,7 +116,7 @@ def test_python_requires_consistent_with_runtime() -> None:
     root = Path(__file__).resolve().parent.parent
     data = tomllib.loads((root / "pyproject.toml").read_text())
     requires = data["project"]["requires-python"]
-    # We declare ">=3.11"; verify by parsing minor explicitly.
+    # Verify the declared minimum by parsing the minor explicitly.
     assert requires.startswith(">="), requires
     declared = tuple(int(p) for p in requires.removeprefix(">=").strip().split("."))
     assert sys.version_info[: len(declared)] >= declared, (

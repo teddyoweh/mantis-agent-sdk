@@ -55,7 +55,7 @@ __all__ = [
 MemoryType = Literal["user", "feedback", "project", "reference"]
 
 
-@dataclass(slots=True)
+@dataclass
 class MemoryEntry:
     """One memory file. ``slug`` is the on-disk filename without ``.md``.
 
@@ -216,7 +216,7 @@ def save_memory_entry(entry: MemoryEntry) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class IndexLine:
     title: str
     path: str  # relative to memory/

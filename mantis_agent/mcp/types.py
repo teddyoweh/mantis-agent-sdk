@@ -19,7 +19,12 @@ Design
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union
+
+try:
+    from typing import Annotated
+except ImportError:  # pragma: no cover - Python 3.9 only
+    from typing_extensions import Annotated
 
 import msgspec
 

@@ -24,6 +24,79 @@ from ..capabilities import BackendCapability, ModelCapability
 from ..events import StreamEvent
 from ..types import Message
 
+# SDK-level control keys that ride in ``extra`` but are NOT wire fields for any
+# vendor. ``MantisAgentOptions`` collects the Claude-SDK spellings here so the
+# loop and each provider can read them; a provider's job is to TRANSLATE them
+# into its own native knob (Anthropic's ``thinking`` block, OpenAI's
+# ``reasoning_effort``, Ollama's ``think``) and then drop the alias.
+#
+# Forwarding one verbatim is never right: Anthropic and OpenAI both 400 on an
+# unrecognized top-level field, so a single leaked key turns every request into
+# a hard error. ``allowed_tools``/``disallowed_tools`` are worse than a 400 —
+# they are permission decisions mantis enforces locally, and shipping them to a
+# vendor leaks the policy while doing nothing to apply it.
+#
+# Providers that shallow-merge ``extra`` onto their payload MUST filter through
+# this set. Structural keys (``model``, ``messages``, ``stream``, …) are
+# format-specific and stay in each provider's own exclusion list.
+PROVIDER_CONTROL_KEYS: frozenset[str] = frozenset({
+    "effort",
+    "reasoning_effort",
+    "thinking",
+    "max_thinking_tokens",
+    "verbosity",
+    "reasoning_mode",
+    "reasoning_context",
+    "allowed_tools",
+    "disallowed_tools",
+})
+
+
+def strip_control_keys(extra: dict[str, Any] | None) -> dict[str, Any]:
+    """``extra`` minus the keys that must never reach a provider's wire."""
+    if not extra:
+        return {}
+    return {k: v for k, v in extra.items() if k not in PROVIDER_CONTROL_KEYS}
+
+
+def _boundary_summary(m: Any) -> str | None:
+    """The summary text if ``m`` is a compaction boundary, else ``None``.
+
+    Duck-typed on the marker ``CompactBoundaryMessage`` documents for exactly
+    this purpose (``boundary=True`` beside a ``summary``), so ``base`` stays
+    free of a ``compact`` import and any future marker of the same shape works.
+    """
+    if getattr(m, "boundary", None) is not True:
+        return None
+    summary = getattr(m, "summary", None)
+    return summary if isinstance(summary, str) else None
+
+
+def normalize_messages(messages: Iterable[Message]) -> list[Message]:
+    """Replace marker messages with ones every provider can already place.
+
+    A compaction inserts a ``CompactBoundaryMessage`` into the history. It is
+    not a wire message — no provider's encoder knows the type — so the first
+    request after a compaction died with "unsupported message type" on every
+    backend, which killed the session for good (the boundary never leaves the
+    history, so every retry hit it too).
+
+    Folding it into a ``SystemMessage`` is the placement its own docstring
+    anticipates: the summary IS context, providers already know where a system
+    turn goes, and the ``[previous summary]`` prefix keeps the model from
+    reading a recap of its own past turns as a fresh instruction.
+    """
+    from ..types import SystemMessage  # noqa: PLC0415 — avoids an import cycle
+
+    out: list[Message] = []
+    for m in messages:
+        summary = _boundary_summary(m)
+        out.append(
+            SystemMessage(content=f"[previous summary] {summary}")
+            if summary is not None else m
+        )
+    return out
+
 
 @runtime_checkable
 class Provider(Protocol):

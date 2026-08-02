@@ -163,7 +163,7 @@ class HookResult(msgspec.Struct, omit_defaults=True):
 HookFn = Callable[[HookContext], Awaitable["HookResult | None"]]
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class HookMatcher:
     """A hook scoped to a subset of tools (Claude-SDK ``HookMatcher`` parity).
 
@@ -218,7 +218,7 @@ def _matcher_hits(pattern: str | None, ctx: HookContext) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class Hooks:
     """Per-event hook registry.
 
@@ -280,7 +280,7 @@ _EVENT_TO_FIELD: dict[str, str] = {ev: _camel_to_snake(ev) for ev in HOOK_EVENTS
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class HookDispatcher:
     """Single funnel for hook delivery.
 

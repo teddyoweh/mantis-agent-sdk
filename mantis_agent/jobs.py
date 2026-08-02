@@ -36,7 +36,7 @@ _MAX_RUNTIME_S = 60 * 60  # absolute backstop — a job may not run forever
 _MAX_RETAINED_JOBS = 100  # cap terminal jobs kept for later job_output/inspection
 
 
-@dataclass(slots=True)
+@dataclass
 class Job:
     id: int
     desc: str
@@ -134,11 +134,10 @@ class JobManager:
 
         async def _run() -> None:
             try:
-                async with asyncio.timeout(max_runtime_s):
-                    out = await coro
+                out = await asyncio.wait_for(coro, timeout=max_runtime_s)
                 job.status, job.result = "done", str(out or "")
                 job.record_event("done", update_last=False)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 job.status = "timeout"
                 mins = (max_runtime_s or _MAX_RUNTIME_S) / 60
                 job.result = f"(job exceeded {mins:.0f} min and was stopped)"

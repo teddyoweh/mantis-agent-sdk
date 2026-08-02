@@ -80,7 +80,7 @@ from ..types import (
     UserMessage,
     Usage,
 )
-from .base import HTTPProviderMixin
+from .base import HTTPProviderMixin, normalize_messages, strip_control_keys
 
 DEFAULT_BASE_URL = "http://localhost:11434"
 
@@ -146,7 +146,7 @@ class OllamaProvider(HTTPProviderMixin):
         if system is not None:
             out.append({"role": "system", "content": system})
 
-        for m in messages:
+        for m in normalize_messages(messages):
             if isinstance(m, SystemMessage):
                 content = m.content if isinstance(m.content, str) else _join_text(m.content)
                 out.append({"role": "system", "content": content})
@@ -257,7 +257,10 @@ class OllamaProvider(HTTPProviderMixin):
             opts = extra.pop("options", None) if isinstance(extra, dict) else None
             if isinstance(opts, dict):
                 payload["options"].update(opts)
-            payload.update(extra)
+            # SDK-level knobs (reasoning aliases, tool-permission lists) are not
+            # Ollama wire fields — the ``think`` translation below is how a
+            # reasoning request reaches this backend.
+            payload.update(strip_control_keys(extra))
 
         # Universal thinking config -> Ollama's top-level ``think`` flag.
         # Best-effort: most local checkpoints have no reasoning mode, so only

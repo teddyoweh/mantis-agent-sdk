@@ -113,7 +113,7 @@ def _update_job_progress(job: Any, msg: Message) -> None:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class SubAgentSpec:
     """Describes a sub-agent the parent can invoke as a tool.
 
@@ -382,7 +382,7 @@ def as_subagent_tool(
 #     You are a meticulous code reviewer... (the system prompt)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AgentType:
     """A selectable subagent persona for the ``task`` tool.
 

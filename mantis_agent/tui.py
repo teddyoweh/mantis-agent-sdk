@@ -94,6 +94,9 @@ SLASH_COMMANDS = {
     "/status": "version · model · auth · session at a glance",
     "/cost": "token + dollar spend this session",
     "/doctor": "health-check the install and backend",
+    "/cron": "schedule prompts to run later, with or without you",
+    "/sandbox": "confine shell commands to this project (OS-level)",
+    "/advisor": "pair a stronger model to consult at decision points",
     "/permissions": "view permission mode + rules",
     "/update": "update mantis to the latest version",
     "/release-notes": "what changed in recent versions",
@@ -341,11 +344,12 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 
 
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
-    ("model", ["/models", "/model", "/effort", "/enable", "/disable", "/connect", "/pull"]),
+    ("model", ["/models", "/model", "/advisor", "/effort", "/enable", "/disable",
+               "/connect", "/pull"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
-    ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/jobs", "/job", "/workflows"]),
+    ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
-    ("info", ["/status", "/cost", "/doctor", "/permissions", "/update", "/release-notes"]),
+    ("info", ["/status", "/cost", "/doctor", "/permissions", "/sandbox", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/paste", "/export", "/cwd"]),
     ("editor", ["/vim"]),
 ]
@@ -1041,6 +1045,29 @@ _SLIM_TOOL_KEEP = frozenset({
     "bash", "read_file", "write_file", "edit_file", "ls", "glob", "grep",
     "web_search", "web_fetch", "todo_write",
 })
+
+
+def _deferred_section(registry: Any) -> str:
+    """The system-prompt paragraph naming deferred tools ("" when none)."""
+    try:
+        from .builtin_tools.tool_search import deferred_prompt_section  # noqa: PLC0415
+
+        return deferred_prompt_section(registry)
+    except Exception:  # noqa: BLE001 — a prompt extra must never block launch
+        return ""
+
+
+def _advisor_section(cfg: Any) -> str:
+    """The system-prompt paragraph telling the model when to escalate ("" when
+    no advisor is paired)."""
+    if cfg is None:
+        return ""
+    try:
+        from .advisor import advisor_prompt_section  # noqa: PLC0415
+
+        return advisor_prompt_section(cfg)
+    except Exception:  # noqa: BLE001 — a prompt extra must never block launch
+        return ""
 
 
 def is_small_model(model_id: str, context_window: int | None = None) -> bool:
@@ -1744,6 +1771,12 @@ class MantisTUI:
         self._mcp_manager: Any = None
         self._mcp_tools: list[Any] = []
         self._withheld_mcp: list[str] = []  # project stdio servers held back (untrusted)
+        # Set by _build_agent: "N MCP tool schemas deferred", for /status.
+        self._deferred_note: str = ""
+        # Advisor: the resolved pairing, and a session override from --advisor
+        # or /advisor that beats the saved setting.
+        self._advisor: Any = None
+        self._advisor_override: str | None = None
         self._installed_models: list[str] = []  # /model completer list, filled lazily in bg
         # Twin state — owned HERE (not in the pair tool's closure) so twin
         # conversations survive agent rebuilds and /twin talks to the SAME
@@ -1946,11 +1979,39 @@ class MantisTUI:
                 conversations=self._twin_conversations, personas=self._twin_personas)
             registry.add(self._pair_tool)
 
+        # The advisor: a stronger model this one can escalate to. Bound to
+        # self.messages (not a copy) so it always reads the live conversation,
+        # and built with its own provider so a local model can consult a hosted
+        # one. Slim models don't get it — a 7B that can't manage 22 tools won't
+        # manage knowing when to escalate either.
+        self._advisor = None      # cleared first: /model into a slim model must
+        if not slim:              # drop the pairing, not leave a stale one in /status
+            from .advisor import make_advisor_tool, resolve_advisor  # noqa: PLC0415
+
+            self._advisor = resolve_advisor(self._advisor_override)
+            if self._advisor is not None:
+                registry.add(make_advisor_tool(
+                    self._advisor, messages=self.messages, provider=provider,
+                    on_consult=self._on_advisor_consult))
+
+        # Defer the long tail of tool schemas. Past a threshold every extra
+        # server is context the model pays for on EVERY turn without having
+        # asked for it; deferred tools are named in the prompt and loaded on
+        # demand with tool_search. MCP tools go first — they're the volume,
+        # they're user-configured, and they're the ones a given task usually
+        # doesn't touch.
+        self._deferred_note = self._apply_tool_deferral(registry)
+
         return Agent(
             model=self.model,
             provider=provider,
-            system=self.system or (self._default_system_slim() if slim
-                                   else self._default_system()),
+            # Deferred tools are named in the prompt (cheap) instead of fully
+            # described in the schema list (expensive) — so the model knows
+            # they exist and how to load them.
+            system=(self.system or (self._default_system_slim() if slim
+                                    else self._default_system()))
+            + _deferred_section(registry)
+            + _advisor_section(self._advisor),
             tools=registry,
             permissions=permissions,
             max_tokens=self.max_tokens,
@@ -2163,6 +2224,47 @@ class MantisTUI:
             "general-purpose.\n"
             "- Be brief. Lead with the result. Stop when the task is done."
         )
+
+    def _apply_tool_deferral(self, registry: Any) -> str:
+        """Hide the schemas of tools this session probably won't need.
+
+        Returns a short note for the banner (empty when nothing was deferred).
+        The policy is deliberately conservative: never defer the core belt (the
+        model must be able to read, edit and run things without a round trip),
+        only defer MCP tools, and only once there are enough of them to matter.
+        ``settings.json`` can force it on/off or change the threshold:
+
+            {"toolSearch": {"mode": "auto"|"always"|"off", "threshold": 12}}
+        """
+        from .builtin_tools.tool_search import make_tool_search  # noqa: PLC0415
+
+        cfg: dict[str, Any] = {}
+        try:
+            from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+            raw = (load_settings(SETTING_SOURCES) or {}).get("toolSearch")
+            if isinstance(raw, dict):
+                cfg = raw
+        except Exception:  # noqa: BLE001
+            cfg = {}
+        mode = str(cfg.get("mode", "auto")).lower()
+        if mode == "off":
+            return ""
+        try:
+            threshold = int(cfg.get("threshold", 12))
+        except (TypeError, ValueError):
+            threshold = 12
+
+        candidates = [t.name for t in registry if t.name.startswith("mcp__")]
+        if not candidates:
+            return ""
+        if mode != "always" and len(registry) <= threshold:
+            return ""
+        n = registry.defer(*candidates)
+        if not n:
+            return ""
+        registry.add(make_tool_search(registry))
+        return (f"{n} MCP tool schema{'s' if n != 1 else ''} deferred "
+                "(loaded on demand via tool_search)")
 
     def _default_system(self) -> str:
         """The agent system prompt — what makes the model behave like a real
@@ -2818,6 +2920,28 @@ class MantisTUI:
         n = len(self.pending_attachments) + 1
         placeholder = f"[{label} #{n}]"
         self.pending_attachments.append((placeholder, block))
+        return placeholder
+
+    def _attach_file(self, path: Any) -> str | None:
+        """Stage a file by path as a pending attachment.
+
+        Shared by ``/paste <path>`` and the ⌘V paste handler — on macOS a file
+        copied in Finder arrives as its POSIX path, so "paste an image" and
+        "paste a path to an image" have to end in the same place."""
+        from . import clipboard  # noqa: PLC0415
+
+        try:
+            blocks = clipboard.file_to_blocks(path)
+        except (OSError, ValueError):
+            return None
+        if not blocks:
+            return None
+        label = "Image" if clipboard.is_image_path(path) else "File"
+        placeholder = None
+        for b in blocks:
+            n = len(self.pending_attachments) + 1
+            placeholder = f"[{label} #{n}]"
+            self.pending_attachments.append((placeholder, b))
         return placeholder
 
     def _build_user_content(self, text: str) -> Any:
@@ -4259,11 +4383,20 @@ class MantisTUI:
             else:
                 self._show_agents()
             return True
+        if cmd == "/sandbox":
+            self._cmd_sandbox(arg)
+            return True
+        if cmd == "/cron":
+            self._cmd_cron(arg)
+            return True
         if cmd == "/mcp":
             if arg.strip() == "trust":
                 self._cmd_mcp_trust()
             else:
                 self._show_mcp()
+            return True
+        if cmd == "/advisor":
+            self._cmd_advisor(arg)
             return True
         if cmd == "/job":
             self._cmd_job(arg)
@@ -4459,6 +4592,189 @@ class MantisTUI:
                 f"  {dot} [white]{_e(name)}[/]{pad}  [ansibrightblack]{_e(d)}[/]",
                 highlight=False,
             )
+
+    def _on_advisor_consult(self, model: str, question: str) -> None:
+        """Show that an escalation is happening — it costs real tokens on a
+        second model, so it should never be invisible."""
+        try:
+            self.console.print(
+                f"  [ansibrightblack]⤴ consulting[/] [white]{model}[/] "
+                f"[ansibrightblack]· {ellipsize(question, 60)}[/]",
+                highlight=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _cmd_advisor(self, arg: str = "") -> None:
+        """``/advisor`` — show the pairing; ``/advisor <model>`` sets it;
+        ``/advisor off`` clears it."""
+        from .advisor import (  # noqa: PLC0415
+            advisor_status,
+            clear_advisor_model,
+            resolve_advisor,
+            save_advisor_model,
+        )
+
+        c = self.console
+        want = (arg or "").strip()
+
+        if want.lower() in ("off", "none"):
+            try:
+                clear_advisor_model()
+            except Exception as e:  # noqa: BLE001
+                c.print(f"[ansired]couldn't save that:[/] {e}")
+                return
+            self._advisor_override = None
+            self._advisor = None
+            os.environ.pop("MANTIS_ADVISOR", None)
+            self.agent = self._build_agent()
+            c.print("[ansibrightblack]advisor off — no escalation[/]")
+            return
+
+        if want:
+            cfg = resolve_advisor(want)
+            if cfg is None:
+                c.print(f"[ansired]couldn't resolve[/] {want!r}")
+                return
+            self._advisor_override = want
+            try:
+                save_advisor_model(want)
+            except Exception:  # noqa: BLE001 — a session-only advisor is fine
+                pass
+            self.agent = self._build_agent()
+
+        st = advisor_status(self._advisor, self.model)
+        c.print("\n[bold]Advisor[/]")
+        if not st["on"]:
+            c.print("  [ansibrightblack]○ off[/] — the model works alone")
+            c.print("  [ansibrightblack]/advisor opus · /advisor sonnet · "
+                    "/advisor <any model id>[/]\n")
+            return
+        c.print(f"  [ansigreen]● {st['model']}[/] "
+                f"[ansibrightblack]via {st['via']}[/]")
+        c.print(f"  [ansibrightblack]main model:[/] {self.model}")
+        if st["cross_provider"] and not st["reachable"]:
+            c.print("  [ansiyellow]no key for that provider[/] — enable it in "
+                    "/models, or the consult will fail")
+        if st["same_as_main"]:
+            c.print("  [ansiyellow]same model as the session[/] — a second "
+                    "opinion from itself is worth less than one from a "
+                    "stronger model")
+        c.print("\n[ansibrightblack]The model consults it at decision points: "
+                "before committing to an approach, on a repeated failure, "
+                "before calling a hard task done. /advisor off to stop.[/]\n")
+
+    def _cmd_cron(self, arg: str = "") -> None:
+        """``/cron`` — schedules that outlive this session.
+
+        ``/cron`` lists them; ``/cron every 30m <prompt>`` adds one; ``/cron rm
+        <id>`` removes one. The heavy lifting (install, logs, daemon) lives on
+        ``mantis cron`` where a scheduler can call it.
+        """
+        from datetime import datetime  # noqa: PLC0415
+
+        from . import cron  # noqa: PLC0415
+
+        c = self.console
+        text = (arg or "").strip()
+
+        if text.startswith(("rm ", "remove ", "delete ")):
+            job_id = text.split(maxsplit=1)[1].strip()
+            ok = cron.remove_job(job_id)
+            c.print(f"[ansigreen]removed {job_id}[/]" if ok
+                    else f"[ansired]no job {job_id!r}[/]")
+            return
+
+        if text:
+            # "every 30m triage failures" — schedule first, then the prompt.
+            for n in (4, 3, 2):
+                head = " ".join(text.split()[:n])
+                rest = " ".join(text.split()[n:]).strip()
+                try:
+                    cron.parse_schedule(head)
+                except cron.ScheduleError:
+                    continue
+                if not rest:
+                    c.print("[ansired]that's a schedule with no prompt[/] — "
+                            "try [white]/cron every 30m triage new failures[/]")
+                    return
+                job = cron.add_job(head, rest, cwd=str(Path.cwd()))
+                when = datetime.fromtimestamp(job.next_run).strftime("%a %H:%M")
+                c.print(f"[ansigreen]scheduled {job.id}[/] · {head} · next {when}")
+                c.print("[ansibrightblack]run `mantis cron install` once so it "
+                        "fires without a terminal open[/]")
+                return
+            c.print("[ansired]couldn't read that schedule.[/] Try "
+                    "[white]/cron every 30m <prompt>[/], [white]daily 09:00[/], "
+                    "[white]mon 09:00[/], or a cron expression.")
+            return
+
+        jobs = cron.list_jobs()
+        c.print("\n[bold]Scheduled runs[/]")
+        if not jobs:
+            c.print("  [ansibrightblack]none — /cron every 30m triage new "
+                    "failures[/]\n")
+            return
+        for j in jobs:
+            when = datetime.fromtimestamp(j.next_run).strftime("%a %d %b %H:%M")
+            tags = []
+            if not j.enabled:
+                tags.append("paused")
+            if j.godmode:
+                tags.append("godmode")
+            if not j.sandbox:
+                tags.append("unsandboxed")
+            tail = f" [ansiyellow]{' · '.join(tags)}[/]" if tags else ""
+            c.print(f"  [white]{j.id}[/]  {j.schedule['text']}  "
+                    f"[ansibrightblack]next {when}[/]{tail}")
+            c.print(f"        [ansibrightblack]{j.prompt}[/]")
+            if j.last_status:
+                colour = "ansigreen" if j.last_status == "ok" else "ansired"
+                c.print(f"        [{colour}]{j.last_status}[/] "
+                        f"[ansibrightblack]· {j.runs} run(s)[/]")
+        c.print("\n[ansibrightblack]/cron rm <id> · `mantis cron logs <id>` for "
+                "output · `mantis cron install` to run them unattended[/]\n")
+
+    def _cmd_sandbox(self, arg: str = "") -> None:
+        """``/sandbox`` — show what the shell is confined to; ``on`` / ``off``
+        flips it for this session (and writes the choice to settings)."""
+        from .sandbox import load_policy, sandbox_status  # noqa: PLC0415
+
+        c = self.console
+        want = (arg or "").strip().lower()
+        if want in ("on", "off"):
+            try:
+                from .settings import update_setting_source  # noqa: PLC0415
+
+                update_setting_source("user", {"sandbox": {"enabled": want == "on"}})
+            except Exception as e:  # noqa: BLE001
+                c.print(f"[ansired]couldn't save that:[/] {e}")
+                return
+
+        st = sandbox_status(load_policy(), cwd=str(Path.cwd()))
+        c.print("\n[bold]Shell sandbox[/]")
+        if st["active"]:
+            c.print("  [ansigreen]● on[/] — commands run confined by "
+                    f"[white]{st['backend']}[/]")
+        elif st["enabled"]:
+            c.print(f"  [ansiyellow]● unavailable[/] — {st['reason']}")
+            c.print("  commands are running [ansiyellow]unconfined[/]; set "
+                    "sandbox.failIfUnavailable to refuse instead")
+        else:
+            c.print("  [ansibrightblack]○ off[/] — commands run with your full "
+                    "user permissions")
+            if st["backend"]:
+                c.print(f"  [ansibrightblack]{st['backend']} is available — "
+                        "`/sandbox on` to use it[/]")
+            else:
+                c.print(f"  [ansibrightblack]{st['reason']}[/]")
+        if st["enabled"]:
+            c.print("\n  [ansibrightblack]writable:[/]")
+            for root in st["writable"]:
+                c.print(f"    [ansibrightblack]{root}[/]")
+            net = "allowed" if st["network"] else "[ansired]blocked[/]"
+            c.print(f"  [ansibrightblack]network:[/] {net}")
+        c.print("\n[ansibrightblack]Everything else on disk stays readable but "
+                "read-only. Configure in settings.json under \"sandbox\".[/]\n")
 
     def _cmd_mcp_trust(self) -> None:
         """/mcp trust — approve the current project's .mcp.json so its stdio
@@ -4697,8 +5013,12 @@ class MantisTUI:
             ("cwd", str(Path.cwd())),
             ("session", str(sid)),
             ("messages", str(len(self.messages))),
-            ("tools", str(n_tools)),
+            ("tools", str(n_tools) + (f" · {self._deferred_note}"
+                                      if self._deferred_note else "")),
         ]
+        if self._advisor is not None:
+            via = getattr(self._advisor, "label", None)
+            rows.append(("advisor", self._advisor.model + (f" · {via}" if via else "")))
         if self.effort:
             rows.append(("effort", self.effort))
         if self.verbosity:
@@ -5548,6 +5868,149 @@ class MantisTUI:
 # ---------------------------------------------------------------------------
 
 
+def _run_cron_cli(argv: list[str]) -> int:
+    """``mantis cron …`` — schedules that outlive the session.
+
+    Deliberately its own argument parser rather than a flag on the main one:
+    these subcommands run and exit, they never open the terminal, and half of
+    them are meant to be called by launchd/systemd rather than by a person.
+    """
+    import argparse  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
+
+    from . import cron  # noqa: PLC0415
+
+    p = argparse.ArgumentParser(
+        prog="mantis cron",
+        description="Run agent prompts on a schedule, whether or not you're here.")
+    sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
+
+    p_add = sub.add_parser("add", help="Schedule a prompt.")
+    p_add.add_argument("schedule", help='"every 30m" · "daily 09:00" · "mon 09:00" · "*/15 * * * *"')
+    p_add.add_argument("prompt", nargs="+", help="What the agent should do.")
+    p_add.add_argument("--cwd", default=None, help="Where to run (default: here).")
+    p_add.add_argument("--model", default=None, help="Pin a model for this job.")
+    p_add.add_argument("--godmode", action="store_true",
+                       help="Run every tool without asking.")
+    p_add.add_argument("--no-sandbox", dest="sandbox", action="store_false",
+                       default=True,
+                       help="Don't confine shell commands (sandboxed by default).")
+
+    sub.add_parser("list", help="Show every scheduled job.")
+    p_rm = sub.add_parser("remove", help="Delete a job.")
+    p_rm.add_argument("id")
+    p_pause = sub.add_parser("pause", help="Stop a job firing, keep it around.")
+    p_pause.add_argument("id")
+    p_resume = sub.add_parser("resume", help="Un-pause a job.")
+    p_resume.add_argument("id")
+    p_run = sub.add_parser("run", help="Run a job right now.")
+    p_run.add_argument("id")
+    sub.add_parser("tick", help="Run everything due, once (for launchd/systemd/cron).")
+    p_daemon = sub.add_parser("daemon", help="Stay in the foreground and tick.")
+    p_daemon.add_argument("--interval", type=float, default=30.0)
+    sub.add_parser("install", help="Register the tick with launchd or systemd.")
+    p_logs = sub.add_parser("logs", help="Show a job's most recent run log.")
+    p_logs.add_argument("id")
+
+    args = p.parse_args(argv)
+    cmd = args.cmd or "list"
+
+    def _find(job_id: str):
+        for j in cron.load_jobs():
+            if j.id == job_id or j.id.startswith(job_id):
+                return j
+        return None
+
+    if cmd == "add":
+        try:
+            job = cron.add_job(args.schedule, " ".join(args.prompt), cwd=args.cwd,
+                               godmode=args.godmode, sandbox=args.sandbox,
+                               model=args.model)
+        except (cron.ScheduleError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        when = datetime.fromtimestamp(job.next_run).strftime("%a %d %b %H:%M")
+        print(f"Scheduled {job.id} — {job.schedule['text']}, next run {when}")
+        print("Run `mantis cron install` once so these fire without a terminal open.")
+        return 0
+
+    if cmd == "list":
+        jobs = cron.list_jobs()
+        if not jobs:
+            print("No scheduled jobs. Add one:\n"
+                  '  mantis cron add "every 30m" "triage new test failures"')
+            return 0
+        for j in jobs:
+            when = datetime.fromtimestamp(j.next_run).strftime("%a %d %b %H:%M")
+            flags = []
+            if not j.enabled:
+                flags.append("paused")
+            if j.godmode:
+                flags.append("godmode")
+            if not j.sandbox:
+                flags.append("unsandboxed")
+            tail = f"  [{' · '.join(flags)}]" if flags else ""
+            print(f"{j.id}  {j.schedule['text']:<18} next {when}{tail}")
+            print(f"          {j.prompt}")
+            print(f"          {j.cwd}")
+            if j.last_run:
+                ran = datetime.fromtimestamp(j.last_run).strftime("%d %b %H:%M")
+                print(f"          last {ran} · {j.last_status} · {j.runs} run(s)")
+        return 0
+
+    if cmd in ("remove", "pause", "resume", "run", "logs"):
+        job = _find(args.id)
+        if job is None:
+            print(f"Error: no job {args.id!r}", file=sys.stderr)
+            return 1
+        if cmd == "remove":
+            cron.remove_job(job.id)
+            print(f"Removed {job.id}")
+            return 0
+        if cmd in ("pause", "resume"):
+            cron.set_enabled(job.id, cmd == "resume")
+            print(f"{'Paused' if cmd == 'pause' else 'Resumed'} {job.id}")
+            return 0
+        if cmd == "run":
+            print(f"Running {job.id}…", flush=True)
+            result = cron.run_job(job)
+            print(f"{result['status']} · log: {result['log']}")
+            return 0 if result["status"] == "ok" else 1
+        log = job.last_log
+        if not log or not Path(log).exists():
+            print(f"{job.id} hasn't run yet.")
+            return 0
+        print(Path(log).read_text(encoding="utf-8", errors="replace"))
+        return 0
+
+    if cmd == "tick":
+        results = cron.tick()
+        for r in results:
+            print(f"{r['id']}: {r['status']}")
+        return 0
+
+    if cmd == "daemon":
+        print("Ticking every "
+              f"{int(args.interval)}s — ctrl-c to stop. (`mantis cron install` "
+              "does this without a terminal.)", flush=True)
+        try:
+            return cron.daemon(args.interval)
+        except KeyboardInterrupt:
+            return 0
+
+    if cmd == "install":
+        res = cron.install_scheduler()
+        if not res.get("ok"):
+            print(f"Error: {res.get('error')}", file=sys.stderr)
+            return 1
+        state = "loaded" if res.get("loaded") else "written (load it yourself)"
+        print(f"Installed the {res['backend']} tick — {state}\n  {res['path']}")
+        return 0
+
+    p.print_help()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse  # noqa: PLC0415
 
@@ -5567,6 +6030,10 @@ def main(argv: list[str] | None = None) -> int:
         from .serve import run_serve  # noqa: PLC0415
 
         return run_serve(argv[1:])
+
+    # `mantis cron [...]` → schedules that outlive the session.
+    if argv and argv[0] == "cron":
+        return _run_cron_cli(argv[1:])
 
     # Apply settings.json `env` into the process environment BEFORE argparse so
     # the --api-key / --backend / --model defaults (which read os.environ) pick
@@ -5638,6 +6105,72 @@ def main(argv: list[str] | None = None) -> int:
             "for true godmode."
         ),
     )
+    # -- headless print mode -------------------------------------------------
+    # `mantis -p "do the thing"` runs one prompt and exits. Same flag vocabulary
+    # as Claude Code's print mode so existing CI scripts port over, but it
+    # resolves the model the way an interactive session does — no --model
+    # needed to use the provider you already set up.
+    p.add_argument(
+        "prompt", nargs="*",
+        help="With -p: the prompt to run (use '-' or pipe stdin instead).",
+    )
+    p.add_argument(
+        "-p", "--print", dest="print_mode", action="store_true",
+        help="Headless: run one prompt, print the result, exit. Reads stdin "
+             "when no prompt argument is given.",
+    )
+    p.add_argument(
+        "--output-format", choices=("text", "json", "stream-json"), default="text",
+        help="-p output: text (the reply), json (one result object), or "
+             "stream-json (NDJSON of every message — requires --verbose).",
+    )
+    p.add_argument(
+        "--json", action="store_const", const="json", dest="output_format",
+        help="Shorthand for --output-format json.",
+    )
+    p.add_argument(
+        "--verbose", action="store_true",
+        help="-p: emit every message. Required by --output-format stream-json; "
+             "with --output-format json, prints the full message array.",
+    )
+    p.add_argument(
+        "--append-system-prompt", default=None,
+        help="Append instructions to the system prompt instead of replacing it.",
+    )
+    p.add_argument(
+        "--allowed-tools", "--allowedTools", dest="allowed_tools", default=None,
+        help="-p: comma-separated tools to auto-approve (e.g. 'read_file,grep').",
+    )
+    p.add_argument(
+        "--disallowed-tools", "--disallowedTools", dest="disallowed_tools", default=None,
+        help="-p: comma-separated tools to refuse outright.",
+    )
+    p.add_argument(
+        "--session-id", dest="session_id", default=None,
+        help="-p: run under a specific session id (for correlating CI runs).",
+    )
+    # Unattended runs are exactly where "we'll ask the user" stops being a
+    # safety story, so the sandbox is one flag away from any of them.
+    p.add_argument(
+        "--sandbox", dest="sandbox", action="store_true", default=None,
+        help="Confine shell commands with the OS sandbox: writes limited to "
+             "this project + temp, everything else read-only.",
+    )
+    p.add_argument(
+        "--no-sandbox", dest="sandbox", action="store_false",
+        help="Run shell commands unconfined even if settings enable the sandbox.",
+    )
+    p.add_argument(
+        "--sandbox-no-network", dest="sandbox_network", action="store_false",
+        default=True, help="With --sandbox: block network access too.",
+    )
+    # A cheap model doing the work, a strong one checking the hard calls. The
+    # advisor can live on a different provider than the session's model.
+    p.add_argument(
+        "--advisor", dest="advisor", default=None, metavar="MODEL",
+        help="Pair a stronger model the agent consults at decision points "
+             "(e.g. --advisor opus). 'off' disables it for this run.",
+    )
     p.add_argument(
         "--continue", "-c", dest="continue_session", action="store_true",
         help="Resume your most recent conversation instead of starting fresh.",
@@ -5649,6 +6182,26 @@ def main(argv: list[str] | None = None) -> int:
              "list recent sessions and exit so you can pick one.",
     )
     args = p.parse_args(argv)
+
+    # --sandbox / --no-sandbox ride on the environment so they reach every
+    # shell this process tree starts — subagents and background commands too.
+    if args.sandbox is not None:
+        os.environ["MANTIS_SANDBOX"] = "1" if args.sandbox else "0"
+    if not args.sandbox_network:
+        os.environ["MANTIS_SANDBOX_NETWORK"] = "0"
+
+    # Headless: never build the TUI. This runs before the prompt_toolkit/rich
+    # preflight because a print run needs neither — `mantis -p` has to work in
+    # a container where the terminal libraries were never installed.
+    if args.print_mode:
+        from .headless import run_print  # noqa: PLC0415
+
+        return run_print(args)
+    if args.prompt:
+        print("Error: a prompt argument only makes sense with -p/--print "
+              f"(got {args.prompt[0]!r}). Start `mantis` with no arguments to "
+              "open the terminal.", file=sys.stderr)
+        return 1
 
     # Dependency preflight with a friendly message.
     try:
@@ -5672,6 +6225,11 @@ def main(argv: list[str] | None = None) -> int:
         verbosity=args.verbosity,
         reasoning_mode=args.reasoning_mode,
     )
+
+    # Set before the first _build_agent so the advisor tool is in the very
+    # first tool belt, not one rebuild late.
+    if getattr(args, "advisor", None):
+        tui._advisor_override = args.advisor
 
     if args.permission_mode is not None:
         tui._apply_initial_permission_mode(args.permission_mode)

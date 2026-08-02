@@ -92,7 +92,7 @@ from ..types import (
     UserMessage,
     Usage,
 )
-from .base import HTTPProviderMixin
+from .base import HTTPProviderMixin, normalize_messages, strip_control_keys
 
 __all__ = [
     "ANTHROPIC_DEFAULT_BASE_URL",
@@ -286,19 +286,30 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         # Universal thinking config -> Anthropic thinking block. An explicit
         # extra["thinking"] takes precedence (respected via the guard + the
         # setdefault merge below).
-        if thinking is not None and not (extra and "thinking" in extra):
+        # An explicit extra["thinking"] is already in Anthropic's native block
+        # shape, so it wins outright; extra["max_thinking_tokens"] is the
+        # Claude-SDK alias for a fixed budget and becomes one here. Everything
+        # else in the control set is an SDK-level knob with no Anthropic wire
+        # field — it is translated above or dropped, never forwarded (the
+        # Messages API 400s on any unrecognized top-level key).
+        block: dict[str, Any] | None = None
+        if extra and isinstance(extra.get("thinking"), dict):
+            block = dict(extra["thinking"])
+        elif extra and extra.get("max_thinking_tokens") is not None:
+            block = {"type": "enabled",
+                     "budget_tokens": int(extra["max_thinking_tokens"])}
+        elif thinking is not None:
             block = _thinking_to_anthropic(thinking)
-            if block is not None:
-                payload["thinking"] = block
-                # With thinking on, Anthropic requires the default sampling
-                # temperature — a non-default temperature is a 400 on the models
-                # that take a thinking block. Drop it so enabling thinking can't
-                # turn a valid request into a rejected one.
-                if block.get("type") != "disabled":
-                    payload.pop("temperature", None)
-        if extra:
-            for k, v in extra.items():
-                payload.setdefault(k, v)
+        if block is not None:
+            payload["thinking"] = block
+            # With thinking on, Anthropic requires the default sampling
+            # temperature — a non-default temperature is a 400 on the models
+            # that take a thinking block. Drop it so enabling thinking can't
+            # turn a valid request into a rejected one.
+            if block.get("type") != "disabled":
+                payload.pop("temperature", None)
+        for k, v in strip_control_keys(extra).items():
+            payload.setdefault(k, v)
 
         body = _PAYLOAD_ENCODER.encode(payload)
 
@@ -332,6 +343,9 @@ def _split_system(
     concatenate them.
     """
 
+    # Compaction boundaries become SystemMessages here, so BOTH paths below
+    # place them instead of handing the encoder a type it can't serialize.
+    messages = normalize_messages(messages)
     if explicit_system is not None:
         body_only = [m for m in messages if not isinstance(m, SystemMessage)]
         return explicit_system, body_only

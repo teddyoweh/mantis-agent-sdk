@@ -22,6 +22,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
+try:
+    from eval_type_backport import install_patch
+except ImportError:  # pragma: no cover - Python 3.10+
+    pass
+else:  # pragma: no cover - Python 3.9 only
+    install_patch()
+
 import anyio
 import msgspec
 
@@ -36,7 +43,7 @@ ToolFn = Callable[..., Awaitable[Any]]
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class Tool:
     """Runtime representation of a tool the agent can call.
 
@@ -70,6 +77,11 @@ class Tool:
     abort_siblings_on_error: bool = False
     is_read_only: bool = False
     timeout_s: float | None = None
+    # Deferred tools are advertised by NAME only — their JSON schema is kept
+    # out of every request until the model asks for it with ``tool_search``.
+    # A dozen MCP servers otherwise cost thousands of tokens per turn, on every
+    # turn, whether or not the model was ever going to use them.
+    deferred: bool = False
 
     def to_wire(self) -> dict[str, Any]:
         """JSON-Schema tool definition (Anthropic-shaped). Other providers
@@ -351,7 +363,7 @@ def _type_to_schema(t: Any) -> dict[str, Any]:
     # Optional[X] / X | None / Union[...] — strip NoneType and recurse on the
     # remaining member(s). Union types otherwise fall through to a bare object,
     # mis-typing every optional parameter on the wire.
-    if origin is Union or origin is types.UnionType:
+    if origin is Union or origin is getattr(types, "UnionType", None):
         members = [a for a in get_args(t) if a is not type(None)]
         if len(members) == 1:
             return _type_to_schema(members[0])
@@ -408,7 +420,7 @@ _TOOL_ALIASES: dict[str, str] = {
 }
 
 
-@dataclass(slots=True)
+@dataclass
 class ToolRegistry:
     """Holds tools by name. Cheap to construct per ``Agent``."""
 
@@ -448,7 +460,48 @@ class ToolRegistry:
         return None
 
     def to_wire(self) -> list[dict[str, Any]]:
-        return [t.to_wire() for t in self._by_name.values()]
+        """The schemas that go on the wire this turn — deferred tools are
+        excluded until :meth:`surface` loads them."""
+        return [t.to_wire() for t in self._by_name.values() if not t.deferred]
+
+    # -- deferred tools -------------------------------------------------------
+    #
+    # The registry knows about every tool; the *request* only carries the ones
+    # that are live. ``deferred_index()`` is the cheap catalogue (name + first
+    # line of description) that tells the model what it could load, and
+    # ``surface()`` promotes a tool to live for the rest of the session.
+
+    def defer(self, *names: str) -> int:
+        """Mark tools deferred by name. Returns how many changed."""
+        n = 0
+        for name in names:
+            t = self._by_name.get(name)
+            if t is not None and not t.deferred:
+                t.deferred = True
+                n += 1
+        return n
+
+    def surface(self, *names: str) -> list[Tool]:
+        """Promote deferred tools to live. Returns the ones that changed."""
+        out = []
+        for name in names:
+            t = self.resolve(name)
+            if t is not None and t.deferred:
+                t.deferred = False
+                out.append(t)
+        return out
+
+    def deferred_tools(self) -> list[Tool]:
+        return [t for t in self._by_name.values() if t.deferred]
+
+    def deferred_index(self) -> list[tuple[str, str]]:
+        """``(name, one-line summary)`` for every deferred tool — small enough
+        to name them all in the system prompt."""
+        out = []
+        for t in self.deferred_tools():
+            first = (t.description or "").strip().splitlines()
+            out.append((t.name, first[0][:120] if first else ""))
+        return out
 
     def __bool__(self) -> bool:
         return bool(self._by_name)

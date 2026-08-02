@@ -75,7 +75,7 @@ class Skill(msgspec.Struct, frozen=True, omit_defaults=True):
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class SkillRegistry:
     """Holds the set of skills for an ``Agent``.
 

@@ -544,7 +544,7 @@ def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseB
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class Agent:
     """Multi-turn agent over any OSS model on any compatible backend.
 
@@ -2511,7 +2511,7 @@ class Agent:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class _BlockBuilder:
     """In-progress content block, mutated as deltas arrive."""
 

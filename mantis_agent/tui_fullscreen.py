@@ -1573,8 +1573,11 @@ async def run_fullscreen(tui: Any) -> int:
                         f"sends with your next message{_RESET}{warn}")
         clip = state.get("clip")
         if clip:
+            # A copied FILE arrives as its path, which ⌘V can carry; raw image
+            # bytes can't cross a tty, so that case really is ctrl+v only.
+            keys = "ctrl+v" if clip == "Image" else "⌘v / ctrl+v"
             verb = "paste" if clip == "Image" else "attach"
-            return ANSI(f"{_DIM}{clip} in clipboard · ctrl+v to {verb}{_RESET}")
+            return ANSI(f"{_DIM}{clip} in clipboard · {keys} to {verb}{_RESET}")
         return ANSI("")
 
     def _attach_height() -> Any:
@@ -2568,23 +2571,23 @@ async def run_fullscreen(tui: Any) -> int:
             # which makes the module-level name a function local here.)
             from pathlib import Path  # noqa: PLC0415
 
+            # A successful attach reports itself in the input area (the
+            # indicator above the prompt counts what's staged) — printing it
+            # here too put a duplicate "attached …" line in the transcript.
+            # Only a FAILURE needs saying, because nothing else shows it.
             if arg:
-                from . import clipboard as _clip  # noqa: PLC0415
-                try:
-                    blocks = _clip.file_to_blocks(Path(arg.strip().strip("'\"")).expanduser())
-                except (OSError, ValueError) as e:
-                    await _print(lambda e=e: tui.console.print(f"[ansibrightblack]({e})[/]"))
+                target = Path(arg.strip().strip("'\"")).expanduser()
+                if not target.is_file():
+                    await _print(lambda t=target: tui.console.print(
+                        f"[ansibrightblack](no such file: {t})[/]"))
                     return True
-                label = "Image" if _clip.is_image_path(arg.strip()) else "File"
-                for b in blocks:
-                    n = len(tui.pending_attachments) + 1
-                    tui.pending_attachments.append((f"[{label} #{n}]", b))
-                note = f"attached {Path(arg.strip()).name} — sends with your next message"
-            else:
-                placeholder = tui._capture_clipboard_attachment()
-                note = (f"attached {placeholder} — sends with your next message"
-                        if placeholder else "no image or file on the clipboard")
-            await _print(lambda n=note: tui.console.print(f"[ansibrightblack]({n})[/]"))
+                if tui._attach_file(target) is None:
+                    await _print(lambda t=target: tui.console.print(
+                        f"[ansibrightblack](couldn't attach {t.name})[/]"))
+                    return True
+            elif tui._capture_clipboard_attachment() is None:
+                await _print(lambda: tui.console.print(
+                    "[ansibrightblack](no image or file on the clipboard)[/]"))
             get_app().invalidate()
             return True
         if cmd == "/export":
@@ -2971,6 +2974,9 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if cmd == "/skills":
             await _print(lambda: tui._show_skills())
+            return True
+        if cmd == "/advisor":
+            await _print(lambda: tui._cmd_advisor(arg))
             return True
         if cmd == "/status":
             await _print(lambda: tui._show_status(state["ctx_tokens"], state["session_cost"]))
@@ -3927,21 +3933,45 @@ async def run_fullscreen(tui: Any) -> int:
         # Ctrl+V: attach an image (or copied file) from the system clipboard to
         # the next message — [Image #N] placeholder in the line, real content
         # block flushed on submit. (Was classic-REPL-only; now both UIs.)
+        #
+        # A successful attach says so IN THE INPUT — the placeholder lands in
+        # the line and the indicator above the prompt counts what's staged
+        # (with the can't-see-images warning). Announcing it as well wrote a
+        # duplicate "attached …" line into the transcript for every paste.
         placeholder = tui._capture_clipboard_attachment()
         if placeholder:
             input_buffer.insert_text(placeholder + " ")
-            from .tui import model_supports_vision  # noqa: PLC0415
-            if placeholder.startswith("[Image") and not model_supports_vision(tui.model):
-                event.app.create_background_task(_announce(
-                    f"attached {placeholder} — ⚠ {tui.model} can't see images; "
-                    "/model to switch to a vision model (e.g. gpt-5.4)"))
-            else:
-                event.app.create_background_task(_announce(
-                    f"attached {placeholder} — sends with your next message"))
         else:
             event.app.create_background_task(_announce(
                 "no image or file on the clipboard"))
         event.app.invalidate()
+
+    @kb.add(Keys.BracketedPaste)
+    def _(event: Any) -> None:
+        # ⌘V (and every other terminal paste) arrives here. A terminal can only
+        # deliver TEXT, so a raw screenshot on the clipboard genuinely cannot
+        # ride in on ⌘V — but a file copied in Finder pastes as its POSIX path,
+        # and that is the common "paste my screenshot" flow. Attach it the way
+        # Ctrl+V would instead of dropping a bare path string in the buffer.
+        data = (event.data or "").replace("\r\n", "\n").replace("\r", "\n")
+        from . import clipboard as _clip  # noqa: PLC0415
+
+        path = _clip.looks_like_path(data)
+        if path:
+            placeholder = tui._attach_file(path)
+            if placeholder:
+                input_buffer.insert_text(placeholder + " ")
+                event.app.invalidate()
+                return
+        # Some terminals send an empty bracketed paste when the clipboard holds
+        # something they can't render as text — an image. Take the hint.
+        if not data.strip() and _clip.has_clipboard_image():
+            placeholder = tui._capture_clipboard_attachment()
+            if placeholder:
+                input_buffer.insert_text(placeholder + " ")
+                event.app.invalidate()
+                return
+        input_buffer.insert_text(data)
 
     input_window = Window(
         BufferControl(

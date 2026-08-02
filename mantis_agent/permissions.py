@@ -37,7 +37,7 @@ import functools
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
 import msgspec
 
@@ -88,7 +88,7 @@ class Ask(msgspec.Struct, frozen=True, tag="ask", tag_field="decision"):
     prompt: str = ""
 
 
-PermissionDecision = Allow | Deny | Ask
+PermissionDecision = Union[Allow, Deny, Ask]
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ class PermissionRule(msgspec.Struct, frozen=True, omit_defaults=True):
     is_regex: bool = False
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionRuleSet:
     """Grouped rules, evaluated in (deny, allow, ask) precedence.
 
@@ -178,7 +178,7 @@ def _match_targets(input: dict[str, Any]) -> list[str]:
         for v in input.values():
             if isinstance(v, str):
                 targets.append(v)
-            elif isinstance(v, bool | int | float):
+            elif isinstance(v, (bool, int, float)):
                 targets.append(str(v))
     return targets
 
@@ -221,7 +221,7 @@ CanUseToolFn = Callable[
 ]
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionContext:
     """Configuration the agent threads through every permission check.
 
@@ -314,7 +314,7 @@ def _session_key(tool: Tool, input: dict[str, Any]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class BashRisk:
     is_dangerous: bool
     reason: str = ""
@@ -377,7 +377,7 @@ def _shell_command(input: dict[str, Any]) -> str:
         v = inp.get(f)
         if isinstance(v, str) and v:
             return v
-        if isinstance(v, list | tuple):
+        if isinstance(v, (list, tuple)):
             return " ".join(str(x) for x in v)
     return ""
 

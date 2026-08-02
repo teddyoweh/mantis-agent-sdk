@@ -1,9 +1,9 @@
 [project]
 name = "mantis-agent-sdk"
-version = "2.60.0"
+version = "2.61.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "mantis-agent-sdk authors" }]
 keywords = ["agent", "llm", "claude", "ollama", "mcp", "tool-use", "streaming"]
@@ -13,9 +13,12 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
@@ -23,6 +26,9 @@ dependencies = [
     "msgspec>=0.18.6",
     "httpx[http2]>=0.27",
     "anyio>=4.4",
+    "exceptiongroup>=1.2; python_version < '3.11'",
+    "typing_extensions>=4.6; python_version < '3.10'",
+    "eval_type_backport>=0.2; python_version < '3.10'",
     # The `mantis` terminal ships out of the box: `pip install mantis-agent-sdk`
     # gives you a working TUI, no extras. Both are lazy-imported, so the
     # stdlib-only `mantis-agent` diagnostics CLI keeps its snappy cold start.
@@ -84,7 +90,7 @@ include = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py39"
 
 [tool.ruff.lint.per-file-ignores]
 # The package root is a re-export hub: it deliberately imports the public

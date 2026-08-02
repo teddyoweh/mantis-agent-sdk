@@ -41,7 +41,7 @@ def _emit(cb: Any, ev: dict) -> None:
         pass
 
 
-@dataclass(slots=True)
+@dataclass
 class SwarmCandidate:
     index: int
     worktree: str
@@ -51,7 +51,7 @@ class SwarmCandidate:
     error: str | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class SwarmResult:
     winner: int | None            # index into candidates, None = nothing usable
     reason: str = ""

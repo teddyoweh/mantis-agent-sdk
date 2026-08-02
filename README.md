@@ -307,7 +307,7 @@ mantis-agent setup-local
 python my_agent.py   # works on the first try
 ```
 
-Change one word — `model=` — and the same script runs against Together, Fireworks, vLLM, llama.cpp, or Groq. Anthropic's own canonical SDK examples run verbatim against DeepSeek-R1 1.5B on local Ollama. The suite is **831 tests** across Python 3.11–3.13, and every release is published to PyPI from this same tree.
+Change one word — `model=` — and the same script runs against Together, Fireworks, vLLM, llama.cpp, or Groq. Anthropic's own canonical SDK examples run verbatim against DeepSeek-R1 1.5B on local Ollama. The suite runs across Python 3.9–3.14, and every release is published to PyPI from this same tree.
 
 ---
 

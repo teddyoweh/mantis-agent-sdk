@@ -18,7 +18,12 @@ Design notes
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from typing import Any, Literal, Union
+
+try:
+    from typing import Annotated
+except ImportError:  # pragma: no cover - Python 3.9 only
+    from typing_extensions import Annotated
 
 import msgspec
 
@@ -78,7 +83,7 @@ class ToolResultBlock(
     """Result of a tool call, sent back as part of a user message."""
 
     tool_use_id: str
-    content: str | list["ContentBlock"]
+    content: str | list[Any]
     is_error: bool = False
 
 
@@ -100,6 +105,11 @@ ContentBlock = Annotated[
     Union[TextBlock, ThinkingBlock, ToolUseBlock, ToolResultBlock, ImageBlock],
     msgspec.Meta(description="A single content block in a message."),
 ]
+
+# Resolve the recursive tool-result annotation explicitly. Python 3.10 leaves
+# the postponed alias as a string that msgspec cannot resolve while constructing
+# a decoder for the surrounding message type.
+ToolResultBlock.__annotations__["content"] = Union[str, list[ContentBlock]]
 
 
 # ---------------------------------------------------------------------------

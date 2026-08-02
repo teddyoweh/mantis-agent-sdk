@@ -212,7 +212,7 @@ class SessionNotFoundError(KeyError):
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class _Row:
     """Internal representation used by both stores."""
 

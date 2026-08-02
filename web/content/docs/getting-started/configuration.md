@@ -25,6 +25,7 @@ it; override per-agent in code when you need to.
 | `ANTHROPIC_API_KEY` | Used by `anthropic_passthrough` and built-in tools (`WebFetch`). |
 | `EXA_API_KEY` | Used by `WebSearch` / `WebFetch` for live web results. |
 | `MANTIS_AGENT_MOCK` | Set to `1` to force the mock provider — useful in CI without API keys. |
+| `MANTIS_ADVISOR` | Model the agent consults at decision points (`opus`, an id, or `off`). |
 
 ## Setting sources
 
@@ -56,6 +57,7 @@ your model and backend once and forget about it:
 ```json
 {
   "model": "qwen2.5:7b",
+  "advisorModel": "opus",
   "max_usd": 1.0,
   "max_turns": 20,
   "permissions": {
@@ -63,6 +65,11 @@ your model and backend once and forget about it:
   }
 }
 ```
+
+`advisorModel` pairs a stronger model the terminal consults at decision
+points. It resolves its own provider, so the pairing above runs a local
+7B and escalates the hard calls to Opus. Override per run with
+`--advisor`, or `MANTIS_ADVISOR` (`off` to disable).
 
 ## Programmatic loading
 

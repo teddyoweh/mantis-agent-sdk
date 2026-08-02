@@ -41,7 +41,7 @@ from .types import Usage
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class Budget:
     """Caps the agent is asked to respect.
 
@@ -73,7 +73,7 @@ class Budget:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Pricing:
     """Per-million-token USD pricing for one (provider, model) pair.
 
@@ -238,7 +238,7 @@ def estimate_cost(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class BudgetTracker:
     """Mutable running totals for one agent run.
 

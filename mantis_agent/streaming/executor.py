@@ -64,6 +64,11 @@ import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Optional
 
+try:
+    BaseExceptionGroup
+except NameError:  # pragma: no cover - Python 3.10 only
+    from exceptiongroup import BaseExceptionGroup
+
 import anyio
 import anyio.abc
 import msgspec

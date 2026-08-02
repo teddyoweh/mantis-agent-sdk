@@ -98,7 +98,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class MantisAgentOptions:
     """Drop-in replacement for ``claude_agent_sdk.MantisAgentOptions``.
 
@@ -538,7 +538,7 @@ HookInput = dict[str, Any]
 HookJSONOutput = dict[str, Any]
 
 
-@dataclass(slots=True)
+@dataclass
 class HookContext:
     """Drop-in for ``claude_agent_sdk.types.HookContext``."""
 
@@ -547,7 +547,7 @@ class HookContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass
 class HookMatcher:
     """Drop-in for ``claude_agent_sdk.types.HookMatcher``.
 
@@ -564,7 +564,7 @@ class HookMatcher:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionResult:
     """Drop-in for ``claude_agent_sdk.types.PermissionResult``."""
 
@@ -574,7 +574,7 @@ class PermissionResult:
     updated_input: dict[str, Any] | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionResultAllow:
     """Drop-in for ``claude_agent_sdk.PermissionResultAllow``.
 
@@ -586,7 +586,7 @@ class PermissionResultAllow:
     updated_input: dict[str, Any] | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class PermissionResultDeny:
     """Drop-in for ``claude_agent_sdk.PermissionResultDeny``.
 
@@ -659,7 +659,7 @@ class CLIConnectionError(ProviderError, ClaudeSDKError):
     """
 
 
-@dataclass(slots=True)
+@dataclass
 class Plugin:
     """Drop-in for ``claude_agent_sdk.Plugin``.
 
@@ -682,7 +682,7 @@ class Plugin:
     hooks: dict[str, list[Any]] | None = None
 
 
-@dataclass(slots=True)
+@dataclass
 class AgentDefinition:
     """Drop-in for ``claude_agent_sdk.AgentDefinition``.
 

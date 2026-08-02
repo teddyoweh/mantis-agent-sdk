@@ -217,8 +217,7 @@ async def run_watch(command: str, description: str, *, emit: Any,
         if persistent:
             outcome = await pump()
         else:
-            async with asyncio.timeout(timeout_ms / 1000.0):
-                outcome = await pump()
+            outcome = await asyncio.wait_for(pump(), timeout_ms / 1000.0)
     except (TimeoutError, asyncio.TimeoutError):
         outcome = "timeout"
     finally:

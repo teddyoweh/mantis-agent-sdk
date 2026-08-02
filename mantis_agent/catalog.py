@@ -29,7 +29,7 @@ from .paths import get_mantis_agent_dir
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Pull:
     tag: str  # the `ollama pull <tag>` argument, e.g. "deepseek-r1:7b"
     note: str  # one-line description
@@ -67,7 +67,7 @@ SELF_HOST_NOTE = (
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Provider:
     id: str  # short slug, e.g. "deepseek"
     label: str  # display name
@@ -438,7 +438,7 @@ _NEWEST_ALIASES = frozenset({"newest", "latest", "new", "recent", "flagship"})
 RESOLVER_ALIAS_WORDS: frozenset[str] = _NEWEST_ALIASES | frozenset(_PROVIDER_ALIASES)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ModelResolution:
     """Outcome of :func:`resolve_model_query`.
 

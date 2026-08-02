@@ -20,7 +20,7 @@ from typing import Literal
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ModelCapability:
     """Per-model facts that drive runtime behavior.
 
@@ -674,7 +674,7 @@ BackendKind = Literal[
 ]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class BackendCapability:
     """Probed at adapter init. Cached for the connection lifetime."""
 

@@ -52,7 +52,7 @@ later, far from the bug).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 # Per-backend translation registrations live below; this lookup makes the
 # Agent plumbing one line instead of an if/elif tree.
@@ -72,7 +72,7 @@ class ResponseFormatError(ValueError):
 # Canonicalized shapes the rest of the module deals with:
 #   ("json_object", None)
 #   ("json_schema", {"name": str | None, "schema": dict, "strict": bool | None})
-_CanonicalRF = tuple[str, dict[str, Any] | None]
+_CanonicalRF = tuple[str, Optional[dict[str, Any]]]
 
 
 def normalize_response_format(rf: Any) -> _CanonicalRF:

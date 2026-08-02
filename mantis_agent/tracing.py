@@ -89,7 +89,7 @@ def _new_span_id() -> str:
     return secrets.token_hex(8)
 
 
-@dataclass(slots=True)
+@dataclass
 class Span:
     """One unit of work, with timing and attributes.
 

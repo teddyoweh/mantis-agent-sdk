@@ -310,8 +310,9 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # call. Runs after the command (preserving its exit code); skipped only if the
     # command exits the shell itself, in which case we simply keep the old cwd.
     wrapped = f"{command}\n__mrc=$?\nprintf '\\n{_CWD_MARKER}%s\\n' \"$PWD\"\nexit $__mrc"
+    argv = _sandboxed(["bash", "-lc", wrapped], cwd)
     proc = await asyncio.create_subprocess_exec(
-        "bash", "-lc", wrapped,
+        *argv,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -321,14 +322,14 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout)
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError):
             proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), 2)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError, OSError):
@@ -401,6 +402,24 @@ def _extract_cwd_marker(text: str) -> tuple[str, str | None]:
     return "\n".join(kept), cwd
 
 
+def _sandboxed(argv: list[str], cwd: str | None) -> list[str]:
+    """Wrap a shell invocation in the OS sandbox when one is configured.
+
+    Off by default, so nothing changes for an interactive user who hasn't asked
+    for it. When it IS on and the platform can't provide it, the policy decides
+    whether that's a warning or a hard stop — a config that claims confinement
+    must never silently run unconfined.
+    """
+    try:
+        from ..sandbox import SandboxUnavailable, wrap_command  # noqa: PLC0415
+
+        return wrap_command(argv, cwd=cwd)
+    except SandboxUnavailable:
+        raise
+    except Exception:  # noqa: BLE001 — a broken policy must not break bash
+        return argv
+
+
 def _start_background(command: str, env: dict[str, str], *, cwd: str | None = None) -> str:
     import subprocess  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
@@ -411,7 +430,7 @@ def _start_background(command: str, env: dict[str, str], *, cwd: str | None = No
     fd, log_path = tempfile.mkstemp(prefix="mantis-bg-", suffix=".log")
     try:
         proc = subprocess.Popen(  # noqa: S603
-            ["bash", "-lc", command],  # noqa: S607
+            _sandboxed(["bash", "-lc", command], cwd),  # noqa: S607
             stdout=fd, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
             env=env, cwd=cwd, start_new_session=True,  # detach from our process group
         )

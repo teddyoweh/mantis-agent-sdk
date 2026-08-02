@@ -242,10 +242,19 @@ def find_image_paths(text: str) -> list[tuple[str, str]]:
 
 def looks_like_path(text: str) -> str | None:
     """If ``text`` is (just) a filesystem path to an existing file — e.g. what a
-    drag-and-drop pastes — return the cleaned path, else ``None``."""
+    drag-and-drop or a ⌘V of a copied file pastes — return the cleaned path,
+    else ``None``."""
     s = text.strip().strip("'\"")
     if not s or "\n" in s:
         return None
+    # Some terminals hand over a copied file as a file:// URL rather than a
+    # bare path (percent-encoded, so "my shot.png" arrives as "my%20shot.png").
+    if s.startswith("file://"):
+        from urllib.parse import unquote, urlparse  # noqa: PLC0415
+
+        s = unquote(urlparse(s).path)
+        if not s:
+            return None
     # Drag-drop on macOS escapes spaces with backslashes.
     s = s.replace("\\ ", " ")
     if (s.startswith("/") or s.startswith("~") or s.startswith("./")) and len(s) < 4096:

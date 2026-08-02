@@ -238,6 +238,30 @@ def test_boots_help_status_and_exits(term) -> None:
     assert term.close() == 0                  # clean orderly exit
 
 
+def test_advisor_pairs_a_model_and_turns_off(tmp_path) -> None:
+    """The real terminal, not the unit path: /advisor has to resolve a model,
+    put it in /status, and be switchable off — in one session, because booting
+    a pty app is the expensive part."""
+    t = Term(str(tmp_path / "home"), str(tmp_path))
+    try:
+        t.ready()
+        t.send("/advisor\r")
+        t.expect("off")                        # unpaired by default
+        t.send("/advisor opus\r")
+        t.expect("claude-opus")                # the alias resolved to an id…
+        t.expect("Anthropic")                  # …carrying its own provider
+        t.send("/status\r")
+        t.expect("advisor")                    # the pairing is visible at a glance
+        t.send("/advisor off\r")
+        t.expect("no escalation")
+        t.send("/exit\r")
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()
+
+
 def test_model_picker_opens_and_escapes(term) -> None:
     term.ready()
     term.send("/models\r")
@@ -315,9 +339,61 @@ def test_paste_command_stages_an_image(tmp_path) -> None:
     try:
         t.ready()
         t.send(f"/paste {png}\r")
-        t.expect("sends with your next message")
         t.expect("1 image attached")
+        t.expect("sends with your next message")
+        # …and ONLY there. The attach used to also print a line into the
+        # transcript, so every paste left a duplicate "attached [Image #1] —
+        # sends with your next message" in the scrollback.
+        assert b"attached [Image" not in t.buf
         t.send("/exit\r")
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()
+
+
+def test_cmd_v_of_a_copied_file_attaches_it(tmp_path) -> None:
+    """⌘V can only carry text, so a file copied in Finder arrives as its POSIX
+    path inside a bracketed paste. That has to attach like ctrl+v does, not
+    drop a bare path string in the buffer."""
+    import base64
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+        "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+    t = Term(str(tmp_path / "home"), str(tmp_path),
+             env_extra={"MANTIS_NO_CLIPBOARD_HINT": "1"})
+    try:
+        t.ready()
+        # Exactly what the terminal writes for ⌘V: ESC[200~ <text> ESC[201~
+        os.write(t.master, b"\x1b[200~" + str(png).encode() + b"\x1b[201~")
+        t.pump(1.0)
+        t.expect("[Image #1]")          # a chip in the input, not the raw path
+        t.expect("1 image attached")    # and staged for the next message
+        assert b"attached [Image" not in t.buf      # still nothing in scrollback
+        # Ctrl+C to quit: the buffer holds the chip, so typing /exit into it
+        # would submit "[Image #1] /exit" as a message instead of a command.
+        t.send("\x03")
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()
+
+
+def test_pasted_text_that_is_not_a_path_is_still_just_text(tmp_path) -> None:
+    """The paste handler must not eat ordinary pasted text."""
+    t = Term(str(tmp_path / "home"), str(tmp_path),
+             env_extra={"MANTIS_NO_CLIPBOARD_HINT": "1"})
+    try:
+        t.ready()
+        os.write(t.master, b"\x1b[200~hello /not/a/real/file.png there\x1b[201~")
+        t.pump(1.0)
+        t.expect("hello /not/a/real/file.png there")
+        assert b"image attached" not in t.buf
+        t.send("\x03")                 # pasted text is still in the buffer
         assert t.close() == 0
     finally:
         if t.proc.poll() is None:

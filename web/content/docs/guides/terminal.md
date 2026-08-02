@@ -121,6 +121,7 @@ picture along with the question.
 | `/swarm 3 <task>` | 3 parallel attempts in isolated git worktrees; a judge ranks the diffs and applies the winner |
 | `/watch 30s pytest -q` | sentinel: the moment the command starts failing, the agent wakes and fixes it (edge-triggered) |
 | `/loop 5m <prompt>` | re-run a prompt on an interval, never overlapping a running turn |
+| `/cron every 30m <prompt>` | schedule a run that **outlives the session** — see [Scheduled runs](#scheduled-runs) |
 | `/jobs` | background jobs — the model detaches long work with `task(run_in_background=true)`; you get a notification and the result auto-injects into context. `/jobs kill <id>` |
 
 The model has two ways to keep an eye on something itself:
@@ -141,6 +142,91 @@ The model has two ways to keep an eye on something itself:
 watch(command="tail -f dev.log | grep --line-buffered -E 'ERROR|Traceback'",
       description="errors in dev.log", persistent=true)
 ```
+
+## Scheduled runs
+
+`/loop` and `/watch` die with the session. `/cron` doesn't:
+
+```
+/cron every 30m triage new failures in the test suite
+/cron                       # list what's scheduled
+/cron rm a1b2c3d4
+```
+
+From the shell there's more: `mantis cron add "daily 09:00" "summarize
+yesterday's commits"`, `mantis cron logs <id>` for a run's output,
+`mantis cron run <id>` to fire one now, and **`mantis cron install`** once
+— that registers a one-minute tick with launchd (macOS) or a systemd user
+timer (Linux) so jobs fire with no terminal open.
+
+Schedules: `every 30m` · `daily 09:00` · `mon 09:00` · `*/15 * * * *`.
+Each job runs through the same headless path as `mantis -p`, in its own
+directory, and **sandboxed by default** (`--no-sandbox` to opt out) —
+unattended is exactly where "the user will approve it" stops being true.
+
+## Sandboxing the shell
+
+`/sandbox on` confines every shell command with the OS's own sandbox —
+Seatbelt on macOS, bubblewrap on Linux. Writes are limited to the project
+and temp; everything else on disk stays readable but read-only. It's a
+kernel-level refusal, not a prompt, so it holds for `--godmode`, `/goal`
+and CI runs where nobody is watching.
+
+```bash
+mantis -p "clean up the build" --sandbox            # confine this run
+mantis -p "…" --sandbox --sandbox-no-network        # …and cut the network
+```
+
+```json
+{"sandbox": {"enabled": true, "writableRoots": ["/extra/path"],
+             "network": true, "failIfUnavailable": false}}
+```
+
+`/sandbox` shows what's in force. `failIfUnavailable` makes a missing
+backend an error instead of a silent fallback to unconfined.
+
+## A second opinion on the hard calls
+
+Most turns of a long task are routine; a handful decide whether it works.
+Pair a stronger model as an **advisor** and the agent consults it at exactly
+those moments — before committing to an approach, when the same failure
+keeps recurring, before declaring a hard task done:
+
+```bash
+mantis --advisor opus              # for this session
+mantis -p "fix the flaky test" --advisor claude-opus-5 --godmode
+```
+
+```
+/advisor opus     pair it (saved for next time)
+/advisor          show the pairing
+/advisor off      stop escalating
+```
+
+The advisor reads the whole conversation and returns **judgement, not
+actions** — it gets no tools, so it can't race the main agent over the same
+files. Each consult prints `⤴ consulting <model>` so a call to a second
+model is never invisible, and a failed consult comes back as "proceed on
+your own judgement" rather than taking the session down.
+
+The part worth the flag: **the advisor doesn't have to live on the same
+provider as your model.** It resolves its own base URL and key from the
+catalog, independently of the session — so you can run Qwen on your own box
+and escalate three decisions an hour to Opus, or drive a local DeepSeek with
+a hosted Sonnet checking its plans. Set it permanently with
+`{"advisorModel": "opus"}` in settings, or `MANTIS_ADVISOR` for CI.
+Small local models don't get an advisor (a 7B that can't manage 22 tools
+won't manage knowing when to escalate either).
+
+## Big tool sets stay cheap
+
+Every tool costs tokens on every request. Past a dozen tools mantis
+**defers** the MCP ones: they're listed by name in the prompt, and the
+model loads a schema with `tool_search` when it actually needs one. With
+a 26-tool MCP server that's ~5,200 tokens per request down to ~790 — the
+difference between "MCP works" and "MCP works on a 7B model". `/status`
+shows how many are deferred; turn it off with
+`{"toolSearch": {"mode": "off"}}` or force it with `"always"`.
 
 ## Sessions
 

@@ -9,8 +9,12 @@ publish pipeline breaks silently. Catch that here.
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 only
+    import tomli as tomllib
 
 import pytest
 
@@ -91,7 +95,7 @@ def test_test_workflow_exists_and_matrixes_python() -> None:
     assert path.exists(), ".github/workflows/test.yml must exist."
     body = path.read_text()
     # Multi-version matrix
-    for v in ("3.11", "3.12", "3.13"):
+    for v in ("3.9", "3.10", "3.11", "3.12", "3.13", "3.14"):
         assert v in body, f"test.yml must include Python {v} in the matrix."
     # Runs pytest
     assert "pytest" in body
@@ -114,8 +118,8 @@ def test_pyproject_has_release_metadata() -> None:
     classifiers = " ".join(proj.get("classifiers", []))
     assert "Development Status :: 5 - Production/Stable" in classifiers
     assert "License :: OSI Approved :: Apache Software License" in classifiers
-    assert "Programming Language :: Python :: 3.11" in classifiers
-    assert "Programming Language :: Python :: 3.12" in classifiers
+    for v in ("3.9", "3.10", "3.11", "3.12", "3.13", "3.14"):
+        assert f"Programming Language :: Python :: {v}" in classifiers
     # URLs the PyPI page links from
     urls = proj.get("urls", {})
     assert "Homepage" in urls

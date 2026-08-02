@@ -68,7 +68,7 @@ from ..types import (
     UserMessage,
     Usage,
 )
-from .base import HTTPProviderMixin
+from .base import PROVIDER_CONTROL_KEYS, HTTPProviderMixin, normalize_messages
 
 # Soft import — thinking parser ships in a later milestone. The provider still
 # works without it; we just won't split <think>...</think> out of content
@@ -443,30 +443,34 @@ class OpenAICompatProvider(HTTPProviderMixin):
                 effort = "high"
             if effort is not None:
                 payload["reasoning_effort"] = effort
-            if extra.get("max_thinking_tokens") is not None:
-                payload["max_thinking_tokens"] = extra["max_thinking_tokens"]
-            thinking = extra.get("thinking")
-            if isinstance(thinking, dict):
-                thinking_effort = thinking.get("effort")
+            # NB: a local name, NOT the ``thinking`` parameter. Rebinding it
+            # here meant any non-empty ``extra`` without a "thinking" key
+            # silently erased the universal thinking config below — so
+            # extra={"verbosity": …} quietly turned reasoning off.
+            extra_thinking = extra.get("thinking")
+            if isinstance(extra_thinking, dict):
+                thinking_effort = extra_thinking.get("effort")
                 if thinking_effort == "minimal":
                     thinking_effort = "low"
                 if thinking_effort is not None:
                     payload["reasoning_effort"] = thinking_effort
-                if thinking.get("budget_tokens") is not None:
-                    payload["max_thinking_tokens"] = thinking["budget_tokens"]
-            if extra.get("verbosity") is not None:
+            # ``verbosity`` is a real GPT-5 Chat Completions field, but only
+            # there — gpt-4o and every OSS server 400 on it.
+            if extra.get("verbosity") is not None and _new_openai:
                 payload["verbosity"] = extra["verbosity"]
 
         # Universal thinking config -> OpenAI reasoning knobs. Only applied when
         # the caller didn't already set a reasoning field (extra wins), and only
         # for models that accept a request-side knob — sending reasoning_effort to
         # a plain chat model (gpt-4o, most local checkpoints) is a hard 400.
+        #
+        # ``budget_tokens`` is deliberately dropped: Chat Completions has no
+        # per-request thinking budget. ``reasoning_effort`` is the only knob, and
+        # reasoning tokens are already billed against max_completion_tokens.
         if (thinking
                 and "reasoning_effort" not in payload
-                and "max_thinking_tokens" not in payload
                 and _supports_request_reasoning(model, model_capability)):
             ttype = thinking.get("type")
-            budget = thinking.get("budget_tokens")
             if ttype == "disabled":
                 payload["reasoning_effort"] = "none"
             else:
@@ -475,8 +479,6 @@ class OpenAICompatProvider(HTTPProviderMixin):
                 # OpenAI reasoning_effort value for "adaptive", so pick sane
                 # defaults the Chat Completions endpoint accepts.
                 payload["reasoning_effort"] = "high" if ttype == "enabled" else "medium"
-                if budget is not None:
-                    payload["max_thinking_tokens"] = int(budget)
 
         if path == "A" and tools:
             payload["tools"] = _normalize_tool_defs(tools)
@@ -495,10 +497,7 @@ class OpenAICompatProvider(HTTPProviderMixin):
             # unknown OpenAI parameters.
             passthrough = {
                 k: v for k, v in extra.items()
-                if k not in {
-                    "effort", "reasoning_effort", "thinking",
-                    "max_thinking_tokens", "verbosity",
-                    "reasoning_mode", "reasoning_context",
+                if k not in PROVIDER_CONTROL_KEYS and k not in {
                     # Never let opaque passthrough clobber the structural fields
                     # the translator owns — doing so would silently break the
                     # request (e.g. extra={'stream': False} or a stray messages).
@@ -520,7 +519,7 @@ def _split_system(messages: list[Message]) -> tuple[str | None, list[Message]]:
 
     sys_parts: list[str] = []
     body: list[Message] = []
-    for m in messages:
+    for m in normalize_messages(messages):
         if isinstance(m, SystemMessage):
             sys_parts.append(_system_to_string(m))
         else:
