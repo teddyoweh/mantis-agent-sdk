@@ -64,6 +64,7 @@ export const DOCS_NAV: NavSection[] = [
       { title: "Budget & limits", slug: "guides/budget" },
       { title: "MCP servers", slug: "guides/mcp" },
       { title: "Sub-agents", slug: "guides/sub-agents" },
+      { title: "Workflows", slug: "guides/workflows" },
       { title: "Plugins", slug: "guides/plugins" },
       { title: "Memory", slug: "guides/memory" },
     ],

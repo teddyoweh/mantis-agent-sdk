@@ -485,3 +485,95 @@ def _counter():
     """A monotone ms clock as a zero-arg callable."""
     c = iter(range(0, 100_000_000, 10))
     return lambda: next(c)
+
+
+# ---------------------------------------------------------------------------
+# engine: nested fan-out (the canonical review shape)
+# ---------------------------------------------------------------------------
+
+
+def _live_peak_runner():
+    """A runner that records how many child agents overlap."""
+    state = {"live": 0, "peak": 0}
+
+    async def runner(prompt, *, model, agent_type, schema=None):
+        state["live"] += 1
+        state["peak"] = max(state["peak"], state["live"])
+        await anyio.sleep(0.01)
+        state["live"] -= 1
+        yield AssistantMessage(content=[TextBlock(text=prompt)],
+                               usage=Usage(input_tokens=1, output_tokens=1))
+
+    return runner, state
+
+
+def test_parallel_inside_a_pipeline_stage_does_not_deadlock():
+    """The engine's flagship pattern: fan out over items, then verify each
+    item's findings concurrently inside a later stage.
+
+    The concurrency limiter used to be taken around the whole stage AND around
+    each parallel thunk. Being non-reentrant, an outer stage held a slot while
+    waiting on inner thunks that could never acquire one — so this hung forever
+    once the fan-out reached the cap. It only bit at scale, which is why every
+    existing test (flat, or cap > fan-out) passed.
+    """
+    runner, state = _live_peak_runner()
+    wf = Workflow("wf", agent_runner=runner, concurrency=2, clock=_counter())
+
+    async def go():
+        with anyio.fail_after(20):     # a deadlock must fail, not hang the suite
+            return await wf.pipeline(
+                ["a", "b", "c", "d"],
+                lambda item: wf.agent(f"find {item}", label=f"find-{item}"),
+                lambda found: wf.parallel(
+                    [(lambda k=k: wf.agent(f"verify {k}", label=f"v{k}"))
+                     for k in range(3)]
+                ),
+            )
+
+    out = anyio.run(go)
+
+    assert len(out) == 4                     # every item finished
+    assert all(len(v) == 3 for v in out)     # each verified by 3 lenses
+    assert state["peak"] == 2                # …and the cap still held
+
+
+def test_parallel_inside_parallel_does_not_deadlock():
+    """The judge-panel shape: N candidates, each scored by M judges."""
+    runner, state = _live_peak_runner()
+    wf = Workflow("wf", agent_runner=runner, concurrency=2, clock=_counter())
+
+    async def go():
+        with anyio.fail_after(20):
+            return await wf.parallel([
+                (lambda i=i: wf.parallel(
+                    [(lambda i=i, j=j: wf.agent(f"judge {i}.{j}")) for j in range(3)]))
+                for i in range(4)
+            ])
+
+    out = anyio.run(go)
+
+    assert len(out) == 4 and all(len(v) == 3 for v in out)
+    assert state["peak"] == 2
+
+
+def test_the_cap_bounds_agents_not_orchestration():
+    """A cap of 1 must still make progress through nested fan-out — proof the
+    limiter is held around child runs, not around the wrappers that await them.
+    """
+    runner, state = _live_peak_runner()
+    wf = Workflow("wf", agent_runner=runner, concurrency=1, clock=_counter())
+
+    async def go():
+        with anyio.fail_after(20):
+            return await wf.parallel([
+                (lambda: wf.pipeline(
+                    [1, 2],
+                    lambda x: wf.parallel([(lambda: wf.agent("deep"))]),
+                    lambda x: wf.agent("tail"),
+                )),
+            ])
+
+    anyio.run(go)
+
+    assert state["peak"] == 1                # serialized, but never stuck

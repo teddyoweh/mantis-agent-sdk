@@ -17,6 +17,7 @@ htmlcov/
 
 # Virtual envs
 .venv/
+.venvs/          # per-version envs from scripts/test-matrix.sh
 venv/
 env/
 

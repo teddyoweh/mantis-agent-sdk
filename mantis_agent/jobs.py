@@ -18,6 +18,13 @@ can never be mistaken for the job closing.
 Pure asyncio, no threads: jobs share the TUI's event loop (and the parent's
 HTTP pool via the subagent machinery). One manager per session; the TUI owns
 it and cancels leftovers on exit.
+
+A manager may additionally be given an ``ActivityRegistry``, in which case each
+job also appears as a node in the unified activity tree. That is pure
+instrumentation: every emission goes through ``activity.emit``, which is
+guarded (``registry is None`` costs a null check and nothing else) and swallows
+registry errors, on the same principle ``_fire_on_event`` already applies — a
+broken observer must never turn a completed job into a failed one.
 """
 
 from __future__ import annotations
@@ -29,6 +36,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+
+from .activity import emit as activity_emit
+from .activity import status as activity_status
+from .activity.ids import make_id
 
 __all__ = ["Job", "JobManager"]
 
@@ -51,6 +62,16 @@ class Job:
     last_event: str = "starting"
     last_tool: str = ""
     events: Any = field(default_factory=lambda: deque(maxlen=40))
+    # Set when this job IS a workflow run (kind == "workflow"): the id the
+    # /workflows viewer knows it by. One piece of work, two windows onto it —
+    # /jobs for lifecycle, /workflows for structure.
+    workflow_id: str = ""
+    # The command/script this job is actually running, when it has one. A watch
+    # is usually a poll loop the MODEL composed on the fly, so "what is this
+    # thing running on my machine" is the first question the monitor drill-down
+    # has to answer — and ``desc`` is a human label, not the answer. Defaulted so
+    # every existing ``Job(...)`` construction keeps working untouched.
+    script: str = ""
 
     def __post_init__(self) -> None:
         self.record_event(self.last_event, ts=self.started)
@@ -67,7 +88,8 @@ class Job:
 
     def summary(self) -> str:
         el = int(self.elapsed_s)
-        return f"#{self.id} · {self.kind} · {self.status} · {el}s · {self.desc[:50]}"
+        wf = f" · run {self.workflow_id}" if self.workflow_id else ""
+        return f"#{self.id} · {self.kind} · {self.status} · {el}s{wf} · {self.desc[:50]}"
 
 
 class JobManager:
@@ -77,13 +99,106 @@ class JobManager:
     the UI hook for announcements + context injection. ``on_stream(job, text)``
     fires zero-or-more times *before* that, for jobs that push events as they
     run (watches). Callback errors are swallowed; a broken notifier must never
-    kill the job result."""
+    kill the job result.
 
-    def __init__(self, on_event: Any = None, on_stream: Any = None) -> None:
+    ``registry`` is an optional
+    :class:`~mantis_agent.activity.registry.ActivityRegistry`. When given, each
+    job is mirrored as a node in the activity tree at four points — spawn, each
+    streamed event, the terminal transition, and a cancellation request. When
+    omitted (the default, and every existing construction) the manager behaves
+    byte-for-byte as before and makes no emission calls at all."""
+
+    def __init__(self, on_event: Any = None, on_stream: Any = None,
+                 registry: Any = None) -> None:
         self.on_event = on_event
         self.on_stream = on_stream
         self.jobs: dict[int, Job] = {}
         self._counter = itertools.count(1)
+        #: Optional activity registry. Assignable after construction because the
+        #: TUI builds its manager before the session (and therefore the session's
+        #: registry) exists.
+        self.registry = registry
+        #: The node new jobs are parented to — the current turn, when a host is
+        #: tracking one. An attribute rather than a ``spawn()`` argument: the
+        #: parent is a property of *when* a job is spawned, not of the call, and
+        #: every existing ``spawn()`` signature stays untouched.
+        self.activity_parent_id: str | None = None
+
+    # ------------------------------------------------------------------
+    # Activity emission
+    # ------------------------------------------------------------------
+    # Four call sites, each a single guarded line in the engine below. Every
+    # helper starts by reading ``self.registry`` and returning when it is None,
+    # so a manager without a registry pays one attribute load per event and
+    # nothing else — no id building, no event construction, no try block.
+    #
+    # None of these may raise. ``activity.emit`` already swallows registry
+    # errors, and the id derivation here is wrapped for the same reason: this
+    # code runs inside a job's terminal path, including its cancellation path,
+    # where an exception would rewrite the job's own outcome.
+
+    def _node_id(self, job: Job) -> str:
+        try:
+            return make_id("job", job.id)
+        except Exception:  # noqa: BLE001 — an unusable id is a lost node, not an error
+            return ""
+
+    def _emit_spawned(self, job: Job) -> None:
+        reg = self.registry
+        if reg is None:
+            return
+        node_id = self._node_id(job)
+        if not node_id:
+            return
+        activity_emit.node_created(
+            reg,
+            node_id,
+            self.activity_parent_id or None,
+            # The job's OWN kind (``task`` / ``watch`` / ``workflow``), not the
+            # literal "job": the id namespace already says which engine owns
+            # this node, and the kind is what a viewer groups and labels by.
+            job.kind,
+            job.desc,
+            source="model",
+            actions=("stop", "open") if job.kind == "watch" else ("stop",),
+        )
+        activity_emit.node_status(reg, node_id, activity_status.RUNNING)
+
+    def _emit_activity(self, job: Job, text: str) -> None:
+        reg = self.registry
+        if reg is None:
+            return
+        node_id = self._node_id(job)
+        if node_id:
+            activity_emit.node_activity(reg, node_id, text)
+
+    def _emit_terminal(self, job: Job) -> None:
+        """Mirror a job's terminal transition. Called once per job, from
+        whichever of the two terminal paths got there first."""
+
+        reg = self.registry
+        if reg is None:
+            return
+        node_id = self._node_id(job)
+        if not node_id:
+            return
+        # ``error`` carries the failure text for the outcomes that have one; a
+        # cancelled or completed job has a result, not an error.
+        error = job.result if job.status in ("error", "timeout") else None
+        activity_emit.node_status(
+            reg, node_id, activity_status.from_job_status(job.status), error
+        )
+
+    def _emit_action(self, job: Job, action: str, actor: str = "user") -> None:
+        reg = self.registry
+        if reg is None:
+            return
+        node_id = self._node_id(job)
+        if node_id:
+            # The resulting status is not emitted here: it arrives from the
+            # terminal path once the task actually ends, which is the only place
+            # that knows what the outcome turned out to be.
+            activity_emit.node_action(reg, node_id, action, actor)
 
     async def _fire_on_event(self, job: Job) -> None:
         """Deliver a terminal job to ``on_event``, awaiting async callbacks.
@@ -111,6 +226,9 @@ class JobManager:
         not a terminal state, and must never be read as the job finishing."""
         job.stream_count += 1
         job.record_event(text)
+        # Before the ``on_stream is None`` early return below: a manager with a
+        # registry but no stream callback must still see the activity.
+        self._emit_activity(job, text)
         cb = self.on_stream
         if cb is None:
             return
@@ -122,15 +240,19 @@ class JobManager:
             pass
 
     def spawn(self, coro: Any, *, desc: str, kind: str = "task",
-              max_runtime_s: float | None = _MAX_RUNTIME_S) -> Job:
+              max_runtime_s: float | None = _MAX_RUNTIME_S,
+              workflow_id: str = "") -> Job:
         """Detach ``coro`` as a job. Returns the Job (id assigned) immediately.
 
         ``max_runtime_s=None`` disables the backstop — only for jobs whose whole
         point is to outlive it (a ``persistent`` watch), which instead end with
-        the session via :meth:`cancel_all`."""
-        job = Job(id=next(self._counter), desc=desc, kind=kind)
+        the session via :meth:`cancel_all`. ``workflow_id`` links the job to a
+        workflow run so /jobs and /workflows name the same thing."""
+        job = Job(id=next(self._counter), desc=desc, kind=kind,
+                  workflow_id=workflow_id)
         self.jobs[job.id] = job
         self._prune()
+        self._emit_spawned(job)
 
         async def _run() -> None:
             try:
@@ -151,6 +273,9 @@ class JobManager:
                 job.status = "error"
                 job.result = f"{type(e).__name__}: {e}"
                 job.record_event(f"error: {job.result}", update_last=False)
+            # Before the callback: a notifier that reads the tree must not see
+            # a node still marked running for a job it was just handed.
+            self._emit_terminal(job)
             await self._fire_on_event(job)
 
         job.task = asyncio.ensure_future(_run())
@@ -168,6 +293,10 @@ class JobManager:
                         close()
                     except Exception:  # noqa: BLE001
                         pass
+                # The runner never ran, so this is the terminal transition —
+                # exactly-once still holds, because reaching here means the
+                # runner's own emission did not happen.
+                self._emit_terminal(job)
                 if self.on_event is not None:
                     # Sync context (a done-callback) — can't await here, so run
                     # the callback via the shared async helper on the loop. This
@@ -230,6 +359,7 @@ class JobManager:
         job = self.jobs.get(job_id)
         if job is None or job.task is None or job.task.done():
             return False
+        self._emit_action(job, "stop")
         job.task.cancel()
         return True
 

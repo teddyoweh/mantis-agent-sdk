@@ -78,7 +78,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping
+import sys
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -86,10 +87,17 @@ from .paths import get_mantis_agent_dir
 
 __all__ = [
     "KNOWN_SETTING_KEYS",
+    "PROTECTED_ENV_KEYWORDS",
+    "PROTECTED_ENV_NAMES",
+    "PROTECTED_ENV_PREFIXES",
     "SETTING_SOURCES",
+    "UNTRUSTED_SETTING_SOURCES",
     "apply_settings_to_options",
+    "filter_env_block",
+    "is_protected_env_name",
     "load_setting_source",
     "load_settings",
+    "load_settings_env_safe",
     "merge_settings",
     "resolve_setting_path",
     "save_setting_source",
@@ -129,6 +137,241 @@ KNOWN_SETTING_KEYS: frozenset[str] = frozenset(
         "max_budget_usd",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Env-block trust tiers
+# ---------------------------------------------------------------------------
+#
+# The ``env`` block is applied into ``os.environ`` at CLI launch (see
+# ``tui.main``) so a key saved by ``mantis setup`` reaches the provider. That
+# makes it an execution-relevant surface: ``project`` and ``local`` both
+# resolve under ``<cwd>/.mantis-agent/``, i.e. files a CLONED REPOSITORY can
+# ship. A repo that could write ``MANTIS_MCP_TRUST_PROJECT=1`` would disable
+# the MCP project-trust gate on the victim's first launch — before they have
+# read a single line of the code they cloned.
+#
+# So: only the ``user`` tier (the machine owner's own
+# ``$MANTIS_AGENT_HOME/settings.json``) may set a security-relevant variable.
+# Repo-shipped tiers may set anything else — that keeps the documented
+# key-saving flow working — and every rejection is announced, because silent
+# filtering would hide an attack in progress.
+
+
+#: Setting sources that live inside the working tree and are therefore
+#: attacker-controlled in the "I cloned a repo" threat model.
+UNTRUSTED_SETTING_SOURCES: frozenset[str] = frozenset({"project", "local"})
+
+
+#: Exact env var names a repo-shipped settings file may never set. Every one
+#: of these relaxes a security control or relocates a trust store — enumerated
+#: from the actual readers in this package, not guessed.
+PROTECTED_ENV_NAMES: frozenset[str] = frozenset(
+    {
+        # Trust gates (mcp/manager.py, skill_trust.py)
+        "MANTIS_MCP_TRUST_PROJECT",
+        "MANTIS_SKILLS_TRUST_PROJECT",
+        # Sandbox policy (sandbox.py)
+        "MANTIS_SANDBOX",
+        "MANTIS_SANDBOX_NETWORK",
+        "MANTIS_SANDBOX_SCRUB_ENV",
+        # Hook failure posture (hooks.py)
+        "MANTIS_HOOKS_FAIL_CLOSED",
+        # Feature kill-switches that change what the agent is allowed to do
+        "MANTIS_AGENT_DISABLE_WORKFLOWS",
+        # Permission posture
+        "MANTIS_PERMISSION_MODE",
+        "MANTIS_AGENT_PERMISSION_MODE",
+        # SSRF guard on the web tools (builtin_tools/web.py)
+        "MANTIS_WEB_ALLOW_LOCAL",
+        # Where trust stores / transcripts / credentials live (paths.py).
+        # Repointing these is equivalent to forging a trust decision.
+        "MANTIS_AGENT_HOME",
+        "MANTIS_AGENT_PROJECT_ROOT",
+        "MANTIS_AGENT_MODELS_DIR",
+        "MANTIS_FS_SEED_AGENTS",
+        # Preflight / mock switches that bypass validation of the backend.
+        "MANTIS_AGENT_NO_PREFLIGHT",
+        "MANTIS_AGENT_MOCK",
+        # Generic loader / interpreter hijacks. A repo has no business
+        # supplying any of these, and each is straight code execution.
+        "PATH",
+        "SHELL",
+        "IFS",
+        "ENV",
+        "BASH_ENV",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "PYTHONWARNINGS",
+        "PYTHONEXECUTABLE",
+        "NODE_OPTIONS",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "PAGER",
+        "EDITOR",
+        "VISUAL",
+        "http_proxy",
+        "https_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "REQUESTS_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "CURL_CA_BUNDLE",
+    }
+)
+
+
+#: Name prefixes that are protected wholesale, so a variable added to one of
+#: these families later is gated by default instead of by remembering to
+#: extend the list above.
+PROTECTED_ENV_PREFIXES: tuple[str, ...] = (
+    "MANTIS_SANDBOX",
+    "MANTIS_MCP_TRUST",
+    "MANTIS_SKILLS_TRUST",
+    "MANTIS_HOOKS_",
+    "MANTIS_WEB_ALLOW",
+    "MANTIS_PERMISSION",
+    "MANTIS_AGENT_DISABLE",
+    "LD_",
+    "DYLD_",
+)
+
+
+#: Substrings that make a variable in this tool's own namespace
+#: (``MANTIS_*`` / ``CLAUDE_*``) protected — the vocabulary security switches
+#: are named with. Deliberately broad: a false positive costs a repo one
+#: non-security env var it can't set; a false negative costs a user their
+#: sandbox.
+PROTECTED_ENV_KEYWORDS: tuple[str, ...] = (
+    "TRUST",
+    "SANDBOX",
+    "PERMISSION",
+    "DISABLE",
+    "BYPASS",
+    "GODMODE",
+    "DANGEROUS",
+    "INSECURE",
+    "UNSAFE",
+    "ALLOW_LOCAL",
+    "FAIL_CLOSED",
+    "SKIP_",
+    "NO_PREFLIGHT",
+    "CREDENTIAL",
+)
+
+
+def is_protected_env_name(name: str) -> bool:
+    """True if ``name`` may only be set by the ``user`` settings tier.
+
+    Matching is case-insensitive and whitespace-tolerant on purpose: the
+    check must not be defeatable by ``" mantis_sandbox"``, and on Windows
+    the environment is case-insensitive anyway.
+    """
+
+    if not isinstance(name, str):
+        return False
+    n = name.strip().upper()
+    if not n:
+        return False
+    if n in PROTECTED_ENV_NAMES or name.strip() in PROTECTED_ENV_NAMES:
+        return True
+    if n.startswith(PROTECTED_ENV_PREFIXES):
+        return True
+    if n.startswith(("MANTIS_", "CLAUDE_")) and any(
+        kw in n for kw in PROTECTED_ENV_KEYWORDS
+    ):
+        return True
+    return False
+
+
+def _default_env_warn(message: str) -> None:
+    """Announce a rejected variable on stderr. Never raises."""
+
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 — a closed stderr must not block launch
+        pass
+
+
+def filter_env_block(
+    env: Any,
+    source: str,
+    cwd: str | Path | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> dict[str, str]:
+    """Return the ``str -> str`` pairs of ``env`` that ``source`` may set.
+
+    ``user`` keeps everything. ``project`` / ``local`` (and any unrecognized
+    source name, which is treated as untrusted) lose every name matched by
+    :func:`is_protected_env_name`; each drop is reported through ``warn``
+    (default: a line on stderr) naming both the offending file and variable.
+
+    Non-string keys or values are dropped for every tier — the consumer puts
+    these straight into ``os.environ``, which only accepts strings.
+    """
+
+    out: dict[str, str] = {}
+    if not isinstance(env, Mapping):
+        return out
+    trusted = source not in UNTRUSTED_SETTING_SOURCES and source in SETTING_SOURCES
+    emit = _default_env_warn if warn is None else warn
+    where: str | None = None
+    for key, value in env.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        if not trusted and is_protected_env_name(key):
+            if where is None:
+                try:
+                    where = str(resolve_setting_path(source, cwd))
+                except (ValueError, OSError):  # pragma: no cover — defensive
+                    where = f"<{source} settings>"
+            try:
+                emit(
+                    f"mantis: SECURITY: ignoring env var {key!r} from the "
+                    f"{source} settings file {where} — it controls a security "
+                    f"gate and only your user settings "
+                    f"({resolve_setting_path('user')}) may set it."
+                )
+            except Exception:  # noqa: BLE001 — reporting must not block launch
+                pass
+            continue
+        out[key] = value
+    return out
+
+
+def load_settings_env_safe(
+    sources: Iterable[str] = SETTING_SOURCES,
+    cwd: str | Path | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> dict[str, str]:
+    """Merged ``env`` block with per-tier trust applied.
+
+    Same layering as :func:`load_settings` (later sources win) but each tier's
+    ``env`` is filtered by :func:`filter_env_block` *before* the merge, so a
+    repo-shipped tier can never contribute a protected name. Broken or
+    unreadable layers are skipped rather than raised — this runs on the launch
+    path, where a malformed file must not prevent the CLI from starting.
+    """
+
+    merged: dict[str, str] = {}
+    for source in sources:
+        try:
+            raw = load_setting_source(source, cwd)
+        except (ValueError, OSError):
+            continue
+        merged.update(filter_env_block(raw.get("env"), source, cwd, warn))
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +450,15 @@ def save_setting_source(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(dict(data), indent=2, sort_keys=True) + "\n"
     path.write_text(payload, encoding="utf-8")
+    # A settings file holds an `env` block, and that is where OAuth tokens and
+    # provider keys live — so this is a credential file whatever else is in it.
+    # It was being written 0644 (world-readable): any account on the machine
+    # could read a live token. Tighten on every write, not just creation, so a
+    # file that predates this is repaired the next time it is touched.
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # noqa: BLE001 — a read-only FS must not break saving
+        pass
     return path
 
 

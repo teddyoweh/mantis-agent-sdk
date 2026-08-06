@@ -24,7 +24,7 @@ import uuid as _uuid
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
-from .agent import Agent
+from .agent import Agent, aclose_stream
 from .budget import lookup_pricing
 from .claude_compat import (
     AssistantMessage,
@@ -163,7 +163,8 @@ async def query(
         # soon as the executor finishes a batch. This is the streaming-
         # mode ``client.query()`` with mid-stream tool dispatch the
         # roadmap calls for.
-        async for msg in agent.run_iter(running):
+        _stream = agent.run_iter(running)
+        async for msg in _stream:
             if id(msg) in seed_set:
                 # We already echoed this seed up front; skip the
                 # re-yield from run_iter (it surfaces seeds + injected
@@ -206,6 +207,10 @@ async def query(
         error_subtype = "error_during_execution"
         error_strings.append(f"{type(e).__name__}: {e}")
     finally:
+        # Close the stream in THIS task. run_iter holds the tool executor's
+        # task group open across its yields, so letting the event loop
+        # finalize it later raises "exit cancel scope in a different task".
+        await aclose_stream(_stream)
         await _shutdown()
 
     total_cost_usd = 0.0

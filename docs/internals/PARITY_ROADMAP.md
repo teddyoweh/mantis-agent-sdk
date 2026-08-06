@@ -3,7 +3,7 @@
 This is the **build backlog**: the gap between mantis and Claude Code, turned into
 implementation tickets. Each item has **what · where to touch · how · effort ·
 acceptance**. Built from a four-agent deep dive over Claude Code's decompiled source.
-Read [`../../AGENTS.md`](../../AGENTS.md) first for orientation and the gotchas.
+Read `AGENTS.md` at the repository root first for orientation and the gotchas.
 
 > **Theme:** much of the hard machinery already exists in the repo but is **never
 > wired into `agent.py`'s `run_iter`**. Tier 0 is mostly *connecting* it. Cheap, huge.

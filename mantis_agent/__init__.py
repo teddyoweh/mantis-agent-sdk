@@ -143,6 +143,20 @@ from .response_format import (
     translate_response_format,
 )
 from .tools import Tool, ToolRegistry, tool
+from .workflow import (
+    AgentRun,
+    Phase,
+    Workflow,
+    WorkflowError,
+    WorkflowRun,
+)
+from .workflow_defs import (
+    WorkflowDefinition,
+    WorkflowDefinitionError,
+    discover_workflow_definitions,
+    load_workflow_definition,
+)
+from .workflow_tool import make_workflow_tool
 from .tracing import (
     InMemoryTracer,
     OTelTracer,
@@ -191,6 +205,17 @@ __all__ = [
     "discover_agent_types",
     "make_pair_tool",
     "make_task_tool",
+    # Workflows — declarative multi-agent orchestration
+    "AgentRun",
+    "Phase",
+    "Workflow",
+    "WorkflowDefinition",
+    "WorkflowDefinitionError",
+    "WorkflowError",
+    "WorkflowRun",
+    "discover_workflow_definitions",
+    "load_workflow_definition",
+    "make_workflow_tool",
     # Capabilities / routing
     "BackendCapability",
     "ModelCapability",

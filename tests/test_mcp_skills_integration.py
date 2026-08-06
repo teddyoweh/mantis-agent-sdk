@@ -269,8 +269,8 @@ def test_skill_slash_invocation(tmp_path) -> None:
 
 def test_skill_cannot_shadow_builtin_or_command(tmp_path) -> None:
     from mantis_agent.tui import all_slash_commands, expand_skill_command
-    _write_skill(tmp_path / "home", "model", "Should not shadow /model.")
-    assert expand_skill_command("/model") is None
+    _write_skill(tmp_path / "home", "models", "Should not shadow /models.")
+    assert expand_skill_command("/models") is None
     # custom command beats a same-named skill
     _write_skill(tmp_path / "home", "ship", "skill body")
     cmd_dir = tmp_path / "home" / "commands"

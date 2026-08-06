@@ -48,7 +48,11 @@ def _load_mkdocs_config() -> dict:
     except Exception:
         pass
 
-    import yaml  # type: ignore
+    # A missing YAML parser must SKIP, not error. These three structural tests
+    # are the only thing in the suite that needs one, and erroring made a bare
+    # install look like three real test failures.
+    yaml = pytest.importorskip(
+        "yaml", reason="needs pyyaml (in the dev extra) or the docs extra")
 
     class _TolerantLoader(yaml.SafeLoader):
         pass

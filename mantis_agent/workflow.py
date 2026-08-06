@@ -36,6 +36,9 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 import anyio
 
+from .activity import emit
+from .activity import status as activity_status
+from .activity.ids import make_id
 from .budget import Budget, BudgetTracker
 from .types import AssistantMessage, ModelUsage, ToolUseBlock, UserMessage
 from .workflow_view import accumulate_usage, total_tokens
@@ -48,6 +51,7 @@ __all__ = [
     "WorkflowError",
     "default_clock",
     "make_agent_runner",
+    "wrap_runner_with_progress",
 ]
 
 
@@ -78,6 +82,9 @@ def default_clock() -> float:
 
 _B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
+# Process-wide run sequence — the tie-breaker in a workflow id.
+_WF_SEQ = count()
+
 
 def _b36(n: int) -> str:
     """Base-36 encode a non-negative int (``0`` → ``"0"``)."""
@@ -89,6 +96,24 @@ def _b36(n: int) -> str:
         n, r = divmod(n, 36)
         out.append(_B36[r])
     return "".join(reversed(out))
+
+
+def _node_id(kind: str, local: str) -> str:
+    """Namespaced activity id for ``local``, or ``""`` when one cannot be built.
+
+    ``ids.make_id`` is total for any input holding a single non-separator
+    character — a phase title in any script, of any length, made of punctuation
+    alone still yields a distinct path-safe id. But phase titles are *model*
+    text, and "total in practice" is not a property an engine should bet a run
+    on: the whole contract of this instrumentation is that it cannot raise into
+    the work it describes. A blank id is dropped by the registry as malformed,
+    which is exactly the right outcome for a node nobody could address anyway.
+    """
+
+    try:
+        return make_id(kind, local)
+    except Exception:  # noqa: BLE001 — see docstring
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +145,14 @@ class AgentRun:
     error: str | None = None
     cost_usd: float = 0.0
     turns: int = 0
+    # The exact prompt this child was briefed with. Serialized: the drill-down
+    # view shows it (truncated) and the resume cache keys on its digest, so a
+    # persisted run can be replayed without re-deriving prompts.
+    prompt: str = ""
+    # True when the result came from a prior run's cache instead of a model call.
+    replayed: bool = False
     # Not serialized — private live state.
     _paused: bool = field(default=False, repr=False, compare=False)
-    _prompt: str = field(default="", repr=False, compare=False)
     _schema: dict | None = field(default=None, repr=False, compare=False)
 
     def elapsed_ms(self, now: float) -> float:
@@ -166,6 +196,8 @@ class AgentRun:
             "error": self.error,
             "cost_usd": self.cost_usd,
             "turns": self.turns,
+            "prompt": self.prompt,
+            "replayed": self.replayed,
         }
 
     @classmethod
@@ -196,6 +228,8 @@ class AgentRun:
             error=d.get("error"),
             cost_usd=d.get("cost_usd", 0.0),
             turns=d.get("turns", 0),
+            prompt=d.get("prompt", ""),
+            replayed=bool(d.get("replayed", False)),
         )
         return ar
 
@@ -254,6 +288,13 @@ class WorkflowRun:
     ended: float | None = None
     total_paused_ms: float = 0.0
     log_lines: list[str] = field(default_factory=list)
+    # Identity links — one mental model across the surfaces that show this run.
+    # ``definition`` is the named template it came from ("" for ad-hoc engine
+    # use); ``job_id`` is the background :class:`~mantis_agent.jobs.Job` it runs
+    # under, so /jobs and /workflows point at the same thing.
+    definition: str = ""
+    job_id: int | None = None
+    resumed_from: str = ""
 
     def all_agents(self) -> list[AgentRun]:
         return [a for ph in self.phases for a in ph.agents]
@@ -273,6 +314,9 @@ class WorkflowRun:
             "ended": self.ended,
             "total_paused_ms": self.total_paused_ms,
             "log_lines": list(self.log_lines),
+            "definition": self.definition,
+            "job_id": self.job_id,
+            "resumed_from": self.resumed_from,
             "phases": [p.to_dict() for p in self.phases],
         }
 
@@ -286,6 +330,9 @@ class WorkflowRun:
             ended=d.get("ended"),
             total_paused_ms=d.get("total_paused_ms", 0.0),
             log_lines=list(d.get("log_lines", [])),
+            definition=d.get("definition", ""),
+            job_id=d.get("job_id"),
+            resumed_from=d.get("resumed_from", ""),
             phases=[Phase.from_dict(p) for p in d.get("phases", [])],
         )
 
@@ -362,6 +409,73 @@ def make_agent_runner(
     return runner
 
 
+def wrap_runner_with_progress(base: AgentRunner, on_progress: Any, counter: Any) -> AgentRunner:
+    """Wrap an ``AgentRunner`` so each child run streams ``start``/``tool``/
+    ``turn``/``end`` events in the exact shape ``make_task_tool`` emits.
+
+    That is what makes a workflow child render in the SAME live subagent block
+    a plain ``task`` call does — one mental model, one progress channel. A no-op
+    passthrough when ``on_progress`` is ``None``; observer errors are swallowed
+    (progress is garnish, never control flow)."""
+
+    if on_progress is None:
+        return base
+
+    def _emit(ev: dict[str, Any]) -> None:
+        try:
+            on_progress(ev)
+        except Exception:  # noqa: BLE001 — a bad observer never breaks the run
+            pass
+
+    def runner(
+        prompt: str,
+        *,
+        model: str = "",
+        agent_type: str = "general-purpose",
+        schema: dict | None = None,
+    ) -> AsyncIterator[Any]:
+        rid = next(counter)
+        desc = " ".join((prompt or "").split())
+        desc = desc if len(desc) <= 80 else desc[:79] + "…"
+
+        async def gen() -> AsyncIterator[Any]:
+            _emit({"id": rid, "phase": "start", "type": agent_type,
+                   "desc": desc, "model": model})
+            acc: Any = None
+            try:
+                out = base(prompt, model=model, agent_type=agent_type, schema=schema)
+                async for msg in _aiter_out(out):
+                    if isinstance(msg, AssistantMessage):
+                        for block in getattr(msg, "content", None) or []:
+                            if isinstance(block, ToolUseBlock):
+                                _emit({"id": rid, "phase": "tool", "tool": block.name})
+                        if getattr(msg, "usage", None) is not None:
+                            acc = accumulate_usage(acc, msg.usage)
+                            _emit({"id": rid, "phase": "turn", "model": model,
+                                   "usage": acc, "tokens": total_tokens(acc)})
+                    yield msg
+            finally:
+                _emit({"id": rid, "phase": "end"})
+
+        return gen()
+
+    return runner
+
+
+async def _aiter_out(out: Any) -> AsyncIterator[Any]:
+    """Normalize a runner's return (async iterator or awaitable) into a stream."""
+
+    if hasattr(out, "__aiter__"):
+        async for msg in out:
+            yield msg
+        return
+    if hasattr(out, "__await__"):
+        res = await out
+        if hasattr(res, "__aiter__"):
+            async for msg in res:
+                yield msg
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -405,9 +519,24 @@ class Workflow:
         budget: Budget | None = None,
         concurrency: int | None = None,
         model: str = "",
+        provider: str = "",
+        effort: str = "",
+        registry: Any = None,
+        parent_id: str | None = None,
     ) -> None:
         self.name = name
         self.model = model
+        # Descriptive only: the runner owns the real provider/effort. They are
+        # carried so an agent node can answer §12's cockpit questions (which
+        # model, which provider, how hard was it told to think) at the moment
+        # the child is dispatched, which is the only moment they are known.
+        self.provider = provider
+        self.effort = effort
+        # The activity graph is a read model (plan §8). ``registry is None`` —
+        # the default at every existing construction site — means every emission
+        # below is a null check against this attribute and nothing more.
+        self.registry = registry
+        self.activity_id = ""
         self._runner = agent_runner
         self.on_event = on_event
         self._clock = clock or default_clock
@@ -417,7 +546,13 @@ class Workflow:
         # Workflow-level budget rollup (folds up every child's usage).
         self.budget_tracker = BudgetTracker(budget=budget or Budget())
 
-        self.run = WorkflowRun(id="w" + _b36(int(self._clock()) & 0xFFFFFF), name=name)
+        # Id = clock slice + a process-wide sequence. The clock alone collides:
+        # two workflows created in the same millisecond would share an id, and
+        # ids key the viewer, the job link and the on-disk artifact.
+        self.run = WorkflowRun(
+            id="w" + _b36(int(self._clock()) & 0xFFFFFF) + _b36(next(_WF_SEQ)),
+            name=name,
+        )
         self.run.started = self._clock()
         self.run.status = "running"
 
@@ -434,6 +569,25 @@ class Workflow:
         self._paused = False
         self._paused_at: float | None = None
 
+        if registry is not None:
+            self.activity_id = _node_id("workflow", self.run.id)
+            emit.node_created(
+                registry,
+                self.activity_id,
+                parent_id,
+                "workflow",
+                name,
+                model=model,
+                provider=provider,
+                effort=effort,
+                actions=("stop", "pause", "resume"),
+            )
+            emit.node_status(
+                registry,
+                self.activity_id,
+                activity_status.from_workflow_status(self.run.status),
+            )
+
         self._emit()
 
     # ------------------------------------------------------------------
@@ -448,6 +602,51 @@ class Workflow:
                 self.on_event(self.run)
             except Exception:  # noqa: BLE001 — a bad observer never breaks the run
                 pass
+
+    # ------------------------------------------------------------------
+    # Activity-graph emission (plan §9)
+    # ------------------------------------------------------------------
+    #
+    # Instrumentation, never behaviour. Two rules hold for every call below and
+    # nothing here is allowed to break either:
+    #
+    # * zero cost when nothing is listening — ``self.registry is None`` is the
+    #   whole guard, and ``emit`` returns on it before building an event; and
+    # * a registry problem is never a workflow problem. ``emit`` swallows
+    #   whatever the registry does, for the same reason
+    #   ``JobManager._fire_on_event`` swallows notifier errors: a broken
+    #   observer must never turn a completed run into a failed one.
+
+    def _phase_node(self, title: str) -> str:
+        """Activity id of the phase named ``title`` in this run."""
+
+        if self.registry is None:
+            return ""
+        return _node_id("phase", "%s/%s" % (self.run.id, title))
+
+    def _agent_node(self, ar: AgentRun) -> str:
+        """Activity id of one agent run, scoped by the workflow run."""
+
+        if self.registry is None:
+            return ""
+        return _node_id("agent", "%s/%s" % (self.run.id, ar.id))
+
+    def _emit_agent_status(self, ar: AgentRun) -> None:
+        """Publish an agent's status in the unified vocabulary.
+
+        ``skip`` is passed explicitly because the engine records a skip as
+        ``cancelled`` plus membership in ``_skip`` — that set is the only place
+        the distinction between "user skipped it" and "it was cancelled" lives.
+        """
+
+        if self.registry is None:
+            return
+        emit.node_status(
+            self.registry,
+            self._agent_node(ar),
+            activity_status.from_agent_run(ar, skipped=ar.id in self._skip),
+            error=ar.error,
+        )
 
     # ------------------------------------------------------------------
     # Phases
@@ -471,12 +670,26 @@ class Workflow:
                 wf._current_phase = title
                 if ph.status == "queued":
                     ph.status = "running"
+                emit.node_status(
+                    wf.registry,
+                    wf._phase_node(title),
+                    activity_status.from_phase_status(ph.status),
+                )
                 wf._emit()
                 return ph
 
             def __exit__(self_inner, *exc: Any) -> None:
                 wf._current_phase = self_inner._prev
                 ph.roll_up()
+                # A phase rolls up from its children in the registry too, so
+                # this only decides an *empty* phase — but an empty phase that
+                # stayed "running" forever is exactly the kind of stuck node
+                # the rail exists to stop showing.
+                emit.node_status(
+                    wf.registry,
+                    wf._phase_node(title),
+                    activity_status.from_phase_status(ph.status),
+                )
                 wf._emit()
 
         return _PhaseCtx()
@@ -489,6 +702,14 @@ class Workflow:
                 return ph
         ph = Phase(title=title, detail=detail)
         self.run.phases.append(ph)
+        emit.node_created(
+            self.registry,
+            self._phase_node(title),
+            self.activity_id,
+            "phase",
+            title,
+            detail=detail,
+        )
         return ph
 
     def log(self, msg: str) -> None:
@@ -510,6 +731,7 @@ class Workflow:
         model: str | None = None,
         schema: dict | None = None,
         agent_type: str = "general-purpose",
+        cached: str | None = None,
     ) -> str:
         """Run one child agent to completion and return its final text.
 
@@ -517,6 +739,11 @@ class Workflow:
         the injected runner, folds usage/tools into the run, and honors the pause
         gate + concurrency cap. On runner error the run is marked ``error`` and
         the exception re-raised (so ``parallel`` fails fast).
+
+        ``cached`` short-circuits the model call: the agent is registered and
+        immediately marked ``done`` / ``replayed`` with that text as its result.
+        This is the resume path — a replayed prefix costs nothing and still shows
+        up in the phase rail so the run reads as complete.
         """
 
         phase_title = phase or self._current_phase or "main"
@@ -528,10 +755,37 @@ class Workflow:
             model=model or self.model,
             agent_type=agent_type,
         )
-        ar._prompt = prompt
+        ar.prompt = prompt
         ar._schema = schema
         ph.agents.append(ar)
         self._agents_by_id[ar.id] = ar
+        emit.node_created(
+            self.registry,
+            self._agent_node(ar),
+            self._phase_node(phase_title),
+            "agent",
+            ar.label,
+            detail=ar.agent_type,
+            model=ar.model,
+            provider=self.provider,
+            effort=self.effort,
+            actions=("stop", "skip", "retry"),
+        )
+        if cached is not None:
+            now = self._clock()
+            ar.status = "done"
+            ar.replayed = True
+            ar.started = now
+            ar.ended = now
+            ar.result = cached
+            ar.summary = cached if len(cached) <= 200 else cached[:197] + "…"
+            ar.push_activity("replayed from a previous run")
+            emit.node_activity(
+                self.registry, self._agent_node(ar), "replayed from a previous run"
+            )
+            self._emit_agent_status(ar)
+            self._emit()
+            return cached
         self._emit()
         return await self._drive(ar)
 
@@ -540,6 +794,7 @@ class Workflow:
         if ar.id in self._skip or self._stopped:
             ar.status = "cancelled"
             ar.ended = self._clock()
+            self._emit_agent_status(ar)
             self._emit()
             return ""
 
@@ -553,18 +808,41 @@ class Workflow:
                 "no agent_runner configured — pass agent_runner=... to Workflow()",
             )
 
-        ar.status = "running"
-        ar.started = self._clock()
-        self._emit()
-
         tracker = BudgetTracker(budget=self.budget or Budget())
         scope = anyio.CancelScope()
         self._scopes[ar.id] = scope
         try:
-            with scope:
-                async for msg in _aiter(runner, ar):
-                    self._ingest(ar, msg, tracker)
+            # The concurrency cap is held HERE — around the one thing that costs
+            # anything, a child agent's model stream — and nowhere else.
+            #
+            # It used to be acquired by parallel()/pipeline() instead, around the
+            # whole thunk/stage. Because the limiter is not reentrant, any nested
+            # fan-out (a pipeline stage that calls parallel(), or parallel inside
+            # parallel — both canonical patterns) deadlocked: the outer coroutines
+            # held every slot while waiting on inner ones that could never get
+            # one. It only bit when the outer fan-out reached the cap, so it
+            # passed in small tests and hung on real workloads, and the cap is
+            # min(16, cpu-2) so whether it hung depended on the machine.
+            #
+            # Holding it around the agent instead means orchestration wrappers
+            # own no slots, nesting is safe at any depth, and "cap" means what
+            # the docs say: at most N child agents in flight at once.
+            async with self._limiter:
+                # Re-check: a stop() or skip may have landed while queued.
+                if ar.id in self._skip or self._stopped:
+                    ar.status = "cancelled"
+                    ar.ended = self._clock()
+                    self._emit_agent_status(ar)
                     self._emit()
+                    return ""
+                ar.status = "running"
+                ar.started = self._clock()
+                self._emit_agent_status(ar)
+                self._emit()
+                with scope:
+                    async for msg in _aiter(runner, ar):
+                        self._ingest(ar, msg, tracker)
+                        self._emit()
         except Exception as exc:  # noqa: BLE001 — record then re-raise
             if scope.cancel_called:
                 ar.status = "cancelled"
@@ -597,21 +875,37 @@ class Workflow:
             usage = getattr(msg, "usage", None)
             if usage is not None:
                 ar.usage = accumulate_usage(ar.usage, usage)
+                spent = tracker.total_usd
                 tracker.add_usage(usage, ar.model or self.model or "")
                 tracker.add_turn()
                 self.budget_tracker.add_usage(usage, ar.model or self.model or "")
                 self.budget_tracker.add_turn()
                 ar.turns += 1
+                # A registry accumulates deltas, so the cost of *this* turn is
+                # what the tracker just gained — never its running total, which
+                # would compound every turn into the one before it.
+                emit.node_usage(
+                    self.registry,
+                    self._agent_node(ar),
+                    usage,
+                    cost_usd=tracker.total_usd - spent,
+                )
             for block in getattr(msg, "content", []) or []:
                 if isinstance(block, ToolUseBlock):
                     ar.tool_count += 1
                     ar.push_activity(block.name)
+                    emit.node_activity(
+                        self.registry, self._agent_node(ar), block.name
+                    )
             text = _extract_text(msg)
             if text:
                 ar.summary = text if len(text) <= 200 else text[:197] + "…"
 
     def _finalize(self, ar: AgentRun, tracker: BudgetTracker) -> None:
         ar.cost_usd = tracker.total_usd
+        # Both exits from ``_drive`` land here with ``status``/``ended`` already
+        # set, so this is the one place an agent's terminal verdict is published.
+        self._emit_agent_status(ar)
 
     # ------------------------------------------------------------------
     # Fan-out primitives
@@ -623,15 +917,16 @@ class Workflow:
         """Run ``thunks`` concurrently and return results **in input order**.
 
         Barrier semantics: returns only once every thunk has finished (task-group
-        exit). Concurrency is still bounded by the workflow cap because each
-        thunk's :meth:`agent` acquires the limiter.
+        exit). Concurrency is bounded by the workflow cap, which :meth:`agent`
+        holds around the child run itself — NOT here. Taking it around the whole
+        thunk would deadlock any nested fan-out, since a thunk that itself calls
+        ``parallel``/``pipeline`` would be holding a slot its children need.
         """
 
         results: list[Any] = [None] * len(thunks)
 
         async def _one(i: int, thunk: Callable[[], Awaitable[Any]]) -> None:
-            async with self._limiter:
-                results[i] = await thunk()
+            results[i] = await thunk()
 
         async with anyio.create_task_group() as tg:
             for i, thunk in enumerate(thunks):
@@ -648,7 +943,10 @@ class Workflow:
         No barrier between items: item B's stage-0 does not wait on item A's
         stage-0. Each stage receives the previous stage's output (the raw item
         for stage 0) and returns the next value. Returns the final value per
-        item, in input order. Concurrency stays capped per stage via the limiter.
+        item, in input order. Concurrency is bounded by the cap :meth:`agent`
+        holds around each child run — a stage is free to fan out further
+        (``parallel`` inside a stage is the canonical review pattern), which is
+        only safe because a stage itself holds no slot.
         """
 
         results: list[Any] = [None] * len(items)
@@ -656,8 +954,7 @@ class Workflow:
         async def _chain(i: int, item: Any) -> None:
             value = item
             for stage in stages:
-                async with self._limiter:
-                    value = await stage(value)
+                value = await stage(value)
             results[i] = value
 
         async with anyio.create_task_group() as tg:
@@ -677,6 +974,9 @@ class Workflow:
 
         if self.run.status not in ("running", "queued"):
             raise WorkflowError("not_running", f"workflow {self.run.id} is not running")
+        # Recorded before the attempt, per §7: the resulting NodeStatus is what
+        # says whether it worked, and a refusal above never reaches here.
+        emit.node_action(self.registry, self.activity_id, "stop", "user")
         self._stopped = True
         self.run.status = "cancelled"
         self.run.ended = self._clock()
@@ -685,6 +985,11 @@ class Workflow:
         # Release the gate so any paused waiter unblocks and observes _stopped.
         if not self._gate.is_set():
             self._gate.set()
+        emit.node_status(
+            self.registry,
+            self.activity_id,
+            activity_status.from_workflow_status(self.run.status),
+        )
         self._emit()
 
     def cancel(self, agent_id: str) -> None:
@@ -698,6 +1003,7 @@ class Workflow:
             raise WorkflowError("not_found", f"no agent {agent_id!r}")
         if ar.status != "running":
             raise WorkflowError("not_running", f"agent {agent_id} is {ar.status}")
+        emit.node_action(self.registry, self._agent_node(ar), "stop", "user")
         scope = self._scopes.get(agent_id)
         if scope is not None:
             scope.cancel()
@@ -711,12 +1017,20 @@ class Workflow:
 
         if self._paused:
             return
+        emit.node_action(self.registry, self.activity_id, "pause", "user")
         self._paused = True
         self._paused_at = self._clock()
         self._gate = anyio.Event()  # a fresh, un-set gate blocks waiters
         for ar in self.run.all_agents():
             if ar.status == "running":
                 ar._paused = True
+        # The run is paused; its in-flight agents are not (they finish their
+        # turn), so only the workflow node changes state here.
+        emit.node_status(
+            self.registry,
+            self.activity_id,
+            activity_status.from_workflow_status(self.run.status, paused=True),
+        )
         self._emit()
 
     def resume(self) -> None:
@@ -725,6 +1039,7 @@ class Workflow:
 
         if not self._paused:
             return
+        emit.node_action(self.registry, self.activity_id, "resume", "user")
         dur = self._clock() - (self._paused_at or self._clock())
         self._paused = False
         self._paused_at = None
@@ -734,6 +1049,11 @@ class Workflow:
                 ar.total_paused_ms += dur
                 ar._paused = False
         self._gate.set()
+        emit.node_status(
+            self.registry,
+            self.activity_id,
+            activity_status.from_workflow_status(self.run.status),
+        )
         self._emit()
 
     def skip_agent(self, agent_id: str) -> None:
@@ -745,6 +1065,7 @@ class Workflow:
         ar = self.run.find_agent(agent_id)
         if ar is None:
             raise WorkflowError("not_found", f"no agent {agent_id!r}")
+        emit.node_action(self.registry, self._agent_node(ar), "skip", "user")
         self._skip.add(agent_id)
         if ar.status == "running":
             scope = self._scopes.get(agent_id)
@@ -753,6 +1074,9 @@ class Workflow:
         elif ar.status == "queued":
             ar.status = "cancelled"
             ar.ended = self._clock()
+            # Membership in ``_skip`` is now what distinguishes this from a
+            # plain cancellation, and ``_emit_agent_status`` reads it.
+            self._emit_agent_status(ar)
             self._emit()
 
     async def retry_agent(self, agent_id: str) -> str:
@@ -765,6 +1089,7 @@ class Workflow:
             raise WorkflowError("not_found", f"no agent {agent_id!r}")
         if ar.status == "running":
             raise WorkflowError("not_running", f"agent {agent_id} is still running")
+        emit.node_action(self.registry, self._agent_node(ar), "retry", "user")
         # Reset live counters; keep id/label/phase/model for continuity.
         ar.status = "queued"
         ar.started = None
@@ -778,8 +1103,12 @@ class Workflow:
         ar.error = None
         ar.cost_usd = 0.0
         ar.turns = 0
+        ar.replayed = False
         ar._paused = False
         self._skip.discard(agent_id)
+        # Back to pending: a retried node has no end any more, and leaving it
+        # terminal would let a container claim a completion it no longer has.
+        self._emit_agent_status(ar)
         self._emit()
         return await self._drive(ar)
 
@@ -903,6 +1232,11 @@ class Workflow:
             self.run.status = "done"
         if self.run.ended is None:
             self.run.ended = self._clock()
+        emit.node_status(
+            self.registry,
+            self.activity_id,
+            activity_status.from_workflow_status(self.run.status),
+        )
         self._emit()
 
     def save(self, path: Any = None) -> str:
@@ -965,19 +1299,28 @@ def _default_verify_prompt(objective: str, findings: list[dict[str, Any]]) -> st
 def _parse_verdict(text: str | None) -> str | None:
     """Extract a PASS/FAIL/PARTIAL verdict from a verifier's report.
 
-    Prefers the explicit ``VERDICT: X`` contract line (last one wins), falling
-    back to the first bare token found. Returns ``None`` when absent."""
+    Prefers the explicit ``VERDICT: X`` contract line (last one wins). Returns
+    ``None`` when the verifier never stated one — an absent verdict is honest
+    and the caller can say so, which beats inventing one.
+
+    The fallback deliberately only reads the FINAL non-empty line, and only
+    accepts a standalone UPPERCASE token. Scanning the whole report for a bare
+    substring (the previous behaviour) read ordinary prose as a verdict, and
+    because it tested FAIL first, the most natural way to report success —
+    "No failures found." — came back as FAIL. A verifier that found nothing
+    wrong must never be reported as a failure.
+    """
 
     if not text:
         return None
     hits = _VERDICT_RE.findall(text)
     if hits:
         return hits[-1].upper()
-    up = text.upper()
-    for v in ("FAIL", "PARTIAL", "PASS"):
-        if v in up:
-            return v
-    return None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    tail = re.findall(r"\b(PASS|FAIL|PARTIAL)\b", lines[-1])
+    return tail[-1].upper() if tail else None
 
 
 async def _aiter(runner: AgentRunner, ar: AgentRun) -> AsyncIterator[Any]:
@@ -987,7 +1330,7 @@ async def _aiter(runner: AgentRunner, ar: AgentRun) -> AsyncIterator[Any]:
     async function returning an async iterator/awaitable. This normalizes both.
     """
 
-    out = runner(ar._prompt, model=ar.model, agent_type=ar.agent_type, schema=ar._schema)
+    out = runner(ar.prompt, model=ar.model, agent_type=ar.agent_type, schema=ar._schema)
     if hasattr(out, "__aiter__"):
         async for msg in out:
             yield msg

@@ -44,7 +44,10 @@ def test_category_order_stable() -> None:
 
 
 def test_help_search_matches_command_category_and_description() -> None:
-    assert [c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "resume")] == ["/resume"]
+    # "resume" hits /resume (the command) and /workflows (which resumes a past
+    # run) — search matches descriptions too, and both are genuinely relevant.
+    assert [c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "resume")] == [
+        "/resume", "/workflows"]
     assert "/resume" in {c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "/resume")}
     session = {c for _cat, c, _desc in search_help_lines(SLASH_COMMANDS, "session")}
     assert {"/resume", "/branch", "/rewind"}.issubset(session)

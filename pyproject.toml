@@ -1,6 +1,6 @@
 [project]
 name = "mantis-agent-sdk"
-version = "2.61.0"
+version = "2.62.0"
 description = "Drop-in open-source agent SDK. Multi-model, streaming, MCP, sub-agents."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -56,6 +56,11 @@ dev = [
     "respx>=0.21",
     "build>=1.2",
     "tomli>=2.0; python_version < '3.11'",
+    # tests/test_docs_site.py's structural layer parses mkdocs.yml directly, so
+    # it can check nav/links WITHOUT the heavyweight docs extra — but it still
+    # needs a YAML parser. Without this the three structural tests error out on
+    # a plain `pip install -e .[dev]`, which is what CI and every contributor do.
+    "pyyaml>=6.0",
 ]
 docs = [
     "mkdocs>=1.6",

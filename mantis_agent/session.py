@@ -33,6 +33,7 @@ from typing import Any, Iterable, Protocol, runtime_checkable
 import anyio
 import msgspec
 
+from .hooks import HookContext, HookDispatcher
 from .types import AssistantMessage, Message, SystemMessage, UserMessage
 
 # ---------------------------------------------------------------------------
@@ -643,6 +644,73 @@ def make_checkpoints(messages: Iterable[Message]) -> list[Checkpoint]:
     return out
 
 
+def _is_cancellation(exc: BaseException) -> bool:
+    """Is ``exc`` this backend's cancellation exception?
+
+    asyncio raises ``CancelledError`` and trio raises ``trio.Cancelled``; anyio
+    knows which one is live, so ask it instead of hard-coding either. Outside a
+    running async context there is no backend to ask — sniffio signals that
+    with ``AsyncLibraryNotFoundError`` (a ``RuntimeError``) — so treat it as
+    "not a cancellation" rather than letting the probe escape.
+    """
+
+    try:
+        return isinstance(exc, anyio.get_cancelled_exc_class())
+    except RuntimeError:
+        return False
+
+
+async def _dispatch_session_event(
+    dispatcher: "HookDispatcher | None",
+    event: str,
+    session: "Session",
+    *,
+    reason: str,
+    error: BaseException | None = None,
+    shield: bool = False,
+) -> None:
+    """Fire ``SessionStart`` / ``SessionEnd`` for ``session``.
+
+    Both are observability events — neither is in ``BLOCKING_EVENTS``, so the
+    dispatcher swallows a raising hook and the session lifecycle continues
+    regardless. ``reason`` distinguishes the several ways each end of the
+    lifecycle is reached ("create" / "resume" / "fork"; "closed" / "error" /
+    "cancelled") because that is the first thing a session-auditing hook wants
+    and it cannot be recovered afterwards.
+
+    The ``has()`` guard keeps the no-hook path to a single dict lookup, which
+    matters because ``Session.load`` is on the interactive resume path.
+
+    ``shield`` is set for ``SessionEnd`` only. Teardown is exactly when the
+    surrounding task is likely to be under cancellation, and a plain ``await``
+    there is interrupted at the hook's first checkpoint — losing the one event
+    a cleanup hook exists for. ``SessionStart`` deliberately does NOT shield: a
+    startup hook that hangs must stay cancellable.
+    """
+
+    if dispatcher is None or not dispatcher.has(event):
+        return
+    extras: dict[str, Any] = {
+        "session_id": session.id,
+        "reason": reason,
+        "message_count": len(session.messages),
+    }
+    if error is not None:
+        extras["error"] = str(error)
+        extras["error_type"] = type(error).__name__
+    ctx = HookContext(
+        event=event,
+        messages_snapshot=session.messages,
+        arbitrary=extras,
+    )
+    # A shielded scope runs the dispatch to completion even if the enclosing
+    # scope is already cancelled; the cancellation is still delivered to the
+    # caller the moment we return, so this defers teardown by the hook's own
+    # duration and no longer. See the ``shield`` note in the docstring.
+    with anyio.CancelScope(shield=shield):
+        await dispatcher.dispatch(event, ctx)
+
+
 class Session:
     """High-level conversation handle backed by a ``SessionStore``.
 
@@ -652,9 +720,19 @@ class Session:
     Resume + fork are both checkpoint-driven. A checkpoint is the boundary
     AFTER message N; truncating to a checkpoint with ``index=k`` keeps the
     first ``k`` messages.
+
+    Passing ``dispatcher`` opts the session into the ``SessionStart`` /
+    ``SessionEnd`` hook lifecycle. ``SessionStart`` fires from the factories
+    (``create``, ``load``, ``fork``); ``SessionEnd`` fires from ``close()``,
+    which ``async with`` calls for you on every exit path including error and
+    cancellation::
+
+        async with await Session.create(store, dispatcher=d) as sess:
+            ...
+        # SessionEnd has fired exactly once by here
     """
 
-    __slots__ = ("_store", "_id", "_messages", "_meta")
+    __slots__ = ("_store", "_id", "_messages", "_meta", "_dispatcher", "_ended")
 
     def __init__(
         self,
@@ -662,11 +740,17 @@ class Session:
         session_id: str,
         messages: list[Message] | None = None,
         meta: dict[str, Any] | None = None,
+        *,
+        dispatcher: "HookDispatcher | None" = None,
     ) -> None:
         self._store = store
         self._id = session_id
         self._messages = list(messages) if messages is not None else []
         self._meta = dict(meta) if meta is not None else {}
+        self._dispatcher = dispatcher
+        # Latch: SessionEnd is a once-per-session event. Set before the hook is
+        # awaited so a re-entrant or concurrent ``close()`` cannot double-fire.
+        self._ended = False
 
     # -- factory methods -------------------------------------------------
 
@@ -679,11 +763,15 @@ class Session:
         title: str | None = None,
         tags: Iterable[str] | None = None,
         meta: dict[str, Any] | None = None,
+        dispatcher: "HookDispatcher | None" = None,
     ) -> "Session":
         """Create a fresh session and persist it immediately.
 
         ``session_id`` is auto-generated (UUID4) if not provided. The empty
         message list is saved so subsequent ``list_sessions`` calls see it.
+
+        Fires ``SessionStart`` (reason ``"create"``) after the row exists, so a
+        hook that reads the store back sees the session it was told about.
         """
 
         sid = session_id or f"sess_{uuid.uuid4().hex[:16]}"
@@ -692,13 +780,21 @@ class Session:
             m["title"] = title
         if tags is not None:
             m["tags"] = list(tags)
-        sess = cls(store, sid, messages=[], meta=m)
+        sess = cls(store, sid, messages=[], meta=m, dispatcher=dispatcher)
         await sess.save()
+        await _dispatch_session_event(
+            dispatcher, "SessionStart", sess, reason="create"
+        )
         return sess
 
     @classmethod
     async def load(
-        cls, store: SessionStore, session_id: str, *, fresh_context: bool = True
+        cls,
+        store: SessionStore,
+        session_id: str,
+        *,
+        fresh_context: bool = True,
+        dispatcher: "HookDispatcher | None" = None,
     ) -> "Session":
         """Load an existing session from the store.
 
@@ -708,12 +804,21 @@ class Session:
         stale snapshot from when the session was first created — the env, git
         branch, or MANTIS.md may have changed since. Pass False to keep the
         frozen head verbatim.
+
+        Fires ``SessionStart`` (reason ``"resume"``) — loading an existing
+        session IS the resume path, and a hook wants to tell the two apart.
         """
 
         messages, meta = await store.load(session_id)
         if fresh_context:
             messages = strip_context_messages(messages)
-        return cls(store, session_id, messages=messages, meta=meta)
+        sess = cls(
+            store, session_id, messages=messages, meta=meta, dispatcher=dispatcher
+        )
+        await _dispatch_session_event(
+            dispatcher, "SessionStart", sess, reason="resume"
+        )
+        return sess
 
     # -- properties ------------------------------------------------------
 
@@ -776,6 +881,56 @@ class Session:
 
         await self._store.delete(self._id)
 
+    # -- lifecycle -------------------------------------------------------
+
+    async def close(
+        self, *, reason: str = "closed", error: BaseException | None = None
+    ) -> None:
+        """End the session, firing ``SessionEnd`` exactly once.
+
+        Idempotent: the second and later calls are no-ops, so a caller that
+        closes explicitly inside an ``async with`` block does not double-fire.
+        This does NOT save, delete, or otherwise touch the store — closing is
+        about the *lifecycle*, and silently flushing here would make ``close``
+        a hidden write that a caller who deliberately discarded in-memory edits
+        did not ask for.
+
+        ``reason`` / ``error`` describe how the session ended; ``__aexit__``
+        fills them in from the exception that is unwinding.
+        """
+
+        if self._ended:
+            return
+        self._ended = True
+        await _dispatch_session_event(
+            self._dispatcher,
+            "SessionEnd",
+            self,
+            reason=reason,
+            error=error,
+            shield=True,
+        )
+
+    async def __aenter__(self) -> "Session":
+        # ``SessionStart`` already fired in the factory that built this object;
+        # firing again here would double-report every ``async with await
+        # Session.create(...)``, which is the documented usage.
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        # Classify the exit so a cleanup hook can distinguish a clean close
+        # from a crash from an operator cancelling the run. anyio's cancellation
+        # exception differs by backend (asyncio's CancelledError vs trio's
+        # Cancelled), so ask anyio rather than isinstance-ing one of them.
+        if exc_type is None:
+            reason, err = "closed", None
+        elif isinstance(exc, BaseException) and _is_cancellation(exc):
+            reason, err = "cancelled", None
+        else:
+            reason, err = "error", exc if isinstance(exc, BaseException) else None
+        await self.close(reason=reason, error=err)
+        return False  # never swallow — we observe the exit, we don't own it
+
     # -- checkpoints + fork + resume ------------------------------------
 
     def checkpoints(self) -> list[Checkpoint]:
@@ -821,6 +976,10 @@ class Session:
         The forked session is persisted before returning. Its ``meta`` is a
         shallow copy of the source's plus ``forked_from = source_id`` and,
         when truncated, ``forked_at_index = idx``.
+
+        The fork inherits this session's dispatcher and fires ``SessionStart``
+        (reason ``"fork"``) for the new id — a fork IS a session creation, and
+        a hook that indexes sessions must not miss the ones born this way.
         """
 
         new_sid = new_id or f"sess_{uuid.uuid4().hex[:16]}"
@@ -837,7 +996,17 @@ class Session:
             new_meta["forked_from"] = self._id
             forked = list(self._messages)
             await self._store.save(new_sid, forked, new_meta)
-            return Session(self._store, new_sid, messages=forked, meta=new_meta)
+            child = Session(
+                self._store,
+                new_sid,
+                messages=forked,
+                meta=new_meta,
+                dispatcher=self._dispatcher,
+            )
+            await _dispatch_session_event(
+                self._dispatcher, "SessionStart", child, reason="fork"
+            )
+            return child
 
         idx = self._resolve_checkpoint(checkpoint)
         # Strip any tool_use left dangling by cutting inside an open tool
@@ -847,9 +1016,17 @@ class Session:
         new_meta["forked_from"] = self._id
         new_meta["forked_at_index"] = idx
         await self._store.save(new_sid, truncated, new_meta)
-        return Session(
-            self._store, new_sid, messages=truncated, meta=new_meta
+        child = Session(
+            self._store,
+            new_sid,
+            messages=truncated,
+            meta=new_meta,
+            dispatcher=self._dispatcher,
         )
+        await _dispatch_session_event(
+            self._dispatcher, "SessionStart", child, reason="fork"
+        )
+        return child
 
     async def resume_from(
         self, checkpoint: "Checkpoint | int"
@@ -932,10 +1109,16 @@ async def resume_session(
     store: SessionStore,
     session_id: str,
     checkpoint: "Checkpoint | int",
+    *,
+    dispatcher: "HookDispatcher | None" = None,
 ) -> Session:
     """Truncate ``session_id`` to ``checkpoint`` in place. Returns a
-    :class:`Session` you can continue using."""
+    :class:`Session` you can continue using.
 
-    sess = await Session.load(store, session_id)
+    With a ``dispatcher``, the underlying ``Session.load`` fires
+    ``SessionStart`` (reason ``"resume"``) — once, for the load, not again for
+    the truncation, which is a mutation of an already-started session."""
+
+    sess = await Session.load(store, session_id, dispatcher=dispatcher)
     await sess.resume_from(checkpoint)
     return sess

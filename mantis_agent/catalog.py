@@ -144,7 +144,12 @@ CATALOG: tuple[Provider, ...] = (
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-        ("gpt-oss-120b", "zai-glm-4.7", "llama-3.3-70b", "gemma-4-31b"),
+        # Public-endpoint catalog as of 2026-08-04: production gpt-oss-120b,
+        # then the two previews. llama-3.3-70b used to be here and is gone —
+        # it now resolves only on a Dedicated Endpoint, so offering it as a
+        # starter pick sent people to a model their key cannot reach.
+        # zai-glm-4.7 is last on purpose: deprecated 2026-08-17.
+        ("gpt-oss-120b", "gemma-4-31b", "zai-glm-4.7"),
         "cloud.cerebras.ai · very fast · hosts OpenAI gpt-oss",
     ),
     # Anthropic is NOT OpenAI-compatible — mantis routes api.anthropic.com to the
@@ -189,6 +194,70 @@ def _save_store(data: dict[str, Any]) -> None:
 
 def saved_key(provider_id: str) -> str | None:
     return (_load_store().get("keys") or {}).get(provider_id)
+
+
+# provider id -> (distinctive key prefix or None, where to get one).
+#
+# The prefix is only listed where it is genuinely distinctive. Plain ``sk-`` is
+# shared by OpenAI, DeepSeek, Moonshot and Qwen, so it identifies nobody and is
+# recorded as None — the console URL is the half that always helps, and a
+# guess-by-prefix that fires on the wrong provider is worse than no guess.
+KEY_SHAPES: dict[str, tuple[str | None, str]] = {
+    "anthropic": ("sk-ant-", "console.anthropic.com/settings/keys"),
+    "openrouter": ("sk-or-", "openrouter.ai/keys"),
+    "cerebras": ("csk-", "cloud.cerebras.ai"),
+    "groq": ("gsk_", "console.groq.com/keys"),
+    "gemini": ("AIza", "aistudio.google.com/apikey"),
+    "fireworks": ("fw_", "fireworks.ai/account/api-keys"),
+    "openai": (None, "platform.openai.com/api-keys"),
+    "deepseek": (None, "platform.deepseek.com/api_keys"),
+    "moonshot": (None, "platform.moonshot.ai/console/api-keys"),
+    "qwen": (None, "dashscope.console.aliyun.com"),
+    "glm": (None, "z.ai/manage-apikey/apikey-list"),
+    "together": (None, "api.together.xyz/settings/api-keys"),
+}
+
+
+def key_hint(provider_id: str) -> str:
+    """A short 'what to paste, and where to get it' for the key prompt.
+
+    Naming only the env var ("paste your CEREBRAS_API_KEY") tells someone who
+    has never enabled the provider neither what the string looks like nor where
+    to find it.
+    """
+
+    prefix, where = KEY_SHAPES.get(provider_id, (None, ""))
+    if prefix and where:
+        return f"{prefix}… · get one at {where}"
+    return f"get one at {where}" if where else ""
+
+
+def misdirected_key(provider_id: str, key: str) -> str | None:
+    """If ``key`` unmistakably belongs to a *different* provider, say which —
+    else None.
+
+    Catches the paste-into-the-wrong-row mistake before spending a network
+    round trip on it, where it comes back as a generic "invalid API key" that
+    reads like the key itself is bad.
+
+    Deliberately conservative: it fires only on prefixes that identify exactly
+    one provider, so a bare ``sk-…`` (OpenAI/DeepSeek/Moonshot/Qwen alike) is
+    never second-guessed and goes to the network to be judged.
+    """
+
+    k = key.strip()
+    if not k:
+        return None
+    owner = next((pid for pid, (prefix, _) in KEY_SHAPES.items()
+                  if prefix and k.startswith(prefix)), None)
+    if owner is None or owner == provider_id:
+        return None
+    # An `sk-ant-` key starts with `sk-`, so a provider whose own prefix also
+    # matches this string is not being mis-pasted into.
+    own_prefix = KEY_SHAPES.get(provider_id, (None, ""))[0]
+    if own_prefix and k.startswith(own_prefix):
+        return None
+    return (BY_ID[owner].label if owner in BY_ID else owner)
 
 
 def set_key(provider_id: str, key: str) -> None:
@@ -613,12 +682,29 @@ def store_live_models(provider_id: str, models: list[str]) -> None:
 
 
 def _models_headers(provider: Provider, key: str | None) -> dict[str, str]:
-    """Auth headers for a provider's ``/models`` probe. Anthropic uses
-    ``x-api-key`` + ``anthropic-version`` (not OpenAI's ``Bearer``)."""
+    """Auth headers for a provider's ``/models`` probe.
+
+    Anthropic has more than one way in, and they are not interchangeable: an API
+    key goes in ``x-api-key``, while an OAuth token goes in ``Authorization:
+    Bearer`` *and* needs the oauth beta header. Probing an OAuth session with
+    ``x-api-key`` is how "OAuth token saved · validating… ✗ no API key set"
+    happened — the credential was stored fine and the probe simply looked in the
+    wrong place.
+    """
+    anthropic = provider.id == "anthropic" or "anthropic.com" in provider.base_url
+    if anthropic:
+        token = (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+        if token and not key:
+            return {
+                "authorization": f"Bearer {token}",
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta": "oauth-2025-04-20",
+            }
+        if not key:
+            return {}
+        return {"x-api-key": key, "anthropic-version": "2023-06-01"}
     if not key:
         return {}
-    if provider.id == "anthropic" or "anthropic.com" in provider.base_url:
-        return {"x-api-key": key, "anthropic-version": "2023-06-01"}
     return {"Authorization": f"Bearer {key}"}
 
 
@@ -630,12 +716,13 @@ def validate_provider(provider: Provider, *, timeout: float = 4.0) -> tuple[bool
     import httpx  # noqa: PLC0415
 
     key = api_key_for(provider)
-    if not key:
-        return False, "no API key set"
+    headers = _models_headers(provider, key)
+    if not headers:
+        # "no key" means no *usable credential of any kind*, not "no x-api-key".
+        return False, "no credential set"
     try:
         with httpx.Client(timeout=timeout) as c:
-            r = c.get(f"{provider.base_url.rstrip('/')}/models",
-                      headers=_models_headers(provider, key))
+            r = c.get(f"{provider.base_url.rstrip('/')}/models", headers=headers)
     except Exception:  # noqa: BLE001
         return False, "can't reach endpoint"
     if r.status_code in (401, 403):
@@ -649,6 +736,51 @@ def validate_provider(provider: Provider, *, timeout: float = 4.0) -> tuple[bool
     return True, (f"{n} models available" if n else "key accepted")
 
 
+# Providers that publish their catalog with no API key. Worth special-casing:
+# a hardcoded starter list is a snapshot that rots silently — ours still
+# offered Cerebras `llama-3.3-70b` long after it left their public endpoints —
+# and the normal /v1/models refresh cannot help, because it needs a key the
+# user does not have until after they have already picked a model.
+PUBLIC_MODEL_ENDPOINTS: dict[str, str] = {
+    "cerebras": "https://api.cerebras.ai/public/v1/models",
+}
+
+
+def refresh_public_models(provider: Provider, *, timeout: float = 2.5) -> list[str] | None:
+    """Fetch a provider's *keyless* public catalog and persist it, so the picker
+    shows a real current line-up for a provider nobody has enabled yet.
+
+    Ordering: generally-available models first, then previews, with deprecated
+    ones last — a model being retired in two weeks should not be anyone's
+    default pick. Best-effort; returns None on any failure.
+    """
+
+    import httpx  # noqa: PLC0415
+
+    url = PUBLIC_MODEL_ENDPOINTS.get(provider.id)
+    if not url:
+        return None
+    try:
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(url)
+            r.raise_for_status()
+            data = r.json().get("data", [])
+    except Exception:  # noqa: BLE001 — offline is not an error worth surfacing
+        return None
+
+    def rank(m: dict[str, Any]) -> tuple[int, int, str]:
+        return (1 if m.get("deprecated") else 0,
+                1 if m.get("preview") else 0,
+                str(m.get("id", "")))
+
+    ids = [m.get("id", "") for m in sorted(
+        (m for m in data if isinstance(m, dict) and m.get("id")), key=rank)]
+    if not ids:
+        return None
+    store_live_models(provider.id, ids)
+    return ids
+
+
 def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str] | None:
     """Fetch a provider's live /v1/models and persist it. Best-effort: returns
     the ids (and caches them) on success, ``None`` on any failure. Intended to
@@ -656,6 +788,10 @@ def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str
     import httpx  # noqa: PLC0415
 
     key = api_key_for(provider)
+    # No key, but the provider publishes a public catalog: use it rather than
+    # spending a round trip on a 403 and falling back to the stale hardcoded list.
+    if not key and provider.id in PUBLIC_MODEL_ENDPOINTS:
+        return refresh_public_models(provider, timeout=timeout)
     try:
         with httpx.Client(timeout=timeout) as c:
             r = c.get(f"{provider.base_url.rstrip('/')}/models",
@@ -699,5 +835,10 @@ __all__ = [
     "cached_live_models",
     "store_live_models",
     "refresh_live_models",
+    "refresh_public_models",
+    "PUBLIC_MODEL_ENDPOINTS",
+    "KEY_SHAPES",
+    "key_hint",
+    "misdirected_key",
     "validate_provider",
 ]

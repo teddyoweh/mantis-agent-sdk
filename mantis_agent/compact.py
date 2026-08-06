@@ -29,10 +29,11 @@ decision. The cost of being slightly off is one early or one late compaction
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import msgspec
 
+from .hooks import HookContext, HookDispatcher
 from .types import (
     AssistantMessage,
     ContentBlock,
@@ -50,6 +51,56 @@ from .types import (
 # Wired in by the agent — usually a thin wrapper around ``provider.stream``
 # that drains text and joins it.
 SummarizerFn = Callable[[str], Awaitable[str]]
+
+
+# ---------------------------------------------------------------------------
+# PostCompact dispatch
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_post_compact(
+    dispatcher: "HookDispatcher | None",
+    before: list[Message],
+    after: list[Message],
+    *,
+    trigger: str,
+) -> None:
+    """Fire the non-blocking ``PostCompact`` hook for a completed compaction.
+
+    Called from exactly one place — the tail of ``SimpleCompactor.compact``,
+    after the replacement list is built and immediately before it is returned.
+    That is the only moment where "the new message list" exists and is final,
+    which is what a ``PostCompact`` hook is for (persist the pre-compaction
+    transcript, re-index it, notify a dashboard).
+
+    Deliberately NOT fired for:
+
+    * the no-op paths in ``compact`` (nothing to summarize, summarizer failed
+      or returned empty). Those return the input list unchanged — there was no
+      compaction, so announcing one would be a lie a hook cannot distinguish
+      from the real thing.
+    * ``microcompact`` / ``emergency_clear``. Both are synchronous payload
+      strippers, not summarizations: no turns are replaced, the list identity
+      is preserved, and they run on paths (including post-overflow recovery)
+      where awaiting user code would be actively harmful.
+
+    ``PostCompact`` is observability — it is not in ``BLOCKING_EVENTS``, so a
+    hook that raises is logged and swallowed by the dispatcher and compaction
+    still returns its result. The whole call is guarded by ``has()`` so the
+    common no-hook path costs one dict lookup.
+    """
+
+    if dispatcher is None or not dispatcher.has("PostCompact"):
+        return
+    extras: dict[str, Any] = {
+        "trigger": trigger,
+        "before_count": len(before),
+        "after_count": len(after),
+    }
+    await dispatcher.dispatch(
+        "PostCompact",
+        HookContext(event="PostCompact", messages_snapshot=after, arbitrary=extras),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +302,14 @@ class SimpleCompactor:
         Whether to preserve a leading ``SystemMessage`` outside the boundary.
         Keep this on — the system prompt anchors the agent's persona, and
         rolling it into a summary loses fidelity.
+    dispatcher:
+        Optional ``HookDispatcher``. When set, a compaction that actually
+        replaced turns fires the non-blocking ``PostCompact`` hook with the new
+        message list. Left ``None`` the compactor is hook-free and behaves
+        exactly as before — no import-time or per-call cost.
+    trigger:
+        Label reported to ``PostCompact`` hooks so they can tell an automatic
+        threshold compaction ("auto") from an explicit ``/compact`` ("manual").
     """
 
     __slots__ = (
@@ -262,6 +321,8 @@ class SimpleCompactor:
         "_micro_keep",
         "_micro_min_chars",
         "_summary_token_budget",
+        "_dispatcher",
+        "_trigger",
     )
 
     def __init__(
@@ -275,6 +336,8 @@ class SimpleCompactor:
         micro_keep_tool_results: int = 8,
         micro_min_chars: int = 800,
         summary_token_budget: int = 2048,
+        dispatcher: "HookDispatcher | None" = None,
+        trigger: str = "auto",
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")
@@ -297,6 +360,11 @@ class SimpleCompactor:
         # transcript. Bound the replacement text so compaction always creates
         # headroom instead of burning the limited compaction retry budget.
         self._summary_token_budget = summary_token_budget
+        # Hook delivery for PostCompact. Stored as the dispatcher itself (not a
+        # resolved callable) so a dispatcher whose ``Hooks`` are swapped after
+        # construction is still honoured on the next compaction.
+        self._dispatcher = dispatcher
+        self._trigger = trigger
 
     @staticmethod
     def _used(messages: list[Message], usage: Usage) -> int:
@@ -488,6 +556,13 @@ class SimpleCompactor:
         out = [*head, *anchor, summary_msg, *recent]
         # The line cap above is the dead-end guard for echoing summarizers: it
         # bounds the replacement before it can consume the context window again.
+        #
+        # PostCompact fires here and nowhere else: this is the single return
+        # that represents a real compaction. Every other exit above hands back
+        # the caller's own list untouched. See ``_dispatch_post_compact``.
+        await _dispatch_post_compact(
+            self._dispatcher, messages, out, trigger=self._trigger
+        )
         return out
 
 
@@ -552,18 +627,28 @@ async def run_manual_compaction(
     *,
     focus: str = "",
     keep_recent: int = 4,
+    dispatcher: "HookDispatcher | None" = None,
 ) -> tuple[list[Message], str]:
     """Compact ``messages`` on demand (the ``/compact`` command). Keeps the last
     ``keep_recent`` turns verbatim and summarizes the rest with ``summarizer_fn``;
     an optional ``focus`` hint is appended to the summarizer prompt so the user
     can steer what the summary preserves. Returns ``(new_messages, note)`` and
-    leaves the input untouched when there's nothing to compact."""
+    leaves the input untouched when there's nothing to compact.
+
+    ``dispatcher`` rides along to the internal compactor so a user-triggered
+    compaction fires ``PostCompact`` exactly like an automatic one, tagged
+    ``trigger="manual"``."""
     fn = summarizer_fn
     if focus.strip():
         async def fn(prompt: str, _s=summarizer_fn, _f=focus.strip()) -> str:  # noqa: A001
             return await _s(f"{prompt}\n\nFocus your summary especially on: {_f}")
 
-    comp = SimpleCompactor(fn, keep_recent_turns=max(1, keep_recent))
+    comp = SimpleCompactor(
+        fn,
+        keep_recent_turns=max(1, keep_recent),
+        dispatcher=dispatcher,
+        trigger="manual",
+    )
     snapshot = list(messages)
     before = len(snapshot)
     out = await comp.compact(snapshot)

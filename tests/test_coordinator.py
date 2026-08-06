@@ -305,10 +305,38 @@ def test_parse_verdict():
     assert _parse_verdict("VERDICT: PARTIAL\nmore") == "PARTIAL"
     # last explicit verdict wins
     assert _parse_verdict("VERDICT: PASS ... VERDICT: FAIL") == "FAIL"
-    # bare-token fallback
-    assert _parse_verdict("everything looks partial to me") == "PARTIAL"
+    # bare-token fallback: only a standalone UPPERCASE token on the FINAL line
+    assert _parse_verdict("some analysis\nPARTIAL") == "PARTIAL"
     assert _parse_verdict(None) is None
     assert _parse_verdict("no verdict here") is None
+
+
+def test_prose_is_never_mistaken_for_a_verdict():
+    """The parser used to scan the whole report for a bare substring, testing
+    FAIL first — so the most natural way to report success came back as FAIL,
+    and coordinate handed that to the parent as the result of the run."""
+    assert _parse_verdict("I checked every path. No failures found.") is None
+    assert _parse_verdict("All the tests pass and I found no gaps.") is None
+    assert _parse_verdict("This is a partial implementation but correct.") is None
+    # a failure mentioned in passing is not a verdict on the whole objective
+    assert _parse_verdict("If the token expires the refresh will fail.\nOtherwise "
+                          "the design is sound.") is None
+    # …and the explicit contract still wins over any of that prose
+    assert _parse_verdict("No failures found.\nVERDICT: PASS") == "PASS"
+
+
+def test_a_missing_verdict_is_reported_as_missing():
+    """Better to say the verifier never stated one than to invent a label the
+    parent will act on."""
+    from mantis_agent.coordinator import _format_report
+
+    out = _format_report({
+        "objective": "audit auth", "agents": [], "findings": [],
+        "verification": "I reviewed it and found no failures.", "verdict": None,
+    })
+    assert "NOT STATED" in out
+    assert "VERDICT: FAIL" not in out
+    assert "found no failures" in out          # the report itself still shown
 
 
 def _counter():

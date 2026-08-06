@@ -114,6 +114,17 @@ ANTHROPIC_DEFAULT_VERSION = "2023-06-01"
 # callers who forget to set it don't get a 400.
 _DEFAULT_MAX_TOKENS = 1024
 
+#: The Claude Code identity string. A subscription OAuth token
+#: (``sk-ant-oat…``) is entitled to the premium models only on requests that
+#: present this identity: it must be the **first** ``system`` block and must
+#: match verbatim. Without it, api.anthropic.com serves Haiku normally but
+#: answers Opus/Sonnet/Fable with ``429 rate_limit_error {"message": "Error"}``
+#: — an opaque body that reads like a quota problem and is not one. Folding the
+#: string into the caller's own system text does *not* satisfy the check; it has
+#: to stand alone as its own block, which is why this is prepended rather than
+#: concatenated.
+CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
 _JSON_DECODER = msgspec.json.Decoder()
 _PAYLOAD_ENCODER = msgspec.json.Encoder()
 
@@ -201,17 +212,31 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
             "accept": "text/event-stream",
             "anthropic-version": version,
         }
+        # A subscription OAuth token against api.anthropic.com is the one auth
+        # style that also constrains the *body* — see CLAUDE_CODE_IDENTITY.
+        # Gateways (non-anthropic.com base) mint their own Bearer tokens, handle
+        # auth themselves, and must not have an identity block injected.
+        self._oauth_subscription = bool(
+            token and token.startswith("sk-ant-oat") and "anthropic.com" in url
+        )
         if token:
             headers["authorization"] = f"Bearer {token}"
             # A subscription OAuth token against api.anthropic.com requires the
             # oauth beta header (Claude Code sends OAUTH_BETA_HEADER). Skip it for
             # gateways (non-anthropic.com base) which handle auth themselves.
-            if not anthropic_beta and "anthropic.com" in url:
+            if "anthropic.com" in url:
                 headers["anthropic-beta"] = "oauth-2025-04-20"
         else:
             headers["x-api-key"] = key
         if anthropic_beta:
-            headers["anthropic-beta"] = anthropic_beta
+            # Append rather than replace: a caller asking for an extra beta
+            # (e.g. a context-window flag) must not silently drop the oauth beta
+            # header, which would turn a working OAuth token into a 401.
+            existing = headers.get("anthropic-beta")
+            wanted = [f.strip() for f in anthropic_beta.split(",") if f.strip()]
+            merged = [f for f in (existing or "").split(",") if f.strip()]
+            merged += [f for f in wanted if f not in merged]
+            headers["anthropic-beta"] = ",".join(merged)
         if default_headers:
             headers.update(default_headers)
 
@@ -269,13 +294,29 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
             "stream": True,
         }
         cache = getattr(self, "cache_prompts", True)
-        if system_text:
-            # A cache breakpoint on the (stable) system prompt lets Anthropic
-            # read the whole prefix from cache on every later turn instead of
-            # re-billing it. System becomes a content array carrying the marker.
+        # Prepend the Claude Code identity block when the credential is a
+        # subscription OAuth token, unless the caller already leads with it.
+        # It has to be a standalone first block, so the caller's own system text
+        # follows as a second one instead of being merged in.
+        identity = getattr(self, "_oauth_subscription", False) and not (
+            system_text or ""
+        ).startswith(CLAUDE_CODE_IDENTITY)
+        if system_text or identity:
+            blocks: list[dict[str, Any]] = []
+            if identity:
+                blocks.append({"type": "text", "text": CLAUDE_CODE_IDENTITY})
+            if system_text:
+                blocks.append({"type": "text", "text": system_text})
+            if cache:
+                # A cache breakpoint on the (stable) system prompt lets Anthropic
+                # read the whole prefix from cache on every later turn instead of
+                # re-billing it. The marker goes on the last block so it covers
+                # the identity block too.
+                blocks[-1]["cache_control"] = {"type": "ephemeral"}
+            # A single un-cached text block can stay a plain string; anything
+            # with the identity block in front must be an array.
             payload["system"] = (
-                [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
-                if cache else system_text
+                system_text if (not cache and len(blocks) == 1) else blocks
             )
         if cache and encoded:
             _mark_cache_breakpoint(encoded[-1])  # cache the conversation so far

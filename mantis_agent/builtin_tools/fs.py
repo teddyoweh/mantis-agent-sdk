@@ -224,7 +224,13 @@ def _coerce_int(value: object, *, default: int, lo: int | None = None,
 def _is_secret_env(name: str) -> bool:
     """Is this environment variable a credential we must NOT hand to a
     model-driven shell command? Matches the usual secret-bearing name shapes
-    (API keys, tokens, passwords, access keys). Fails closed — matches broadly."""
+    (API keys, tokens, passwords, access keys). Fails closed — matches broadly.
+
+    This is the *unsandboxed* filter (and the one :mod:`mantis_agent.watch`
+    reuses). It is a denylist, so it only ever catches the names someone
+    thought of: ``MY_DB_DSN=postgres://u:pw@host`` and ``SSH_AUTH_SOCK`` sail
+    straight through it. When the sandbox is on, ``_child_env`` below throws it
+    away and uses the allowlist instead."""
     n = name.upper()
     if any(s in n for s in (
         "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
@@ -232,6 +238,86 @@ def _is_secret_env(name: str) -> bool:
     )):
         return True
     return n == "TOKEN" or n.endswith(("_TOKEN", "_KEY", "_KEY_ID"))
+
+
+# Names the allowlist in :mod:`mantis_agent.redaction` doesn't know about but
+# that a real build/test command needs: where the toolchain lives and where its
+# caches go. Two of them are load-bearing for correctness rather than
+# convenience — ``MANTIS_SANDBOX*`` is how confinement reaches a nested
+# ``mantis``, and a nested agent that lost the flag would spawn *its* shells
+# unconfined, which is the exact opposite of what the operator asked for.
+#
+# Nothing secret-shaped can be smuggled in here: ``build_child_env`` re-checks
+# ``is_secret_name`` after ``extra_pass`` and drops the name anyway.
+_SHELL_PASSTHROUGH: tuple[str, ...] = (
+    # the sandbox's own switches — a policy must be inherited, not re-decided
+    "MANTIS_SANDBOX", "MANTIS_SANDBOX_NETWORK", "MANTIS_SANDBOX_SCRUB_ENV",
+    "MANTIS_AGENT_HOME",
+    # python
+    "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE",
+    "PYENV_ROOT", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
+    "UV_CACHE_DIR", "UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "PIP_CACHE_DIR",
+    # node / go / rust / jvm
+    "NODE_ENV", "NODE_PATH", "NODE_OPTIONS", "NVM_DIR",
+    "NPM_CONFIG_PREFIX", "NPM_CONFIG_CACHE",
+    "GOPATH", "GOROOT", "GOCACHE", "GOMODCACHE", "GOFLAGS",
+    "CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "GRADLE_USER_HOME", "MAVEN_HOME",
+    # platform, XDG, CI, and TLS trust stores (without these, https breaks in
+    # exactly the confusing way that gets sandboxes disabled)
+    "HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY",
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    "CI", "SHLVL", "HOSTNAME", "COLORTERM", "MAKEFLAGS",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "NIX_PATH", "PKG_CONFIG_PATH",
+)
+
+# Non-interactive by construction: models love to reach for ``nano``/``vim`` or
+# commands that page (``git log``, ``less``) — those launch full-screen UIs that
+# hang on the closed stdin or vomit terminal-control codes into the result.
+# ``TERM=dumb`` + neutered pager/editor envs make them behave like a script.
+_NONINTERACTIVE_ENV = {
+    "TERM": "dumb", "PAGER": "cat", "GIT_PAGER": "cat",
+    "EDITOR": "true", "VISUAL": "true",
+    "GIT_TERMINAL_PROMPT": "0", "DEBIAN_FRONTEND": "noninteractive",
+}
+
+
+def _child_env(cwd: str | None = None) -> dict[str, str]:
+    """The environment for a shell we are about to spawn — the single place
+    that decides what a model-driven command is allowed to *know*.
+
+    Two regimes, deliberately. **Sandboxed** (``MANTIS_SANDBOX=1`` or
+    ``sandbox.enabled``): the allowlist behind
+    :func:`mantis_agent.sandbox.child_env`, because confining the filesystem
+    while the child still inherits the environment confines the wrong half —
+    a process that can read ``os.environ`` and open a socket doesn't need your
+    disk to hurt you, and a denylist is only ever as good as the imagination of
+    whoever wrote it (``MY_DB_DSN``, ``SSH_AUTH_SOCK``).
+
+    **Unsandboxed** (the default): the historical :func:`_is_secret_env`
+    denylist. Someone who never asked for confinement should not discover that
+    ``git push``, ``kubectl`` and ``docker`` stopped working — this is their own
+    shell on their own machine, and the allowlist is a promise the sandbox
+    makes, not a promise ``bash`` makes.
+    """
+    env: dict[str, str] | None = None
+    try:
+        from ..sandbox import child_env, load_policy  # noqa: PLC0415
+
+        policy = load_policy()
+        if policy.enabled:
+            env = child_env(policy, cwd=cwd, extra_pass=_SHELL_PASSTHROUGH)
+    except Exception:  # noqa: BLE001 — a broken policy must not break bash
+        env = None
+    if env is None:
+        # Strip credential-bearing vars (API keys, tokens, passwords) before
+        # spawning: an untrusted/prompt-injected model must not read the host's
+        # secrets out of its own environment (`env`, `curl -d "$(env)"`).
+        env = {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
+        if cwd:
+            env["PWD"] = str(cwd)
+    env.update(_NONINTERACTIVE_ENV)
+    return env
 
 
 @tool(is_read_only=False, is_concurrency_safe=False, timeout_s=120.0)
@@ -281,27 +367,17 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # than we provided gets EOF and exits rather than blocking forever.
     stdin_bytes = (stdin if isinstance(stdin, str) else str(stdin)).encode("utf-8")
 
-    # Non-interactive environment: models love to reach for ``nano``/``vim`` or
-    # commands that page (``git log``, ``less``) — those launch full-screen UIs
-    # that hang on the closed stdin or vomit terminal-control codes into the
-    # result. ``TERM=dumb`` + neutered pager/editor envs make them behave like a
-    # script would.
-    # Strip credential-bearing vars (API keys, tokens, passwords) before
-    # spawning: an untrusted/prompt-injected model must not be able to read the
-    # host's secrets out of its own environment (`env`, `printenv`,
-    # `curl -d "$(env)"`). Fail closed — keep only non-secret vars.
-    env = {k: v for k, v in os.environ.items() if not _is_secret_env(k)}
-    env.update(
-        TERM="dumb", PAGER="cat", GIT_PAGER="cat", EDITOR="true", VISUAL="true",
-        GIT_TERMINAL_PROMPT="0", DEBIAN_FRONTEND="noninteractive",
-    )
-
     # Persistent working directory: each foreground command starts where the
     # previous one ended, so `cd sub` then a later `ls` behaves like a real shell
     # (Claude Code parity) instead of resetting to the launch dir every call.
     cwd = _bash_cwd()["cwd"]
     if cwd is not None and not os.path.isdir(cwd):
         cwd = _bash_cwd()["cwd"] = None  # the tracked dir vanished — fall back
+
+    # What the child may know (secrets scrubbed) and how it must behave (no
+    # pagers, no editors, no prompts). One helper for both spawn paths — see
+    # `_child_env`; the env is computed after `cwd` so PWD can agree with it.
+    env = _child_env(cwd)
 
     if run_in_background:
         return _start_background(command, env, cwd=cwd)
@@ -420,9 +496,17 @@ def _sandboxed(argv: list[str], cwd: str | None) -> list[str]:
         return argv
 
 
-def _start_background(command: str, env: dict[str, str], *, cwd: str | None = None) -> str:
+def _start_background(command: str, env: dict[str, str] | None = None, *,
+                      cwd: str | None = None) -> str:
     import subprocess  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
+
+    # `env` is normally the one `bash` already built, but a background shell
+    # outlives the call that started it and is the last place that should be
+    # trusted to inherit os.environ by accident: with no env passed, build the
+    # same scrubbed one rather than falling through to the parent's.
+    if env is None:
+        env = _child_env(cwd)
 
     counter = _bg_counter()
     counter[0] += 1

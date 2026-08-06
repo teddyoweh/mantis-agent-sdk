@@ -44,6 +44,7 @@ from mantis_agent.events import (
     ThinkingDelta,
 )
 from mantis_agent.providers.anthropic_passthrough import (
+    CLAUDE_CODE_IDENTITY,
     ANTHROPIC_DEFAULT_BASE_URL,
     ANTHROPIC_DEFAULT_VERSION,
     AnthropicPassthroughProvider,
@@ -829,3 +830,135 @@ class TestAgentBuildsProvider:
         # Sentinel uses the provider's default base URL.
         assert agent.provider.base_url == ANTHROPIC_DEFAULT_BASE_URL
         anyio.run(agent.provider.aclose)
+
+
+class TestOAuthSubscriptionIdentity:
+    """A subscription OAuth token (``sk-ant-oat…``) is entitled to the premium
+    models only on requests that lead with the Claude Code identity system
+    block. Without it api.anthropic.com serves Haiku but answers Opus/Sonnet
+    with an opaque ``429 rate_limit_error {"message": "Error"}`` — the
+    "only Haiku works" failure these tests pin down.
+    """
+
+    @staticmethod
+    async def _oauth_provider(handler, **kw) -> AnthropicPassthroughProvider:
+        p = AnthropicPassthroughProvider(
+            auth_token="sk-ant-oat01-testtoken0123456789", **kw
+        )
+        original_headers = dict(p.client.headers)
+        await p.client.aclose()
+        p.client = httpx.AsyncClient(
+            base_url=p.base_url,
+            transport=httpx.MockTransport(handler),
+            headers=original_headers,
+        )
+        return p
+
+    def _body(self, provider_kw=None, **stream_kw) -> dict[str, Any]:
+        return self._capture(provider_kw, **stream_kw)["body"]
+
+    def _capture(self, provider_kw=None, **stream_kw) -> dict[str, Any]:
+        captured: dict[str, Any] = {}
+
+        async def go() -> None:
+            seen: list[httpx.Request] = []
+            handler = _record_request(seen, _CANONICAL_STREAM)
+            p = await self._oauth_provider(handler, **(provider_kw or {}))
+            async for _ in p.stream(
+                model="claude-opus-4-8",
+                messages=[UserMessage(content="hi")],
+                **stream_kw,
+            ):
+                pass
+            await p.aclose()
+            captured["body"] = json.loads(seen[0].content.decode("utf-8"))
+            captured["headers"] = dict(seen[0].headers)
+
+        anyio.run(go)
+        return captured
+
+    def test_identity_block_is_first_and_verbatim(self) -> None:
+        body = self._body(system="be brief")
+        # Must be its own leading block: folding the identity into the caller's
+        # system text does not satisfy the entitlement check.
+        assert body["system"][0] == {
+            "type": "text",
+            "text": CLAUDE_CODE_IDENTITY,
+        }
+        assert body["system"][1]["text"] == "be brief"
+
+    def test_identity_block_sent_even_with_no_system_prompt(self) -> None:
+        body = self._body()
+        assert body["system"][0]["text"] == CLAUDE_CODE_IDENTITY
+
+    def test_cache_breakpoint_covers_the_identity_block(self) -> None:
+        # The marker belongs on the LAST block so the cached prefix includes
+        # the identity block rather than splitting the prompt in two.
+        blocks = self._body(system="be brief")["system"]
+        assert "cache_control" not in blocks[0]
+        assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_caller_supplied_identity_is_not_duplicated(self) -> None:
+        blocks = self._body(system=CLAUDE_CODE_IDENTITY + "\n\nBe brief.")["system"]
+        assert len(blocks) == 1
+        assert blocks[0]["text"].startswith(CLAUDE_CODE_IDENTITY)
+
+    def test_api_key_auth_gets_no_identity_block(self) -> None:
+        # A direct sk-ant-api key has no entitlement gate; injecting Claude Code
+        # framing into someone else's agent would be wrong.
+        seen: list[httpx.Request] = []
+
+        async def go() -> None:
+            handler = _record_request(seen, _CANONICAL_STREAM)
+            p = await _provider_with_handler(handler)
+            async for _ in p.stream(
+                model="claude-opus-4-8",
+                messages=[UserMessage(content="hi")],
+                system="be brief",
+            ):
+                pass
+            await p.aclose()
+
+        anyio.run(go)
+        body = json.loads(seen[0].content.decode("utf-8"))
+        assert body["system"] == [
+            {"type": "text", "text": "be brief",
+             "cache_control": {"type": "ephemeral"}}
+        ]
+
+    def test_gateway_bearer_token_gets_no_identity_block(self) -> None:
+        seen: list[httpx.Request] = []
+
+        async def go() -> None:
+            handler = _record_request(seen, _CANONICAL_STREAM)
+            p = AnthropicPassthroughProvider(
+                auth_token="sk-ant-oat01-testtoken0123456789",
+                base_url="https://gateway.internal/v1",
+            )
+            original_headers = dict(p.client.headers)
+            await p.client.aclose()
+            p.client = httpx.AsyncClient(
+                base_url=p.base_url,
+                transport=httpx.MockTransport(handler),
+                headers=original_headers,
+            )
+            async for _ in p.stream(
+                model="claude-opus-4-8",
+                messages=[UserMessage(content="hi")],
+                system="be brief",
+            ):
+                pass
+            await p.aclose()
+
+        anyio.run(go)
+        body = json.loads(seen[0].content.decode("utf-8"))
+        assert body["system"][0]["text"] == "be brief"
+
+    def test_custom_beta_does_not_drop_the_oauth_beta(self) -> None:
+        # Replacing the header instead of appending would 401 a valid token.
+        headers = self._capture(
+            provider_kw={"anthropic_beta": "context-1m-2025-08-07"}
+        )["headers"]
+        beta = headers["anthropic-beta"]
+        assert "oauth-2025-04-20" in beta
+        assert "context-1m-2025-08-07" in beta

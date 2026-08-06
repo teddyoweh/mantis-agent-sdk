@@ -258,6 +258,231 @@ def format_phase_rail(phases: Any, sel: int = -1, *, color: bool = True) -> str:
     return joiner.join(segs)
 
 
+# ---------------------------------------------------------------------------
+# Agent drill-down
+# ---------------------------------------------------------------------------
+
+
+def format_agent_detail(
+    run: Any,
+    agent_run: Any,
+    *,
+    now: float = 0.0,
+    job: Any = None,
+    prompt_chars: int = 600,
+    activity_limit: int = 12,
+    result_chars: int = 2000,
+    color: bool = True,
+) -> list[str]:
+    """Everything known about ONE agent, as plain lines.
+
+    Identity (workflow · phase · type · model), lifecycle (status · timing),
+    accounting (turns · tools · tokens · cost), the brief it was given, its
+    recent activity, and its result or error. Shared by the fullscreen overlay
+    and the classic REPL so the two can never drift.
+
+    Only observable facts appear here — tool names, turn counts, final text.
+    A model's hidden reasoning is never surfaced, by construction: the engine
+    records tool calls and visible text and nothing else.
+    """
+
+    dim = _DIM if color else ""
+    grey = _GREY if color else ""
+    red = _RED if color else ""
+    reset = _RESET if color else ""
+
+    label = getattr(agent_run, "label", "") or getattr(agent_run, "id", "?")
+    lines = [f"Workflow agent · {label}"]
+
+    wf_name = getattr(run, "name", "") or "?"
+    ident = f"{dim}workflow: {wf_name}"
+    run_id = getattr(run, "id", "")
+    if run_id:
+        ident += f" ({run_id})"
+    job_id = getattr(run, "job_id", None)
+    if job_id is None and job is not None:
+        job_id = getattr(job, "id", None)
+    if job_id is not None:
+        ident += f" · job #{job_id}"
+    lines.append(ident + reset)
+
+    meta = " · ".join(x for x in (
+        getattr(agent_run, "phase", "") or "",
+        getattr(agent_run, "agent_type", "") or "",
+        getattr(agent_run, "model", "") or "",
+    ) if x)
+    if meta:
+        lines.append(f"{dim}phase: {meta}{reset}")
+
+    status = getattr(agent_run, "status", "?")
+    if getattr(agent_run, "replayed", False):
+        status += " (replayed)"
+    dur = format_duration(_elapsed_ms(agent_run, now))
+    lines.append(f"{dim}status: {status} · {dur}{reset}")
+
+    tok = total_tokens(getattr(agent_run, "usage", None))
+    counts = (f"{getattr(agent_run, 'turns', 0)} turns · "
+              f"{getattr(agent_run, 'tool_count', 0)} tools · {format_number(tok)} tok")
+    cost = getattr(agent_run, "cost_usd", 0.0) or 0.0
+    if cost:
+        counts += f" · ${cost:.4f}" if cost < 0.01 else f" · ${cost:.2f}"
+    lines.append(f"{dim}progress: {counts}{reset}")
+
+    prompt = (getattr(agent_run, "prompt", "") or "").strip()
+    if prompt:
+        lines.append(f"{grey}prompt{reset}")
+        lines += [f"{grey}  {ln}{reset}" for ln in _clip_lines(prompt, prompt_chars)]
+
+    acts = list(getattr(agent_run, "recent_activities", []) or [])[-activity_limit:]
+    if acts:
+        lines.append(f"{grey}recent activity{reset}")
+        lines += [f"{grey}  - {a}{reset}" for a in acts]
+
+    err = getattr(agent_run, "error", None)
+    if err:
+        lines.append(f"{red}error{reset}")
+        lines += [f"{red}  {ln}{reset}" for ln in _clip_lines(str(err), 800)]
+
+    result = (getattr(agent_run, "result", "") or "").strip()
+    if result:
+        lines.append(f"{grey}result{reset}")
+        lines += [f"  {ln}" for ln in _clip_lines(result, result_chars)]
+    elif not err and status.startswith("running"):
+        lines.append(f"{dim}(still working — no result yet){reset}")
+    return lines
+
+
+def _clip_lines(text: str, limit: int) -> list[str]:
+    """Clip to ``limit`` chars and split into display lines, marking truncation."""
+
+    body = text if len(text) <= limit else text[:limit].rstrip() + " …(truncated)"
+    return body.splitlines() or [""]
+
+
+# ---------------------------------------------------------------------------
+# Control plane — one place that decides what is possible and says why not
+# ---------------------------------------------------------------------------
+
+# Every control, and what it needs to be legal. The viewer renders the footer
+# from this, and both TUIs route their keys through :func:`apply_control`, so
+# an action can never crash the UI or silently do nothing.
+CONTROLS: tuple[tuple[str, str, str], ...] = (
+    ("stop", "x", "stop the whole run"),
+    ("pause", "p", "pause / resume the run"),
+    ("cancel", "c", "cancel the selected agent"),
+    ("skip", "k", "skip the selected agent"),
+    ("retry", "r", "retry the selected agent"),
+    ("save", "s", "save the run to disk"),
+    ("inspect", "enter", "inspect the selected agent"),
+)
+
+
+def control_footer(*, detail: bool = False) -> str:
+    """The hint line. Controls are only discoverable if they are written down."""
+
+    if detail:
+        return "←/esc back · r retry agent · c cancel agent · s save"
+    return ("↑↓ select · enter/→ inspect · ←/esc back · x stop · p pause/resume · "
+            "c cancel · k skip · r retry · s save")
+
+
+def apply_control(handle: Any, run: Any, agent_run: Any, action: str) -> str:
+    """Run one control-plane action and return a one-line human result.
+
+    Never raises. A control that is not eligible explains WHY (the run already
+    finished, the agent is not running, this run is history not a live handle)
+    instead of failing silently — an orchestration UI that quietly ignores keys
+    is worse than one with fewer keys.
+
+    ``handle`` is the live :class:`~mantis_agent.workflow.Workflow`, or ``None``
+    for a run loaded from history."""
+
+    name = getattr(run, "name", None) or getattr(run, "id", "workflow")
+    if action == "save":
+        return _do_save(handle, run)
+    if handle is None:
+        return f"{name} is not live (loaded from history) — only 'save' works here"
+
+    from .workflow import WorkflowError  # noqa: PLC0415
+
+    try:
+        if action == "stop":
+            handle.stop()
+            return f"stopping {name}"
+        if action == "pause":
+            if getattr(handle, "_paused", False):
+                handle.resume()
+                return f"resumed {name}"
+            handle.pause()
+            return f"paused {name} — new agents wait at their phase boundary"
+        if action in ("cancel", "skip", "retry"):
+            if agent_run is None:
+                return f"no agent selected to {action}"
+            agent_id = getattr(agent_run, "id", "")
+            label = getattr(agent_run, "label", "") or agent_id
+            if action == "cancel":
+                handle.cancel(agent_id)
+                return f"cancelling {label}"
+            if action == "skip":
+                handle.skip_agent(agent_id)
+                return f"skipping {label}"
+            return f"retry-{agent_id}"  # caller schedules the coroutine
+    except WorkflowError as e:
+        return f"cannot {action}: {e}"
+    except Exception as e:  # noqa: BLE001 — a control must never take down the UI
+        return f"cannot {action}: {type(e).__name__}: {e}"
+    return f"unknown action {action!r}"
+
+
+def _do_save(handle: Any, run: Any) -> str:
+    """Snapshot a run into the durable store.
+
+    Deliberately the SAME destination a finished run auto-persists to, live or
+    not: saving mid-run should put the artifact where ``/workflows history``
+    will look for it, not somewhere else the user then has to remember."""
+
+    from .workflow_store import save_run  # noqa: PLC0415
+
+    try:
+        path = save_run(
+            run,
+            definition=getattr(run, "definition", ""),
+            job_id=getattr(run, "job_id", None),
+        )
+    except Exception as e:  # noqa: BLE001
+        return f"could not save: {type(e).__name__}: {e}"
+    return f"saved → {path}"
+
+
+def empty_state_lines(definitions: Any = None) -> list[str]:
+    """What ``/workflows`` shows with nothing running — a lesson, not a shrug.
+
+    An empty state that only says "nothing here" teaches the user nothing; this
+    one names the exact command that starts a run and lists what is available."""
+
+    lines = [
+        "No workflows in this session yet.",
+        "Start one:  /workflows run <name> key=value …",
+    ]
+    defs = list(definitions or [])
+    if defs:
+        lines.append("Available:")
+        for d in defs[:8]:
+            req = ""
+            names = getattr(d, "required_input_names", None)
+            if callable(names):
+                got = names()
+                if got:
+                    req = f"  (needs {', '.join(got)})"
+            lines.append(f"  {getattr(d, 'name', '?')} — "
+                         f"{getattr(d, 'description', '')}{req}")
+        if len(defs) > 8:
+            lines.append(f"  … and {len(defs) - 8} more — /workflows list")
+    lines.append("Past runs:  /workflows history · resume one with "
+                 "/workflows resume <run-id>")
+    return lines
+
+
 def _visible_len(s: str) -> int:
     """Length of ``s`` ignoring ANSI SGR escape sequences."""
 
@@ -302,11 +527,16 @@ def _truncate_visible(s: str, width: int) -> str:
 
 
 __all__ = [
+    "CONTROLS",
     "status_glyph",
     "format_duration",
     "format_number",
     "accumulate_usage",
     "total_tokens",
+    "apply_control",
+    "control_footer",
+    "empty_state_lines",
+    "format_agent_detail",
     "format_agent_row",
     "format_phase_rail",
 ]

@@ -37,6 +37,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 import msgspec
 
 from .budget import Budget, BudgetTracker
@@ -60,7 +61,7 @@ from .events import (
     TextDelta,
     ThinkingDelta,
 )
-from .hooks import HookContext, HookDispatcher, Hooks
+from .hooks import HookContext, HookDispatcher, Hooks, _env_forces_fail_closed
 from .permissions import (
     Allow,
     Deny,
@@ -104,6 +105,24 @@ _MALFORMED_TOOL_JSON_KEY = "__mantis_malformed_tool_json__"
 _TOOL_TEMPERATURE_CAP = 0.2
 
 
+def _rejects_default_temperature(provider: Any) -> bool:
+    """True where sending an UNREQUESTED temperature is worse than sending none.
+
+    The capability table's ``recommended_temperature`` is a default we invent,
+    not something the user asked for. Anthropic's newer models reject an explicit
+    temperature outright — ``400: `temperature` is deprecated for this model`` —
+    so injecting one turns a perfectly good request into a failed one, on a value
+    nobody chose.
+
+    Scoped to the provider rather than a model list on purpose: a hardcoded set
+    of model ids rots the moment a new one ships, and the failure mode is a hard
+    400 on first use. An explicit ``--temperature`` is still honoured — the user
+    then owns the outcome.
+    """
+
+    return type(provider).__name__ == "AnthropicPassthroughProvider"
+
+
 # ---------------------------------------------------------------------------
 # Text tool-call salvage
 # ---------------------------------------------------------------------------
@@ -118,6 +137,75 @@ _TOOL_TEMPERATURE_CAP = 0.2
 
 _TODO_SENTINEL = "[Current todo list]"
 _TODO_GLYPH = {"completed": "[x]", "in_progress": "[→]", "pending": "[ ]"}
+
+
+def _looks_truncated(raw: Any) -> bool:
+    """Did this tool-argument JSON get CUT OFF rather than written wrong?
+
+    Truncation leaves a well-formed *prefix*: every structure that opened is
+    still open at the end. A genuine syntax error (trailing comma, unquoted
+    key, smart quotes) is balanced but wrong. The two need opposite advice —
+    "write less" vs "fix your syntax" — so guessing costs the model a whole
+    generation per retry, and it retries into the same wall.
+
+    Walks the string once, tracking string state and escapes so a brace inside
+    a quoted value doesn't count.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    depth = 0
+    in_string = False
+    escaped = False
+    for ch in raw:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth < 0:
+                return False          # closed more than it opened: malformed
+    # Ends inside a string, or with structures still open → cut off.
+    return in_string or depth > 0
+
+
+async def aclose_stream(stream: Any) -> None:
+    """Finalize a ``run_iter`` generator in the task that was consuming it.
+
+    ``run_iter`` deliberately holds the streaming tool executor's task group
+    open ACROSS its yields, so a consumer can render "tool running…" while the
+    tools drain. The cost is that the generator must not be left for the event
+    loop to finalize: abandoning it (``break``, an exception, or Esc cancelling
+    the consuming task) hands teardown to the asyncgen shutdown hook, which
+    runs in a DIFFERENT task, and anyio answers that with
+
+        RuntimeError: Attempted to exit cancel scope in a different task
+                      than it was entered in
+
+    raised straight into the event loop, killing the session. Closing here
+    keeps the exit in the task that entered the scope.
+
+    Shielded, because the common trigger IS cancellation: an unshielded await
+    in an already-cancelled task re-raises before the cleanup can run.
+    """
+    aclose = getattr(stream, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        with anyio.CancelScope(shield=True):
+            await aclose()
+    except (RuntimeError, StopAsyncIteration):
+        pass          # already finalized, or closed from elsewhere first
+    except Exception:  # noqa: BLE001 — teardown must not mask the real error
+        pass
 
 
 def _render_todo_reminder(todos: list[dict[str, Any]]) -> str:
@@ -620,6 +708,14 @@ class Agent:
 
     # Safety + budget knobs — None means "no enforcement".
     hooks: Hooks | None = None
+    # What a *crashing* veto hook means. Default False = today's behaviour: a
+    # PreToolUse guard that raises is logged and IGNORED, and the tool call it
+    # existed to deny proceeds (fail-open). True turns "the guard did not
+    # answer" into a denial for the events in ``hooks.BLOCKING_EVENTS``.
+    # ``MANTIS_HOOKS_FAIL_CLOSED=1`` forces it on for operators who want the
+    # safe behaviour without touching code; it never turns an explicit
+    # ``hooks_fail_closed=True`` back off.
+    hooks_fail_closed: bool = False
     permissions: PermissionContext | None = None
     budget: Budget | None = None
     max_usd: float | None = None  # shortcut: sets budget.max_usd if budget is None
@@ -788,7 +884,7 @@ class Agent:
         # Propagate temperature from capability if user didn't set one. When
         # tools are registered, clamp the default down for tool-call reliability
         # (see ``_TOOL_TEMPERATURE_CAP``) — never overrides an explicit value.
-        if self.temperature is None:
+        if self.temperature is None and not _rejects_default_temperature(self.provider):
             rec = self.model_capability.recommended_temperature
             if self.tools:
                 rec = min(rec, _TOOL_TEMPERATURE_CAP)
@@ -810,8 +906,13 @@ class Agent:
         # The actual content is resolved lazily so a session that doesn't
         # call run() pays nothing for it.
 
-        # Wire safety surface.
-        self._dispatcher = HookDispatcher(self.hooks or Hooks())
+        # Wire safety surface. The env var is an escalation switch only —
+        # it promotes fail-open to fail-closed, never the reverse.
+        if not self.hooks_fail_closed and _env_forces_fail_closed():
+            self.hooks_fail_closed = True
+        self._dispatcher = HookDispatcher(
+            self.hooks or Hooks(), fail_closed=self.hooks_fail_closed
+        )
 
         # Resolve budget — accept either an explicit Budget or shortcut kwargs.
         if self.budget is None and self.max_usd is not None:
@@ -1546,11 +1647,7 @@ class Agent:
                     and compactions < _MAX_COMPACTIONS
                     and self._is_safe_compaction_point(messages)
                 ):
-                    ctx_window = (
-                        self.model_capability.context_window
-                        if self.model_capability is not None
-                        else 0
-                    )
+                    ctx_window = self._message_budget()
                     usage_now = last_usage or Usage()
                     # Cheap first line: clear old tool-result bodies (no model call).
                     micro = getattr(self._compactor, "microcompact", None)
@@ -2031,6 +2128,27 @@ class Agent:
         # an is_error result so the model re-emits a well-formed call, instead of
         # crashing the run.
         if isinstance(call.input, dict) and _MALFORMED_TOOL_JSON_KEY in call.input:
+            raw = call.input.get(_MALFORMED_TOOL_JSON_KEY)
+            # Distinguish CUT OFF from MALFORMED. They need opposite fixes, and
+            # telling the model the wrong one costs a full generation per retry:
+            # "re-issue valid JSON" makes it re-emit the same oversized call,
+            # which truncates at the identical point. That loop is what a big
+            # write_file looks like when the content doesn't fit under the cap.
+            if _looks_truncated(raw):
+                return call, ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=(
+                        f"The arguments for `{call.name}` were CUT OFF mid-call — "
+                        f"the response hit its output limit (max_tokens="
+                        f"{self.max_tokens}), so the JSON ended part-way through. "
+                        f"Your syntax was fine; there was just no room left.\n"
+                        f"Re-issue it SMALLER: send less in one call (for a file, "
+                        f"write the first part now and append the rest with "
+                        f"follow-up calls). Repeating the same call unchanged will "
+                        f"truncate at the same place."
+                    ),
+                    is_error=True,
+                )
             return call, ToolResultBlock(
                 tool_use_id=call.id,
                 content=(
@@ -2236,6 +2354,12 @@ class Agent:
                     and _is_context_overflow(err)
                 ):
                     overflow_retried = True
+                    # Learn BEFORE compacting. The refusal states the real
+                    # ceiling, and compacting against our (too large) guess is
+                    # exactly how this used to fail: the retry re-sent a prompt
+                    # the endpoint had already refused, and every later turn
+                    # overflowed the same way.
+                    self._learn_context_limit(err)
                     if await self._emergency_compact(messages):
                         _log.warning("context overflow (%r); compacted and retrying", err)
                         continue
@@ -2275,6 +2399,102 @@ class Agent:
         async for ev in self._provider_stream(messages):
             yield ev
 
+    def _endpoint(self) -> str | None:
+        """The endpoint this agent actually talks to.
+
+        ``backend`` is only set when the caller passed a URL; the TUI builds a
+        provider object instead and leaves it None. Reading the provider's own
+        base_url keeps the key used to RECORD a learned limit identical to the
+        one used to READ it back — they diverged once, and the limit was
+        written under a bare model name and then never found again.
+        """
+
+        if self.backend:
+            return self.backend
+        base = getattr(self.provider, "base_url", None)
+        return str(base) if base else None
+
+    def _effective_context_window(self) -> int:
+        """The context window to plan against.
+
+        Our capability table is a guess, and a guess that is too large disables
+        compaction entirely — the compactor only fires at a fraction of the
+        window it is told about. Anything we have watched the endpoint actually
+        reject lowers it.
+        """
+
+        cap = self.model_capability
+        declared = (getattr(cap, "context_window", 0) or 0) if cap is not None else 0
+        try:
+            from .context_limits import effective_window  # noqa: PLC0415
+            return effective_window(self.model, declared, self._endpoint())
+        except Exception:  # noqa: BLE001 — never let bookkeeping break a turn
+            return declared
+
+    def _prompt_overhead_tokens(self) -> int:
+        """Tokens every request spends before a single message: the system
+        prompt and the tool schemas.
+
+        The compaction estimator counted messages only. With a large tool set
+        the real prompt therefore ran thousands of tokens above what we planned
+        with — a session showing "7k used" was sending 13140. On a 128k model
+        that slack is invisible; on an 8k one it is the whole bug, because
+        compaction happily "succeeds" at a target the request can never meet.
+        """
+
+        total = 0
+        if self.system:
+            total += max(1, len(str(self.system)) // 4)
+        try:
+            if self.tools:
+                import json as _json  # noqa: PLC0415
+                total += len(_json.dumps(self.tools.to_wire())) // 4
+        except Exception:  # noqa: BLE001 — an estimate, never a hard failure
+            pass
+        return total
+
+    def _message_budget(self) -> int:
+        """How much of the context window the conversation may actually use.
+
+        Zero when the fixed overhead alone does not fit: that is not a
+        compaction problem and no amount of summarizing fixes it.
+        """
+
+        window = self._effective_context_window()
+        if window <= 0:
+            return 0
+        return max(0, window - self._prompt_overhead_tokens())
+
+    def _learn_context_limit(self, err: BaseException) -> bool:
+        """Record the ceiling a provider just told us it enforces.
+
+        The refusal carries the real number ("…while limit is 8192"), which is
+        the only trustworthy source: our table said 128k for this same model,
+        and the provider's own catalog advertised 131k. Returns True when this
+        taught us something new, meaning the retry is worth attempting against
+        a budget that has actually changed.
+        """
+
+        try:
+            from .context_limits import learned_limit, parse_limit, record_limit  # noqa: PLC0415
+
+            limit = parse_limit(err)
+            if limit is None:
+                return False
+            endpoint = self._endpoint()
+            before = learned_limit(self.model, endpoint)
+            if not record_limit(self.model, limit, endpoint):
+                return False
+            _log.warning(
+                "learned real context limit for %r: %d tokens (was planning against %s); "
+                "compaction now targets the true ceiling",
+                self.model, limit,
+                before or (getattr(self.model_capability, "context_window", 0) or "unknown"),
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     async def _emergency_compact(self, messages: list[Message]) -> bool:
         """Shrink ``messages`` in place as much as possible after a context-
         overflow error: clear old tool-result bodies (microcompaction, no model
@@ -2300,7 +2520,12 @@ class Agent:
         # every subsequent message, including a manual /compact, overflows too.
         # The provider has already refused this transcript; a degraded run beats
         # a dead one.
-        if after_chars > before_chars * 0.5:
+        # Escalate when the result is still over the ceiling the provider just
+        # told us about, not only when compaction "barely dented it". Shrinking
+        # 14789 tokens by 40% still overflows an 8192 limit, and the old
+        # proportional test called that a success — so the retry re-sent a
+        # prompt that could not fit and the session wedged.
+        if after_chars > before_chars * 0.5 or self._still_over_limit(messages):
             clear = getattr(self._compactor, "emergency_clear", None)
             if clear is not None and clear(messages, keep_last=0):
                 _log.warning(
@@ -2308,6 +2533,24 @@ class Agent:
                     "tool-result payloads to recover the session")
                 after_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
         return len(messages) < before or after_chars < before_chars
+
+    def _still_over_limit(self, messages: list[Message]) -> bool:
+        """Whether ``messages`` would still be refused by the known ceiling.
+
+        Uses the same estimator the compactor plans with, and reserves the room
+        the request itself needs, so "it fits" means it fits with the reply.
+        """
+
+        window = self._effective_context_window()
+        if window <= 0:
+            return False
+        try:
+            from .compact import _message_token_estimate  # noqa: PLC0415
+            used = sum(_message_token_estimate(m) for m in messages)
+            used += self._prompt_overhead_tokens()
+        except Exception:  # noqa: BLE001
+            return False
+        return used >= window * 0.9
 
     def _activate_fallback(self, error: BaseException) -> None:
         _log.warning(
@@ -2379,12 +2622,18 @@ class Agent:
         # Pass the resolved capability through so the provider can pick the
         # right tool-use path (A/B/C) without re-doing lookup.
         max_tokens = self.max_tokens
-        ctx_window = getattr(self.model_capability, "context_window", 0) or 0
+        # Effective, not declared: with a learned 8k ceiling the reply
+        # reservation has to shrink too, or input+output overflows even though
+        # the transcript alone fits.
+        ctx_window = self._effective_context_window()
         if ctx_window > 0:
             try:
                 from .compact import _message_token_estimate  # noqa: PLC0415
                 estimated_input = sum(_message_token_estimate(m) for m in provider_messages)
-                if system:
+                # Tool schemas ride on every request too — omitting them made
+                # the reservation optimistic by thousands of tokens.
+                estimated_input += self._prompt_overhead_tokens()
+                if system and not self.system:
                     estimated_input += max(1, len(system) // 4)
                 room = ctx_window - estimated_input - 512
                 if room > 0:

@@ -90,9 +90,12 @@ def test_stores_coexist(tmp_home: Path) -> None:
 
 
 def test_validate_provider_no_key(tmp_home: Path) -> None:
+    # "no credential set", not "no API key set": Anthropic can be authed by an
+    # OAuth bearer token with no x-api-key at all, and the old wording made a
+    # perfectly good OAuth session report as a missing key.
     ok, detail = catalog.validate_provider(catalog.BY_ID["deepseek"])
     assert ok is False
-    assert "no API key" in detail
+    assert "no credential" in detail
 
 
 @pytest.mark.parametrize(

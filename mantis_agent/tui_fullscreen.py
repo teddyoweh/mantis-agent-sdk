@@ -25,17 +25,269 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import term_caps, term_measure
 from .tui import MODES, SLASH_COMMANDS, SPINNER_FRAMES, THINKING_WORDS, print_banner
 
 # ANSI 256/standard colors (work in Terminal.app — no truecolor needed).
-_GREEN = "\033[38;5;113m"
-_YELLOW = "\033[33m"
-_DIM = "\033[38;5;240m"
-_GREY = "\033[90m"
-_RESET = "\033[0m"
+#
+# Nothing here is a bare escape: every constant goes through ``_c()``, which
+# hands back "" when :mod:`mantis_agent.term_caps` says this terminal must not
+# be painted (``NO_COLOR=1``, ``TERM=dumb``, stdout redirected to a file). The
+# rows below are built by interpolating these constants, so blanking them is
+# what makes the rendered output escape-free — there is no second code path.
+#
+# They are module-level *variables* rather than literals precisely so
+# ``_refresh_palette()`` can recompute the whole set after the environment
+# changes (tests, and any future in-app theme toggle). Anything that captured
+# one in a default argument or a local would go stale, so don't.
+_PAINT = True
+
+_GREEN = _YELLOW = _DIM = _GREY = _RESET = ""
+_BOLD = _CYAN = _RED = ""
+_HL = _AMBER = _AMBER_FG = ""
+
 _MODE_ANSI = {
     "ansibrightblack": "90", "ansigreen": "32", "ansicyan": "36", "ansired": "31",
 }
+
+
+def _c(code: str) -> str:
+    """``code`` on a terminal that can take colour, "" on one that can't."""
+    return code if _PAINT else ""
+
+
+def _mode_color(name: str) -> str:
+    """SGR for a permission-mode colour name — the one colour the footer picks
+    by name (from ``MODES``) instead of by constant."""
+    return _c(f"\033[{_MODE_ANSI.get(name, '90')}m")
+
+
+def _refresh_palette() -> None:
+    """Recompute every colour constant from the current terminal capabilities.
+
+    Called once at import, and again by anything that has deliberately changed
+    the environment underneath us."""
+    global _PAINT, _GREEN, _YELLOW, _DIM, _GREY, _RESET, _BOLD, _CYAN, _RED
+    global _HL, _AMBER, _AMBER_FG
+    _PAINT = term_caps.detect(force_refresh=True).color != "none"
+    _GREEN = _c("\033[38;5;113m")
+    _YELLOW = _c("\033[33m")
+    _DIM = _c("\033[38;5;240m")
+    _GREY = _c("\033[90m")
+    _RESET = _c("\033[0m")
+    _BOLD = _c("\033[1m")
+    _CYAN = _c("\033[36m")
+    _RED = _c("\033[38;5;203m")          # errors, failed MCP servers
+    _HL = _c("\033[30;48;5;113m")        # selected row — green background
+    _AMBER = _c("\033[30;48;5;179m")     # selected + locked — amber background
+    _AMBER_FG = _c("\033[38;5;179m")     # amber text (warnings, needs-trust)
+
+
+_refresh_palette()
+
+
+# -- measuring and cutting painted text --------------------------------------
+#
+# Every overlay below is a fixed-width frame filled with strings that already
+# carry SGR, and most of those strings are user text: a session title, an MCP
+# server's error, an agent's last tool line. Both of the obvious primitives are
+# wrong for that:
+#
+# * ``s[:n]`` and ``tui.ellipsize`` cut on a code-point boundary, which can land
+#   inside an SGR run — ESC, ``[``, ``38;5;113m``. The terminal then prints the
+#   surviving ``8;5;113m`` as text and stays in whatever state the fragment left
+#   it in, so the damage is not the panel: it is every line printed after it.
+# * ``len``, ``ljust`` and ``rjust`` count code points, so one CJK character
+#   fills one column of the budget and two columns of the screen, and the box
+#   border ends up drawn through the text it was supposed to contain.
+#
+# ``term_measure`` answers both correctly; these three wrappers exist so the
+# call sites read as intent ("cut this to fit", "pad this to a column") and so
+# there is one place to look when a frame is off by a column.
+
+
+def _cells(s: str) -> int:
+    """Columns ``s`` occupies when printed — escapes free, wide glyphs double."""
+    return term_measure.display_width(s)
+
+
+def _cut(s: str, width: int) -> str:
+    """``s`` shortened to ``width`` columns, cut only where it is safe.
+
+    Never splits a grapheme cluster or an escape sequence, and closes any colour
+    or hyperlink the cut left open. Returns ``s`` itself when it already fits,
+    so the common case costs a width measurement and nothing else.
+    """
+    return term_measure.truncate(s, width)
+
+
+def _pad(s: str, width: int, align: str = "left") -> str:
+    """``s`` padded to ``width`` *columns* — the ``ljust``/``rjust`` that counts
+    what the terminal counts. Longer input is returned unchanged, exactly like
+    ``str.ljust``; pair it with :func:`_cut` when the column is hard-edged."""
+    return term_measure.pad(s, width, align=align)
+
+
+def _ellipsize(text: str, limit: int) -> str:
+    """:func:`mantis_agent.tui.ellipsize` measured in columns and cut safely.
+
+    Same contract — one line, whitespace collapsed, ``…`` when it does not fit —
+    and byte-for-byte the same answer for the plain ASCII these panels are
+    usually handed, which is what keeps the PTY-tested surfaces unchanged. It
+    differs exactly where the original is wrong: ``limit`` counts columns, so a
+    CJK title stops at the frame edge instead of two columns past it, and the
+    cut cannot split a grapheme cluster or an escape sequence.
+    """
+    t = " ".join((text or "").split())
+    if _cells(t) <= limit:
+        return t
+    # Cut one column short and add the ellipsis by hand rather than letting
+    # ``truncate`` place it: the original drops a space left sitting at the cut,
+    # and that one column is the difference between two right-aligned columns
+    # lining up and not.
+    return term_measure.truncate(t, max(limit - 1, 1), ellipsis="").rstrip(" ") + "…"
+
+
+# Tabs that aggregate other tabs rather than naming a provider — a live/locked
+# marker on these says nothing ("available" is available by definition).
+_AGGREGATE_TABS = frozenset({"all", "available"})
+
+
+def tab_state(tab: dict) -> str:
+    """How reachable a picker tab is: ``live`` (every model usable now),
+    ``partial`` (some), ``locked`` (none), or ``plain`` for aggregates.
+
+    The tab bar used to draw every unselected chip identically dim, so nothing
+    on screen distinguished a provider holding a working key from one you have
+    never set up.
+    """
+
+    if tab.get("tab") in _AGGREGATE_TABS:
+        return "plain"
+    count = int(tab.get("count", 0) or 0)
+    avail = int(tab.get("avail", 0) or 0)
+    if count <= 0 or avail <= 0:
+        return "locked"
+    return "live" if avail >= count else "partial"
+
+
+def tab_text(tab: dict) -> str:
+    """The chip's printable text, carrying its state without relying on colour.
+
+    ``✦claude 11`` — every model reachable. ``open 8/15`` — partial, and the
+    ratio says so on its own. Both survive NO_COLOR, where every escape in this
+    file collapses to an empty string and colour alone would convey nothing.
+    """
+
+    label, count = tab.get("label", ""), int(tab.get("count", 0) or 0)
+    if count <= 0:
+        return label
+    state = tab_state(tab)
+    if state == "live":
+        return f"✦{label} {count}"
+    if state == "partial":
+        return f"{label} {int(tab.get('avail', 0) or 0)}/{count}"
+    return f"{label} {count}"
+
+
+def _tab_chip(tab: dict, *, selected: bool) -> tuple[str, str, int]:
+    """``(text, ansi_chip, printable_width)`` for one tab-bar chip."""
+
+    text = tab_text(tab)
+    width = _cells(text)
+    if selected:
+        return text, f"{_HL} {text} {_RESET}", width + 2
+    state = tab_state(tab)
+    if state == "live":
+        return text, f"{_GREEN}{text}{_RESET}", width
+    if state == "partial":
+        # Green only the reachable count, so the eye lands on what is usable.
+        label, _, ratio = text.partition(" ")
+        avail, _, total = ratio.partition("/")
+        return text, (f"{_DIM}{label} {_RESET}{_GREEN}{avail}{_RESET}"
+                      f"{_DIM}/{total}{_RESET}"), width
+    return text, f"{_DIM}{text}{_RESET}", width
+
+
+MENU_ROWS = 8  # visible rows in the `/` and `@` completion menu
+
+
+def menu_window(total: int, sel: int, rows: int = MENU_ROWS) -> int:
+    """First index the completion menu should render so ``sel`` stays visible.
+
+    The menu used to render ``opts[:8]`` unconditionally. With 47 slash commands
+    that meant pressing ``/`` showed the first 8 and nothing else — the rest were
+    unreachable by arrow, because moving the selection past #8 just moved a
+    highlight that had scrolled out of view. Window the list instead.
+    """
+
+    if total <= rows:
+        return 0
+    sel = max(0, min(sel, total - 1))
+    return max(0, min(sel - rows + 1, total - rows))
+
+
+WATCH_FOLLOWUP_COOLDOWN_S = 20.0
+WATCH_FOLLOWUP_MAX_PER_JOB = 20
+
+
+def watch_followup_due(
+    rec: dict,
+    now: float,
+    *,
+    busy: bool,
+    enabled: bool = True,
+    cooldown_s: float = WATCH_FOLLOWUP_COOLDOWN_S,
+    max_fires: int = WATCH_FOLLOWUP_MAX_PER_JOB,
+) -> bool:
+    """Should this monitor event wake a turn?
+
+    Module-level and pure so the gating can be asserted directly — the decision
+    is what makes an autonomous follow-up safe, and burying it in a closure would
+    make the one part worth testing the one part that cannot be.
+
+    ``rec`` is the per-monitor record ``{"fires": int, "last": float}``.
+    Every ``False`` here is a reason NOT to let the agent act on its own:
+    a turn is already running, the user is mid-decision at a permission prompt,
+    the monitor is flapping, or it has already had its budget of turns.
+    """
+    if not enabled or busy:
+        return False
+    if int(rec.get("fires", 0)) >= max_fires:
+        return False
+    return (now - float(rec.get("last", 0.0))) >= cooldown_s
+
+
+def watch_followup_prompt(desc: str, text: str) -> str:
+    """The turn a monitor event wakes.
+
+    The event is already in history as meta context, so this is the nudge that
+    makes the model look at it rather than a re-statement of it. The explicit
+    "if routine, one line" is what stops a chatty monitor turning into an essay
+    every thirty seconds."""
+    label = (desc or "monitor").strip()
+    return (f"[monitor] {label} reported: {text.strip()}\n\n"
+            "Decide whether this needs action. If it is routine, say so in "
+            "one line.")
+
+
+def _footer_line(mode_idx: int, model: str, knobs: Any = (), ctx: str = "",
+                 live: str = "") -> str:
+    """The status line under the prompt: permission mode · model · knobs ·
+    context fill · live work. Split out of ``footer_ft`` so the string can be
+    rendered (and asserted on) without standing up a prompt_toolkit application.
+
+    ``live`` is the roll-up from ``activity.render.footer_counts`` — "1 monitor ·
+    3 agents". It carries its own ``↓ to manage`` hint because a count with no
+    way to act on it just raises a question; and it is omitted entirely when
+    nothing is running, so a plain chat session grows no chrome."""
+    label, symbol, color = MODES[mode_idx]
+    left = "" if mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
+    knob_seg = f"   {' '.join(knobs)}" if knobs else ""
+    ctx_seg = f"   {ctx}" if ctx else ""
+    live_seg = f"{_GREY} · {live} · ↓ to manage{_RESET}" if live else ""
+    return (f"{_mode_color(color)}{left}{_RESET}   "
+            f"{_GREY}{model}{_RESET}{knob_seg}{ctx_seg}{live_seg}")
 
 _MENTION_IGNORE = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", ".mypy_cache",
@@ -117,7 +369,23 @@ async def run_fullscreen(tui: Any) -> int:
     from prompt_toolkit.application import Application, get_app  # noqa: PLC0415
     from prompt_toolkit.application.run_in_terminal import run_in_terminal  # noqa: PLC0415
     from prompt_toolkit.buffer import Buffer  # noqa: PLC0415
-    from prompt_toolkit.formatted_text import ANSI  # noqa: PLC0415
+    from prompt_toolkit.formatted_text import ANSI as _PTANSI  # noqa: PLC0415
+
+    def ANSI(text: str):  # noqa: N802 — deliberately shadows the import above
+        """Every rendered control in this function goes through here.
+
+        Zeroing the palette constants is not sufficient for ``NO_COLOR``: a good
+        number of controls build their SGR inline (``f"\\x1b[90m{...}"``) rather
+        than from ``_GREY`` and friends, so five of them still emitted colour
+        with the palette blank. Chasing those call sites one by one is a losing
+        game — the next inline escape someone adds silently reopens it.
+
+        This is the single point every control must pass through to become
+        renderable, so enforcing the guarantee here makes it structural: with
+        colour off, nothing can reach the terminal carrying an escape sequence,
+        no matter how it was assembled.
+        """
+        return _PTANSI(text if _PAINT else term_caps.strip_ansi(text))
     from prompt_toolkit.key_binding import KeyBindings  # noqa: PLC0415
     from prompt_toolkit.layout import HSplit, Layout, VSplit, Window  # noqa: PLC0415
     from prompt_toolkit.layout.controls import (  # noqa: PLC0415
@@ -179,7 +447,7 @@ async def run_fullscreen(tui: Any) -> int:
     state: dict[str, Any] = {
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
-        "awaiting_key": None, "picking_effort": None,
+        "awaiting_key": None, "picking_effort": None, "picking_auth": None,
         "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
         "agent_inspector": None, "workflows": None, "mcp_view": None,
         # Label of whatever attachable thing is sitting on the system clipboard
@@ -188,7 +456,18 @@ async def run_fullscreen(tui: Any) -> int:
     }
 
     def _ctx_window() -> int:
-        cap = getattr(tui.agent, "model_capability", None) if tui.agent else None
+        # The agent's EFFECTIVE window, not the capability table's guess: a
+        # footer reading "7k/128k" while the endpoint refuses anything over
+        # 8192 tells you the opposite of what is happening.
+        agent = tui.agent
+        if agent is not None:
+            eff = getattr(agent, "_effective_context_window", None)
+            if callable(eff):
+                try:
+                    return eff() or 0
+                except Exception:  # noqa: BLE001
+                    pass
+        cap = getattr(agent, "model_capability", None) if agent else None
         return getattr(cap, "context_window", 0) or 0
 
     def _ctx_status() -> str:
@@ -526,12 +805,19 @@ async def run_fullscreen(tui: Any) -> int:
         prov_groups: list[dict] = []
         try:
             for g in catalog.grouped_provider_models():
-                models = [m for m in g["models"]
-                          if _is_chat_model(m) and m not in active_set]
+                models = [m for m in g["models"] if _is_chat_model(m)]
                 if not models:
                     continue
+                # Models of the CURRENTLY ACTIVE backend used to be dropped here
+                # because the ● active group already lists them. That deleted the
+                # whole tab for whichever provider you were using: switch to
+                # Cerebras and the "cerebras" chip vanished, so its other models
+                # became unreachable from the bar. Keep the group intact and
+                # merely mark the duplicates — the cross-provider views skip
+                # them, the provider's own tab shows them.
                 rows = [{"kind": "model", "model": m, "enabled": g["enabled"],
-                         "provider_id": g["provider_id"], "ctx": ctxlab(m)}
+                         "provider_id": g["provider_id"], "ctx": ctxlab(m),
+                         "dup_of_active": m in active_set}
                         for m in models]
                 for row in rows:
                     m = row["model"]
@@ -589,6 +875,16 @@ async def run_fullscreen(tui: Any) -> int:
                       "enabled": True, "provider_id": None, "ctx": ""}]})
         return groups
 
+    def _dup_in_view(row: dict, tab: str) -> bool:
+        """Whether ``row`` merely repeats what the ● active group already shows.
+
+        The active model's provider still gets a full tab of its own; the
+        duplicate is hidden only in the cross-provider views ("all",
+        "available"), where the same model would otherwise appear twice.
+        """
+
+        return bool(row.get("dup_of_active")) and tab != row.get("provider_id")
+
     def _items_for(groups: list[dict], flt: str, tab: str) -> list[dict]:
         """Flatten ``groups`` into header+model rows for the active ``tab``
         ("all" keeps every group), applying the case-insensitive text filter and
@@ -609,6 +905,8 @@ async def run_fullscreen(tui: Any) -> int:
                 for r in g["rows"]:
                     if r["kind"] != "model" or not r["enabled"]:
                         continue
+                    if _dup_in_view(r, tab):
+                        continue
                     if fl and fl not in r["model"].lower():
                         continue
                     key = (r["model"], r.get("provider_id"))
@@ -626,6 +924,8 @@ async def run_fullscreen(tui: Any) -> int:
                 for r in g["rows"]:
                     if r["kind"] != "model" or fl not in r["model"].lower():
                         continue
+                    if _dup_in_view(r, tab):
+                        continue
                     key = (r["model"], r.get("provider_id"))
                     if key in seen:
                         continue
@@ -639,7 +939,9 @@ async def run_fullscreen(tui: Any) -> int:
             if tab != "all" and g["tab"] != tab:
                 continue
             rows = [r for r in g["rows"]
-                    if r["kind"] == "selfhost" or not fl or fl in r["model"].lower()]
+                    if (r["kind"] == "selfhost"
+                        or ((not fl or fl in r["model"].lower())
+                            and not _dup_in_view(r, tab)))]
             if not rows or (fl and all(r["kind"] == "selfhost" for r in rows)):
                 continue
             items.append({"kind": "header", "label": g["header"],
@@ -660,15 +962,27 @@ async def run_fullscreen(tui: Any) -> int:
         def _navailable(g: dict) -> int:
             return sum(1 for r in g["rows"] if r["kind"] == "model" and r["enabled"])
 
+        # The cross-provider tabs hide rows the ● active group already lists, so
+        # their counts must skip the same rows or the header promises models the
+        # list does not contain.
+        def _n_cross(g: dict, *, enabled_only: bool = False) -> int:
+            return sum(1 for r in g["rows"]
+                       if r["kind"] == "model"
+                       and not r.get("dup_of_active")
+                       and (r["enabled"] or not enabled_only))
+
         tabs = [{"tab": "all", "label": "all",
-                 "count": sum(_nmodels(g) for g in groups)},
+                 "count": sum(_n_cross(g) for g in groups)},
                 {"tab": "available", "label": "available",
-                 "count": sum(_navailable(g) for g in groups)}]
+                 "count": sum(_n_cross(g, enabled_only=True) for g in groups)}]
         for g in groups:
             if g.get("tab_hidden"):  # e.g. the ● active group — shown only in "all"
                 continue
+            # `avail` drives the chip's live/locked styling: every chip used to
+            # render identically dim, so the bar gave no clue which providers
+            # you can actually reach without opening each one.
             tabs.append({"tab": g["tab"], "label": g["tablabel"],
-                         "count": _nmodels(g)})
+                         "count": _nmodels(g), "avail": _navailable(g)})
         items = _items_for(groups, flt, "all")
         sel = next((i for i, it in enumerate(items)
                     if it["kind"] == "model" and it["model"] == tui.model), None)
@@ -677,11 +991,52 @@ async def run_fullscreen(tui: Any) -> int:
         state["picking_model"] = {"items": items, "sel": sel, "filter": flt,
                                   "groups": groups, "tabs": tabs, "tab": "all"}
         get_app().invalidate()
+        _refresh_public_catalogs()
+
+    def _refresh_public_catalogs() -> None:
+        """Top up the model list for providers that publish a keyless catalog.
+
+        Without this the picker shows a hardcoded starter list for any provider
+        you have not enabled — a snapshot that goes stale without anyone
+        noticing. Fire-and-forget off the UI thread, and only when the cache has
+        actually expired, so opening the picker never blocks on the network.
+        """
+
+        from . import catalog  # noqa: PLC0415
+
+        stale = [p for pid, p in ((pid, catalog.BY_ID.get(pid))
+                                  for pid in catalog.PUBLIC_MODEL_ENDPOINTS)
+                 if p is not None and catalog.cached_live_models(pid) is None]
+        if not stale:
+            return
+
+        async def _run() -> None:
+            changed = False
+            for prov in stale:
+                try:
+                    if await asyncio.to_thread(catalog.refresh_public_models, prov):
+                        changed = True
+                except Exception:  # noqa: BLE001 — offline: keep the starter list
+                    pass
+            if changed:
+                state.pop("model_cache", None)
+                # Rebuild only if the picker is still open on the same view.
+                p = state.get("picking_model")
+                if p is not None:
+                    p["groups"] = _picker_groups()
+                    p["items"] = _items_for(p["groups"], p["filter"], p["tab"])
+                    p["sel"] = min(p["sel"], max(len(p["items"]) - 1, 0))
+                get_app().invalidate()
+
+        try:
+            asyncio.get_running_loop().create_task(_run())
+        except RuntimeError:
+            pass  # no loop (unit-test construction): the starter list stands
 
     # -- session picker (same overlay, mode="session") ------------------------
 
     def _build_session_items(flt: str) -> list[dict]:
-        from .tui import ellipsize, time_ago  # noqa: PLC0415
+        from .tui import time_ago  # noqa: PLC0415
         from .session_tree import list_sessions  # noqa: PLC0415
         fl = flt.lower().strip()
         cur = tui.transcript.session_id if getattr(tui, "transcript", None) else None
@@ -689,7 +1044,7 @@ async def run_fullscreen(tui: Any) -> int:
         for s in list_sessions()[:50]:
             if s.session_id == cur:
                 continue
-            title = ellipsize(s.title or s.first_prompt or "(untitled)", 48)
+            title = _ellipsize(s.title or s.first_prompt or "(untitled)", 48)
             label = f"{title} · {s.message_count} msgs · {time_ago(s.modified_at)}"
             if fl and fl not in label.lower():
                 continue
@@ -700,7 +1055,6 @@ async def run_fullscreen(tui: Any) -> int:
     def _build_rewind_items(flt: str) -> list[dict]:
         """Past user messages, newest last — esc-esc opens this to jump back,
         restore the code state, and edit the message you jumped to."""
-        from .tui import ellipsize  # noqa: PLC0415
         from .types import TextBlock as _TB, UserMessage as _UM  # noqa: PLC0415
         fl = flt.lower().strip()
         items: list[dict] = [{"kind": "header", "label": "Rewind to (edits + files restored)"}]
@@ -711,7 +1065,7 @@ async def run_fullscreen(tui: Any) -> int:
                 (b.text for b in m.content if isinstance(b, _TB)), "")
             if not text.strip():
                 continue
-            label = ellipsize(text, 60)
+            label = _ellipsize(text, 60)
             if fl and fl not in label.lower():
                 continue
             items.append({"kind": "rewind", "model": label, "enabled": True,
@@ -758,6 +1112,54 @@ async def run_fullscreen(tui: Any) -> int:
             p["sel"] = next((i for i, it in enumerate(items)
                              if it["kind"] in _SELECTABLE_KINDS), 0)
 
+    # -- auth-method picker (Anthropic has four of them) ----------------------
+    # Auto-detecting a pasted credential is right, but it cannot be the only
+    # path: Bedrock and Vertex are not a single pasted string, and a user who
+    # has not decided *which* account they are using needs to see the options
+    # before hunting for a value. So the flow is choose-then-paste, with the
+    # detector still checking the paste against the choice.
+    _AUTH_METHODS = (
+        ("api_key", "API key",
+         "sk-ant-api… · console.anthropic.com"),
+        ("oauth", "OAuth token",
+         "sk-ant-oat… · a Claude subscription login"),
+        ("bedrock", "AWS Bedrock",
+         "SigV4 · needs AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY"),
+        ("vertex", "Google Vertex",
+         "needs an access token + ANTHROPIC_VERTEX_PROJECT_ID"),
+        ("clear", "Remove saved credentials",
+         "forget the key/token on this machine"),
+    )
+
+    def auth_ft() -> Any:
+        p = state.get("picking_auth")
+        if not p:
+            return ANSI("")
+        sel = int(p.get("sel", 0)) % len(_AUTH_METHODS)
+        try:
+            from .anthropic_auth import configured_modes  # noqa: PLC0415
+
+            have = configured_modes()
+        except Exception:  # noqa: BLE001 — the menu renders with or without state
+            have = {}
+        rows = [f"{_GREEN}How do you authenticate with Anthropic?{_RESET}  "
+                f"{_GREY}↑/↓ · enter · esc{_RESET}"]
+        for i, (mode, label, hint) in enumerate(_AUTH_METHODS):
+            # Marking what is already set up answers "which of these do I have?"
+            # at a glance, instead of making the user re-derive it.
+            mark = f"{_GREEN}✓{_RESET} " if have.get(mode) else "  "
+            if i == sel:
+                rows.append(f"{_HL} ❯ {label} {_RESET} {mark}{_DIM}{hint}{_RESET}")
+            else:
+                rows.append(f"   {mark}{_DIM}{label} · {hint}{_RESET}")
+        return ANSI("\n".join(rows))
+
+    def _auth_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+
+        return Dimension.exact(
+            1 + len(_AUTH_METHODS) if state.get("picking_auth") else 0)
+
     def effort_ft() -> Any:
         p = state.get("picking_effort")
         if not p:
@@ -766,14 +1168,10 @@ async def run_fullscreen(tui: Any) -> int:
         rows = [f"{_GREEN}Select effort{_RESET}  {_GREY}↑/↓ · enter · esc{_RESET}"]
         for i, v in enumerate(items):
             if i == sel:
-                rows.append(f"\033[30;48;5;113m ❯ {v} \033[0m")
+                rows.append(f"{_HL} ❯ {v} {_RESET}")
             else:
                 rows.append(f"  {_DIM}{v}{_RESET}")
         return ANSI("\n".join(rows))
-
-    _HL = "\033[30;48;5;113m"   # selected row — green background
-    _AMBER = "\033[30;48;5;179m"  # selected + locked — amber background
-    _AMBER_FG = "\033[38;5;179m"  # amber text (warnings, needs-trust)
 
     def _tab_bar_rows(p: dict) -> list[str]:
         """Every provider chip, wrapped across as many lines as it takes so
@@ -788,19 +1186,12 @@ async def run_fullscreen(tui: Any) -> int:
         cw = max(30, min(W - 2, 74))
         curtab = p.get("tab", "all")
 
-        def _tlab(t: dict) -> str:
-            return t["label"] if t["count"] <= 0 else f"{t['label']} {t['count']}"
-
         active = next((t for t in tabs if t["tab"] == curtab), tabs[0])
         budget = cw - 4
         lines: list[list[tuple[str, int]]] = [[]]
         used = 0
         for t in tabs:
-            lab = _tlab(t)
-            if t is active:
-                chip, plen = f"{_HL} {lab} \033[0m", len(lab) + 2
-            else:
-                chip, plen = f"{_DIM}{lab}{_RESET}", len(lab)
+            _lab, chip, plen = _tab_chip(t, selected=t is active)
             sep = 3 if lines[-1] else 0  # " · " before every chip but a line's first
             if lines[-1] and used + sep + plen > budget:
                 lines.append([])
@@ -826,11 +1217,11 @@ async def run_fullscreen(tui: Any) -> int:
         │   glm-4.7                                🔒 self-host │
         ╰─ ↑↓ · ←→ tabs · type to filter · enter ─── 12 more ↓ ─╯
 
-        Width-capped so columns stay tight on wide terminals. Almost every
-        glyph used is single-cell — the plain-text length of a row IS its
-        printed width — except 🔒, which renders 2 cells wide; ``_xw()``
-        below is the compensation for that one wide glyph."""
-        from .tui import ellipsize  # noqa: PLC0415
+        Width-capped so columns stay tight on wide terminals. Rows are measured
+        in printed columns rather than in characters: 🔒 is two cells wide, and
+        so is every character of a CJK session title — and a session title is
+        whatever the user typed, so this is not a hypothetical. ``_xw()`` below
+        is what the row arithmetic adds for glyphs that cost more than one."""
         p = state.get("picking_model")
         if not p:
             return ANSI("")
@@ -854,13 +1245,13 @@ async def run_fullscreen(tui: Any) -> int:
 
         # ── top border: title · current model · live filter ─────────────
         t1 = f" {title} "
-        t2 = f"· {ellipsize(tui.model, 24)} " if (mode is None and tui.model) else ""
+        t2 = f"· {_ellipsize(tui.model, 24)} " if (mode is None and tui.model) else ""
         t3 = f"· /{flt} " if flt else ""
-        if len(t1) + len(t2) + len(t3) > cw - 2:
+        if _cells(t1) + _cells(t2) + _cells(t3) > cw - 2:
             t2 = ""  # narrow terminal: drop the "now" segment first
-        if len(t1) + len(t3) > cw - 2:
-            t1, t3 = ellipsize(t1, cw - 2), ""
-        fill = "─" * max(0, cw - 1 - len(t1) - len(t2) - len(t3))
+        if _cells(t1) + _cells(t3) > cw - 2:
+            t1, t3 = _ellipsize(t1, cw - 2), ""
+        fill = "─" * max(0, cw - 1 - _cells(t1) - _cells(t2) - _cells(t3))
         out.append(f"{_GREY}╭─{_RESET}{_GREEN}{t1}{_RESET}{_DIM}{t2}{_RESET}"
                    f"{_GREEN}{t3}{_RESET}{_GREY}{fill}╮{_RESET}")
 
@@ -879,23 +1270,24 @@ async def run_fullscreen(tui: Any) -> int:
             selected = i == sel
 
             def _xw(s: str) -> int:
-                # extra terminal cells beyond len(): 🔒 renders 2 cells wide
-                return s.count("🔒")
+                # Extra terminal cells beyond len(): 🔒 renders 2 cells wide,
+                # and so does every CJK character in a session title.
+                return _cells(s) - len(s)
 
             if k == "header":
                 cnt = str(it.get("count") or "")
-                lab = ellipsize(it["label"], cw - len(cnt) - 4)
-                gap = " " * max(0, cw - 2 - len(lab) - _xw(lab) - len(cnt))
-                out.append(edge(f" {_DIM}\033[1m{lab}\033[0m{_RESET}{gap}{_DIM}{cnt}{_RESET} "))
+                lab = _ellipsize(it["label"], cw - _cells(cnt) - 4)
+                gap = " " * max(0, cw - 2 - _cells(lab) - _cells(cnt))
+                out.append(edge(f" {_DIM}{_BOLD}{lab}{_RESET}{_RESET}{gap}{_DIM}{cnt}{_RESET} "))
                 continue
             if k in ("selfhost", "session", "rewind"):  # single-column rows
-                name = ellipsize(it["model"], cw - 4)
+                name = _ellipsize(it["model"], cw - 4)
                 if selected:
-                    out.append(edge(f"{_HL} ❯ {name.ljust(cw - 4)}\033[0m "))
+                    out.append(edge(f"{_HL} ❯ {_pad(name, cw - 4)}{_RESET} "))
                 else:
                     col = _GREEN if k == "selfhost" else ""
                     end = _RESET if col else ""
-                    out.append(edge(f"   {col}{name}{end}{' ' * max(0, cw - 4 - len(name))} "))
+                    out.append(edge(f"   {col}{name}{end}{' ' * max(0, cw - 4 - _cells(name))} "))
                 continue
             # model row — name (left) + a right-aligned meta column that says
             # HOW this model runs: local/free, pull tag, self-host, provider
@@ -923,26 +1315,31 @@ async def run_fullscreen(tui: Any) -> int:
                 right, rw = "● now", 8
             else:
                 right, rw = ctx, 6
-            name_w = max(8, cw - 4 - rw - _xw(right))
-            name = ellipsize(m, name_w)
+            # ``rw`` budgets the meta column in characters; what it costs on
+            # screen is that plus whatever its wide glyphs add, and the name
+            # column gets the rest.
+            rcw = rw + _xw(right)
+            name_w = max(8, cw - 4 - rcw)
+            name = _ellipsize(m, name_w)
+            rt = _pad(right, rcw, "right")
             if selected:
                 bg = _AMBER if not_ready else _HL
-                out.append(edge(f"{bg} ❯ {name.ljust(name_w)}{right.rjust(rw)}\033[0m "))
+                out.append(edge(f"{bg} ❯ {_pad(name, name_w)}{rt}{_RESET} "))
             elif not_ready:
-                out.append(edge(f"   {_DIM}{name.ljust(name_w)}{right.rjust(rw)}{_RESET} "))
+                out.append(edge(f"   {_DIM}{_pad(name, name_w)}{rt}{_RESET} "))
             elif is_cur:
-                out.append(edge(f"   {_GREEN}{name.ljust(name_w)}{right.rjust(rw)}{_RESET} "))
+                out.append(edge(f"   {_GREEN}{_pad(name, name_w)}{rt}{_RESET} "))
             else:
-                out.append(edge(f"   {name.ljust(name_w)}{_DIM}{right.rjust(rw)}{_RESET} "))
+                out.append(edge(f"   {_pad(name, name_w)}{_DIM}{rt}{_RESET} "))
 
         # ── bottom border: nav hints + scroll position ───────────────────
-        nav = " ↑↓ · ←→ tabs · type to filter · enter · esc " if tabs \
-            else " ↑↓ · type to filter · enter · esc "
+        nav = " ↑↓ · ←→ tabs · filter · enter · ^k key · esc " if tabs \
+            else " ↑↓ · filter · enter · ^k key · esc "
         below, above = n - hi, lo
         info = f" {below} more ↓ " if below else (f" ↑ {above} above " if above else "")
-        if len(nav) + len(info) > cw - 2:
+        if _cells(nav) + _cells(info) > cw - 2:
             nav = ""
-        fill = "─" * max(0, cw - 1 - len(nav) - len(info) - (1 if info else 0))
+        fill = "─" * max(0, cw - 1 - _cells(nav) - _cells(info) - (1 if info else 0))
         tail = f"{_DIM}{info}{_RESET}{_GREY}─{_RESET}" if info else ""
         out.append(f"{_GREY}╰─{_RESET}{_DIM}{nav}{_RESET}{_GREY}{fill}{_RESET}"
                    f"{tail}{_GREY}╯{_RESET}")
@@ -962,18 +1359,27 @@ async def run_fullscreen(tui: Any) -> int:
         if not opts:
             return ANSI("")
         sel = state["slash_sel"] % len(opts)
+        start = menu_window(len(opts), sel)
         rows = []
-        for i, (_kind, value, meta) in enumerate(opts[:8]):
+        for i, (_kind, value, meta) in enumerate(opts[start:start + MENU_ROWS],
+                                                 start=start):
             metatxt = f"  {_DIM}{meta}{_RESET}" if meta else ""
             if i == sel:
-                rows.append(f"\033[30;48;5;113m {value} \033[0m{metatxt}")
+                rows.append(f"{_HL} {value} {_RESET}{metatxt}")
             else:
                 rows.append(f"  {_GREEN}{value}{_RESET}{metatxt}")
+        if len(opts) > MENU_ROWS:
+            # Without this the list looks complete at 8 items — say how much
+            # more there is and that arrows reach it.
+            rows.append(f"  {_DIM}↑↓ {sel + 1}/{len(opts)} · type to filter{_RESET}")
         return ANSI("\n".join(rows))
 
     def _menu_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        n = min(len(_menu_options()), 8)
+        opts = _menu_options()
+        n = min(len(opts), MENU_ROWS)
+        if n and len(opts) > MENU_ROWS:
+            n += 1  # the "↑↓ n/total" counter line
         return Dimension.exact(n) if n else Dimension.exact(0)
 
     def _retire_provider(old: Any, new: Any) -> None:
@@ -1061,7 +1467,33 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001
             pass
 
-    async def _apply_key(pid: str, model: str, key: str) -> None:
+    def _key_prompt(pid: str, env_name: str, mode: str = "") -> str:
+        """What the paste line asks for.
+
+        Anthropic accepts more than an API key, and naming only `ANTHROPIC_API_KEY`
+        told users their OAuth token was the wrong thing to paste — it is not.
+        Once a method has been CHOSEN, name that one specifically rather than
+        listing the options again.
+        """
+        if mode == "api_key":
+            return "paste your Anthropic API key (sk-ant-api…) · enter · esc to cancel"
+        if mode == "oauth":
+            return "paste your Anthropic OAuth token (sk-ant-oat…) · enter · esc to cancel"
+        if pid == "anthropic":
+            return ("paste your Anthropic API key (sk-ant-api…) or OAuth token "
+                    "(sk-ant-oat…) · enter to confirm · esc to cancel")
+        from . import catalog  # noqa: PLC0415
+
+        label = catalog.BY_ID[pid].label if pid in catalog.BY_ID else pid
+        hint = catalog.key_hint(pid)
+        # The env var name alone says neither what the string looks like nor
+        # where to get one, which is exactly what someone enabling a provider
+        # for the first time is missing.
+        lead = f"paste your {label} API key ({hint})" if hint else f"paste your {env_name}"
+        return f"{lead} · enter to confirm · esc to cancel"
+
+    async def _apply_key(pid: str, model: str, key: str,
+                         chosen: str = "") -> None:
         """Enable a provider inline (from the picker): save the pasted key,
         validate it, and switch to the chosen model — or report why it failed."""
         from . import catalog  # noqa: PLC0415
@@ -1069,6 +1501,67 @@ async def run_fullscreen(tui: Any) -> int:
         prov = catalog.BY_ID.get(pid)
         if prov is None or not key:
             return
+
+        # Anthropic can be reached four ways and they authenticate differently.
+        # Classify what was actually pasted instead of assuming it is an API key:
+        # an OAuth token stored in the x-api-key slot fails with an error that
+        # reads like a bad key, which is the single most confusing outcome here.
+        if pid == "anthropic":
+            from .anthropic_auth import (  # noqa: PLC0415
+                CredentialError,
+                detect_credential,
+                persist_credential,
+            )
+
+            try:
+                cred = detect_credential(key)
+                # A chosen method plus a detector means a mismatch is caught here
+                # rather than becoming an auth failure that reads like a bad key.
+                if chosen and cred.mode != chosen:
+                    await _announce(
+                        f"✗ you chose {chosen}, but that looks like a "
+                        f"{cred.mode} credential — paste again or pick again")
+                    return
+                note = persist_credential(cred)
+            except CredentialError as exc:
+                await _announce(f"✗ {exc}")
+                return
+            await _announce(f"{note} · validating…")
+            try:
+                ok, detail = await asyncio.to_thread(catalog.validate_provider, prov)
+            except Exception:  # noqa: BLE001
+                ok, detail = False, "validation error"
+            if not ok:
+                # Only say "not saved" when something was actually rolled back.
+                # An OAuth token stays put — it lives in the settings env block,
+                # not the key store — and claiming otherwise sends the user
+                # hunting for a paste that already worked.
+                if cred.mode == "api_key":
+                    catalog.clear_key(pid)
+                    await _announce(f"✗ {prov.label}: {detail} (key not saved)")
+                else:
+                    await _announce(
+                        f"✗ {prov.label}: {detail} — {cred.mode} credential is "
+                        f"saved, so fix the cause and re-run /models")
+                return
+            await _switch_model(model, provider_id=pid)
+            try:
+                await asyncio.to_thread(catalog.refresh_live_models, prov)
+                state.pop("model_cache", None)
+            except Exception:  # noqa: BLE001 — the catalog refresh is a nicety
+                pass
+            await _announce(f"✓ {prov.label} enabled ({cred.mode}) · model → {model}")
+            return
+
+        # A key pasted into the wrong provider row comes back as a generic
+        # "invalid API key", which reads like the key is bad rather than
+        # misfiled. Name the real owner instead of spending a round trip on it.
+        owner = catalog.misdirected_key(pid, key)
+        if owner:
+            await _announce(f"✗ that looks like a {owner} key, not a "
+                            f"{prov.label} one — nothing saved")
+            return
+
         await _announce(f"validating {prov.label} key…")
         catalog.set_key(pid, key)
         try:
@@ -1204,7 +1697,7 @@ async def run_fullscreen(tui: Any) -> int:
         input_buffer.text = js
         input_buffer.cursor_position = len(js)
 
-    _MCP_DOTS = {"connected": f"{_GREEN}●{_RESET}", "failed": f"\033[38;5;203m●{_RESET}",
+    _MCP_DOTS = {"connected": f"{_GREEN}●{_RESET}", "failed": f"{_RED}●{_RESET}",
                  "pending": f"{_GREY}○{_RESET}", "withheld": f"{_AMBER_FG}◆{_RESET}"}
 
     def _mcp_pretty_path(path: str) -> str:
@@ -1258,16 +1751,18 @@ async def run_fullscreen(tui: Any) -> int:
         for w in r["warnings"]:
             field("warning", w, color=_AMBER_FG)
         if r["error"]:
-            field("error", r["error"], color="\033[38;5;203m")
+            field("error", r["error"], color=_RED)
         out.append("")
         secrets = "revealed" if reveal else "masked · s reveals"
         out.append(f"  {_DIM}config json{_RESET}  {_GREY}({secrets}){_RESET}")
+        # ``ensure_ascii=False`` keeps the entry readable, which means these
+        # lines can carry CJK — a character slice would let them run past the
+        # card's right edge and through its border.
         for ln in json.dumps(entry, indent=2, ensure_ascii=False).splitlines():
-            out.append(f"  {_GREY}{ln[:cw - 4]}{_RESET}")
+            out.append(f"  {_GREY}{_cut(ln, cw - 4)}{_RESET}")
         return out
 
     def _mcp_list_body(v: dict, cw: int) -> list[str]:
-        from .tui import ellipsize  # noqa: PLC0415
         rows, sel = v["rows"], v["sel"]
         servers = [r for r in rows if r["kind"] == "server"]
         out: list[str] = []
@@ -1283,7 +1778,7 @@ async def run_fullscreen(tui: Any) -> int:
             if r["kind"] == "add":
                 label = "+ add a server"
                 tip = "paste JSON, a command, or a URL"
-                pad = max(1, cw - 5 - len(label) - len(tip))
+                pad = max(1, cw - 5 - _cells(label) - _cells(tip))
                 if selected:
                     out.append(f"{_HL} ❯ {label}{' ' * pad}{tip} {_RESET}")
                 else:
@@ -1297,10 +1792,10 @@ async def run_fullscreen(tui: Any) -> int:
                 right = r["error"] or r["detail"] or "failed"
             else:
                 right = r["detail"] or "connected"
-            cells = (f"{ellipsize(r['name'], nw).ljust(nw)}"
-                     f"{r['transport'][:6].ljust(7)}"
-                     f"{r['origin'][:9].ljust(10)}"
-                     f"{ellipsize(right, rw).rjust(rw)} ")
+            cells = (f"{_pad(_ellipsize(r['name'], nw), nw)}"
+                     f"{_pad(_cut(r['transport'], 6), 7)}"
+                     f"{_pad(_cut(r['origin'], 9), 10)}"
+                     f"{_pad(_ellipsize(right, rw), rw, 'right')} ")
             if selected:
                 # On the highlight bar the dot loses its color, so the glyph
                 # itself has to carry the state.
@@ -1309,15 +1804,15 @@ async def run_fullscreen(tui: Any) -> int:
                 out.append(f"{bg} ❯ {glyph} {cells}{_RESET}")
             else:
                 dot = _MCP_DOTS.get(r["state"], f"{_GREY}○{_RESET}")
-                out.append(f"   {dot} {ellipsize(r['name'], nw).ljust(nw)}{_DIM}"
-                           f"{r['transport'][:6].ljust(7)}{r['origin'][:9].ljust(10)}"
-                           f"{ellipsize(right, rw).rjust(rw)}{_RESET} ")
+                out.append(f"   {dot} {_pad(_ellipsize(r['name'], nw), nw)}{_DIM}"
+                           f"{_pad(_cut(r['transport'], 6), 7)}"
+                           f"{_pad(_cut(r['origin'], 9), 10)}"
+                           f"{_pad(_ellipsize(right, rw), rw, 'right')}{_RESET} ")
         return out
 
     def _mcp_lines() -> list[str]:
         """Every rendered line of the overlay. ``mcp_ft`` and ``_mcp_view_height``
         both read it, so the drawn box and the reserved rows can't drift."""
-        from .workflow_view import _truncate_visible, _visible_len  # noqa: PLC0415
         v = state.get("mcp_view")
         if not v:
             return []
@@ -1374,16 +1869,20 @@ async def run_fullscreen(tui: Any) -> int:
             v["dscroll"] = 0
 
         out = [f"{_GREY}╭─{_RESET}{_GREEN}{title}{_RESET}{_GREY}"
-               f"{'─' * max(0, cw - 1 - len(title))}╮{_RESET}"]
+               f"{'─' * max(0, cw - 1 - _cells(title))}╮{_RESET}"]
         for ln in head + body:
             if ln == "\x00rule":
                 out.append(f"{_GREY}├{'─' * cw}┤{_RESET}")
                 continue
-            vis = _visible_len(ln)
-            content = _truncate_visible(ln, cw) if vis > cw else ln + " " * (cw - vis)
+            # Every body line arrives painted, and a server's error text is
+            # whatever the server said — so this is the cut that must not land
+            # inside an escape, and the width that must not be a character
+            # count. Both borders are drawn from it.
+            vis = _cells(ln)
+            content = _cut(ln, cw) if vis > cw else ln + " " * (cw - vis)
             out.append(f"{_GREY}│{_RESET}{content}{_GREY}│{_RESET}")
         out.append(f"{_GREY}╰─{_RESET}{_DIM}{hint}{_RESET}{_GREY}"
-                   f"{'─' * max(0, cw - 1 - len(hint))}╯{_RESET}")
+                   f"{'─' * max(0, cw - 1 - _cells(hint))}╯{_RESET}")
         return out
 
     def mcp_ft() -> Any:
@@ -1540,7 +2039,7 @@ async def run_fullscreen(tui: Any) -> int:
         note = state.get("retry_note")
         extra = ""
         if note and time.monotonic() < note[1]:
-            extra = f"  \033[33m{note[0]}\033[0m"
+            extra = f"  {_YELLOW}{note[0]}{_RESET}"
         nq = len(state.get("queue") or [])
         queued = f" {_DIM}· {nq} queued{_RESET}" if nq else ""
         return ANSI(
@@ -1585,12 +2084,56 @@ async def run_fullscreen(tui: Any) -> int:
         showing = bool(getattr(tui, "pending_attachments", None)) or bool(state.get("clip"))
         return Dimension.exact(1 if showing else 0)
 
+    def _rail_items() -> list:
+        """Live work as rail rows. Cheap enough for the render path: it walks the
+        job dict once and the manager already prunes terminal jobs."""
+        from .activity.render import rail_items_from_jobs  # noqa: PLC0415
+
+        jobs = getattr(tui, "_jobs", None)
+        if jobs is None:
+            return []
+        try:
+            return rail_items_from_jobs(jobs)
+        except Exception:  # noqa: BLE001 — the rail must never break the prompt
+            return []
+
+    def _live_counts() -> str:
+        from .activity.render import footer_counts  # noqa: PLC0415
+
+        try:
+            return footer_counts(_rail_items())
+        except Exception:  # noqa: BLE001
+            return ""
+
+    _RAIL_ROWS = 3
+
+    def _rail_lines() -> list[str]:
+        """The persistent 'what is running' strip that sits above the footer.
+
+        Empty — so the window collapses to zero height — whenever nothing is
+        live. The rail is only worth its rows when it is answering a question."""
+        from .activity.render import rail_rows  # noqa: PLC0415
+
+        items = _rail_items()
+        if not items:
+            return []
+        try:
+            rows = rail_rows(items, width=max(20, _width() - 2),
+                             color=_PAINT, frame=state["frame"], limit=_RAIL_ROWS)
+        except Exception:  # noqa: BLE001 — never break the prompt over chrome
+            return []
+        return rows + [f"{_DIM}  enter to view · x to stop{_RESET}"]
+
+    def _rail_ft() -> Any:
+        lines = _rail_lines()
+        return ANSI("\n".join(lines)) if lines else ANSI("")
+
+    def _rail_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+
+        return Dimension.exact(len(_rail_lines()))
+
     def footer_ft() -> Any:
-        label, symbol, color = MODES[tui.mode_idx]
-        left = "" if tui.mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
-        col = _MODE_ANSI.get(color, "90")
-        ctx = _ctx_status()
-        ctx_seg = f"   {ctx}" if ctx else ""
         knobs = []
         if getattr(tui, "effort", None):
             knobs.append(f"effort={tui.effort}")
@@ -1598,16 +2141,54 @@ async def run_fullscreen(tui: Any) -> int:
             knobs.append(f"verb={tui.verbosity}")
         if getattr(tui, "reasoning_mode", None):
             knobs.append(f"reasoning={tui.reasoning_mode}")
-        knob_seg = f"   {' '.join(knobs)}" if knobs else ""
-        return ANSI(f"\033[{col}m{left}{_RESET}   {_GREY}{tui.model}{_RESET}{knob_seg}{ctx_seg}")
+        return ANSI(_footer_line(tui.mode_idx, tui.model, knobs, _ctx_status(),
+                                 _live_counts()))
 
     _LIVE_TODO_ROWS = 8
 
     def _live_agent_items() -> list[tuple[int, dict]]:
         return sorted((getattr(tui, "_live_subagents", None) or {}).items())
 
+    def _manage_items() -> list[tuple[int, dict]]:
+        """Everything ↓ manages: live subagents AND monitors/jobs/workflows.
+
+        One surface, not two. The footer offers a single "↓ to manage" and it
+        would be a poor trade to have that mean "agents, unless the only thing
+        running is a monitor, in which case nothing happens" — which is exactly
+        what it did while the inspector keyed off subagents alone.
+
+        Jobs are projected into the same row shape the renderer already consumes
+        (``type``/``desc``/``tools``/``last_event``/``started``/``events``), so
+        the list renders unchanged. ``_rail`` carries the richer RailItem through
+        for the drill-down, which is what lets a monitor show its script.
+        """
+        items = list(_live_agent_items())
+        seen_ids = {rid for rid, _ in items}
+        for item in _rail_items():
+            try:
+                jid = int(str(item.id).split(":", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            if jid in seen_ids:
+                continue
+            events = []
+            jobs = getattr(tui, "_jobs", None)
+            job = jobs.get(jid) if jobs is not None else None
+            if job is not None:
+                events = list(getattr(job, "events", None) or [])
+            items.append((jid, {
+                "type": "monitor" if item.kind == "watch" else item.kind,
+                "desc": item.label,
+                "tools": item.events,
+                "last_event": item.detail or "starting",
+                "started": time.monotonic() - item.elapsed_s,
+                "events": events,
+                "_rail": item,
+            }))
+        return items
+
     def _open_agent_inspector() -> None:
-        items = _live_agent_items()
+        items = _manage_items()
         if not items:
             state["agent_inspector"] = None
             return
@@ -1620,7 +2201,7 @@ async def run_fullscreen(tui: Any) -> int:
         panel = state.get("agent_inspector")
         if not panel:
             return ANSI("")
-        items = _live_agent_items()
+        items = _manage_items()
         if not items:
             state["agent_inspector"] = None
             return ANSI("")
@@ -1631,10 +2212,21 @@ async def run_fullscreen(tui: Any) -> int:
         rid, rec = items[sel]
 
         # -- detail mode: one agent, its full recent activity ----------------
+        if panel.get("detail") and rec.get("_rail") is not None:
+            # A monitor/job drills into its own pane: what it is RUNNING is the
+            # first question, and a poll loop the model wrote is not something
+            # the agent-shaped "N tools · Ns · last event" line can answer.
+            from .activity.render import monitor_detail  # noqa: PLC0415
+
+            body = monitor_detail(rec["_rail"], width=max(width - 2, 30))
+            hint = f"{_GREY}← back · Esc close · x stop{_RESET}"
+            return ANSI(f"{_CYAN}{body.splitlines()[0]}{_RESET} {hint}\n"
+                        + "\n".join(body.splitlines()[1:]))
+
         if panel.get("detail"):
             el = int(now - rec.get("started", now))
             last = rec.get("last_event") or "starting"
-            rows = [f"\033[36mAgent #{rid} · {rec.get('type', 'task')}{_RESET} "
+            rows = [f"{_CYAN}Agent #{rid} · {rec.get('type', 'task')}{_RESET} "
                     f"{_GREY}← back · Esc close{_RESET}"]
             desc = rec.get("desc", "")
             if desc:
@@ -1644,21 +2236,27 @@ async def run_fullscreen(tui: Any) -> int:
             if events:
                 rows.append(f"{_GREY}recent activity{_RESET}")
                 for ts, text in events:
-                    rows.append(f"{_GREY}  - {max(0, int(now - ts))}s ago · "
-                                f"{ellipsize(text, max(width - 10, 20))}{_RESET}")
+                    # Measure the real prefix instead of guessing 10 — an
+                    # under-estimate wraps the line and smears the panel.
+                    prefix = f"  - {max(0, int(now - ts))}s ago · "
+                    rows.append(f"{_GREY}{prefix}"
+                                f"{ellipsize(text, max(width - len(prefix) - 1, 20))}{_RESET}")
             else:
                 rows.append(f"{_DIM}  (no tool activity yet){_RESET}")
             return ANSI("\n".join(rows))
 
         # -- list mode: all agents, recent activity of the selected one ------
-        rows = [f"\033[36mLive agents{_RESET} {_GREY}↑/↓ move · Enter inspect · ← / Esc close{_RESET}"]
+        rows = [f"{_CYAN}Live agents{_RESET} {_GREY}↑/↓ move · Enter inspect · ← / Esc close{_RESET}"]
         for i, (r_id, r_rec) in enumerate(items[:12]):
             el = int(now - r_rec.get("started", now))
             mark = "❯" if i == sel else " "
             last = r_rec.get("last_event") or "starting"
+            # desc BEFORE the last event: it's what distinguishes three
+            # identical "explore" rows, and the event is repeated in full on
+            # the recent line below — so the event is what should get cut.
             body = ellipsize(
                 f"{mark} #{r_id} {r_rec.get('type', 'task')} · {r_rec.get('tools', 0)} tools · "
-                f"{el}s · {last} · {r_rec.get('desc', '')}",
+                f"{el}s · {r_rec.get('desc', '')} · {last}",
                 max(width - 2, 20),
             )
             rows.append(f"{_GREEN if i == sel else _DIM}{body}{_RESET}")
@@ -1666,8 +2264,9 @@ async def run_fullscreen(tui: Any) -> int:
         if events:
             rows.append(f"{_GREY}recent #{rid}{_RESET}")
             for ts, text in events:
-                rows.append(f"{_GREY}  - {max(0, int(now - ts))}s ago · "
-                            f"{ellipsize(text, max(width - 10, 20))}{_RESET}")
+                prefix = f"  - {max(0, int(now - ts))}s ago · "
+                rows.append(f"{_GREY}{prefix}"
+                            f"{ellipsize(text, max(width - len(prefix) - 1, 20))}{_RESET}")
         return ANSI("\n".join(rows))
 
     def _agent_inspector_height() -> Any:
@@ -1675,11 +2274,21 @@ async def run_fullscreen(tui: Any) -> int:
         panel = state.get("agent_inspector")
         if not panel:
             return Dimension.exact(0)
-        items = _live_agent_items()
+        items = _manage_items()
         if not items:
             return Dimension.exact(0)
         sel = int(panel.get("sel", 0)) % len(items)
         rec = items[sel][1]
+        if panel.get("detail") and rec.get("_rail") is not None:
+            # The monitor pane is rendered by `monitor_detail`, whose height
+            # depends on how long the script is — counting agent-shaped rows here
+            # cut the script off below the fold, which is precisely the thing the
+            # pane exists to show.
+            from .activity.render import monitor_detail  # noqa: PLC0415
+
+            width = shutil.get_terminal_size((80, 24)).columns
+            body = monitor_detail(rec["_rail"], width=max(width - 2, 30))
+            return Dimension.exact(len(body.splitlines()))
         if panel.get("detail"):
             events = list(rec.get("events") or [])[-10:]
             n = 1                                   # header
@@ -1728,35 +2337,22 @@ async def run_fullscreen(tui: Any) -> int:
         return (getattr(tui, "_workflow_handles", {}) or {}).get(getattr(run, "id", ""))
 
     def _wf_detail_lines(run: Any, ag: Any, now: float) -> list[str]:
-        from .workflow_view import format_duration, format_number, total_tokens  # noqa: PLC0415
-        label = getattr(ag, "label", "") or getattr(ag, "id", "?")
-        lines = [f"{_GREEN}Workflow agent · {label}{_RESET}  {_GREY}← / esc back{_RESET}",
-                 f"{_DIM}workflow: {getattr(run, 'name', '?')}{_RESET}"]
-        phase = getattr(ag, "phase", "") or ""
-        atype = getattr(ag, "agent_type", "") or ""
-        meta = " · ".join(x for x in (phase, atype) if x)
-        if meta:
-            lines.append(f"{_DIM}phase: {meta}{_RESET}")
-        dur = format_duration(ag.elapsed_ms(now)) if hasattr(ag, "elapsed_ms") else "?"
-        lines.append(f"{_DIM}status: {getattr(ag, 'status', '?')} · {dur}{_RESET}")
-        tok = total_tokens(getattr(ag, "usage", None))
-        counts = (f"{getattr(ag, 'turns', 0)} turns · {getattr(ag, 'tool_count', 0)} "
-                  f"tools · {format_number(tok)} tok")
-        cost = getattr(ag, "cost_usd", 0.0) or 0.0
-        if cost:
-            counts += f" · ${cost:.4f}" if cost < 0.01 else f" · ${cost:.2f}"
-        lines.append(f"{_DIM}progress: {counts}{_RESET}")
-        model = getattr(ag, "model", "") or ""
-        if model:
-            lines.append(f"{_DIM}model: {model}{_RESET}")
-        acts = list(getattr(ag, "recent_activities", []) or [])[-5:]
-        if acts:
-            lines.append(f"{_GREY}recent activity{_RESET}")
-            lines += [f"{_GREY}  - {a}{_RESET}" for a in acts]
-        err = getattr(ag, "error", None)
-        if err:
-            lines.append(f"\033[38;5;203merror: {str(err)[:200]}{_RESET}")
-        return lines
+        """Drill-down for one agent, from the shared renderer — identity, phase,
+        model, timing, usage/cost, the prompt it was briefed with, its activity
+        tail, and its result or error. Never hidden reasoning: the engine only
+        ever records tool names and visible text."""
+        from .workflow_view import format_agent_detail  # noqa: PLC0415
+
+        job = None
+        job_id = getattr(run, "job_id", None)
+        jobs = getattr(tui, "_jobs", None)
+        if job_id is not None and jobs is not None:
+            job = jobs.get(job_id)
+        lines = format_agent_detail(run, ag, now=now, job=job,
+                                    prompt_chars=400, activity_limit=8,
+                                    result_chars=1200)
+        head = f"{_GREEN}{lines[0]}{_RESET}  {_GREY}← / esc back{_RESET}"
+        return [head, *lines[1:]]
 
     def _workflows_lines() -> list[str]:
         """All overlay lines (header + body + footer) for the current state.
@@ -1767,24 +2363,32 @@ async def run_fullscreen(tui: Any) -> int:
             return []
         from .workflow import default_clock  # noqa: PLC0415
         from .workflow_view import (  # noqa: PLC0415
-            _truncate_visible,
-            _visible_len,
+            control_footer,
             format_agent_row,
             status_glyph,
         )
         width = shutil.get_terminal_size((80, 24)).columns
         pairs = _wf_pairs()
         if not pairs:
-            return [f"{_GREEN}Workflows{_RESET}  {_GREY}(esc to close){_RESET}",
-                    f"{_DIM}no active workflows yet — /swarm and the pipeline/parallel "
-                    f"helpers register runs here{_RESET}"]
+            # An empty state that teaches the command instead of shrugging.
+            from .workflow_defs import discover_workflow_definitions  # noqa: PLC0415
+            from .workflow_view import empty_state_lines  # noqa: PLC0415
+            try:
+                defs = discover_workflow_definitions()
+            except Exception:  # noqa: BLE001 — a broken definition never blanks the pane
+                defs = []
+            head = f"{_GREEN}Workflows{_RESET}  {_GREY}(esc to close){_RESET}"
+            return [head] + [_cut(f"{_DIM}{ln}{_RESET}", width)
+                             for ln in empty_state_lines(defs)]
         sel = min(max(int(p.get("sel", 0)), 0), len(pairs) - 1)
         p["sel"] = sel
         now = default_clock()
         frame = state.get("frame", 0)
         if p.get("detail"):
             run, ag = pairs[sel]
-            return [_truncate_visible(ln, width) for ln in _wf_detail_lines(run, ag, now)]
+            # The detail pane carries the agent's own prompt and result text —
+            # painted, and in whatever script the user writes in.
+            return [_cut(ln, width) for ln in _wf_detail_lines(run, ag, now)]
         # List view: left phase rail (selected run) + right scrolling agent rows.
         run = pairs[sel][0]
         left: list[str] = []
@@ -1803,17 +2407,26 @@ async def run_fullscreen(tui: Any) -> int:
                 frame=frame, show_model=False, color=True))
 
         def _padv(s: str, w: int) -> str:
-            vl = _visible_len(s)
-            return _truncate_visible(s, w) if vl >= w else s + " " * (w - vl)
+            vl = _cells(s)
+            return _cut(s, w) if vl >= w else s + " " * (w - vl)
 
-        header = f"{_GREEN}Workflows{_RESET} {_GREY}· {getattr(run, 'name', '?')}{_RESET}"
+        # Header names the SELECTED run and how many others are in flight —
+        # multiple concurrent workflows are the normal case, not an edge case.
+        runs = list(getattr(tui, "_workflows", []) or [])
+        idx = next((i for i, r in enumerate(runs)
+                    if getattr(r, "id", None) == getattr(run, "id", None)), 0)
+        pos = f" {idx + 1}/{len(runs)}" if len(runs) > 1 else ""
+        live = " ⏸" if getattr(_wf_handle(run), "_paused", False) else ""
+        job_id = getattr(run, "job_id", None)
+        job = f" · job #{job_id}" if job_id is not None else ""
+        header = (f"{_GREEN}Workflows{pos}{_RESET} {_GREY}· {getattr(run, 'name', '?')} "
+                  f"({getattr(run, 'id', '?')}){job}{live}{_RESET}")
         rows = [header]
         for r in range(max(len(left), len(right))):
             lft = left[r] if r < len(left) else ""
             rgt = right[r] if r < len(right) else ""
             rows.append(_padv(lft, _WF_LEFT_W) + "  " + rgt)
-        rows.append(f"{_GREY}↑↓ select · enter/→ inspect · ←/esc back · "
-                    f"x stop · p pause · s save{_RESET}")
+        rows.append(f"{_GREY}{control_footer()}{_RESET}")
         return rows
 
     def _workflows_ft() -> Any:
@@ -1825,64 +2438,59 @@ async def run_fullscreen(tui: Any) -> int:
         n = len(_workflows_lines())
         return Dimension.exact(n) if n else Dimension.exact(0)
 
-    def _wf_stop() -> None:
-        run = _wf_selected_run()
+    def _wf_selected_pair() -> tuple[Any, Any]:
+        """``(run, agent)`` under the cursor — ``(None, None)`` when empty."""
+        p = state.get("workflows")
+        pairs = _wf_pairs()
+        if not p or not pairs:
+            return (None, None)
+        sel = min(max(int(p.get("sel", 0)), 0), len(pairs) - 1)
+        return pairs[sel]
+
+    def _wf_control(action: str) -> None:
+        """Drive one control-plane action on the selection.
+
+        Everything routes through :func:`workflow_view.apply_control`, which
+        decides eligibility and returns a human sentence either way — so a key
+        pressed on a finished run explains itself instead of doing nothing.
+        ``retry`` is the one action that needs to *run* something, so it is
+        scheduled as a background task on the app loop."""
+        from .workflow_view import apply_control  # noqa: PLC0415
+
+        run, ag = _wf_selected_pair()
         if run is None:
+            get_app().create_background_task(_announce("no workflow selected"))
             return
         handle = _wf_handle(run)
-        name = getattr(run, "name", "workflow")
-        fn = getattr(handle, "stop", None) if handle is not None else None
-        if not callable(fn):
-            get_app().create_background_task(_announce(f"{name} is not live — nothing to stop"))
-            return
-        try:
-            fn()
-            get_app().create_background_task(_announce(f"⛌ stopping {name}"))
-        except Exception as e:  # noqa: BLE001
-            get_app().create_background_task(_announce(f"could not stop {name}: {e}"))
+        msg = apply_control(handle, run, ag, action)
+        if msg.startswith("retry-") and handle is not None:
+            agent_id = msg[len("retry-"):]
+            label = getattr(ag, "label", "") or agent_id
+
+            async def _retry() -> None:
+                await _announce(f"↻ retrying {label}")
+                try:
+                    await handle.retry_agent(agent_id)
+                except Exception as e:  # noqa: BLE001 — surfaced, never fatal
+                    await _announce(f"retry failed: {e}")
+
+            get_app().create_background_task(_retry())
+        else:
+            get_app().create_background_task(_announce(msg))
         get_app().invalidate()
+
+    def _wf_stop() -> None:
+        _wf_control("stop")
 
     def _wf_toggle_pause() -> None:
-        run = _wf_selected_run()
-        if run is None:
-            return
-        handle = _wf_handle(run)
-        name = getattr(run, "name", "workflow")
-        if handle is None:
-            get_app().create_background_task(_announce(f"{name} is not live — nothing to pause"))
-            return
-        try:
-            if getattr(handle, "_paused", False):
-                handle.resume()
-                get_app().create_background_task(_announce(f"▶ resumed {name}"))
-            else:
-                handle.pause()
-                get_app().create_background_task(_announce(f"⏸ paused {name}"))
-        except Exception as e:  # noqa: BLE001
-            get_app().create_background_task(_announce(f"could not pause {name}: {e}"))
-        get_app().invalidate()
+        _wf_control("pause")
 
     def _wf_save() -> None:
-        run = _wf_selected_run()
-        if run is None:
-            return
-        handle = _wf_handle(run)
-        fn = getattr(handle, "save", None) if handle is not None else None
-        if callable(fn):
-            try:
-                path = fn()
-                get_app().create_background_task(_announce(f"saved → {path}"))
-            except Exception as e:  # noqa: BLE001
-                get_app().create_background_task(_announce(f"could not save: {e}"))
-        elif hasattr(tui, "_save_workflow"):
-            get_app().create_background_task(_print(lambda r=run: tui._save_workflow(r)))
-        else:
-            get_app().create_background_task(_announce("nothing to save"))
+        _wf_control("save")
 
     def _live_subagent_rows(width: int) -> list[str]:
         """'⎿ ◇ explore · 6 tools · 42s · tool grep — CPU analysis' rows for
         in-flight task-tool runs, capped at 10."""
-        from .tui import ellipsize  # noqa: PLC0415
         rows: list[str] = []
         subs = getattr(tui, "_live_subagents", None) or {}
         for i, (rid, s) in enumerate(list(subs.items())[:10]):
@@ -1890,11 +2498,11 @@ async def run_fullscreen(tui: Any) -> int:
             desc = f" — {s['desc']}" if s.get("desc") else ""
             last = s.get("last_event") or ""
             activity = f" · {last}" if last and last != "starting" else ""
-            body = ellipsize(
+            body = _ellipsize(
                 f"◇ #{rid} {s.get('type', '?')} · {s.get('tools', 0)} tools · {el}s{activity}{desc}",
                 max(width - 6, 20))
             branch = "  ⎿ " if (i == 0 and not tui.todos) else "    "
-            rows.append(f"{_DIM}{branch}\033[36m{body}\033[0m{_RESET}")
+            rows.append(f"{_DIM}{branch}{_CYAN}{body}{_RESET}{_RESET}")
         return rows
 
     def live_todos_ft() -> Any:
@@ -1943,7 +2551,7 @@ async def run_fullscreen(tui: Any) -> int:
         sel = p["sel"] % 3
         head = f"{_GREEN}Allow?{_RESET} {_DIM}{p['prompt']}{_RESET}"
         row = "   ".join(
-            (f"\033[30;48;5;113m {i + 1} {o} \033[0m" if i == sel
+            (f"{_HL} {i + 1} {o} {_RESET}" if i == sel
              else f"{_DIM}{i + 1} {o}{_RESET}")
             for i, o in enumerate(_PERM_OPTS)
         )
@@ -2044,7 +2652,7 @@ async def run_fullscreen(tui: Any) -> int:
                 def _show_cmd_err(e: Any = e) -> None:
                     tui.console.print(f"[ansired]error:[/] {e}")
                     from .tui import error_hint  # noqa: PLC0415
-                    hint = error_hint(e, tui.backend)
+                    hint = error_hint(e, tui.backend, tui.model)
                     if hint:
                         styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
                         tui.console.print(f"[ansibrightblack]  → {styled}[/]")
@@ -2081,7 +2689,8 @@ async def run_fullscreen(tui: Any) -> int:
         tui._turn_active = True
         get_app().invalidate()
         try:
-            async for msg in tui.agent.run_iter(tui.messages):
+            _stream = tui.agent.run_iter(tui.messages)
+            async for msg in _stream:
                 if isinstance(msg, AssistantMessage):
                     _txt = "".join(getattr(b, "text", "") for b in msg.content
                                    if type(b).__name__ == "TextBlock")
@@ -2125,12 +2734,17 @@ async def run_fullscreen(tui: Any) -> int:
             def _show_err(e: Any = e) -> None:
                 tui.console.print(f"[ansired]error:[/] {e}")
                 from .tui import error_hint  # noqa: PLC0415
-                hint = error_hint(e, tui.backend)
+                hint = error_hint(e, tui.backend, tui.model)
                 if hint:
                     styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)  # `cmd` → styled
                     tui.console.print(f"[ansibrightblack]  → {styled}[/]")
             await _print(_show_err)
         finally:
+            # Close the stream in THIS task. run_iter holds the tool executor's
+            # task group open across its yields, so letting the event loop
+            # finalize it later raises "exit cancel scope in a different task".
+            from .agent import aclose_stream  # noqa: PLC0415
+            await aclose_stream(_stream)
             tui._turn_active = False
             tui._persist_messages(base)  # save this turn for /resume + /branch
             elapsed = time.monotonic() - state.get("started", time.monotonic())
@@ -2666,30 +3280,12 @@ async def run_fullscreen(tui: Any) -> int:
             on = "on" if tui.vim_mode else "off"
             await _print(lambda: tui.console.print(f"[ansibrightblack](vim mode {on})[/]"))
             return True
-        if cmd in ("/model", "/models"):
-            if arg and cmd == "/model":
-                # /model <query> → resolve a number / id / provider / alias /
-                # fuzzy fragment to a REAL model. Never send a raw string to the
-                # backend: an unrecognized or ambiguous query opens the picker,
-                # pre-filtered, so the user lands on something that exists.
-                from . import catalog  # noqa: PLC0415
-                res = catalog.resolve_model_query(arg, _chat_models())
-                if res.model:
-                    await _switch_model(res.model, provider_id=res.provider_id)
-                    await _print(lambda m=res.model: tui.console.print(
-                        f"[ansibrightblack](model → [white]{m}[/])[/]"))
-                elif res.candidates:
-                    await _print(lambda n=len(res.candidates): tui.console.print(
-                        f"[ansibrightblack]{n} models match [white]{arg}[/] — pick one:[/]"))
-                    _open_model_picker(arg)
-                else:
-                    await _print(lambda: tui.console.print(
-                        f"[ansiyellow]![/] [ansibrightblack]no model matches "
-                        f"[white]{arg}[/] — showing the full list[/]"))
-                    _open_model_picker(arg)
-            else:
-                # /models [partial] → picker overlay, pre-filtered if given.
-                _open_model_picker(arg or "")
+        if cmd == "/models":
+            # One command, one behaviour: open the picker. The old `/model` was
+            # a second name for this that additionally took a query; both the
+            # duplicate name and the query form are gone, because "type a
+            # fragment and hope it resolves" is what the picker's filter is for.
+            _open_model_picker(arg or "")
             return True
         if cmd == "/pull":
             # Download an open model with ollama and switch to it — same
@@ -2945,7 +3541,13 @@ async def run_fullscreen(tui: Any) -> int:
                 f"{prompt[:60]} — /loop stop {lid} to end")
             return True
         if cmd == "/workflows":
-            _open_workflows()
+            # Bare → the live overlay. With a subcommand (list · run · history ·
+            # resume) → the classic handler, which prints into the scrollback and
+            # registers any run it starts with the same viewer.
+            if arg.strip():
+                await _print(lambda: tui._cmd_workflows_sub(arg))
+            else:
+                _open_workflows()
             return True
         if cmd == "/job":
             await _print(lambda: tui._cmd_job(arg))
@@ -3040,7 +3642,7 @@ async def run_fullscreen(tui: Any) -> int:
             # then validate + enable + switch to the provider's flagship model.
             state["awaiting_key"] = {"provider_id": pid, "model": prov.models[0]}
             input_buffer.reset()
-            await _announce(f"paste your {prov.api_key_env} to enable {pid} · enter to confirm · esc to cancel")
+            await _announce(_key_prompt(pid, prov.api_key_env))
             return True
         if cmd == "/connect":
             parts = arg.split()
@@ -3099,6 +3701,7 @@ async def run_fullscreen(tui: Any) -> int:
     _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
     _picker_open = Condition(lambda: state.get("picking_model") is not None)
+    _auth_open = Condition(lambda: state.get("picking_auth") is not None)
     _effort_open = Condition(lambda: state.get("picking_effort") is not None)
     _agent_open = Condition(lambda: state.get("agent_inspector") is not None)
     _workflows_open = Condition(lambda: state.get("workflows") is not None)
@@ -3116,11 +3719,12 @@ async def run_fullscreen(tui: Any) -> int:
             return False
         if any(state.get(k) for k in (
                 "pending_perm", "pending_question", "picking_model",
-                "picking_effort", "workflows", "awaiting_key", "mcp_view")):
+                "picking_effort", "picking_auth", "workflows", "awaiting_key",
+                     "mcp_view")):
             return False
         if input_buffer.text.strip() or _menu_options():
             return False
-        return bool(_live_agent_items())
+        return bool(_manage_items())
 
     _can_enter_agents = Condition(_can_enter_agents_fn)
 
@@ -3301,6 +3905,52 @@ async def run_fullscreen(tui: Any) -> int:
         p["sel"] = next((j for j, it in enumerate(p["items"])
                          if it["kind"] in _SELECTABLE_KINDS), 0)
 
+    @kb.add("up", filter=_auth_open, eager=True)
+    def _(event: Any) -> None:
+        p = state["picking_auth"]
+        p["sel"] = (int(p.get("sel", 0)) - 1) % len(_AUTH_METHODS)
+        event.app.invalidate()
+
+    @kb.add("down", filter=_auth_open, eager=True)
+    def _(event: Any) -> None:
+        p = state["picking_auth"]
+        p["sel"] = (int(p.get("sel", 0)) + 1) % len(_AUTH_METHODS)
+        event.app.invalidate()
+
+    @kb.add("escape", filter=_auth_open, eager=True)
+    def _(event: Any) -> None:
+        state["picking_auth"] = None
+        event.app.create_background_task(_announce("cancelled"))
+        event.app.invalidate()
+
+    @kb.add("enter", filter=_auth_open, eager=True)
+    def _(event: Any) -> None:
+        p = state["picking_auth"] or {}
+        sel = int(p.get("sel", 0)) % len(_AUTH_METHODS)
+        mode, label, _hint = _AUTH_METHODS[sel]
+        model = p.get("model") or ""
+        state["picking_auth"] = None
+        if mode == "clear":
+            from .anthropic_auth import clear_credentials  # noqa: PLC0415
+
+            note = clear_credentials()
+            event.app.create_background_task(_announce(note))
+            event.app.invalidate()
+            return
+        # Bedrock and Vertex are not one pasted string. Say exactly what is
+        # missing instead of opening an input that cannot succeed.
+        from .anthropic_auth import setup_instructions  # noqa: PLC0415
+
+        todo = setup_instructions(mode)
+        if todo:
+            event.app.create_background_task(_announce(todo))
+            event.app.invalidate()
+            return
+        state["awaiting_key"] = {"provider_id": "anthropic", "model": model,
+                                 "auth_mode": mode}
+        event.app.create_background_task(_announce(_key_prompt("anthropic", "", mode)))
+        event.app.invalidate()
+
     @kb.add("up", filter=_effort_open)
     def _(event: Any) -> None:
         p = state["picking_effort"]
@@ -3332,6 +3982,46 @@ async def run_fullscreen(tui: Any) -> int:
             async with in_terminal():
                 tui._cmd_knobs(f"effort={value}")
         event.app.create_background_task(_apply_effort())
+        event.app.invalidate()
+
+    @kb.add("c-k", filter=_picker_open, eager=True)
+    def _(event: Any) -> None:
+        """Re-key the highlighted row's provider — change, rotate or replace.
+
+        The paste prompt used to appear ONLY for a locked provider, so once a
+        key worked there was no way to change it, rotate a leaked one, or move
+        from an API key to an OAuth token without editing settings by hand.
+        Bound to ctrl+k rather than `k` because the picker types-to-filter, so a
+        bare letter belongs to the filter.
+        """
+        from . import catalog  # noqa: PLC0415
+
+        p = state.get("picking_model") or {}
+        items = p.get("items") or []
+        sel = int(p.get("sel", 0))
+        it = items[sel] if 0 <= sel < len(items) else None
+        if not it:
+            return
+        pid = it.get("provider_id")
+        if not pid and it.get("model"):
+            prov_guess = catalog.provider_for_model(it["model"])
+            pid = prov_guess.id if prov_guess is not None else None
+        if not pid:
+            event.app.create_background_task(_announce(
+                "no API provider on this row — ctrl+k re-keys a hosted model"))
+            return
+        prov = catalog.BY_ID.get(pid)
+        if prov is None:
+            return
+        state["picking_model"] = None
+        input_buffer.reset()
+        model = it.get("model") or (prov.models[0] if prov.models else "")
+        if pid == "anthropic":
+            state["picking_auth"] = {"sel": 0, "model": model}
+        else:
+            state["awaiting_key"] = {"provider_id": pid, "model": model}
+            event.app.create_background_task(
+                _announce(_key_prompt(pid, prov.api_key_env)))
         event.app.invalidate()
 
     @kb.add("up", filter=_picker_open)
@@ -3460,7 +4150,7 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("down", filter=_agent_open, eager=True)
     @kb.add("c-n", filter=_agent_open, eager=True)
     def _(event: Any) -> None:
-        items = _live_agent_items()
+        items = _manage_items()
         if items:
             state["agent_inspector"]["sel"] = (state["agent_inspector"].get("sel", 0) + 1) % len(items)
         event.app.invalidate()
@@ -3468,7 +4158,7 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("up", filter=_agent_open, eager=True)
     @kb.add("c-p", filter=_agent_open, eager=True)
     def _(event: Any) -> None:
-        items = _live_agent_items()
+        items = _manage_items()
         if items:
             panel = state["agent_inspector"]
             cur = int(panel.get("sel", 0))
@@ -3482,10 +4172,40 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("right", filter=_agent_open, eager=True)
     def _(event: Any) -> None:
         # Drill into the selected agent's focused detail view.
-        if _live_agent_items():
+        if _manage_items():
             state["agent_inspector"]["detail"] = True
         else:
             state["agent_inspector"] = None
+        event.app.invalidate()
+
+    @kb.add("x", filter=_agent_open, eager=True)
+    def _(event: Any) -> None:
+        # Stop the selected item. Only jobs/monitors can be stopped from here —
+        # a live subagent is owned by the turn that spawned it, and killing it
+        # out from under the parent is a different (and much sharper) operation
+        # than cancelling a background job, so `x` deliberately does nothing on
+        # those rows rather than pretending.
+        panel = state.get("agent_inspector") or {}
+        items = _manage_items()
+        if not items:
+            return
+        sel = int(panel.get("sel", 0)) % len(items)
+        jid, rec = items[sel]
+        if rec.get("_rail") is None:
+            return
+        jobs = getattr(tui, "_jobs", None)
+        if jobs is None:
+            return
+        stopped = False
+        try:
+            stopped = bool(jobs.cancel(jid))
+        except Exception:  # noqa: BLE001 — a failed stop must not kill the UI
+            stopped = False
+        label = rec.get("desc") or f"#{jid}"
+        get_app().create_background_task(_announce(
+            f"stopped {label}" if stopped else f"could not stop {label}"))
+        # Leaving detail avoids staring at a pane for something that just died.
+        panel["detail"] = False
         event.app.invalidate()
 
     @kb.add("left", filter=_agent_open, eager=True)
@@ -3545,6 +4265,9 @@ async def run_fullscreen(tui: Any) -> int:
             state["workflows"] = None
         event.app.invalidate()
 
+    # Control plane. Every key here is one entry in workflow_view.CONTROLS and
+    # goes through the same eligibility check, so an action that doesn't apply
+    # says why rather than doing nothing.
     @kb.add("x", filter=_workflows_open, eager=True)
     def _(event: Any) -> None:
         _wf_stop()
@@ -3556,6 +4279,18 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("s", filter=_workflows_open, eager=True)
     def _(event: Any) -> None:
         _wf_save()
+
+    @kb.add("c", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_control("cancel")
+
+    @kb.add("k", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_control("skip")
+
+    @kb.add("r", filter=_workflows_open, eager=True)
+    def _(event: Any) -> None:
+        _wf_control("retry")
 
     @kb.add("down", filter=_menu_open)
     def _(event: Any) -> None:
@@ -3674,7 +4409,9 @@ async def run_fullscreen(tui: Any) -> int:
             input_buffer.reset()
             state["awaiting_key"] = None
             if key:
-                event.app.create_background_task(_apply_key(ak["provider_id"], ak["model"], key))
+                event.app.create_background_task(
+                    _apply_key(ak["provider_id"], ak["model"], key,
+                               ak.get("auth_mode", "")))
             else:
                 event.app.create_background_task(_announce("cancelled — no key entered"))
             event.app.invalidate()
@@ -3760,10 +4497,17 @@ async def run_fullscreen(tui: Any) -> int:
                         from . import catalog  # noqa: PLC0415
                         prov = catalog.BY_ID.get(pid)
                         env = prov.api_key_env if prov else "API key"
-                        state["awaiting_key"] = {"provider_id": pid, "model": it["model"]}
                         input_buffer.reset()
-                        event.app.create_background_task(
-                            _announce(f"paste your {env} to enable {pid} · enter to confirm · esc to cancel"))
+                        if pid == "anthropic":
+                            # Four ways in, and two of them are not a single
+                            # pasted value — so choose the method first rather
+                            # than opening an input that may not fit the answer.
+                            state["picking_auth"] = {"sel": 0, "model": it["model"]}
+                        else:
+                            state["awaiting_key"] = {"provider_id": pid,
+                                                     "model": it["model"]}
+                            event.app.create_background_task(
+                                _announce(_key_prompt(pid, env)))
             event.app.invalidate()
             return
         # Menu open → act on the highlighted row (switch model / fill command).
@@ -4014,6 +4758,8 @@ async def run_fullscreen(tui: Any) -> int:
             Window(FormattedTextControl(mcp_ft), height=_mcp_view_height),
             # Live ollama pull progress — height 0 unless a pull is running.
             Window(FormattedTextControl(pull_ft), height=_pull_height),
+            # Anthropic auth-method picker — height 0 unless open.
+            Window(FormattedTextControl(auth_ft), height=_auth_height),
             Window(FormattedTextControl(effort_ft), height=Condition(
                 lambda: (1 + len(state["picking_effort"]["items"]))
                 if state.get("picking_effort") else 0)), 
@@ -4022,6 +4768,8 @@ async def run_fullscreen(tui: Any) -> int:
             # /workflows overlay — two-pane structured multi-agent run viewer;
             # height 0 unless opened. Pass the height CALLABLE, never its call.
             Window(FormattedTextControl(_workflows_ft), height=_workflows_height),
+            # Live-work rail — height 0 unless something is actually running.
+            Window(FormattedTextControl(_rail_ft), height=_rail_height),
             Window(FormattedTextControl(footer_ft), height=1),
         ]),
         focused_element=input_window,
@@ -4107,6 +4855,53 @@ async def run_fullscreen(tui: Any) -> int:
 
     tui._job_notify = _notify_job
 
+    # --- monitor follow-ups -------------------------------------------------
+    #
+    # A monitor event used to be PASSIVE: `_on_job_stream` queued it as meta
+    # context and printed a line, so the model only ever reacted the next time
+    # the user typed. For a monitor that is the whole point — you arm it
+    # precisely so something happens WITHOUT you sitting there — so an event now
+    # wakes a turn, the same way `/loop` fires one through `_handle`.
+    #
+    # Bounded, because this is the agent acting on its own: idle-only (never
+    # mid-turn, never over a pending permission prompt), a per-monitor cooldown,
+    # and a per-monitor ceiling for the session. A monitor that flaps must not
+    # turn into an unbounded spend loop.
+    _followups: dict[int, dict] = {}
+
+    def _followups_enabled() -> bool:
+        import os  # noqa: PLC0415
+
+        if os.environ.get("MANTIS_WATCH_FOLLOWUP", "").strip().lower() in (
+                "0", "false", "no", "off"):
+            return False
+        return bool(getattr(tui, "watch_followup", True))
+
+    def _followup_busy() -> bool:
+        return bool(state["working"] or state.get("pending_perm")
+                    or state.get("pending_question") or state.get("awaiting_key"))
+
+    def _maybe_followup(job: Any, text: str) -> None:
+        jid = getattr(job, "id", 0)
+        rec = _followups.setdefault(jid, {"fires": 0, "last": 0.0})
+        now = time.monotonic()
+        if not watch_followup_due(rec, now, busy=_followup_busy(),
+                                  enabled=_followups_enabled()):
+            return
+        rec["fires"] += 1
+        rec["last"] = now
+
+        desc = str(getattr(job, "desc", "") or f"monitor #{jid}")
+        prompt = watch_followup_prompt(desc, text)
+
+        async def _fire() -> None:
+            if _followup_busy():
+                return
+            state["working"] = True  # claim the slot before awaiting
+            await _handle(prompt)
+
+        get_app().create_background_task(_fire())
+
     def _notify_watch(job: Any, text: str) -> None:
         # A watch event, unlike a job completion, can arrive mid-turn and
         # repeatedly — announce it on its own line so a burst reads as a stream
@@ -4117,6 +4912,7 @@ async def run_fullscreen(tui: Any) -> int:
             job, text, width=shutil.get_terminal_size((80, 24)).columns)
         get_app().create_background_task(_announce(line))
         get_app().invalidate()
+        _maybe_followup(job, text)
 
     tui._watch_notify = _notify_watch
 
@@ -4125,13 +4921,40 @@ async def run_fullscreen(tui: Any) -> int:
     # (only fires when the env var is explicitly set).
     if _os.environ.get("MANTIS_FS_SEED_AGENTS"):
         _now = time.monotonic()
+        # Seeded through the real progress sink, so the fixture exercises the
+        # same formatting the live feed uses instead of hand-written strings.
         tui._live_subagents = {
-            1: {"type": "explore", "desc": "seed one", "tools": 3,
-                "last_event": "tool grep", "started": _now,
-                "events": [(_now, "grep foo")]},
+            1: {"type": "explore", "desc": "seed one", "tools": 0,
+                "last_event": "starting", "started": _now, "events": []},
             2: {"type": "explore", "desc": "seed two", "tools": 5,
-                "last_event": "tool glob", "started": _now, "events": []},
+                "last_event": "starting", "started": _now, "events": []},
         }
+        for _t, _a, _r in (
+            ("grep", {"pattern": "def handler"}, ["a.py:1", "b.py:2"]),
+            ("read_file", {"path": "mantis_agent/tui.py"}, "x\n" * 4157),
+        ):
+            from .tool_preview import tool_arg_preview as _tap  # noqa: PLC0415
+            _s = _tap(_t, _a)
+            tui._subagent_progress({"id": 1, "phase": "tool", "tool": _t,
+                                    "arg": _s, "args": _a})
+            tui._subagent_progress({"id": 1, "phase": "tool_done", "tool": _t,
+                                    "arg": _s, "result": _r})
+
+    # Seed a fake MONITOR so the ↓ manage surface and its drill-down are
+    # drivable without arming a real watch (which would need a subprocess and a
+    # network). Separate flag from the agent seed: the point is that ↓ works when
+    # a monitor is the ONLY thing running, which is exactly what it used to miss.
+    if _os.environ.get("MANTIS_FS_SEED_MONITOR"):
+        _jobs = getattr(tui, "_jobs", None)
+        if _jobs is not None:
+            from .jobs import Job as _Job  # noqa: PLC0415
+
+            _mj = _Job(id=91, desc="Monitor google.com status", kind="watch")
+            _mj.script = ("prev=up\nwhile true; do\n"
+                          "  code=$(curl -s -o /dev/null -w '%{http_code}' "
+                          "https://www.google.com || echo 000)\ndone")
+            _mj.record_event("google.com up/down status changes")
+            _jobs.jobs[91] = _mj
 
     anim = asyncio.ensure_future(_animate())
     mcp_boot = asyncio.ensure_future(_mcp_startup())

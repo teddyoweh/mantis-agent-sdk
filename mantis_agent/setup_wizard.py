@@ -839,7 +839,17 @@ def _anthropic_ping(base_url: str, model: str, auth: dict[str, str], *, timeout:
     except Exception:  # noqa: BLE001
         return True, ""
     headers = {"content-type": "application/json", "anthropic-version": "2023-06-01", **auth}
-    payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+    payload: dict = {"model": model, "max_tokens": 1,
+                     "messages": [{"role": "user", "content": "hi"}]}
+    # A subscription OAuth token needs the oauth beta header *and* the Claude
+    # Code identity system block, or the premium models answer 429 — which this
+    # probe would report as "credential OK (Error)", i.e. it would validate a
+    # working token against a request shape mantis no longer sends. Mirror the
+    # real provider so the probe tests what an actual turn will do.
+    if "bearer" in str(auth.get("authorization", "")).lower() and "anthropic.com" in base_url:
+        from .providers.anthropic_passthrough import CLAUDE_CODE_IDENTITY  # noqa: PLC0415
+        headers.setdefault("anthropic-beta", "oauth-2025-04-20")
+        payload["system"] = [{"type": "text", "text": CLAUDE_CODE_IDENTITY}]
     try:
         r = httpx.post(f"{base_url.rstrip('/')}/messages", headers=headers, json=payload, timeout=timeout)
     except Exception:  # noqa: BLE001

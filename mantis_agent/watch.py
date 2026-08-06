@@ -340,6 +340,9 @@ def make_watch_tool(jobs: Any) -> Tool:
             # it ends with the session (cancel_all) or via watch_stop.
             max_runtime_s=None if persistent else (timeout_ms / 1000.0) + 30.0)
         holder["job"] = job
+        # Carry the command onto the Job so `/monitors` can show what this watch
+        # is actually running, rather than only the description the model chose.
+        job.script = command
 
         window = "no timeout (persistent)" if persistent else f"{timeout_ms / 1000:.0f}s"
         return (

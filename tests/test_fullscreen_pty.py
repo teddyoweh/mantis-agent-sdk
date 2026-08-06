@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import termios
+import json
 import time
 
 import pytest
@@ -24,7 +25,9 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-on
 class Term:
     """Minimal expect-style driver for one mantis process on a pty."""
 
-    def __init__(self, tmp_home: str, cwd: str, env_extra: dict | None = None) -> None:
+    def __init__(self, tmp_home: str, cwd: str, env_extra: dict | None = None,
+                 model: str = "gpt-5.4",
+                 backend: str = "http://127.0.0.1:9") -> None:
         env = dict(os.environ)
         env.update({
             "MANTIS_AGENT_HOME": tmp_home,
@@ -43,12 +46,39 @@ class Term:
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "mantis_agent.tui",
-             "--model", "gpt-5.4", "--backend", "http://127.0.0.1:9", "--api-key", "k"],
+             "--model", model, "--backend", backend, "--api-key", "k"],
             stdin=slave, stdout=slave, stderr=slave,
             env=env, cwd=cwd, close_fds=True,
         )
         os.close(slave)
         self.buf = b""
+
+    # prompt_toolkit asks the terminal where the cursor is (DSR / "CPR") and
+    # WAITS for the reply. A real terminal answers; this driver is the terminal,
+    # so if we stay silent prompt_toolkit eventually times out, prints
+    # "WARNING: your terminal doesn't support cursor position requests (CPR)."
+    # and blocks on "Press ENTER to continue…" — after which every expect() in
+    # the test fails on an app that is simply waiting for a keypress. Whether
+    # the timeout is reached depends on machine load, which is exactly why this
+    # showed up as a ~1-in-5 flake in the heaviest test rather than a hard fail.
+    _CPR_REQUEST = b"\x1b[6n"
+
+    def _drain(self) -> bytes:
+        """Read whatever is pending, answering any cursor-position request."""
+        try:
+            data = os.read(self.master, 65536)
+        except OSError:
+            return b""
+        self.buf += data
+        if self._CPR_REQUEST in data:
+            # Report the cursor at 1,1 — the app only needs *a* well-formed
+            # answer, not an accurate one.
+            for _ in range(data.count(self._CPR_REQUEST)):
+                try:
+                    os.write(self.master, b"\x1b[1;1R")
+                except OSError:
+                    break
+        return data
 
     def pump(self, seconds: float) -> None:
         """Sleep WHILE draining the pty — a full-screen app repaints constantly,
@@ -57,11 +87,8 @@ class Term:
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             r, _, _ = select.select([self.master], [], [], 0.1)
-            if r:
-                try:
-                    self.buf += os.read(self.master, 65536)
-                except OSError:
-                    return
+            if r and not self._drain():
+                return
 
     def expect(self, text: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
@@ -70,13 +97,15 @@ class Term:
             if needle in self.buf:
                 return
             r, _, _ = select.select([self.master], [], [], 0.25)
-            if r:
-                try:
-                    self.buf += os.read(self.master, 65536)
-                except OSError:
-                    break
+            if r and not self._drain():
+                break
+        # A blocked CPR prompt is the classic cause of a mass expect() failure,
+        # so name it rather than leaving the next reader to decode raw bytes.
+        hint = ("  [the app is parked on prompt_toolkit's CPR fallback — the "
+                "driver failed to answer ESC[6n]"
+                if b"Press ENTER to continue" in self.buf else "")
         raise AssertionError(
-            f"never saw {text!r}; last 500 bytes: {self.buf[-500:]!r}")
+            f"never saw {text!r};{hint} last 500 bytes: {self.buf[-500:]!r}")
 
     def ready(self) -> None:
         """Wait until the input frame is actually accepting keys: the banner
@@ -96,6 +125,36 @@ class Term:
             self.pump(0.02)
         self.pump(0.2)
 
+    def send_until(self, keys: str, marker: str, tries: int = 3,
+                   each: float = 8.0) -> None:
+        """Send ``keys`` and retry until ``marker`` shows up.
+
+        The app can be BUSY rather than idle when the driver types: the boot
+        MCP connect includes a server on a refused port whose connect timeout
+        is 5s, and every observed failure of this test ran exactly ~5.2s longer
+        than a passing one — the keystroke landed inside that window and was
+        dropped, so the overlay never opened. Retrying is the honest fix for a
+        driver racing a busy UI; a fixed sleep just moves the race.
+        """
+        for attempt in range(tries):
+            if attempt:
+                # Wipe whatever of the previous attempt landed. Without this a
+                # partially-delivered "/mcp" plus a retry becomes "/mc/mcp",
+                # which can never open the overlay — the retry would guarantee
+                # failure rather than recover from it.
+                self.send("\x7f" * (len(keys) + 8))
+            self.send(keys)
+            deadline = time.monotonic() + each
+            while time.monotonic() < deadline:
+                if marker.encode() in self.buf:
+                    return
+                r, _, _ = select.select([self.master], [], [], 0.25)
+                if r and not self._drain():
+                    break
+        raise AssertionError(
+            f"never saw {marker!r} after {tries} attempts sending {keys!r}; "
+            f"last 300 bytes: {self.buf[-300:]!r}")
+
     def esc(self) -> None:
         self.send("\x1b")
         self.pump(0.7)                   # let the ESC resolve alone — an ESC
@@ -103,7 +162,12 @@ class Term:
                                          # parse as a meta-key sequence
 
     def close(self) -> int:
-        deadline = time.monotonic() + 12
+        # Must exceed the app's OWN shutdown budget, or a correct-but-slow exit
+        # gets SIGKILLed and scored as a hang. On /exit the terminal awaits
+        # MCPManager.stop(), whose default bound is 15s (mcp/manager.py) — a
+        # 12s deadline here meant a session with MCP servers attached failed
+        # roughly 1 run in 5, only when teardown ran long.
+        deadline = time.monotonic() + 40
         while time.monotonic() < deadline and self.proc.poll() is None:
             self.pump(0.2)               # keep draining so exit prints can flush
         try:
@@ -173,7 +237,7 @@ def test_mcp_view_inspects_config_masks_secrets_and_adds_json(
     term = term_with_mcp
     term.ready()
     term.expect("mcp:", timeout=40.0)          # boot connect settled
-    term.send("/mcp\r")
+    term.send_until("/mcp\r", "MCP servers")
     term.expect("MCP servers")                 # list header with counts
     # Sync on the list FOOTER, not on a server name: "alpha"/"beta" are already
     # in the buffer from the boot summary, so expecting those would race ahead
@@ -217,8 +281,15 @@ def test_down_arrow_enters_live_subagent_inspector(term_with_agents) -> None:
     term.send("\x1b[B")                        # ↓ — enter the inspector list
     term.expect("Live agents")                 # list header
     term.expect("explore")                     # a seeded subagent row
+    # The feed says what the agent DID, not just which tool ran. It used to
+    # render "tool grep" over and over — no pattern, no file, no result.
+    term.expect("Search def handler")          # verb + the actual argument…
+    term.expect("2 matches")                   # …and what came back
+    assert b"tool grep" not in term.buf
     term.send("\r")                            # Enter — drill into detail
     term.expect("← back")                      # detail-view header
+    term.expect("Read mantis_agent/tui.py")    # detail view carries it too
+    term.expect("4157 lines")
     term.send("\x1b[D")                        # ← — back to the list
     term.expect("Enter inspect")               # list header hint again
     term.esc()                                 # esc closes the overlay
@@ -277,12 +348,15 @@ def test_workflows_overlay_opens_navigates_and_escapes(term) -> None:
     term.ready()
     term.send("/workflows\r")
     term.expect("Workflows")                   # overlay header rendered
-    term.expect("no active workflows yet")     # empty-state body (no runs)
+    term.expect("No workflows in this session yet")   # empty state teaches the cmd
+    term.expect("/workflows run <name>")              # …by naming it
     term.send("\x1b[B")                        # down-arrow: safe no-op when empty
     term.send("\x1b[A")                        # up-arrow: same
     term.pump(0.3)
-    term.expect("no active workflows yet")     # still up, nothing crashed
+    term.expect("No workflows in this session yet")   # still up, nothing crashed
     term.esc()                                 # esc closes the overlay
+    term.send("/workflows list\r")             # subcommand path prints inline
+    term.expect("review")                      # a built-in definition is listed
     term.send("/models\r")                     # app still interactive afterward
     term.expect("select a model")              # picker header up again
     term.esc()
@@ -394,6 +468,139 @@ def test_pasted_text_that_is_not_a_path_is_still_just_text(tmp_path) -> None:
         t.expect("hello /not/a/real/file.png there")
         assert b"image attached" not in t.buf
         t.send("\x03")                 # pasted text is still in the buffer
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()
+
+
+@pytest.fixture()
+def term_with_monitor(tmp_path):
+    """A mantis process whose ONLY live work is a monitor.
+
+    The case the manage surface used to miss entirely: ↓ keyed off live
+    subagents, so with just a watch running it did nothing at all — while the
+    footer cheerfully advertised "↓ to manage".
+    """
+    t = Term(str(tmp_path / "home"), str(tmp_path),
+             env_extra={"MANTIS_FS_SEED_MONITOR": "1"})
+    yield t
+    if t.proc.poll() is None:
+        t.proc.kill()
+    t.close()
+
+
+def test_down_arrow_manages_a_monitor_and_drills_into_its_script(term_with_monitor) -> None:
+    """↓ reaches a monitor with no agents running; Enter shows what it RUNS."""
+    term = term_with_monitor
+    term.ready()
+    term.expect("1 monitor")                    # footer roll-up
+    term.send("\x1b[B")                         # ↓ — manage
+    term.expect("Monitor google.com status")    # the monitor is in the list
+    term.send("\r")                             # Enter — drill in
+    term.expect("Monitor details")              # its own pane, not the agent one
+    term.expect("Status:")
+    term.expect("while true")                   # the script, verbatim
+    term.expect("x stop")                       # the stop affordance is real
+    term.send("\x1b[D")                         # ← back to the list
+    term.expect("Monitor google.com status")
+    term.esc()
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
+def test_slash_menu_scrolls_past_the_first_page(term) -> None:
+    """The real terminal proof for the `/` menu: it used to render opts[:8], so
+    only the first 8 commands were ever visible and arrowing down moved a
+    highlight that had already scrolled off. Walk past the first page and a
+    command that lives beyond it must scroll into view.
+
+    Asserting on the rendered command rather than the "13/47" counter on
+    purpose: prompt_toolkit redraws incrementally, so a counter ticking 12 -> 13
+    puts only the changed cell on the wire, never the whole string.
+    """
+    term.ready()
+    term.send("/")
+    term.expect("type to filter")     # menu up, and it says there is more
+    term.expect("/models")            # first page (index 0)
+    for _ in range(12):               # walk to index 12, well past the 8 rows
+        term.send("\x1b[B")
+    term.expect("rewind")             # index 12 — unreachable before this fix
+    term.esc()
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
+def test_cerebras_key_prompt_names_shape_and_console(term) -> None:
+    """Enabling a locked provider from the picker must say what to paste. The
+    prompt used to name only the env var (`CEREBRAS_API_KEY`), which tells a
+    first-time user neither the key's shape nor where to get one."""
+    term.ready()
+    term.send("/models\r")
+    term.expect("select a model")
+    term.send("gemma-4-31b")           # Cerebras-only id, so the row is unambiguous
+    term.expect("gemma-4-31b")
+    term.send("\x0b")                  # ^k — set a key for the highlighted row
+    term.expect("csk-")                # the key's actual shape…
+    term.expect("cloud.cerebras.ai")   # …and where to get one
+    term.esc()
+    term.esc()
+    term.send("/exit\r")
+    assert term.close() == 0
+
+
+def test_picker_tabs_mark_which_providers_are_live(tmp_path) -> None:
+    """The tab bar drew every unselected chip identically dim, so a provider
+    with a working key was indistinguishable from one never set up. Keyed
+    providers now carry a ✦; unkeyed ones stay bare."""
+    t = Term(str(tmp_path / "home"), str(tmp_path), env_extra={
+        "ANTHROPIC_API_KEY": "sk-ant-api03-" + "A" * 40,
+        "CEREBRAS_API_KEY": "csk-" + "C" * 40,
+    })
+    try:
+        t.ready()
+        t.send("/models\r")
+        t.expect("select a model")
+        t.expect("✦claude")            # keyed -> marked
+        t.expect("✦cerebras")
+        t.expect("groq")               # unkeyed -> present but unmarked
+        assert b"\xe2\x9c\xa6groq" not in t.buf, "unkeyed provider must not be starred"
+        t.esc()
+        t.send("/exit\r")
+        assert t.close() == 0
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+            t.close()
+
+
+def test_the_active_providers_tab_does_not_disappear(tmp_path) -> None:
+    """Switching to a provider used to delete its chip from the tab bar.
+
+    Provider groups dropped any model belonging to the active backend, because
+    the hidden ● active group already listed it — so with Cerebras selected the
+    "cerebras" chip vanished and its other models became unreachable from the
+    bar. The provider keeps its tab; only the cross-provider views dedupe."""
+    # MANTIS_AGENT_HOME *is* the agent dir — not a parent of ".mantis-agent".
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / "live_models.json").write_text(json.dumps(
+        {"cerebras": {"ts": time.time(),
+                      "models": ["gemma-4-31b", "gpt-oss-120b", "zai-glm-4.7"]}}))
+    t = Term(str(home), str(tmp_path),
+             env_extra={"CEREBRAS_API_KEY": "csk-" + "C" * 40},
+             model="zai-glm-4.7", backend="https://api.cerebras.ai/v1")
+    try:
+        t.ready()
+        t.send("/models\r")
+        # Assert the two facts separately: prompt_toolkit styles the title, so
+        # escapes sit between "select a model" and the model name in the stream.
+        t.expect("api.cerebras.ai")                 # we really are on Cerebras
+        t.expect("cerebras 3")                      # …and its tab still lists all 3
+        t.send("\x1b[C")                            # tabs are navigable to it
+        t.esc()
+        t.send("/exit\r")
         assert t.close() == 0
     finally:
         if t.proc.poll() is None:

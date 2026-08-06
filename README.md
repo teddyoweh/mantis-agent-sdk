@@ -253,6 +253,70 @@ Plus the OSS-specific bits the hosted SDKs don't need to think about:
 
 ---
 
+## Workflows — named multi-agent orchestration
+
+A **workflow** is a named template that fans subagents out across phases, runs
+in the background, and can be watched, controlled, and resumed. One mental
+model: `workflow › phase › agent`, and a workflow is also a background job — so
+it has an id and an observable status from the moment it starts.
+
+```
+/workflows list                                  # built-ins + yours, with source
+/workflows run review target=mantis_agent/agent.py
+▶ workflow review · run w2h94j · job #3 · 3 phases
+/workflows                                       # live viewer
+```
+
+```
+Workflows 1/2 · review (w2h94j) · job #3
+◇ Review    2/3    ❯● ◇ correctness: reading agent.py…   ▶ 12s · ↓4.1k tok
+✓ Verify    3/3      ● ✓ edge-cases: three findings…       28s · ↑9.2k tok
+↑↓ select · enter/→ inspect · ←/esc back · x stop · p pause/resume · c cancel · k skip · r retry · s save
+```
+
+`Enter` drills into one agent — its prompt, activity, tokens, cost, result or
+error. Controls that don't apply say *why* instead of failing silently. Five
+templates ship in the box (`understand` · `design` · `review` · `research` ·
+`implement`), and you add your own as Markdown:
+
+````markdown
+---
+name: review
+description: Review a change across dimensions, then verify each finding
+---
+
+Shared briefing — prepended to every agent's prompt.
+
+```json
+{
+  "inputs": [{"name": "target", "required": true}],
+  "phases": [
+    {"title": "Review", "mode": "parallel", "agents": [
+      {"label": "bugs", "agent_type": "explore", "prompt": "Review {target} for bugs."}
+    ]},
+    {"title": "Verify", "mode": "pipeline", "over": "phase:Review", "stages": [
+      {"agent_type": "verify", "prompt": "Try to refute:\n{item}"}
+    ]}
+  ]
+}
+```
+````
+
+Drop it in `.mantis/workflows/<name>.md` (project) or
+`$MANTIS_AGENT_HOME/workflows/<name>.md` (user) — project wins, and either
+overrides a built-in of the same name. Phases run `parallel` (barrier),
+`sequential` (each sees `{prev}`), or `pipeline` (one independent chain per
+item, no barrier).
+
+Every run is persisted to `$MANTIS_AGENT_HOME/workflows/runs/` — so
+`/workflows history` still lists it next week, and `/workflows resume <run-id>`
+replays every agent whose prompt is unchanged for free and re-runs only the
+rest. Credential-shaped inputs are redacted before anything is written.
+
+Full guide: [docs/guides/workflows.md](docs/guides/workflows.md).
+
+---
+
 ## Observability
 
 ```python

@@ -60,6 +60,13 @@ class Skill(msgspec.Struct, frozen=True, omit_defaults=True):
 
     ``category`` — optional taxonomy bucket for filtering ("safety",
     "domain/finance", "personality"). Free-form; the SDK doesn't enforce.
+
+    ``source`` — which tier the skill came from: ``"user"`` (the host's own —
+    a programmatically registered skill, or ``~/.mantis-agent/skills``) or
+    ``"project"`` (``<cwd>/.mantis/skills``, i.e. whatever the cloned repo
+    ships). Project-tier bodies are attacker-controlled system-prompt input, so
+    :mod:`mantis_agent.skill_trust` gates them; the default is ``"user"``
+    because anything constructed in-process belongs to the host.
     """
 
     name: str
@@ -68,6 +75,7 @@ class Skill(msgspec.Struct, frozen=True, omit_defaults=True):
     search_hint: str | None = None
     always_load: bool = False
     category: str | None = None
+    source: str = "user"
 
 
 # ---------------------------------------------------------------------------
@@ -269,9 +277,29 @@ def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
     """Scan the skill directories and return every ``SKILL.md`` as a
     :class:`Skill` (name defaults to the folder slug). Best-effort — unreadable
     or malformed files are skipped. Later dirs (project) override earlier ones
-    (user) by name."""
-    found: dict[str, Skill] = {}
+    (user) by name.
+
+    Project-tier skills (``<cwd>/.mantis/skills``) are withheld entirely until
+    the user trusts that repo's skill files — a skill body goes straight into
+    the system prompt, so a cloned repository must not be able to write there by
+    merely being cd-ed into. Gating at *discovery* rather than at use is the
+    stronger cut: a skill the model never sees in the catalog cannot be loaded,
+    matched, or asked for. See :mod:`mantis_agent.skill_trust` (and the mirror
+    of this gate for project MCP servers in ``mcp/manager.py``)."""
+    from .paths import get_mantis_agent_dir  # noqa: PLC0415
+    from .skill_trust import filter_untrusted_project_skills  # noqa: PLC0415
+
+    # Tiering is decided by "is this the USER's own directory?", never by
+    # position in the list: anything else _skill_dirs turns up is treated as
+    # project-tier, which is the fail-closed direction.
+    user_dir = get_mantis_agent_dir() / SKILLS_SUBDIR
+    scanned: list[Skill] = []
     for d in _skill_dirs(cwd):
+        try:
+            same = d.resolve() == user_dir.resolve()
+        except OSError:  # pragma: no cover — unresolvable path
+            same = d == user_dir
+        tier = "user" if same else "project"
         for md in sorted(d.glob("*/SKILL.md")):
             try:
                 meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
@@ -280,14 +308,21 @@ def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
             name = (meta.get("name") or md.parent.name).strip()
             if not name:
                 continue
-            found[name] = Skill(
+            scanned.append(Skill(
                 name=name,
                 description=meta.get("description", ""),
                 body=body,
                 search_hint=meta.get("search_hint") or meta.get("keywords"),
                 always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
                 category=meta.get("category"),
-            )
+                source=tier,
+            ))
+    # Filter BEFORE the name merge, so an untrusted project skill can't shadow
+    # (or delete) a user skill of the same name just by claiming it.
+    kept, _withheld = filter_untrusted_project_skills(scanned, cwd)
+    found: dict[str, Skill] = {}
+    for s in kept:
+        found[s.name] = s
     return list(found.values())
 
 

@@ -41,6 +41,17 @@ The parent passes its provider into the child by default so the child reuses
 the open HTTP connection pool — that's the single biggest perf win for the
 common asyncio_task case, and it's why we don't make people wire it up by
 hand.
+
+Activity
+--------
+Every factory here takes an optional ``registry`` (an
+:class:`~mantis_agent.activity.registry.ActivityRegistry`). Given one, a run
+becomes a node of kind ``subagent`` in the unified activity tree, parented to
+the tool call that invoked it, and its progress lines land on that node instead
+of only on the parent job. That is instrumentation, not behaviour: emission
+goes through ``activity.emit``, which no-ops on ``None`` and swallows registry
+errors, on the principle ``JobManager._fire_on_event`` already applies — a
+broken observer must never change the outcome of the work it observes.
 """
 
 from __future__ import annotations
@@ -51,7 +62,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, overload
 
-from .agent import Agent
+from .activity import emit as activity_emit
+from .activity import status as activity_status
+from .activity.ids import make_id
+from .agent import Agent, aclose_stream
 from .providers.base import Provider
 from .tools import Tool, ToolRegistry, tool
 from .types import AssistantMessage, Message, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage
@@ -61,7 +75,120 @@ IsolationMode = Literal["asyncio_task", "subprocess", "remote"]
 _RUN_COUNTER = itertools.count(1)  # live-progress ids for task-tool runs
 
 
+# ---------------------------------------------------------------------------
+# Activity emission
+# ---------------------------------------------------------------------------
+# A subagent run had identity (``_RUN_COUNTER``) but no *node*: its turns, its
+# tools and its result were written onto the parent job by
+# ``_update_job_progress``, which is why a child collapsed into its parent
+# everywhere but the ``on_progress`` feed. The helpers below give a run its own
+# node in the unified activity tree.
+#
+# This is instrumentation on top of working code, so it obeys the two rules
+# ``activity.emit`` is built around and ``JobManager._fire_on_event`` set the
+# precedent for:
+#
+# * ``registry is None`` — the default, and every existing construction — costs
+#   one comparison. No id is built, no event is constructed, no ``try`` entered.
+# * Nothing here may raise into the run. ``activity.emit`` already swallows
+#   registry errors; the id derivation and parent lookup are wrapped for the
+#   same reason, because they run inside a child's ``finally``, including its
+#   cancellation path, where an exception would rewrite the run's own outcome.
+
+
+def _subagent_node_id(run_id: Any) -> str:
+    """``sub:<run>`` for a run counter value, or ``""`` if it can't be spelled.
+
+    An unusable id is a lost node, never an error — the caller skips emission
+    when this returns empty.
+    """
+
+    try:
+        return make_id("subagent", run_id)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _twin_node_id(peer: str) -> str:
+    """``sub:twin/<peer>`` — one stable node per twin, for the life of the session.
+
+    Scoped rather than counted because a twin is *named*, not numbered: the same
+    peer must land on the same node across every exchange, and the shared
+    ``twin`` scope is what turns ``/twin`` into a filter over the tree. ``peer``
+    is model-authored, which ``make_id`` normalizes without raising.
+    """
+
+    try:
+        return make_id("subagent", "twin/" + peer)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _session_node_id(reg: Any) -> str | None:
+    """The session root, when one has been announced; ``None`` otherwise."""
+
+    try:
+        if reg is None or not getattr(reg, "session_id", ""):
+            return None
+        root = make_id("session", reg.session_id)
+        return root if root in reg.nodes else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _activity_parent(reg: Any, parent: Any = None) -> str | None:
+    """The node a subagent run hangs off (plan §9: the tool call that spawned it).
+
+    Resolution order, strongest first:
+
+    1. ``parent`` as given — a node id, or a zero-arg callable returning one, so
+       a host that tracks the current tool call can hand over the exact node
+       (the tool is built once per session, but the invoking node changes per
+       call, so a static value alone cannot express it).
+    2. The newest still-running ``tool`` node in the registry. Tool nodes are
+       created by the layer that dispatches the call and closed when it returns,
+       so at the moment a subagent starts, the live one is the call that started
+       it. With several tool calls dispatched in parallel this can attribute a
+       child to a sibling call; that is a display-level mis-parent, and the
+       explicit parent above is the cure.
+    3. The session root, when one has been announced — a child of the session is
+       still better than a second root.
+    4. ``None``: a root node. A dangling or missing parent never hides a node —
+       :meth:`ActivityRegistry.roots` treats it as a root.
+    """
+
+    if reg is None:
+        return None
+    try:
+        if callable(parent):
+            parent = parent()
+        if isinstance(parent, str) and parent:
+            return parent
+        newest: str | None = None
+        for node in reg.nodes.values():  # creation order
+            if node.kind == "tool" and not activity_status.is_terminal(node.status):
+                newest = node.id
+        if newest is not None:
+            return newest
+    except Exception:  # noqa: BLE001 — a missing parent is a root, not a failure
+        return None
+    return _session_node_id(reg)
+
+
+def _terminal_status(exc: BaseException) -> str:
+    """Map a child's escaping exception onto the unified vocabulary.
+
+    ``CancelledError`` is a ``BaseException`` on every Python this package
+    supports, so "not an ``Exception``" is exactly "the run was torn down" —
+    no ``asyncio`` import needed to tell the two apart.
+    """
+
+    return activity_status.ERROR if isinstance(exc, Exception) else activity_status.CANCELLED
+
+
 def _job_log(job: Any, text: str) -> None:
+    if job is None:
+        return
     try:
         if hasattr(job, "record_event"):
             job.record_event(text)
@@ -77,7 +204,25 @@ def _short_text(s: str, limit: int = 90) -> str:
     return s if len(s) <= limit else s[:limit - 1] + "…"
 
 
-def _update_job_progress(job: Any, msg: Message) -> None:
+def _update_job_progress(
+    job: Any, msg: Message, *, reg: Any = None, node_id: str = ""
+) -> None:
+    """Mirror one child message onto the parent job **and** the child's own node.
+
+    The job write is the original behaviour and stays exactly as it was: the
+    live inspector reads ``job.last_event`` / ``job.tool_count`` / ``last_tool``
+    today, and ``/job <id>`` renders from them. What is added is the *same* line
+    against the subagent's node, which is what stops a child's work from being
+    readable only as its parent's. ``reg is None`` costs one comparison per
+    line; ``job is None`` (a foreground run, which has no job at all) is now a
+    supported call rather than four swallowed ``AttributeError``s.
+    """
+
+    def _line(text: str) -> None:
+        _job_log(job, text)
+        if reg is not None and node_id:
+            activity_emit.node_activity(reg, node_id, text)
+
     if isinstance(msg, AssistantMessage):
         try:
             job.turn_count += 1
@@ -87,7 +232,7 @@ def _update_job_progress(job: Any, msg: Message) -> None:
             b.text for b in msg.content if isinstance(b, TextBlock)
         ))
         if text:
-            _job_log(job, f"assistant: {text}")
+            _line(f"assistant: {text}")
         for block in msg.content:
             if isinstance(block, ToolUseBlock):
                 try:
@@ -99,13 +244,13 @@ def _update_job_progress(job: Any, msg: Message) -> None:
                 if isinstance(block.input, dict):
                     desc = str(block.input.get("description") or block.input.get("path")
                                or block.input.get("pattern") or block.input.get("command") or "")
-                _job_log(job, f"tool {block.name}{(': ' + _short_text(desc, 70)) if desc else ''}")
+                _line(f"tool {block.name}{(': ' + _short_text(desc, 70)) if desc else ''}")
     elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
         for block in msg.content:
             if isinstance(block, ToolResultBlock):
                 status = "error" if block.is_error else "result"
                 content = block.content if isinstance(block.content, str) else ""
-                _job_log(job, f"{status}: {_short_text(content, 90)}")
+                _line(f"{status}: {_short_text(content, 90)}")
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +284,10 @@ class SubAgentSpec:
     # spend cap. ``None`` leaves the child ungated / uncapped (v0 behaviour).
     permissions: Any = None
     budget: Any = None
+    # Optional ActivityRegistry. Threaded exactly like the two above — a
+    # defaulted field, so every existing construction is untouched — and used
+    # only to mirror the run as a node. ``None`` (the default) emits nothing.
+    registry: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +380,29 @@ class SubAgentTool(Tool):
 
         # The child sees a single user turn: the prompt the parent passed in.
         messages: list[Message] = [UserMessage(content=prompt)]
-        await child.run(messages)
+        reg = self._spec.registry
+        node_id = _subagent_node_id(next(_RUN_COUNTER)) if reg is not None else ""
+        if node_id:
+            activity_emit.node_created(
+                reg,
+                node_id,
+                _activity_parent(reg),
+                "subagent",
+                f"{self._spec.name}: {prompt}",
+                detail="%d tools" % len(self._spec.tools),
+                model=self._spec.model,
+                source="model",
+            )
+            activity_emit.node_status(reg, node_id, activity_status.RUNNING)
+        outcome, error = activity_status.DONE, None
+        try:
+            await child.run(messages)
+        except BaseException as exc:
+            outcome, error = _terminal_status(exc), f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            if node_id:
+                activity_emit.node_status(reg, node_id, outcome, error)
         return _extract_final_text(messages)
 
 
@@ -564,6 +735,10 @@ BUILTIN_AGENT_TYPES: tuple[AgentType, ...] = (
 # plan-mode/todo handoffs that belong to the parent session.
 _SUBAGENT_EXCLUDED_TOOLS = frozenset({
     "task", "ask_user_question", "exit_plan_mode", "todo_write",
+    # Orchestration tools are parent-only: a child that can start its own
+    # workflow turns one fan-out into a fan-out of fan-outs, and the cost of
+    # that compounds invisibly.
+    "coordinate", "workflow",
 })
 
 
@@ -734,6 +909,8 @@ def make_task_tool(
     agent_types: list[AgentType] | None = None,
     on_progress: Any = None,
     jobs: Any = None,
+    registry: Any = None,
+    activity_parent_id: Any = None,
 ) -> Tool:
     """Build the ``task`` tool: the parent delegates a focused, multi-step task
     to a fresh subagent that runs to completion and returns just its findings.
@@ -749,9 +926,21 @@ def make_task_tool(
     under the same USD/token cap instead of spending unbounded.
 
     ``max_steps`` is a floor for backward compatibility: an agent type's own
-    budget wins when larger."""
+    budget wins when larger.
+
+    ``registry`` is an optional
+    :class:`~mantis_agent.activity.registry.ActivityRegistry`. When given, each
+    run becomes its own node in the activity tree — created when it starts,
+    fed the same progress lines that go to the parent job, and closed with a
+    terminal status — so a delegated child is finally visible as itself rather
+    than as extra turns on whatever spawned it. ``activity_parent_id`` names the
+    node that node hangs off (see :func:`_activity_parent`); a callable is
+    accepted because the invoking tool call changes per call while this tool is
+    built once. Omit both (the default, and every existing construction) and the
+    tool behaves exactly as before, making no emission calls at all."""
     types = agent_types if agent_types is not None else discover_agent_types()
     by_name = {t.name: t for t in types}
+    reg = registry   # the ACTIVITY registry, distinct from the child's ToolRegistry
 
     @tool(name="task", is_read_only=True, is_concurrency_safe=True,
           input_schema=_task_schema(types))
@@ -768,10 +957,13 @@ def make_task_tool(
         # Live progress: wrap this run's kit so every child tool call pings
         # on_progress — the TUI renders "⎿ explore · 6 tools · 42s" under the
         # spinner instead of a silent 90s Delegate line.
-        run_id = None
+        # One run id serves both consumers: the ``on_progress`` feed the TUI
+        # already renders, and the activity node this run gets. It is minted
+        # when either is listening and never otherwise, so a plain SDK ``task``
+        # call still consumes nothing.
+        run_id = next(_RUN_COUNTER) if (on_progress is not None or registry is not None) else None
         if on_progress is not None:
             import copy  # noqa: PLC0415
-            run_id = next(_RUN_COUNTER)
             try:
                 on_progress({"id": run_id, "phase": "start", "type": type_name,
                              "desc": str((args or {}).get("description") or ""),
@@ -783,11 +975,36 @@ def make_task_tool(
                 orig = t.fn
 
                 async def fn(*a: Any, _orig: Any = orig, _name: str = t.name, **kw: Any) -> Any:
+                    # Two events per call: one when it STARTS (so a slow grep
+                    # shows what it's grepping for while it runs) and one when
+                    # it returns, carrying a shape-only summary of the result.
+                    # The consumer updates the first in place rather than
+                    # appending, so a call stays one line.
+                    from .tool_preview import tool_arg_preview  # noqa: PLC0415
+
                     try:
-                        on_progress({"id": run_id, "phase": "tool", "tool": _name})
+                        on_progress({"id": run_id, "phase": "tool", "tool": _name,
+                                     "arg": tool_arg_preview(_name, kw), "args": dict(kw)})
                     except Exception:  # noqa: BLE001
                         pass
-                    return await _orig(*a, **kw)
+                    try:
+                        out = await _orig(*a, **kw)
+                    except BaseException as e:
+                        # A raising tool is exactly what you want to see in the
+                        # inspector — don't let the failure vanish from the feed.
+                        try:
+                            on_progress({"id": run_id, "phase": "tool_done", "tool": _name,
+                                         "arg": tool_arg_preview(_name, kw),
+                                         "error": f"{type(e).__name__}: {e}"})
+                        except Exception:  # noqa: BLE001
+                            pass
+                        raise
+                    try:
+                        on_progress({"id": run_id, "phase": "tool_done", "tool": _name,
+                                     "arg": tool_arg_preview(_name, kw), "result": out})
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return out
                 # Shallow-copy preserves the concrete type (SubAgentTool /
                 # WrappedAgentTool have custom __init__ signatures that
                 # ``dataclasses.replace`` can't reconstruct) and its extra
@@ -796,9 +1013,14 @@ def make_task_tool(
                 wrapped.fn = fn  # type: ignore[assignment]
                 return wrapped
             kit = [_wrap(t) for t in kit]
-        registry = ToolRegistry()
+        # Named for what it holds — the child's tools — because ``registry``
+        # now also means the activity registry in this function.
+        child_tools = ToolRegistry()
         if kit:
-            registry.add(*kit)
+            child_tools.add(*kit)
+        # Resolved once per call, at the moment the model invoked ``task``, so
+        # the live tool node found is the call that is running right now.
+        parent_node_id = _activity_parent(reg, activity_parent_id)
 
         async def _execute(job: Any = None) -> str:
             # A type-level model override still uses the PARENT's provider/
@@ -816,7 +1038,7 @@ def make_task_tool(
                 provider=provider,
                 backend=backend,
                 system=at.system_prompt,
-                tools=registry,
+                tools=child_tools,
                 max_steps=max(max_steps, at.max_steps),
                 permissions=permissions,
                 budget=budget,   # inherit the parent's USD/token spend cap
@@ -826,11 +1048,44 @@ def make_task_tool(
             messages: list[Message] = [UserMessage(content=prompt)]
             child_model = at.model or model
             acc_usage: Any = None  # running ModelUsage: latest input + summed output
+            # Bound before the try: the branch below is conditional, and the
+            # finally closes this unconditionally.
+            _stream: Any = None
+            # This run's own node, announced immediately before the try that
+            # closes it — everything between the two is covered, so a node can
+            # never be left running by a failure. A backgrounded run hangs off
+            # its job node rather than the tool call: the job is what outlives
+            # the call, and it is the node ``JobManager`` emits for this work.
+            node_id = _subagent_node_id(run_id) if (reg is not None and run_id) else ""
+            if node_id:
+                parent = parent_node_id
+                if job is not None:
+                    try:
+                        parent = make_id("job", job.id)
+                    except Exception:  # noqa: BLE001
+                        parent = parent_node_id
+                activity_emit.node_created(
+                    reg,
+                    node_id,
+                    parent,
+                    "subagent",
+                    "%s: %s" % (at.name, str((args or {}).get("description") or prompt)),
+                    detail="%d tools" % len(kit),
+                    model=child_model,
+                    source="model",
+                )
+                activity_emit.node_status(reg, node_id, activity_status.RUNNING)
+            outcome, error = activity_status.DONE, None
             try:
                 if hasattr(child, "run_iter"):
-                    async for msg in child.run_iter(messages):
-                        if job is not None:
-                            _update_job_progress(job, msg)
+                    _stream = child.run_iter(messages)
+                    async for msg in _stream:
+                        if job is not None or node_id:
+                            # One call, two destinations: the parent job's
+                            # counters (what the live inspector reads today) and
+                            # this run's own node (what stops the child from
+                            # being readable only as its parent).
+                            _update_job_progress(job, msg, reg=reg, node_id=node_id)
                         # Additive per-turn progress: carry the child's model and
                         # accumulated token usage so a viewer (e.g. /workflows)
                         # can show per-agent tokens/model. Existing consumers read
@@ -850,13 +1105,31 @@ def make_task_tool(
                                 pass
                 else:
                     await child.run(messages)
+            except BaseException as exc:
+                outcome, error = _terminal_status(exc), f"{type(exc).__name__}: {exc}"
+                raise
             finally:
+                # Close the stream in THIS task. run_iter holds the tool executor's
+                # task group open across its yields, so letting the event loop
+                # finalize it later raises "exit cancel scope in a different task".
+                await aclose_stream(_stream)
                 if on_progress is not None and run_id is not None:
                     try:
                         on_progress({"id": run_id, "phase": "end"})
                     except Exception:  # noqa: BLE001
                         pass
-            return _extract_final_text(messages) or "(subagent produced no output)"
+                # In the ``finally`` so a cancelled or failed run still closes
+                # its node — an activity tree whose children never end is worse
+                # than one that says nothing.
+                if node_id:
+                    activity_emit.node_status(reg, node_id, outcome, error)
+            # Stamp the child's identity + tool policy into the neutralized
+            # envelope: when a report DOES carry framing, the parent should be
+            # able to see which agent (and how privileged) produced it.
+            policy = at.tools if isinstance(at.tools, str) else ",".join(at.tools)
+            return _extract_final_text(
+                messages, agent=at.name, tools_policy=policy,
+            ) or "(subagent produced no output)"
 
         wants_bg = bool((args or {}).get("run_in_background"))
         if wants_bg and jobs is not None:
@@ -959,6 +1232,7 @@ def make_pair_tool(
     max_history: int = 60,
     conversations: dict[str, list[Message]] | None = None,
     personas: dict[str, str] | None = None,
+    registry: Any = None,
 ) -> Tool:
     """Build the ``pair`` tool: converse with persistent same-model twins.
 
@@ -969,13 +1243,22 @@ def make_pair_tool(
 
     Pass ``conversations``/``personas`` to own the twin state externally — the
     TUI does this so twins survive agent rebuilds AND so the user's ``/twin``
-    command talks to the SAME twins the model's ``pair`` calls do."""
+    command talks to the SAME twins the model's ``pair`` calls do.
+
+    ``registry`` is an optional
+    :class:`~mantis_agent.activity.registry.ActivityRegistry`. Each twin gets
+    ONE long-lived node — ``sub:twin/<peer>`` — reused across every exchange
+    with that peer, so ``/twin`` becomes a filter over the activity tree rather
+    than a separate list. Twins are roots (or children of the session root):
+    they outlive any single tool call, so parenting one to the call that
+    happened to speak first would make a stale node the owner of a live one."""
     conversations = conversations if conversations is not None else {}
     personas = personas if personas is not None else {}
+    reg = registry   # the ACTIVITY registry, distinct from the twin's ToolRegistry
 
-    registry = ToolRegistry()
+    child_tools = ToolRegistry()
     if tools:
-        registry.add(*tools)
+        child_tools.add(*tools)
 
     @tool(name="pair", is_read_only=True, is_concurrency_safe=False,
           input_schema=_PAIR_SCHEMA)
@@ -996,22 +1279,38 @@ def make_pair_tool(
             provider=provider,  # share the parent's HTTP pool
             backend=backend,
             system=_TWIN_SYSTEM.format(peer=peer, persona=personas[peer]),
-            tools=registry,
+            tools=child_tools,
             max_steps=max_steps,
             include_recall=False,
             include_env=False,
         )
+        # One node per peer, announced on every exchange: the registry treats a
+        # re-announced node as a retry and keeps the original, so this is how a
+        # twin's node stays the SAME node from its first message to its last.
+        node_id = _twin_node_id(peer) if reg is not None else ""
+        if node_id:
+            activity_emit.node_created(
+                reg, node_id, _session_node_id(reg), "subagent", f"twin {peer}",
+                detail=_short_text(personas.get(peer) or "", 60),
+                model=model, source="model",
+            )
+            activity_emit.node_status(reg, node_id, activity_status.RUNNING)
+            activity_emit.node_activity(reg, node_id, f"you: {_short_text(message)}")
         rollback_to = len(history)
         history.append(UserMessage(content=message))
         try:
             await child.run(history)
-        except BaseException:
+        except BaseException as exc:
             # A failed turn must not poison the persistent history: run()
             # mutates `history` in place, so a mid-turn exception can leave a
             # user message with no assistant reply (or a half-written pair),
             # which corrupts the twin's next turn. Roll back to the pre-turn
             # state so the sliding window stays well-formed.
             del history[rollback_to:]
+            if node_id:
+                activity_emit.node_status(
+                    reg, node_id, _terminal_status(exc), f"{type(exc).__name__}: {exc}"
+                )
             raise
         # Trim from the FRONT (oldest exchanges) so the twin's memory is a
         # sliding window; never split a user/assistant pair.
@@ -1020,6 +1319,13 @@ def make_pair_tool(
             while history and isinstance(history[0], AssistantMessage):
                 history.pop(0)
         reply = _extract_final_text(history)
+        if node_id:
+            # ``done`` per exchange, not once at the end: a twin between
+            # messages is idle, and the node is revived by the next call's
+            # ``running``. A twin left non-terminal would sit in the rail's
+            # live counts for the whole session.
+            activity_emit.node_activity(reg, node_id, f"{peer}: {_short_text(reply)}")
+            activity_emit.node_status(reg, node_id, activity_status.DONE)
         return f"[{peer}] {reply}" if reply else f"[{peer}] (no reply)"
 
     pair.description = (
@@ -1079,13 +1385,40 @@ def make_job_output_tool(jobs: Any) -> Tool:
     return job_output
 
 
-def _extract_final_text(messages: list[Message]) -> str:
+def _extract_final_text(
+    messages: list[Message],
+    *,
+    agent: str = "",
+    tools_policy: str = "",
+) -> str:
     """Pick the last assistant message and stitch its text blocks together.
 
     If the child ran out of turns without producing text (e.g. last turn was
     all tool calls), fall back to a stable marker so the parent model can
     still reason about what happened.
+
+    The child's text is UNTRUSTED: it becomes a ``ToolResultBlock`` in the
+    parent's context, so a child that merely *quotes* a hostile file would
+    otherwise paste that file's ``<system-reminder>`` block, forged role
+    turns, ANSI escapes or bidi overrides straight into the parent's
+    reasoning. Everything therefore goes through
+    :func:`~mantis_agent.child_report.neutralize_if_needed`, which scrubs
+    control characters/invisibles, *escapes* (never deletes) framing markers,
+    caps the length, and seals the result in a nonce-delimited envelope the
+    child cannot close. A report with nothing structural in it comes back
+    byte-identical, which is why the non-context callers (session titles,
+    advisor replies) still get clean text.
+
+    ``agent``/``tools_policy`` are optional labels stamped into that envelope
+    so the parent can see *which* child spoke; they are keyword-only with
+    empty defaults, so every existing call site is unaffected.
+
+    The two ``<sub-agent …>`` fallback markers are OUR text, not the child's,
+    and pass through unwrapped — but they still go through the same call,
+    because ``stop_reason`` comes off the wire and is not ours to trust.
     """
+
+    from .child_report import neutralize_if_needed  # noqa: PLC0415 — avoid import cycle
 
     for msg in reversed(messages):
         if isinstance(msg, AssistantMessage):
@@ -1095,9 +1428,15 @@ def _extract_final_text(messages: list[Message]) -> str:
                     parts.append(blk.text)
             text = "".join(parts).strip()
             if text:
-                return text
+                return neutralize_if_needed(
+                    text, agent=agent, tools_policy=tools_policy,
+                )
             # No text in the final assistant turn — surface stop_reason.
-            return f"<sub-agent finished with stop_reason={msg.stop_reason!r} and no text>"
+            return neutralize_if_needed(
+                f"<sub-agent finished with stop_reason={msg.stop_reason!r} and no text>",
+                agent=agent,
+                tools_policy=tools_policy,
+            )
     return "<sub-agent produced no assistant message>"
 
 

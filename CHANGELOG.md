@@ -8,6 +8,133 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.62.0] - 2026-08-06
+
+### Added
+
+- **`mantis update` — self-update that knows how you installed it.** Upgrading
+  meant remembering whether this box used `uv tool`, `pipx` or pip, and running
+  the wrong one produces an "upgrade" that silently changes nothing. The command
+  detects the install mode from the interpreter's location and runs the matching
+  updater. `--check` reports the available version without installing and exits
+  `1` when an upgrade is waiting, so it composes into a shell condition.
+
+  Two details that come from the failure modes rather than the happy path: a
+  uv-created venv contains no `pip`, so `python -m pip` would die with "No module
+  named pip" — mantis detects that and installs through `uv` into the same
+  interpreter instead. And an **editable install is never touched**: that's a
+  working checkout, potentially with uncommitted changes, so the command prints
+  the `git pull` you'd want and exits rather than running anything. Version
+  comparison is a self-contained PEP 440 subset (`packaging` is not a
+  dependency) that gets 2.61 > 2.9 right — a string compare does not, and would
+  report "up to date" forever once the minor hit double digits. The in-terminal
+  `/update` now shares this detection so the two can't disagree. Subcommands are
+  also listed in `mantis --help`, which previously advertised none of them.
+
+- **Named workflows — declarative multi-agent orchestration, end to end.** The
+  workflow engine shipped in 2.59.0 could run phases, fan out and pipeline, but
+  nothing ever reached it: `/workflows` rendered an empty list because no code
+  path registered a run. This closes that loop and adds the layer that was
+  missing above it — a **named definition** you can invoke, watch, control,
+  persist and resume.
+
+  A definition is Markdown with frontmatter plus a fenced `json` phase graph —
+  the same file shape as `agents/*.md` and `skills/*/SKILL.md` — discovered from
+  `./.mantis/workflows/*.md` (project) and `$MANTIS_AGENT_HOME/workflows/*.md`
+  (user), with project > user > built-in precedence by name. Data, not code:
+  Python has no sandbox worth trusting, so where Claude Code evaluates a
+  model-authored script, this walks a validated phase list. Phases run
+  `parallel` (barrier), `sequential` (each agent sees `{prev}`), or `pipeline`
+  (one independent chain per item from an earlier phase or an input, no
+  barrier). Prompts template over `{input}`, `{phase:Title}`, `{item}`,
+  `{prev}`, `{index}`; unknown placeholders are left literal so prompts
+  containing JSON survive. Validation reports every problem at once, a broken
+  file is skipped rather than fatal, and a definition (or a runtime fan-out)
+  over 64 agents is refused before anything is spent.
+
+  Five built-ins ship as examples worth using: `understand` (parallel readers →
+  brief), `design` (independent approaches → judge → recommendation), `review`
+  (dimensions → adversarial verify per dimension → report), `research`
+  (multi-modal sweep → deep read → sourced answer), `implement` (plan →
+  implement → verify).
+
+- **`workflow` tool + `/workflows run`.** Both go through one launch path, so a
+  model-started run and a user-started run are the same object. It backgrounds
+  through the existing `JobManager` and returns a run id **and** a job id
+  immediately; `/jobs` shows lifecycle, `/workflows` shows structure, and each
+  names the other. The tool description is explicit that workflows spawn many
+  agents and are only for orchestration the user actually asked for;
+  `MANTIS_AGENT_DISABLE_WORKFLOWS=1` turns it into a clear refusal. Children
+  inherit the parent's permission gate and budget, and orchestration tools
+  (`task`, `coordinate`, `workflow`) are now stripped from subagents so a
+  fan-out cannot recursively fan out.
+
+- **Durable run history + resume.** Every run — including one that was stopped
+  or failed — is written to `$MANTIS_AGENT_HOME/workflows/runs/<id>.json`.
+  `/workflows history` lists past runs; `/workflows resume <run-id>` replays
+  every agent whose phase, label and prompt digest are unchanged (instant,
+  free, marked `replayed`) and re-runs the rest. Cache identity is
+  content-addressed, so editing a prompt correctly invalidates that agent and
+  everything downstream. Inputs whose names look like credentials are stored as
+  `[redacted]` and never resurrected on resume.
+
+- **`/workflows` is a real viewer.** Multiple concurrent runs are one navigable
+  list; the header names the selected run, its position, its job and whether
+  it's paused. Controls that were implemented but unreachable are now bound and
+  documented in the footer: stop, pause/resume, **cancel agent**, **skip
+  agent**, **retry agent**, save. Every action routes through one eligibility
+  check that returns a sentence either way, so a key pressed on a finished run
+  explains itself instead of doing nothing. Drill-down now shows the agent's
+  prompt, its full recent activity, model/type/status, timing, usage and cost,
+  and its result or error — with its workflow and job named. Never hidden
+  reasoning: the engine records tool names and visible text only. The empty
+  state teaches the command that starts a run and lists what's available.
+
+### Changed
+
+- `coordinate` runs now register with `/workflows` too (new `on_run` hook), so
+  the live viewer covers both orchestration tools.
+- `AgentRun` gained serialized `prompt` and `replayed` fields; `WorkflowRun`
+  gained `definition`, `job_id` and `resumed_from`. `Job` gained `workflow_id`.
+- `Workflow.agent()` accepts `cached=` — register an agent as already-complete
+  from a stored result. This is the resume path.
+- Workflow run ids now carry a process-wide sequence as well as a clock slice.
+  Two workflows created in the same millisecond previously shared an id, which
+  would have collided in the viewer, the job link and the on-disk artifact.
+
+### Fixed
+
+- **Claude subscription tokens can reach Opus, Sonnet and Fable again — not just
+  Haiku.** With an OAuth token (`sk-ant-oat…`), every premium model answered
+  `429 rate_limit_error {"message": "Error"}` while Haiku returned 200. The
+  opaque body reads like a spent quota and is not one: Anthropic grants a
+  subscription token the premium models only on requests carrying the Claude
+  Code identity, and mantis never sent it. The passthrough provider now leads
+  with that identity as a standalone first `system` block (folding the string
+  into the caller's own system text does *not* satisfy the check — it has to be
+  its own block). API keys and gateway Bearer tokens are untouched, and the
+  prompt-cache breakpoint moved to the last block so the cached prefix still
+  covers everything.
+
+  Two things fell out of the same code path. A custom `anthropic_beta` was
+  *replacing* the `oauth-2025-04-20` header rather than appending to it, which
+  would 401 an otherwise valid token; betas now merge. And `mantis setup`'s
+  credential probe sent neither the beta header nor the identity block, so it
+  validated Opus as `credential OK (Error)` — a pass for a request shape mantis
+  doesn't send. It now mirrors the real provider and genuinely verifies.
+
+  The `/update`-adjacent 429 hint was also wrong as a result of this bug: it told
+  people the model "isn't available on a Claude subscription token" and to switch
+  to Haiku. With the request fixed, a 429 here really is a spent usage window,
+  and the hint says so.
+
+### Public API
+
+- Added (MINOR): `AgentRun`, `Phase`, `Workflow`, `WorkflowRun`,
+  `WorkflowError`, `WorkflowDefinition`, `WorkflowDefinitionError`,
+  `discover_workflow_definitions`, `load_workflow_definition`,
+  `make_workflow_tool`.
+
 ## [2.61.0] - 2026-08-01
 
 ### Changed
@@ -18,6 +145,39 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ### Added
 
+- **Model-authored workflow scripts.** The `workflow` tool now takes a
+  `script` as well as a `name`: the model writes the orchestration itself
+  against the engine's own API — `agent()`, `parallel()`, `pipeline()`,
+  `phase()`, `log()`, `args`, `budget` — instead of choosing between a fixed
+  fan-out (`coordinate`) and a definition a human wrote down.
+
+  This is what makes the rest of the engine reachable. A declarative definition
+  is data, and data cannot express *loop until two consecutive rounds find
+  nothing new* or *scale the fan-out to the budget that's left* — the shapes
+  that make an orchestration engine worth having. Telling: the `parallel`-inside-
+  `pipeline` deadlock fixed above survived because nothing model-facing could
+  reach that pattern.
+
+  Scripts run through an AST allowlist: loops, conditionals, comprehensions,
+  f-strings, `try`/`except`, `def` and `lambda` are available; imports, dunder
+  and `_`-prefixed attribute access, `eval`/`exec`/`open`/`getattr` and the
+  filesystem are not. Agents a script spawns inherit the parent's tools,
+  permissions and budget unchanged, so authoring orchestration never widens what
+  runs inside it, and the concurrency cap still applies. This is a guardrail,
+  not a security boundary — the author is the session's own model, which can
+  usually already run shell commands.
+
+  Scripts are validated before anything spawns, so a rejected one costs nothing,
+  and the AST is wrapped in an async function rather than re-indented into a
+  string so runtime errors carry the line number from the model's own source.
+  `meta` is read as a literal up front, so the run is named and its phase rail
+  drawn from the moment it starts.
+
+  This reverses an explicit design decision recorded in `workflow_tool`'s
+  docstring ("model-authored code is not something you want `exec()`-ed inside
+  the user's process… everything that matters about a workflow is data, not
+  control flow"). The docstring now records the reversal and what was kept of
+  the original reasoning.
 - **Advisor — pair a stronger model to consult at decision points.** Most
   turns of a long task are routine; a handful decide whether it works.
   `mantis --advisor opus`, `/advisor opus`, `advisorModel` in settings or
@@ -42,6 +202,72 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ### Fixed
 
+- **A tool call cut off by the output cap was reported as bad JSON syntax,
+  which sent the model into a retry loop.** Writing a large file can push the
+  `content` argument past `max_tokens` (8192 by default), leaving the arguments
+  JSON ending mid-string. Mantis answered with "not valid JSON — re-issue a
+  well-formed object": the wrong diagnosis and the opposite of the fix. The
+  model's syntax was fine, so it faithfully re-emitted the same oversized call
+  and truncated at the identical point, burning a full generation per attempt
+  until the anti-runaway guard finally tripped. The stream already carried
+  `stop_reason="max_tokens"` and nothing consulted it.
+
+  Truncation is now told apart from malformation structurally — a cut-off
+  payload is a well-formed *prefix* (structures still open, or ending inside a
+  string), where a genuine syntax error is balanced but wrong — and the model is
+  told it hit the output limit, given the actual `max_tokens` value, and told to
+  split the write. Balanced-but-wrong payloads still get the original message,
+  which is correct for them.
+- **"No failures found." was reported as `VERDICT: FAIL`.** When a verifier
+  didn't end with the exact `VERDICT: X` contract line, `_parse_verdict` scanned
+  the *whole* report for a bare substring and tested `FAIL` first — so the most
+  natural way to report success inverted, and any long report that mentioned a
+  failure mode in passing came back as a failure. `coordinate` hands that
+  verdict to the parent model as the result of the run. The fallback now reads
+  only the final line and only accepts a standalone uppercase token; a verifier
+  that stated no verdict is reported as `VERDICT: NOT STATED` with its report
+  attached, rather than being assigned one it never gave.
+- **Workflow deadlock: any nested fan-out hung forever.** The concurrency
+  limiter was acquired by `parallel()` around each whole thunk and by
+  `pipeline()` around each whole stage. `anyio.CapacityLimiter` is not
+  reentrant, so a stage or thunk that itself fanned out held a slot while
+  waiting on children that could never acquire one. That made the engine's two
+  canonical patterns — `parallel` inside a `pipeline` stage (fan out, then
+  verify each item's findings) and `parallel` inside `parallel` (a judge panel)
+  — deadlock as soon as the outer fan-out reached the cap. It passed every
+  existing test because they are all flat or run with a cap above their
+  fan-out, and since the cap is `min(16, cpu-2)` whether a given workflow hung
+  depended on the machine it ran on.
+
+  The limiter is now held around the child agent run itself and nowhere else,
+  so orchestration wrappers own no slots and nesting is safe at any depth. The
+  bound is unchanged in meaning and still exact — measured peak concurrent
+  agents equals the cap for flat, nested and three-deep shapes alike. A
+  `stop()` with a full queue now drains promptly (agents waiting on the limiter
+  re-check for cancellation on acquire rather than each running a full turn).
+- **`Attempted to exit cancel scope in a different task` killed the event
+  loop.** `Agent.run_iter` is an async generator that deliberately holds the
+  streaming tool executor's anyio task group open *across* its yields — that's
+  what lets the UI render "tool running…" while tools drain. The cost is that
+  the generator must be finalized by the task consuming it. Every consumer
+  abandoned it instead (`break`, an exception, or Esc cancelling the turn), so
+  teardown fell to the event loop's async-generator shutdown hook, which runs
+  in a **different task**, and anyio raised straight into the loop — taking down
+  the whole session rather than just the turn. Interrupting a turn with tools in
+  flight was enough to trigger it.
+
+  All five consumers (`query`, `compat_query`, `subagent`, and both terminals)
+  now close the stream in their own `finally` via a new shielded
+  `agent.aclose_stream()` — shielded because the usual trigger *is*
+  cancellation, and an unshielded await in an already-cancelled task re-raises
+  before cleanup can run.
+- **A broken pygments took down any reply containing a code block.** The
+  markdown code-block renderer constructed a `rich.Syntax` lazily, so the lexer
+  wasn't resolved until rich was already inside its console loop — where a
+  raising renderer kills the entire message. Seen in the wild as
+  `error: No module named 'pygments.lexers.special'` from a partially-installed
+  pygments. The lexer is now resolved eagerly inside a guard and falls back to
+  plain text.
 - **`error: unsupported message type: CompactBoundaryMessage` — a compaction
   permanently bricked the session.** `CompactBoundaryMessage` is not a wire
   type and no provider's encoder knew it, so the first request after an
@@ -82,8 +308,49 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   your next message` in the scrollback was pure noise, once per paste. Ctrl+V
   and `/paste` are now silent on success and speak only on failure.
 
+### Development
+
+- **`scripts/test-matrix.sh`** runs the suite across every Python version CI
+  covers, each in its own environment under `.venvs/`. The obvious one-liner —
+  `for py in 3.10 3.11 …; do uv run --python "$py" …; done` — rebuilds the
+  *project* environment (`.venv/`) in place on each iteration, so it silently
+  replaces your dev venv and breaks anything else using it mid-run. The
+  resulting import errors look exactly like test failures, which makes the
+  matrix untrustworthy in both directions.
+- **`pyyaml` added to the `dev` extra.** `tests/test_docs_site.py` documents its
+  structural layer as running without the docs extra, but that layer parses
+  `mkdocs.yml` and so needs a YAML parser — which nothing installed. Three tests
+  errored on a plain `pip install -e ".[dev]"`, i.e. on CI and for every
+  contributor. The fallback also now `importorskip`s, so a minimal install
+  skips rather than reporting phantom failures.
+
 ### Changed
 
+- **The live-agent inspector shows what an agent is doing, not just which tool
+  it called.** The feed rendered the bare tool name, so watching three explore
+  agents gave you five identical lines of `tool grep` / `tool read_file` — no
+  pattern, no file, no result, nothing to tell one call from the next. Each
+  call is now one line carrying the salient argument and a shape-only summary
+  of what came back:
+
+  ```
+  recent #1
+    - 0s ago · Search def _build_payload → 12 matches
+    - 2s ago · Read mantis_agent/tui.py → 4157 lines
+    - 5s ago · Run pytest -q tests/test_advisor.py → 24 passed in 0.08s
+    - 9s ago · Read gone.py → FileNotFoundError: gone.py
+  ```
+
+  A call in flight shows the argument without the arrow (so a slow grep reads
+  as running, not as having returned nothing) and the same line is updated in
+  place when it returns — one line per call, not a start line and a finish
+  line. Errors are surfaced verbatim instead of being counted as "1 line".
+  Result summaries are deliberately shapes, not payloads, so the panel can't be
+  flooded by a large read. `TOOL_VERBS` moved to a new `tool_preview` module so
+  the SDK-level subagent wrapper labels a call exactly the way the transcript
+  does; `mantis_agent.tui.TOOL_VERBS` still resolves.
+- Event lines in the inspector measured their own prefix as a hardcoded 10
+  columns, under-counting it and wrapping in a narrow pane.
 - **⌘V now attaches a copied image file.** A terminal can only deliver text, so
   raw screenshot bytes genuinely cannot ride in on ⌘V — but a file copied in
   Finder pastes as its POSIX path, which is the common "paste my screenshot"
@@ -2202,5 +2469,6 @@ A non-exhaustive summary:
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.62.0...HEAD
+[2.62.0]: https://github.com/teddyoweh/mantis-agent-sdk/releases/tag/v2.62.0
 [1.0.0]: https://github.com/teddyoweh/mantis-agent-sdk/releases/tag/v1.0.0

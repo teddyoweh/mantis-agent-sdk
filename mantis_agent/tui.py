@@ -30,6 +30,7 @@ Configuration comes from the same env vars the rest of the SDK uses:
 
 from __future__ import annotations
 
+import itertools
 import os
 import random
 import re
@@ -70,7 +71,6 @@ EXAMPLE_PROMPTS = [
 # Slash commands shown in the completion menu (command → one-line description).
 SLASH_COMMANDS = {
     "/models": "browse & pick a model (local · API · self-host)",
-    "/model": "switch / pick a model",
     "/effort": "show/set model effort: standard · max · ultra", 
     "/agi": "continuous master-agent loop: ideate · delegate · synthesize",
     "/goal": "autopilot: plan → execute → verify until done",
@@ -78,7 +78,7 @@ SLASH_COMMANDS = {
     "/watch": "watch a command; agent wakes + fixes when it breaks",
     "/jobs": "background jobs — list · watch · kill",
     "/job": "background job detail — /job <id> [kill]",
-    "/workflows": "inspect multi-agent runs (swarm · pipeline · parallel)",
+    "/workflows": "named workflows — run · watch · list · history · resume",
     "/loop": "re-run a prompt on an interval (/loop 5m <prompt>)",
     "/resume": "resume a past conversation",
     "/branch": "fork this conversation into a new session",
@@ -120,32 +120,9 @@ SLASH_COMMANDS = {
 # Friendly verbs for tool calls, Claude-Code-style (e.g. ``Read foo.py``). The
 # value is (verb, primary-arg-keys-in-priority-order) — the first present key is
 # shown as the target after the verb.
-TOOL_VERBS = {
-    "bash": ("Run", ("command",)),
-    "read_file": ("Read", ("path", "file_path")),
-    "write_file": ("Write", ("path", "file_path")),
-    "edit_file": ("Edit", ("path", "file_path")),
-    "multi_edit": ("Edit", ("path", "file_path")),
-    "ls": ("List", ("path",)),
-    "glob": ("Find", ("pattern", "path")),
-    "grep": ("Search", ("pattern", "query")),
-    "web_search": ("Search web", ("query",)),
-    "web_fetch": ("Fetch", ("url",)),
-    "todo_write": ("Plan", ()),
-    "task": ("Delegate", ("description", "prompt")),
-    "lsp": ("Look up", ("symbol",)),
-    "notebook_edit": ("Edit cell", ("path", "file_path")),
-    "remember": ("Remember", ("name",)),
-    "load_skill": ("Load skill", ("name", "skill")),
-    "ask_user_question": ("Ask", ()),
-    "exit_plan_mode": ("Present plan", ()),
-    "bash_output": ("Check output", ("bash_id", "id")),
-    "bash_kill": ("Kill", ("bash_id",)),
-    "monitor": ("Wait for", ("until_pattern", "path", "port", "bash_id")),
-    "watch": ("Watch", ("description", "command")),
-    "watch_stop": ("Stop watch", ("job_id",)),
-    "pair": ("Confer with", ("peer",)),
-}
+# The verb/argument table moved to tool_preview so the SDK-level subagent
+# wrapper can label a call exactly like the transcript does.
+from .tool_preview import TOOL_VERBS  # noqa: E402
 
 # File extension → pygments lexer name, for syntax-highlighting diff bodies.
 _EXT_LANG = {
@@ -169,21 +146,58 @@ def _lang_from_path(path: str | None) -> str | None:
 _THINK_CAP = 12  # max thinking lines rendered before eliding the rest
 
 
+def _thinking_body(thinking: str) -> list[str]:
+    """The reasoning as display lines, tidied.
+
+    Raw reasoning arrives as a wall of prose with ragged blank runs, which is
+    what made the inline block look like spill rather than a rendered element.
+    Collapse blank runs and drop trailing space so the capped preview spends its
+    budget on content instead of gaps.
+    """
+
+    out: list[str] = []
+    for raw in (thinking or "").strip().splitlines():
+        ln = raw.rstrip()
+        if not ln and (not out or not out[-1]):
+            continue  # swallow leading and repeated blank lines
+        out.append(ln)
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
 def _thinking_lines(thinking: str) -> list[Any]:
     """Rich Text lines for a ThinkingBlock — a dim ``✻ thinking`` header + the
     reasoning dimmed and capped. Empty list when there's nothing to show. Pure
-    (returns renderables) so it's testable."""
+    (returns renderables) so it's testable.
+
+    Capped reasoning follows the same grammar as capped tool output — a count
+    and the ``ctrl+o`` pointer — because it is the same promise: nothing was
+    lost, here is where the rest lives.
+    """
+    from rich.padding import Padding as _Padding  # noqa: PLC0415
     from rich.text import Text as _T  # noqa: PLC0415
 
-    body = (thinking or "").strip()
-    if not body:
+    lines = _thinking_body(thinking)
+    if not lines:
         return []
-    lines = body.splitlines()
-    out: list[Any] = [_T("✻ thinking", style="italic bright_black")]
-    for ln in lines[:_THINK_CAP]:
-        out.append(_T(f"  {ln}", style="bright_black"))
+    head = _T("✻ thinking", style="italic bright_black")
     if len(lines) > _THINK_CAP:
-        out.append(_T(f"  … ({len(lines) - _THINK_CAP} more lines)", style="italic bright_black"))
+        # Say how much reasoning there was before showing a slice of it.
+        head.append(f"  ({len(lines)} lines)", style="bright_black")
+    out: list[Any] = [head]
+    for ln in lines[:_THINK_CAP]:
+        # Padding, not a literal "  " prefix: reasoning is long prose, and a
+        # prefix only indents the FIRST screen line, so every wrapped
+        # continuation fell back to column 0 and the block read as spill
+        # rather than as an indented element.
+        out.append(_Padding(_T(ln, style="bright_black"), (0, 0, 0, 2)))
+    if len(lines) > _THINK_CAP:
+        extra = len(lines) - _THINK_CAP
+        hint = _T(f"  … +{extra} more line{'s' if extra != 1 else ''} ",
+                  style="bright_black")
+        hint.append("(ctrl+o to expand)", style="bright_black")
+        out.append(hint)
     return out
 
 
@@ -344,7 +358,7 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 
 
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
-    ("model", ["/models", "/model", "/advisor", "/effort", "/enable", "/disable",
+    ("model", ["/models", "/advisor", "/effort", "/enable", "/disable",
                "/connect", "/pull"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
     ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
@@ -1364,7 +1378,55 @@ def _is_chat_model(model_id: str) -> bool:
     return True
 
 
-def error_hint(err: BaseException, backend: str | None) -> str | None:
+_TIGHT_WINDOW = 16384  # below this, prompt+tools overhead is a real share of it
+
+
+def _known_small_window(backend: str | None, model: str | None = None) -> int | None:
+    """A learned context ceiling small enough that compaction cannot save it.
+
+    Only reports a limit we have actually watched an endpoint enforce, so this
+    never fires on a guess from the capability table.
+    """
+
+    try:
+        from .context_limits import learned_limit  # noqa: PLC0415
+
+        if not model:
+            return None
+        seen = learned_limit(str(model), backend)
+        return seen if seen and seen <= _TIGHT_WINDOW else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _is_oauth_premium_block(err: BaseException, backend: str | None) -> bool:
+    """True for the opaque 429 a Claude subscription OAuth token can get back.
+
+    Anthropic returns a bare ``"message":"Error"`` for this, with no retry-after
+    and no way to tell it apart from a real quota exhaustion by body alone — so
+    the discriminator is the credential: a Bearer token with no API key behind
+    it. With an API key present the same 429 really is a quota limit and the
+    normal wait-and-retry hint applies.
+
+    This used to fire constantly because mantis omitted the Claude Code identity
+    system block, which the premium models require of a subscription token (see
+    ``CLAUDE_CODE_IDENTITY`` in the passthrough provider) — Haiku answered and
+    everything else 429'd, which looked exactly like a missing entitlement. That
+    request bug is fixed, so a surviving 429 here is the real thing: the
+    subscription's usage window is spent.
+    """
+
+    import os  # noqa: PLC0415
+
+    if backend and "anthropic" not in backend.lower():
+        return False
+    if (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        return False
+    return bool((os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip())
+
+
+def error_hint(err: BaseException, backend: str | None,
+               model: str | None = None) -> str | None:
     """A one-line, actionable recovery hint for a runtime error — or None if we
     have nothing useful to add. Covers the three selection failures users hit
     most: a bad API key, an unavailable model, and an unreachable backend.
@@ -1376,13 +1438,29 @@ def error_hint(err: BaseException, backend: str | None) -> str | None:
     if isinstance(err, AuthError) or "api key" in low or "authentication" in low:
         return "the API key looks invalid — re-run `mantis setup`, or /models to switch"
     if isinstance(err, RateLimitError) or "rate limit" in low or "too many requests" in low or "429" in low:
+        if _is_oauth_premium_block(err, backend):
+            # Anthropic sends a deliberately opaque `"message":"Error"` here with
+            # no retry-after, so name what it actually is — a spent subscription
+            # window — and the two ways out, rather than a bare "wait a moment"
+            # against a duration we were not told.
+            return ("your Claude subscription's usage limit is reached — wait for the "
+                    "window to reset, /models to pick a cheaper model, or set an API "
+                    "key (`^k` in /models)")
         ra = getattr(err, "retry_after_s", None)
         when = f"retry in ~{int(ra)}s" if isinstance(ra, (int, float)) and ra > 0 else "wait a moment and retry"
         return f"rate limited — {when}, or /models to switch provider"
     if any(p in low for p in ("context length", "context window", "maximum context",
                               "too many tokens", "context_length_exceeded",
-                              "reduce the length", "prompt is too long", "input is too long")):
-        return "the conversation is too long for this model's context — /compact to shrink it, or /clear to start fresh"
+                              "reduce the length", "prompt is too long", "input is too long",
+                              "input tokens exceed", "configured limit of")):
+        limit = _known_small_window(backend, model)
+        if limit:
+            # Saying "/compact or /clear" here is a dead end: when the window is
+            # this small the system prompt and tool schemas alone can fill it,
+            # so an empty conversation overflows too and the advice loops.
+            return (f"this model's context is only {limit // 1024}k — too small for the "
+                    f"current tools/prompt; /models to pick a larger model")
+        return "the conversation is too long for this model's context and automatic compaction could not recover — /compact or /clear"
     if any(p in low for p in ("does not support tools", "tools are not supported",
                               "tool use is not", "function calling is not",
                               "doesn't support function", "no tool support")):
@@ -1529,10 +1607,24 @@ def _compact_markdown(text: str) -> Any:
         class _TightCodeBlock(CodeBlock):
             def __rich_console__(self, console: Any, options: Any) -> Any:  # noqa: ANN401
                 code = str(self.text).rstrip()
-                yield Syntax(
-                    code, self.lexer_name, theme=self.theme,
-                    background_color="default", word_wrap=True, padding=0,
-                )
+                try:
+                    syntax = Syntax(
+                        code, self.lexer_name, theme=self.theme,
+                        background_color="default", word_wrap=True, padding=0,
+                    )
+                    # Resolve the lexer HERE. Constructing a Syntax is lazy —
+                    # pygments isn't touched until rich renders it, and by then
+                    # we're inside rich's console loop where a raising renderer
+                    # takes down the whole reply. A broken/partial pygments
+                    # install ("No module named 'pygments.lexers.special'")
+                    # would otherwise kill every message containing a fence.
+                    syntax.highlight(code)
+                except Exception:  # noqa: BLE001 — highlighting is decoration
+                    from rich.text import Text as _Text  # noqa: PLC0415
+
+                    yield _Text(code)
+                else:
+                    yield syntax
 
         Markdown.elements["fence"] = _TightCodeBlock
         Markdown.elements["code_block"] = _TightCodeBlock
@@ -1789,10 +1881,11 @@ class MantisTUI:
         self._file_checkpoints: list[dict[str, Any]] = []
         # Live subagent progress (task tool runs): id → {type, desc, tools, started}.
         self._live_subagents: dict[int, dict[str, Any]] = {}
-        # Structured multi-agent runs (swarm · pipeline · parallel), shown by
-        # /workflows. Integration code appends WorkflowRun data here and, for
-        # live runs, registers the Workflow handle by run id so the viewer can
-        # stop/pause it.
+        # Structured multi-agent runs shown by /workflows. Every orchestration
+        # entry point (the `workflow` tool, `coordinate`, /workflows run) calls
+        # _register_workflow, which appends the WorkflowRun snapshot here and
+        # keys the live Workflow handle by run id so the viewer can stop, pause,
+        # cancel, skip, retry and save it.
         self._workflows: list[Any] = []
         self._workflow_handles: dict[str, Any] = {}
         # Background jobs (task run_in_background=true). The fullscreen app
@@ -1800,9 +1893,25 @@ class MantisTUI:
         # message so the MODEL learns the result on its next turn.
         # Monitors additionally stream events mid-run through on_stream — same
         # injection path, but no status, because the job is still going.
+        # The unified activity tree. Every engine emits into this one registry,
+        # so /jobs, /agents and /workflows become views over the same model
+        # rather than three windows onto three private ones. Constructed here
+        # because it is session-scoped: one tree per conversation, torn down
+        # with it.
+        #
+        # Nothing about the engines depends on it existing — every emission call
+        # is guarded on `registry is None` and swallows registry errors — so if
+        # construction ever fails, the session runs exactly as it did before.
+        from .activity.registry import ActivityRegistry  # noqa: PLC0415
         from .jobs import JobManager  # noqa: PLC0415
+
+        try:
+            self.activity: Any = ActivityRegistry(session_id="")
+        except Exception:  # noqa: BLE001 — observability must never block a boot
+            self.activity = None
         self._jobs = JobManager(on_event=self._on_job_done,
-                                on_stream=self._on_job_stream)
+                                on_stream=self._on_job_stream,
+                                registry=self.activity)
         self._job_notify: Any = None
         self._watch_notify: Any = None
         self._turn_active = False
@@ -1960,7 +2069,20 @@ class MantisTUI:
             registry.add(make_coordinate_tool(
                 model=self.model, provider=provider, backend=self.backend,
                 tools=_parent_kit, permissions=permissions,
-                on_progress=self._subagent_progress, jobs=self._jobs))
+                on_progress=self._subagent_progress, jobs=self._jobs,
+                on_run=self._register_workflow))
+            # workflow — NAMED declarative workflows (.mantis/workflows/*.md and
+            # the built-ins). Where coordinate improvises a DAG from an
+            # objective, this runs a template the user wrote and can re-run,
+            # resume and inspect. Detached through the same JobManager, so it
+            # returns a run id immediately and shows up in BOTH /jobs and
+            # /workflows.
+            from .workflow_tool import make_workflow_tool  # noqa: PLC0415
+            registry.add(make_workflow_tool(
+                model=self.model, provider=provider, backend=self.backend,
+                tools=_parent_kit, permissions=permissions,
+                on_progress=self._subagent_progress, jobs=self._jobs,
+                on_run=self._register_workflow))
             registry.add(make_job_output_tool(self._jobs))
             # watch — the push counterpart to bash(run_in_background=True):
             # a watch whose every stdout line arrives as a notification instead
@@ -2712,7 +2834,7 @@ class MantisTUI:
                     # _slash_menu_lines), not the float — don't double up here.
                     return
                 cmd, _, rest = text.partition(" ")
-                if cmd == "/model":  # suggest model ids
+                if cmd == "/models":  # suggest model ids
                     seen = set()
                     for m in tui_self._installed_models:
                         if rest.lower() in m.lower():
@@ -3058,8 +3180,15 @@ class MantisTUI:
 
         self.agent.on_event = _sink
         self._turn_active = True
+        # Open a node for this turn and parent everything spawned during it.
+        # Without this every job is a ROOT and the "tree" is a flat list — the
+        # parent links are the whole reason the activity graph exists, since
+        # they are what lets a workflow's agents, a task's subagent and the
+        # shell job it started read as one piece of work.
+        self._begin_activity_turn()
         try:
-            async for msg in self.agent.run_iter(self.messages):
+            _stream = self.agent.run_iter(self.messages)
+            async for msg in _stream:
                 await thinking.stop()
                 hugging = False
                 if isinstance(msg, AssistantMessage) and getattr(msg, "usage", None) is not None:
@@ -3091,7 +3220,13 @@ class MantisTUI:
             del self.messages[base:]
             raise
         finally:
+            # Close the stream in THIS task. run_iter holds the tool executor's
+            # task group open across its yields, so letting the event loop
+            # finalize it later raises "exit cancel scope in a different task".
+            from .agent import aclose_stream  # noqa: PLC0415
+            await aclose_stream(_stream)
             self._turn_active = False
+            self._end_activity_turn()
             self.agent.on_event = None
             await thinking.stop()
             self._thinking = None
@@ -3248,6 +3383,44 @@ class MantisTUI:
         self.messages.extend(self._job_context_backlog)
         self._job_context_backlog.clear()
 
+    # ------------------------------------------------------------------
+    # Activity turns
+    # ------------------------------------------------------------------
+    # A turn node is what everything spawned during the turn hangs off. Both
+    # helpers are total: observability may never take down a turn, so a registry
+    # that is absent, broken or raising leaves the turn running exactly as it
+    # would have without one.
+
+    def _begin_activity_turn(self) -> None:
+        reg = getattr(self, "activity", None)
+        if reg is None:
+            return
+        try:
+            self._turn_seq = getattr(self, "_turn_seq", 0) + 1
+            node_id = reg.create_node(
+                kind="turn", local=str(self._turn_seq),
+                title=f"turn {self._turn_seq}", parent_id=None, source="user",
+            )
+            reg.set_status(node_id, "running")
+            self._jobs.activity_parent_id = node_id
+        except Exception:  # noqa: BLE001 — never let the tree break the turn
+            self._jobs.activity_parent_id = None
+
+    def _end_activity_turn(self) -> None:
+        reg = getattr(self, "activity", None)
+        node_id = getattr(self._jobs, "activity_parent_id", None)
+        if reg is None or not node_id:
+            return
+        try:
+            # The turn is over; work it started may not be. Rollup gives the
+            # right answer either way — a turn with a live background job stays
+            # `running` rather than claiming to be finished.
+            reg.set_status(node_id, "done")
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            self._jobs.activity_parent_id = None
+
     def _on_job_done(self, job: Any) -> None:
         """A background job reached a terminal state: tell the user (UI hook)
         and queue the result as meta context so the model knows next turn."""
@@ -3334,6 +3507,13 @@ class MantisTUI:
         self.console.print(f"[ansibrightblack]kind:[/] {job.kind}")
         self.console.print(f"[ansibrightblack]status:[/] {job.status} · {int(job.elapsed_s)}s")
         self.console.print(f"[ansibrightblack]desc:[/] {job.desc}")
+        wf_id = getattr(job, "workflow_id", "") or ""
+        if wf_id:
+            # The other half of this job's identity: its structure lives in
+            # /workflows, its lifecycle here.
+            self.console.print(
+                f"[ansibrightblack]workflow:[/] run {wf_id} "
+                f"[ansibrightblack]· /workflows to see its phases and agents[/]")
         if str(getattr(job, "kind", "") or "").startswith("watch"):
             n = getattr(job, "stream_count", 0)
             counts = f"{n} event{'s' if n != 1 else ''} streamed"
@@ -3374,12 +3554,15 @@ class MantisTUI:
             elapsed = int(now - float(rec.get("started", now)))
             detail = (f"{rec.get('type', 'task')} · running · {elapsed}s · "
                       f"{rec.get('tools', 0)} tools")
-            last = rec.get("last_event") or ""
-            if last:
-                detail += f" · {last}"
+            # desc BEFORE last_event: the description is what tells three
+            # identical "explore" rows apart, and the event is repeated in full
+            # on the recent line below — so the event is what should get cut.
             desc = rec.get("desc") or ""
             if desc:
                 detail += f" · {desc}"
+            last = rec.get("last_event") or ""
+            if last:
+                detail += f" · {last}"
             rows.append(("[ansiyellow]◇[/]", f"#{rid}", detail))
         self._list_rows(rows)
         if verbose:
@@ -3438,6 +3621,11 @@ class MantisTUI:
             turns = getattr(j, "turn_count", 0)
             if tools or turns:
                 detail += f" · {turns} turns · {tools} tools"
+            # A workflow job is also a workflow RUN — name the id so /jobs and
+            # /workflows are visibly the same object.
+            wf_id = getattr(j, "workflow_id", "") or ""
+            if wf_id:
+                detail += f" · run {wf_id}"
             last = getattr(j, "last_event", "") or ""
             if last:
                 detail += f" · {last}"
@@ -3455,16 +3643,24 @@ class MantisTUI:
         self.console.print("[ansibrightblack]→ /job <id> for details · /jobs watch · /jobs kill <id|all>[/]")
 
     async def _cmd_workflows(self, arg: str = "") -> None:
-        """/workflows — inspect structured multi-agent runs (swarm · pipeline ·
-        parallel). Opens a self-erasing picker that renders the SAME rows as the
-        fullscreen viewer (via the shared ``workflow_view`` helpers): a phase
-        rail per run, one navigable row per agent. ↑/↓ move · enter inspects ·
-        x stops · p pauses · s saves · esc closes."""
+        """/workflows — the orchestration surface.
+
+        Bare, it opens the multi-run viewer: one phase rail + navigable agent
+        rows per run, rendered with the shared ``workflow_view`` helpers so it
+        matches the fullscreen overlay exactly. ↑/↓ move · enter inspects ·
+        x stops · p pauses/resumes · c cancels · k skips · r retries · s saves.
+
+        Subcommands cover the rest of the lifecycle:
+        ``list`` (definitions) · ``run <name> k=v`` · ``history`` · ``resume <run-id>``.
+        """
+        if self._cmd_workflows_sub(arg):
+            return
         runs = list(getattr(self, "_workflows", []) or [])
         if not runs:
-            self.console.print(
-                "[ansibrightblack]no workflows yet — /swarm and the pipeline/"
-                "parallel helpers register runs here[/]")
+            from .workflow_view import empty_state_lines  # noqa: PLC0415
+            from .workflow_defs import discover_workflow_definitions  # noqa: PLC0415
+            for line in empty_state_lines(discover_workflow_definitions()):
+                self.console.print(f"[ansibrightblack]{line}[/]")
             return
         picked = await self._workflows_modal(runs)
         if not picked:
@@ -3475,27 +3671,267 @@ class MantisTUI:
         if action == "inspect" and agent is not None:
             self._render_workflow_agent(run, agent)
             return
-        if action == "save" and run is not None:
-            self._save_workflow(run)
+        await self._workflow_control(run, agent, action or "")
+
+    def _cmd_workflows_sub(self, arg: str) -> bool:
+        """Handle a ``/workflows <subcommand>``; ``False`` means "open the viewer".
+
+        Kept synchronous on purpose: both terminals dispatch it, and the
+        fullscreen one runs slash commands inside ``run_in_terminal`` where
+        there is no place to await. Starting a run doesn't need to await
+        anything — that's the whole point of backgrounding it."""
+        parts = (arg or "").strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1] if len(parts) > 1 else ""
+        if sub in ("list", "ls", "defs"):
+            self._cmd_workflows_list()
+            return True
+        if sub in ("history", "runs", "past"):
+            self._cmd_workflows_history()
+            return True
+        if sub == "run":
+            self._cmd_workflows_run(rest)
+            return True
+        if sub == "resume":
+            self._cmd_workflows_run(rest, resume=True)
+            return True
+        if sub in ("export", "dump"):
+            self._cmd_workflows_export(rest.strip())
+            return True
+        if sub:
+            self.console.print(
+                f"[ansibrightblack]unknown /workflows {sub!r} — try: list · "
+                "run <name> key=value · history · resume <run-id> · "
+                "export <run-id>[/]")
+            return True
+        return False
+
+    async def _workflow_control(self, run: Any, agent: Any, action: str) -> None:
+        """Route one viewer action through the shared control plane and print
+        the outcome — including WHY an ineligible action was refused."""
+        from .workflow_view import apply_control  # noqa: PLC0415
+
+        if run is None or not action:
             return
-        if action in {"stop", "pause"} and run is not None:
-            handle = (getattr(self, "_workflow_handles", {}) or {}).get(getattr(run, "id", ""))
-            fn = getattr(handle, action, None) if handle is not None else None
-            name = getattr(run, "name", "workflow")
-            if callable(fn):
-                try:
-                    fn()
+        handle = self._workflow_handle(run)
+        msg = apply_control(handle, run, agent, action)
+        if msg.startswith("retry-") and handle is not None:
+            agent_id = msg[len("retry-"):]
+            label = getattr(agent, "label", "") or agent_id
+            self.console.print(f"[ansibrightblack](retrying {label})[/]")
+            try:
+                await handle.retry_agent(agent_id)
+                self.console.print(f"[ansibrightblack](retry of {label} finished)[/]")
+            except Exception as e:  # noqa: BLE001
+                self.console.print(f"[ansibrightblack](retry failed: {e})[/]")
+            return
+        self.console.print(f"[ansibrightblack]{msg}[/]")
+
+    def _cmd_workflows_list(self) -> None:
+        """/workflows list — every definition the session can run, with source."""
+        from .workflow_defs import discover_workflow_definitions  # noqa: PLC0415
+
+        errors: list[str] = []
+        defs = discover_workflow_definitions(errors=errors)
+        self.console.print("\n[bold]Workflows[/]")
+        rows = []
+        for d in defs:
+            need = d.required_input_names()
+            detail = f"{len(d.phases)} phases · {d.min_agents}+ agents"
+            if need:
+                detail += f" · needs {', '.join(need)}"
+            detail += f" · {d.description}"
+            rows.append((f"[ansibrightblack]{d.source}[/]", d.name, detail))
+        self._list_rows(rows)
+        for err in errors:
+            self.console.print(f"[ansiyellow]skipped[/] [ansibrightblack]{err}[/]")
+        self.console.print(
+            "[ansibrightblack]→ /workflows run <name> key=value · define your own in "
+            ".mantis/workflows/<name>.md[/]")
+
+    def _cmd_workflows_history(self) -> None:
+        """/workflows history — persisted runs from this and earlier sessions."""
+        from .workflow_store import list_runs  # noqa: PLC0415
+
+        runs = list_runs(limit=20)
+        if not runs:
+            self.console.print(
+                "[ansibrightblack]no saved workflow runs yet — every run is written to "
+                "~/.mantis-agent/workflows/runs when it finishes[/]")
+            return
+        self.console.print("\n[bold]Workflow history[/]")
+        rows = []
+        for r in runs:
+            glyph = {"done": "[ansigreen]●[/]", "running": "[ansiyellow]●[/]"}.get(
+                r.get("status", ""), "[ansired]●[/]")
+            age = ""
+            saved = r.get("saved_at") or 0
+            if saved:
+                mins = max(0, int((time.time() - saved) / 60))
+                age = f"{mins}m ago" if mins < 90 else f"{mins // 60}h ago"
+            detail = " · ".join(x for x in (
+                r.get("definition") or r.get("name") or "workflow",
+                r.get("status", ""), f"{r.get('agents', 0)} agents", age,
+            ) if x)
+            rows.append((glyph, r.get("run_id", "?"), detail))
+        self._list_rows(rows)
+        self.console.print(
+            "[ansibrightblack]→ /workflows resume <run-id> replays every unchanged "
+            "agent for free and re-runs the rest[/]")
+
+    def _cmd_workflows_export(self, run_id: str) -> None:
+        """/workflows export [run-id] — write a run's JSON into the CWD.
+
+        Defaults to the most recent run of this session; falls back to the
+        durable store so a run from last week is exportable too."""
+        runs = list(getattr(self, "_workflows", []) or [])
+        run = None
+        if run_id:
+            run = next((r for r in runs if getattr(r, "id", "") == run_id), None)
+            if run is None:
+                from .workflow import WorkflowRun  # noqa: PLC0415
+                from .workflow_store import load_record  # noqa: PLC0415
+
+                record = load_record(run_id)
+                if record is None:
                     self.console.print(
-                        f"[ansibrightblack]({'stopping' if action == 'stop' else 'pausing'} {name})[/]")
-                except Exception as e:  # noqa: BLE001
-                    self.console.print(f"[ansibrightblack](could not {action} {name}: {e})[/]")
+                        f"[ansibrightblack]no run {run_id} — /workflows history[/]")
+                    return
+                run = WorkflowRun.from_dict(record.get("run") or {})
+        elif runs:
+            run = runs[-1]
+        if run is None:
+            self.console.print(
+                "[ansibrightblack]nothing to export — /workflows history for "
+                "past runs, then /workflows export <run-id>[/]")
+            return
+        self._save_workflow(run)
+
+    def _parse_workflow_args(self, text: str) -> tuple[str, dict[str, str]]:
+        """``review target=agent.py note="two words"`` → ``("review", {...})``.
+
+        Anything that isn't ``key=value`` joins the ``objective`` input, so
+        ``/workflows run understand the auth flow`` does the obvious thing."""
+        import shlex  # noqa: PLC0415
+
+        try:
+            toks = shlex.split(text)
+        except ValueError:
+            toks = text.split()
+        name = toks[0] if toks else ""
+        inputs: dict[str, str] = {}
+        loose: list[str] = []
+        for tok in toks[1:]:
+            if "=" in tok and not tok.startswith("="):
+                k, _, v = tok.partition("=")
+                inputs[k.strip()] = v
             else:
+                loose.append(tok)
+        if loose:
+            inputs.setdefault("objective", " ".join(loose))
+        return name, inputs
+
+    def _cmd_workflows_run(self, rest: str, *, resume: bool = False) -> None:
+        """/workflows run <name> k=v — start a named workflow in the background.
+
+        Returns immediately with the run id and job id, exactly like the model's
+        ``workflow`` tool: the two paths share :func:`prepare_workflow_launch`,
+        so a user-started run and a model-started one are the same object."""
+        from .workflow_defs import (  # noqa: PLC0415
+            WorkflowDefinitionError,
+            discover_workflow_definitions,
+            load_workflow_definition,
+        )
+        from .workflow_tool import (  # noqa: PLC0415
+            _run_and_report,
+            attach_job_progress,
+            prepare_workflow_launch,
+            workflows_enabled,
+        )
+
+        if not workflows_enabled():
+            self.console.print(
+                "[ansibrightblack]workflows are disabled "
+                "($MANTIS_AGENT_DISABLE_WORKFLOWS)[/]")
+            return
+        resume_from = ""
+        if resume:
+            toks = (rest or "").strip().split(maxsplit=1)
+            resume_from = toks[0] if toks else ""
+            if not resume_from:
+                self.console.print("[ansibrightblack]usage: /workflows resume <run-id>[/]")
+                return
+            from .workflow_store import load_record  # noqa: PLC0415
+            record = load_record(resume_from)
+            if record is None:
                 self.console.print(
-                    f"[ansibrightblack]{name} is not live — nothing to {action}[/]")
+                    f"[ansibrightblack]no saved run {resume_from} — /workflows history[/]")
+                return
+            name = record.get("definition") or ""
+            _, inputs = self._parse_workflow_args("x " + (toks[1] if len(toks) > 1 else ""))
+        else:
+            name, inputs = self._parse_workflow_args(rest or "")
+        if not name:
+            self.console.print(
+                "[ansibrightblack]usage: /workflows run <name> key=value · "
+                "/workflows list to see them[/]")
+            return
+        defn = load_workflow_definition(name)
+        if defn is None:
+            names = ", ".join(d.name for d in discover_workflow_definitions()) or "(none)"
+            self.console.print(
+                f"[ansibrightblack]no workflow {name!r}. Available: {names}[/]")
+            return
+
+        from .subagent import discover_agent_types  # noqa: PLC0415
+        from .workflow import make_agent_runner, wrap_runner_with_progress  # noqa: PLC0415
+
+        types = discover_agent_types()
+        agent = getattr(self, "agent", None)
+        base = make_agent_runner(
+            model=self.model,
+            tools=list(getattr(agent, "tools", []) or []) or None,
+            provider=getattr(agent, "provider", None),
+            backend=self.backend,
+            permissions=getattr(agent, "permissions", None),
+            budget=getattr(agent, "budget", None),
+            agent_types=types,
+        )
+        runner = wrap_runner_with_progress(
+            base, self._subagent_progress, itertools.count(1))
+        try:
+            launch = prepare_workflow_launch(
+                defn, inputs, agent_runner=runner, model=self.model,
+                budget=getattr(agent, "budget", None), resume_from=resume_from,
+                valid_agent_types=[t.name for t in types],
+            )
+        except WorkflowDefinitionError as e:
+            self.console.print(f"[ansibrightblack]{e}[/]")
+            return
+
+        job = self._jobs.spawn(_run_and_report(launch),
+                               desc=f"workflow {defn.name}", kind="workflow",
+                               workflow_id=launch.run_id)
+        launch.workflow.run.job_id = job.id
+        attach_job_progress(launch.workflow, job)
+        self._register_workflow(launch.workflow)
+        self.console.print(
+            f"[ansibrightblack]▶ workflow {defn.name} · run {launch.run_id} · "
+            f"job #{job.id} · {len(defn.phases)} phases[/]")
+        if resume_from:
+            self.console.print(
+                f"[ansibrightblack]  resumed from {resume_from} — "
+                f"{len(launch.cache)} agent result(s) replayed free[/]")
+        self.console.print(
+            "[ansibrightblack]→ /workflows to watch · /jobs for lifecycle · "
+            "the report lands as a job notification[/]")
 
     def _save_workflow(self, run: Any) -> None:
-        """Dump a workflow run's structured state to a timestamped JSON file so
-        it can be replayed or shared."""
+        """Export a run's structured state to a timestamped JSON file in the
+        current directory — for sharing or attaching to a ticket.
+
+        Distinct from the ``s`` control in the viewer, which snapshots into the
+        durable store where ``/workflows history`` reads from."""
         import json  # noqa: PLC0415
 
         try:
@@ -3503,50 +3939,31 @@ class MantisTUI:
             slug = re.sub(r"[^a-z0-9]+", "-", (getattr(run, "name", "") or "workflow").lower()).strip("-") or "workflow"
             path = Path.cwd() / f"workflow-{slug}-{int(time.time())}.json"
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            self.console.print(f"[ansibrightblack]saved → {path}[/]")
+            self.console.print(f"[ansibrightblack]exported → {path}[/]")
         except Exception as e:  # noqa: BLE001
-            self.console.print(f"[ansibrightblack](could not save workflow: {e})[/]")
+            self.console.print(f"[ansibrightblack](could not export workflow: {e})[/]")
 
     def _render_workflow_agent(self, run: Any, agent: Any) -> None:
-        """Focused detail for one workflow agent — status, timing, tokens, the
-        recent-activity tail, and its result/error (mirrors /job detail)."""
-        from .workflow import default_clock  # noqa: PLC0415
-        from .workflow_view import format_duration, format_number, total_tokens  # noqa: PLC0415
+        """Focused detail for one workflow agent — identity, lifecycle, cost, the
+        brief it was given, its activity tail, and its result/error.
 
-        label = getattr(agent, "label", "") or getattr(agent, "id", "?")
-        self.console.print(f"\n[bold]Workflow agent · {label}[/]")
-        self.console.print(f"[ansibrightblack]workflow:[/] {getattr(run, 'name', '?')}")
-        phase = getattr(agent, "phase", "") or ""
-        atype = getattr(agent, "agent_type", "") or ""
-        meta = " · ".join(x for x in (phase, atype) if x)
-        if meta:
-            self.console.print(f"[ansibrightblack]phase:[/] {meta}")
-        dur = format_duration(agent.elapsed_ms(default_clock())) if hasattr(agent, "elapsed_ms") else "?"
-        self.console.print(f"[ansibrightblack]status:[/] {getattr(agent, 'status', '?')} · {dur}")
-        tok = total_tokens(getattr(agent, "usage", None))
-        counts = f"{getattr(agent, 'turns', 0)} turns · {getattr(agent, 'tool_count', 0)} tools · {format_number(tok)} tok"
-        cost = getattr(agent, "cost_usd", 0.0) or 0.0
-        if cost:
-            counts += f" · ${cost:.4f}" if cost < 0.01 else f" · ${cost:.2f}"
-        self.console.print(f"[ansibrightblack]progress:[/] {counts}")
-        model = getattr(agent, "model", "") or ""
-        if model:
-            self.console.print(f"[ansibrightblack]model:[/] {model}")
-        activities = list(getattr(agent, "recent_activities", []) or [])
-        if activities:
-            self.console.print("[ansibrightblack]recent activity[/]")
-            for line in activities:
-                self.console.print(f"[ansibrightblack]  - {line}[/]")
-        err = getattr(agent, "error", None)
-        if err:
-            self.console.print("[ansired]error[/]")
-            self.console.print(str(err), markup=False, highlight=False)
-        result = (getattr(agent, "result", "") or "").strip()
-        if result:
-            if len(result) > 4000:
-                result = result[:4000] + "\n…(truncated)"
-            self.console.print("[ansibrightblack]result[/]")
-            self.console.print(result, markup=False, highlight=False)
+        Rendered from the shared :func:`workflow_view.format_agent_detail` so the
+        classic REPL and the fullscreen overlay show the same facts."""
+        from .workflow import default_clock  # noqa: PLC0415
+        from .workflow_view import format_agent_detail  # noqa: PLC0415
+
+        job = None
+        job_id = getattr(run, "job_id", None)
+        if job_id is not None:
+            job = self._jobs.get(job_id)
+        lines = format_agent_detail(run, agent, now=default_clock(), job=job,
+                                    result_chars=4000, color=False)
+        self.console.print(f"\n[bold]{lines[0]}[/]")
+        for line in lines[1:]:
+            self.console.print(line, markup=False, highlight=False)
+        self.console.print(
+            "[ansibrightblack]→ /workflows to go back · r retries this agent in the "
+            "viewer[/]")
 
     async def _workflows_modal(self, runs: list) -> dict | None:
         """Inline, self-erasing viewer over ``runs`` (WorkflowRun data). One
@@ -3626,6 +4043,8 @@ class MantisTUI:
         def _ok(e: Any) -> None:
             _exit(e, "inspect")
 
+        # Control plane — every action defined in workflow_view.CONTROLS is
+        # bound here and validated there, so a key can never crash the picker.
         @kb.add("x")
         def _stop(e: Any) -> None:
             _exit(e, "stop")
@@ -3638,6 +4057,18 @@ class MantisTUI:
         def _save(e: Any) -> None:
             _exit(e, "save")
 
+        @kb.add("c")
+        def _cancel(e: Any) -> None:
+            _exit(e, "cancel")
+
+        @kb.add("k")
+        def _skip(e: Any) -> None:
+            _exit(e, "skip")
+
+        @kb.add("r")
+        def _retry(e: Any) -> None:
+            _exit(e, "retry")
+
         @kb.add("escape")
         @kb.add("c-c")
         def _no(e: Any) -> None:
@@ -3649,11 +4080,14 @@ class MantisTUI:
 
         def title_text() -> list:
             n = len(agents)
-            return [("class:title", f"workflows — {n} agent{'s' if n != 1 else ''}")]
+            nruns = len({getattr(r, "id", None) for r, _ in agents})
+            return [("class:title",
+                     f"workflows — {nruns} run{'s' if nruns != 1 else ''} · "
+                     f"{n} agent{'s' if n != 1 else ''}")]
 
         def footer_text() -> list:
-            return [("class:hint",
-                     "↑↓ select · enter inspect · x stop · p pause · s save · esc back")]
+            from .workflow_view import control_footer  # noqa: PLC0415
+            return [("class:hint", control_footer())]
 
         head = Window(FormattedTextControl(title_text), height=1)
         body = Window(control, height=D(max=20), wrap_lines=False)
@@ -3665,6 +4099,42 @@ class MantisTUI:
             full_screen=False, erase_when_done=True, mouse_support=True,
         )
         return await app.run_async()
+
+    # -- workflow registration ---------------------------------------------
+    _MAX_SESSION_WORKFLOWS = 20
+
+    def _register_workflow(self, wf: Any) -> None:
+        """Make a live workflow visible to ``/workflows``.
+
+        Called by every orchestration entry point (the ``workflow`` tool, the
+        ``coordinate`` tool, ``/workflows run``) the instant the run exists —
+        BEFORE it starts — so a queued run is already navigable and already
+        stoppable. Stores the snapshot for rendering and the handle for control;
+        oldest runs age out so a long session can't grow without bound."""
+        try:
+            run = getattr(wf, "run", None)
+            if run is None:
+                return
+            if any(getattr(r, "id", None) == run.id for r in self._workflows):
+                return
+            self._workflows.append(run)
+            self._workflow_handles[run.id] = wf
+            while len(self._workflows) > self._MAX_SESSION_WORKFLOWS:
+                dropped = self._workflows.pop(0)
+                self._workflow_handles.pop(getattr(dropped, "id", ""), None)
+        except Exception:  # noqa: BLE001 — registration never breaks a run
+            pass
+
+    def _workflow_handle(self, run: Any) -> Any:
+        """The live :class:`Workflow` for a run, or ``None`` if it's history."""
+        return (self._workflow_handles or {}).get(getattr(run, "id", ""))
+
+    @staticmethod
+    def _agent_event_line(tool: str, arg: str | None) -> str:
+        """``"Search def _build_payload"`` — the in-flight half of a feed line.
+        Shared by both phases so the completed line is this plus ``→ result``."""
+        verb = TOOL_VERBS.get(tool, (tool, ()))[0]
+        return f"{verb} {arg or ''}".rstrip()
 
     def _subagent_progress(self, ev: dict) -> None:
         """task-tool progress sink: keeps the live map the fullscreen spinner
@@ -3683,8 +4153,28 @@ class MantisTUI:
                 rec = self._live_subagents[rid]
                 rec["tools"] += 1
                 rec["last_tool"] = str(ev.get("tool") or "")
-                rec["last_event"] = f"tool {rec['last_tool']}"
+                # "Search def _build_payload" beats "tool grep": five identical
+                # 'tool grep' lines told you nothing about what was happening.
+                rec["last_event"] = self._agent_event_line(rec["last_tool"], ev.get("arg"))
                 rec.setdefault("events", []).append((time.monotonic(), rec["last_event"]))
+            elif ev.get("phase") == "tool_done" and rid in self._live_subagents:
+                from .tool_preview import tool_result_preview  # noqa: PLC0415
+
+                rec = self._live_subagents[rid]
+                name = str(ev.get("tool") or "")
+                head = self._agent_event_line(name, ev.get("arg"))
+                tail = (ev["error"] if "error" in ev
+                        else tool_result_preview(name, ev.get("result")))
+                line = f"{head} → {tail}" if tail else head
+                rec["last_event"] = line
+                events = rec.setdefault("events", [])
+                # Update the in-flight entry in place — one line per call, not
+                # a start line and a finish line. Both are built from the same
+                # `head`, so the prefix match is exact.
+                if events and str(events[-1][1]) == head:
+                    events[-1] = (events[-1][0], line)
+                else:
+                    events.append((time.monotonic(), line))
             elif ev.get("phase") == "end":
                 if rid in self._live_subagents:
                     self._live_subagents[rid]["last_event"] = "done"
@@ -4113,6 +4603,7 @@ class MantisTUI:
         from .types import (  # noqa: PLC0415
             AssistantMessage,
             TextBlock,
+            ThinkingBlock,
             ToolResultBlock,
             ToolUseBlock,
             UserMessage,
@@ -4140,7 +4631,16 @@ class MantisTUI:
                                 self.console.print(f"[bright_black]›[/] {_esc(b.text)}")
                 elif isinstance(m, AssistantMessage):
                     for b in m.content:
-                        if isinstance(b, TextBlock) and b.text.strip():
+                        if isinstance(b, ThinkingBlock):
+                            # The inline view caps reasoning and points here; if
+                            # the expand view dropped it, that pointer would lie.
+                            body = (getattr(b, "thinking", "") or "").strip()
+                            if not body:
+                                continue
+                            self.console.print(_T("✻ thinking", style="italic bright_black"))
+                            for ln in body.splitlines():
+                                self.console.print(_T("  " + ln, style="bright_black"))
+                        elif isinstance(b, TextBlock) and b.text.strip():
                             self.console.print(f"[{BODY}]●[/] {_esc(b.text.strip())}")
                         elif isinstance(b, ToolUseBlock):
                             verb, target = self._tool_label(b.name, b.input or {})
@@ -4484,12 +4984,7 @@ class MantisTUI:
             else:
                 self.console.print(f"[ansiyellow]![/] pull failed for [white]{tag}[/]")
             return True
-        if cmd == "/model":
-            if arg:
-                await self._switch_model(arg)
-            else:
-                await self._select_model()
-            return True
+
         # Unknown slash command - let it fall through as a normal prompt.
         return False
 
@@ -5156,24 +5651,43 @@ class MantisTUI:
         c.print("\n[ansibrightblack]no CHANGELOG.md found for this install[/]")
 
     def _run_update(self) -> str:
-        """/update — self-update. Editable installs are the developer's own
-        checkout (git pull, not pip); wheel installs go through uv/pip."""
+        """/update — self-update, sharing `mantis update`'s detection so the
+        slash command and the CLI can never disagree about how this install is
+        upgraded. Editable installs are the developer's own checkout (git pull,
+        not pip); uv/pipx/pip installs update in place."""
         import subprocess  # noqa: PLC0415
-        pkg_root = Path(__file__).resolve().parent.parent
-        if (pkg_root / ".git").exists() and (pkg_root / "pyproject.toml").exists():
-            return ("this is an editable install from a source checkout — update with:\n"
-                    f"  git -C {pkg_root} pull && uv tool install --force --editable '{pkg_root}[cli]'")
-        for cmd in (["uv", "tool", "upgrade", "mantis-agent-sdk"],
-                    [sys.executable, "-m", "pip", "install", "-U", "mantis-agent-sdk[cli]"]):
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            except FileNotFoundError:
-                continue
-            except subprocess.TimeoutExpired:
-                return "update timed out"
+
+        from .update import (  # noqa: PLC0415
+            DIST_SPEC,
+            current_version,
+            detect_install,
+            is_newer,
+            latest_version,
+        )
+
+        cur = current_version()
+        install = detect_install()
+        latest, detail = latest_version(timeout=10.0)
+        if latest and not is_newer(latest, cur):
+            return f"already on the latest release ({latest})"
+        head = (f"update available: {cur} → {latest}\n" if latest
+                else f"could not determine the latest version — {detail}\n")
+
+        if install.kind == "source":
+            return (head + "this is an editable install from a source checkout — update with:\n"
+                    f"  git -C {install.root} pull && "
+                    f"uv tool install --force --editable '{install.root}[cli]'")
+        cmd = install.command or [sys.executable, "-m", "pip", "install", "-U", DIST_SPEC]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)  # noqa: S603
+        except FileNotFoundError:
+            return head + f"{cmd[0]} is not on PATH — try: pip install -U '{DIST_SPEC}'"
+        except subprocess.TimeoutExpired:
+            return head + "update timed out"
+        if r.returncode != 0:
             tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
-            return "\n".join(tail[-4:]) if tail else f"exit {r.returncode}"
-        return "no updater found — install uv or pip"
+            return head + "\n".join(tail[-4:] or [f"exit {r.returncode}"])
+        return head + "updated · restart mantis to pick it up"
 
     def _doctor_auth_headers(self) -> dict[str, str]:
         """Best-effort auth for the doctor's backend probe."""
@@ -5821,7 +6335,7 @@ class MantisTUI:
                         raise
                     except Exception as e:  # noqa: BLE001 — one clean line, no traceback
                         self.console.print(f"[ansired]error:[/] {e}")
-                        hint = error_hint(e, self.backend)
+                        hint = error_hint(e, self.backend, self.model)
                         if hint:
                             import re as _re  # noqa: PLC0415
                             styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
@@ -5843,7 +6357,7 @@ class MantisTUI:
                     continue
                 except Exception as e:  # noqa: BLE001
                     self.console.print(f"\n[ansired]error:[/] {e}")
-                    hint = error_hint(e, self.backend)
+                    hint = error_hint(e, self.backend, self.model)
                     if hint:
                         import re as _re  # noqa: PLC0415
                         styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
@@ -6035,13 +6549,24 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "cron":
         return _run_cron_cli(argv[1:])
 
+    # `mantis update [...]` → self-update against the latest PyPI release.
+    # Handled here, before the settings/env load and argparse, so it still works
+    # when the config that the terminal needs is broken or half-written.
+    if argv and argv[0] in ("update", "upgrade"):
+        from .update import run_update  # noqa: PLC0415
+
+        return run_update(argv[1:])
+
     # Apply settings.json `env` into the process environment BEFORE argparse so
     # the --api-key / --backend / --model defaults (which read os.environ) pick
     # it up. setdefault → a real shell env var still wins. This is what makes a
     # key saved by `mantis setup` (self-host, etc.) actually reach the provider.
+    # `load_settings_env_safe` (not `load_settings`) so the project/local tiers
+    # — files a CLONED REPO ships — can't set MANTIS_MCP_TRUST_PROJECT and
+    # friends; those drops are announced on stderr, not swallowed.
     try:
-        from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
-        _env = (load_settings(SETTING_SOURCES) or {}).get("env") or {}
+        from .settings import SETTING_SOURCES, load_settings_env_safe  # noqa: PLC0415
+        _env = load_settings_env_safe(SETTING_SOURCES) or {}
         for _k, _v in _env.items():
             if isinstance(_k, str) and isinstance(_v, str):
                 os.environ.setdefault(_k, _v)
@@ -6051,6 +6576,18 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="mantis",
         description="Mantis — interactive agent terminal. Run `mantis setup` first to install a model.",
+        # The subcommands are dispatched by hand above (before settings load), so
+        # argparse doesn't know about them and can't list them. Spell them out —
+        # otherwise the only way to discover `mantis update` is to be told.
+        epilog=(
+            "subcommands:\n"
+            "  mantis setup     install a model and set it as the default\n"
+            "  mantis update    update mantis to the latest release\n"
+            "  mantis serve     local web dashboard over your sessions\n"
+            "  mantis cron      schedules that outlive the session\n"
+            "\nRun `mantis <subcommand> --help` for their options."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--model", default=DEFAULT_MODEL, help="Model slug.")
     p.add_argument("--backend", default=DEFAULT_BACKEND, help="Backend base URL.")

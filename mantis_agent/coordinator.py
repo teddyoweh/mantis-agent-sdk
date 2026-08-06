@@ -31,12 +31,10 @@ renders coordinate runs with no extra wiring. Tests inject a fake
 from __future__ import annotations
 
 import itertools
-from typing import Any, AsyncIterator
+from typing import Any
 
 from .tools import Tool, tool
-from .types import AssistantMessage, ToolUseBlock
-from .workflow import Workflow, make_agent_runner
-from .workflow_view import accumulate_usage, total_tokens
+from .workflow import Workflow, make_agent_runner, wrap_runner_with_progress
 
 __all__ = ["make_coordinate_tool"]
 
@@ -46,17 +44,6 @@ __all__ = ["make_coordinate_tool"]
 # ---------------------------------------------------------------------------
 
 
-def _emit(on_progress: Any, ev: dict[str, Any]) -> None:
-    """Fire one progress event, swallowing observer errors (garnish, not logic)."""
-
-    if on_progress is None:
-        return
-    try:
-        on_progress(ev)
-    except Exception:  # noqa: BLE001 — a bad observer never breaks the run
-        pass
-
-
 def _short(text: str, limit: int = 80) -> str:
     """Collapse whitespace and clip — a one-line desc for the live viewer."""
 
@@ -64,63 +51,16 @@ def _short(text: str, limit: int = 80) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-async def _aiter_out(out: Any) -> AsyncIterator[Any]:
-    """Normalize a runner's return (async iterator or awaitable) into a stream."""
-
-    if hasattr(out, "__aiter__"):
-        async for msg in out:
-            yield msg
-        return
-    if hasattr(out, "__await__"):
-        res = await out
-        if hasattr(res, "__aiter__"):
-            async for msg in res:
-                yield msg
-
-
 def _with_progress(base: Any, on_progress: Any, counter: "itertools.count[int]") -> Any:
     """Wrap an ``agent_runner`` so each child run streams start/tool/turn/end
-    events in the exact shape ``make_task_tool`` emits (so the TUI's
-    ``_subagent_progress`` sink and ``/workflows`` viewer light up unchanged).
+    events in the task-tool shape (so the TUI's ``_subagent_progress`` sink and
+    the ``/workflows`` live viewer light up unchanged).
 
-    A no-op passthrough when ``on_progress`` is ``None``."""
+    Thin alias for :func:`workflow.wrap_runner_with_progress` — the named-workflow
+    runner uses the same wrapper, so every orchestration path reports progress
+    identically."""
 
-    if on_progress is None:
-        return base
-
-    def runner(
-        prompt: str,
-        *,
-        model: str = "",
-        agent_type: str = "general-purpose",
-        schema: dict | None = None,
-    ) -> AsyncIterator[Any]:
-        rid = next(counter)
-
-        async def gen() -> AsyncIterator[Any]:
-            _emit(on_progress, {"id": rid, "phase": "start", "type": agent_type,
-                                "desc": _short(prompt), "model": model})
-            acc: Any = None
-            try:
-                out = base(prompt, model=model, agent_type=agent_type, schema=schema)
-                async for msg in _aiter_out(out):
-                    if isinstance(msg, AssistantMessage):
-                        for block in getattr(msg, "content", None) or []:
-                            if isinstance(block, ToolUseBlock):
-                                _emit(on_progress, {"id": rid, "phase": "tool",
-                                                    "tool": block.name})
-                        if getattr(msg, "usage", None) is not None:
-                            acc = accumulate_usage(acc, msg.usage)
-                            _emit(on_progress, {"id": rid, "phase": "turn",
-                                                "model": model, "usage": acc,
-                                                "tokens": total_tokens(acc)})
-                    yield msg
-            finally:
-                _emit(on_progress, {"id": rid, "phase": "end"})
-
-        return gen()
-
-    return runner
+    return wrap_runner_with_progress(base, on_progress, counter)
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +163,16 @@ def _format_report(result: dict[str, Any]) -> str:
 
     verification = result.get("verification")
     if verification:
-        verdict = result.get("verdict") or "UNKNOWN"
-        lines.append(f"\n## Verification — VERDICT: {verdict}")
+        verdict = result.get("verdict")
+        if verdict:
+            lines.append(f"\n## Verification — VERDICT: {verdict}")
+        else:
+            # No verdict is reported as no verdict. Guessing one from the prose
+            # is how "No failures found." used to come back as FAIL — read the
+            # report below instead of trusting a label that was never stated.
+            lines.append("\n## Verification — VERDICT: NOT STATED "
+                         "(the verifier didn't end with the contract line — "
+                         "judge from its report below)")
         lines.append(verification.strip())
 
     return "\n".join(lines)
@@ -316,6 +264,7 @@ def make_coordinate_tool(
     jobs: Any = None,
     agent_runner: Any = None,
     concurrency: int | None = None,
+    on_run: Any = None,
 ) -> Tool:
     """Build the ``coordinate`` tool — the model-facing entry to the workflow
     engine (see the module docstring for the Research → Synthesis → Verification
@@ -330,7 +279,10 @@ def make_coordinate_tool(
 
     ``agent_runner`` overrides the default child-building runner (used by tests
     to inject a fake so nothing hits a model); ``jobs`` is accepted for signature
-    parity with ``make_task_tool`` (coordinate always runs synchronously)."""
+    parity with ``make_task_tool`` (coordinate always runs synchronously).
+    ``on_run(workflow)`` is called with the live :class:`Workflow` the instant it
+    exists — that is how a coordinate run appears in ``/workflows`` with working
+    stop/pause controls, exactly like a named workflow."""
 
     # Resolve personas once (same source the task tool uses) for schema + defaults.
     from .subagent import discover_agent_types  # noqa: PLC0415 — avoid import cycle
@@ -369,6 +321,11 @@ def make_coordinate_tool(
             model=model,
             concurrency=concurrency,
         )
+        if on_run is not None:
+            try:
+                on_run(wf)
+            except Exception:  # noqa: BLE001 — registration is observability
+                pass
         result = await wf.coordinate(objective, workers, verify=verify)
         return _format_report(result)
 

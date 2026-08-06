@@ -54,7 +54,7 @@ from typing import Any, Literal, Union
 
 import msgspec
 
-from .agent import Agent
+from .agent import Agent, aclose_stream
 from .budget import lookup_pricing
 from .capabilities import lookup_model
 from .tools import Tool, ToolRegistry
@@ -623,7 +623,8 @@ async def query(
         # BEFORE the next assistant turn streams. The compat path
         # already did this; the dict-options TS-SDK path was buffering
         # via ``await agent.run(...)`` until this rewrite.
-        async for msg in agent.run_iter(running):
+        _stream = agent.run_iter(running)
+        async for msg in _stream:
             if id(msg) in seed_ids:
                 # Already echoed in step 2 — don't re-yield seeds.
                 continue
@@ -695,6 +696,10 @@ async def query(
             error_subtype = "error_during_execution"
         error_strings.append(f"{type(e).__name__}: {e}")
     finally:
+        # Close the stream in THIS task. run_iter holds the tool executor's
+        # task group open across its yields, so letting the event loop
+        # finalize it later raises "exit cancel scope in a different task".
+        await aclose_stream(_stream)
         await agent.aclose()
 
     duration_ms = int((time.monotonic() - started_at) * 1000)

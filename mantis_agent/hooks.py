@@ -14,6 +14,10 @@ Design
   routes by event name and **swallows hook exceptions** — a misbehaving
   user hook must never crash the agent. The exception is logged and the
   dispatch returns a default ``HookResult()`` (no veto, no mutation).
+  The one nuance: for the veto-carrying events in ``BLOCKING_EVENTS`` a
+  swallowed exception is a *fail-open* — the guard that was supposed to
+  deny simply didn't answer — so ``HookDispatcher(fail_closed=True)`` (or
+  ``MANTIS_HOOKS_FAIL_CLOSED=1``) turns a raising hook into a denial.
 * ``HookContext`` carries everything a hook might want: the event name, the
   tool involved (for tool-use events), input/output payloads, a snapshot
   of the message list, the agent id, plus an ``arbitrary`` extras dict for
@@ -36,7 +40,9 @@ The agent loop pattern looks like::
 
 from __future__ import annotations
 
+import inspect
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -86,20 +92,40 @@ HOOK_EVENTS: tuple[str, ...] = (
 )
 
 
-# Of the full upstream vocabulary above, these are the events the mantis agent
-# loop actually *fires* today. The rest are declared for upstream Claude Code
-# parity (so ecosystem tooling can register handlers by the same names) and for
+# Of the full upstream vocabulary above, these are the events the mantis runtime
+# actually *fires* today. The rest are declared for upstream Claude Code parity
+# (so ecosystem tooling can register handlers by the same names) and for
 # custom/out-of-band dispatch, but the built-in runtime does not emit them yet —
 # a hook registered for one of them will simply never be called. Keeping this set
 # explicit makes the contract honest: we don't silently advertise events that
 # never fire. Call ``HookDispatcher.is_dispatched(event)`` to check at runtime.
 #
-# Wired dispatch points (see mantis_agent/agent.py):
-#   PreToolUse / PostToolUse / PostToolUseFailure — around each tool execution
-#   UserPromptSubmit — before a user turn is sent
-#   PreCompact — before context compaction
-#   Stop — when a run reaches a stopping point
-#   PermissionDenied — when a tool call is refused by the permission layer
+# Wired dispatch points, by module:
+#
+#   mantis_agent/agent.py
+#     PreToolUse / PostToolUse / PostToolUseFailure — around each tool execution
+#     UserPromptSubmit — before a user turn is sent
+#     PreCompact — before context compaction
+#     Stop — when a run reaches a stopping point
+#     PermissionDenied — when a tool call is refused by the permission layer
+#
+#   mantis_agent/compact.py
+#     PostCompact — after a compaction that actually replaced turns, carrying
+#       the NEW message list (``SimpleCompactor.compact`` and
+#       ``run_manual_compaction``)
+#
+#   mantis_agent/session.py
+#     SessionStart — ``Session.create`` (reason "create"), ``Session.load`` /
+#       ``resume_session`` (reason "resume"), ``Session.fork`` (reason "fork")
+#     SessionEnd — ``Session.close`` and ``async with`` exit, including the
+#       error and cancellation paths
+#
+# Membership means "some built-in code path emits this", the same way the
+# agent.py events only fire when an ``Agent`` is actually run. The compaction
+# and session events are emitted by objects the integrator constructs, so they
+# reach hooks once the ``dispatcher=`` argument is threaded through (the SDK
+# does this for you; see the guides). An event whose only dispatch site is a
+# code path nobody can reach does NOT belong in this set.
 DISPATCHED_EVENTS: frozenset[str] = frozenset(
     {
         "PreToolUse",
@@ -107,6 +133,9 @@ DISPATCHED_EVENTS: frozenset[str] = frozenset(
         "PostToolUseFailure",
         "UserPromptSubmit",
         "PreCompact",
+        "PostCompact",
+        "SessionStart",
+        "SessionEnd",
         "Stop",
         "PermissionDenied",
     }
@@ -114,6 +143,57 @@ DISPATCHED_EVENTS: frozenset[str] = frozenset(
 
 # Declared for parity/custom dispatch but not emitted by the built-in loop.
 RESERVED_EVENTS: frozenset[str] = frozenset(HOOK_EVENTS) - DISPATCHED_EVENTS
+
+
+# Events where a hook's *veto* is the whole point — the caller asked permission
+# before doing something consequential and treats ``block=False`` as consent.
+#
+# For these, swallowing an exception is not "graceful degradation", it is a
+# fail-open: a ``PreToolUse`` guard that crashes on an input it never
+# anticipated silently grants the very tool call it exists to deny. The safe
+# reading of "the guard did not answer" is *no*, not *yes*. Everything not in
+# this set is observability (``PostToolUse``, ``Notification``, ``SessionEnd``,
+# ...) where the caller ignores ``block`` anyway and swallow-and-continue is
+# both correct and required — a broken dashboard hook must never stop the agent.
+#
+# Membership rationale, event by event:
+#   PreToolUse         — the sandbox/permission veto on every tool call.
+#   UserPromptSubmit   — content gate on what reaches the model.
+#   PermissionRequest  — an explicit "may I?"; silence must not mean yes.
+#   SubagentStop/Stop  — a veto here keeps the run going; a crash that reads as
+#                        "don't continue" is the conservative failure.
+#   PreCompact         — compaction is lossy and irreversible; skip it on doubt.
+#   InstructionsLoaded — gate on instruction text entering the system prompt.
+BLOCKING_EVENTS: frozenset[str] = frozenset(
+    {
+        "PreToolUse",
+        "UserPromptSubmit",
+        "PermissionRequest",
+        "SubagentStop",
+        "Stop",
+        "PreCompact",
+        "InstructionsLoaded",
+    }
+)
+
+# Escape hatch for operators who want the safe behaviour before it becomes the
+# default. Read from the environment (not settings) so it can be flipped for a
+# single process without touching config, and so this module stays dependency
+# free. It is an *escalation* switch only: setting it forces fail-closed on,
+# but leaving it unset/false never downgrades an explicit ``fail_closed=True``.
+_FAIL_CLOSED_ENV = "MANTIS_HOOKS_FAIL_CLOSED"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_forces_fail_closed() -> bool:
+    """Is ``MANTIS_HOOKS_FAIL_CLOSED`` set to a truthy value right now?
+
+    Read at dispatch time rather than cached at import/construction so tests
+    (and long-lived processes toggling the var) see changes immediately; the
+    cost is one ``os.environ`` lookup on the already-exceptional error path.
+    """
+
+    return os.environ.get(_FAIL_CLOSED_ENV, "").strip().lower() in _TRUTHY
 
 
 # ---------------------------------------------------------------------------
@@ -158,8 +238,10 @@ class HookResult(msgspec.Struct, omit_defaults=True):
     note: str | None = None
 
 
-# A hook is an async callable taking the context and returning a result.
-# Returning ``None`` is allowed and is equivalent to ``HookResult()``.
+# A hook is a callable taking the context and returning a result. Async is the
+# documented shape (and what this alias describes), but a plain ``def`` that
+# returns the result directly works too — ``dispatch`` awaits only awaitable
+# returns. Returning ``None`` is allowed and is equivalent to ``HookResult()``.
 HookFn = Callable[[HookContext], Awaitable["HookResult | None"]]
 
 
@@ -292,9 +374,18 @@ class HookDispatcher:
     3. Catches *any* exception and logs it — user hook bugs do not
        propagate into the agent loop.
     4. Normalizes a ``None`` return to ``HookResult()``.
+
+    ``fail_closed`` decides what step 3 means for the veto-carrying events in
+    :data:`BLOCKING_EVENTS`. When True, a hook that raises *denies* the
+    operation instead of silently permitting it (see the ``BLOCKING_EVENTS``
+    commentary for why that is the safe reading). It defaults to False so this
+    release changes no existing behaviour — the open path logs a WARNING
+    announcing the coming flip. Setting ``MANTIS_HOOKS_FAIL_CLOSED=1`` forces
+    fail-closed on regardless of the constructor argument.
     """
 
     hooks: Hooks
+    fail_closed: bool = False
 
     async def dispatch(self, event: str, ctx: HookContext) -> HookResult:
         """Deliver ``ctx`` to the hook registered for ``event``, if any.
@@ -322,11 +413,65 @@ class HookDispatcher:
             if not _matcher_hits(pattern, ctx):
                 continue
             try:
-                res = await fn(ctx)
-            except Exception:  # noqa: BLE001 — user code; never crash the loop
+                # A hook may be a coroutine function OR a plain ``def`` that
+                # returns the HookResult directly — same tolerance as
+                # ``JobManager._fire_on_event``. Awaiting a non-awaitable
+                # raises TypeError, and under fail_closed that TypeError would
+                # be read as "the guard crashed" and DENY: a sync no-op hook
+                # would silently start blocking every tool call. Only await
+                # what is actually awaitable.
+                res = fn(ctx)
+                if inspect.isawaitable(res):
+                    res = await res
+            except Exception as exc:  # noqa: BLE001 — user code; never crash the loop
+                # Observability events: unchanged — log and carry on.
+                if event not in BLOCKING_EVENTS:
+                    logger.exception("hook %r raised; treating as no-op", event)
+                    continue
+                # Veto events: the hook was asked for permission and did not
+                # answer. Deny (fail closed) or, for now, permit-with-a-warning.
+                name = getattr(fn, "__qualname__", None) or repr(fn)
+                if self.fail_closed or _env_forces_fail_closed():
+                    logger.exception(
+                        "blocking hook %s raised on %r; failing closed (denying)",
+                        name,
+                        event,
+                    )
+                    return HookResult(
+                        block=True,
+                        mutated_input=mutated,
+                        note=(
+                            f"hook {event} failed: {type(exc).__name__}; failing closed"
+                        ),
+                    )
                 logger.exception("hook %r raised; treating as no-op", event)
+                logger.warning(
+                    "blocking hook %s raised on %r and was IGNORED — the %s call "
+                    "proceeds unguarded (fail-open). A future version will fail "
+                    "closed and deny instead; set %s=1 (or HookDispatcher("
+                    "fail_closed=True)) to opt in now.",
+                    name,
+                    event,
+                    event,
+                    _FAIL_CLOSED_ENV,
+                )
                 continue
             if res is None:
+                continue
+            if not isinstance(res, HookResult):
+                # A hook that returns something else — a dict, a bool, a bare
+                # string — is a misbehaving hook, not a veto. Before sync hooks
+                # were supported, ``await <dict>`` raised TypeError *inside* the
+                # try above and was swallowed here; now the value arrives intact
+                # and would reach ``res.mutated_input`` and raise AttributeError
+                # straight out of dispatch. That would violate this module's
+                # central promise — a broken user hook must never crash the agent
+                # loop — and it would do so on observability events too.
+                logger.warning(
+                    "hook %r returned %s, expected HookResult or None; ignoring",
+                    event,
+                    type(res).__name__,
+                )
                 continue
             if res.mutated_input is not None:
                 mutated = res.mutated_input
@@ -339,6 +484,55 @@ class HookDispatcher:
         # UserPromptSubmit hook uses this to inject additional context.
         combined = "\n".join(notes) if notes else None
         return HookResult(mutated_input=mutated, note=combined)
+
+    async def dispatch_run_end(
+        self,
+        messages: list[Message] | None = None,
+        *,
+        error: BaseException | None = None,
+        agent_id: str | None = None,
+        arbitrary: dict[str, Any] | None = None,
+    ) -> HookResult:
+        """Fire the terminal event for a run: ``Stop``, or ``StopFailure``
+        when ``error`` is set.
+
+        The two events are one decision — "the run is over, and here is how it
+        ended" — so they get one call site rather than two that can drift. A
+        caller that already knows it succeeded can keep calling
+        ``dispatch("Stop", ...)`` directly; this helper exists so the *failure*
+        path is a single line at the point where the exception is known, which
+        is the only reason ``StopFailure`` has historically gone unfired.
+
+        ``error`` is recorded in ``ctx.arbitrary`` as ``error`` (the ``str()``
+        of the exception) and ``error_type`` (its class name) rather than as
+        the live exception object: hook contexts are serialized by some
+        integrations, and a traceback-bearing exception is neither portable nor
+        safe to hand to arbitrary consumers. Explicit ``arbitrary`` keys win
+        over the derived ones so a caller can supply a redacted message.
+
+        ``StopFailure`` is deliberately *not* in :data:`BLOCKING_EVENTS`: the
+        run has already failed, so there is nothing left for a hook to veto,
+        and a raising observability hook must not turn one failure into two.
+        """
+
+        event = "Stop" if error is None else "StopFailure"
+        if not self.has(event):
+            # Same fast path the loop uses elsewhere — no hook, no context
+            # assembly, no allocation beyond the empty result.
+            return HookResult()
+        extras: dict[str, Any] = dict(arbitrary) if arbitrary else {}
+        if error is not None:
+            extras.setdefault("error", str(error))
+            extras.setdefault("error_type", type(error).__name__)
+        return await self.dispatch(
+            event,
+            HookContext(
+                event=event,
+                messages_snapshot=messages,
+                agent_id=agent_id,
+                arbitrary=extras,
+            ),
+        )
 
     def has(self, event: str) -> bool:
         """Cheap check used by the loop to skip context assembly when nothing
@@ -364,6 +558,7 @@ class HookDispatcher:
 
 __all__ = [
     "HOOK_EVENTS",
+    "BLOCKING_EVENTS",
     "DISPATCHED_EVENTS",
     "RESERVED_EVENTS",
     "HookContext",

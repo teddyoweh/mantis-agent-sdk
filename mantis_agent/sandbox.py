@@ -20,6 +20,7 @@ Configure it in ``settings.json``::
     {"sandbox": {"enabled": true,
                  "writableRoots": ["/extra/path"],
                  "network": true,
+                 "scrubEnv": true,
                  "failIfUnavailable": false}}
 
 ``enabled`` defaults to off, because silently changing what a shell command can
@@ -35,11 +36,13 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 __all__ = [
     "SandboxPolicy",
     "SandboxUnavailable",
     "available_backend",
+    "child_env",
     "load_policy",
     "sandbox_status",
     "wrap_command",
@@ -58,12 +61,18 @@ class SandboxPolicy:
     else on the disk is readable but read-only. ``network`` is separate because
     turning it off breaks `pip install` and `git push`, which is a legitimate
     thing to want and a legitimate thing not to want.
+
+    ``scrub_env`` is the other half of the confinement, and the half that is
+    easy to forget: a filesystem sandbox means nothing to a process that
+    inherits ``ANTHROPIC_API_KEY`` and can open a socket. It defaults on, and
+    the allowlist lives in :mod:`.redaction`.
     """
 
     enabled: bool = False
     writable_roots: list[str] = field(default_factory=list)
     network: bool = True
     fail_if_unavailable: bool = False
+    scrub_env: bool = True
 
     def roots_for(self, cwd: str | None = None) -> list[str]:
         """Absolute, de-duplicated writable roots for a run in ``cwd``."""
@@ -108,12 +117,15 @@ def load_policy() -> SandboxPolicy:
         roots = [roots]
     enabled = _env_flag("MANTIS_SANDBOX")
     network = _env_flag("MANTIS_SANDBOX_NETWORK")
+    scrub = _env_flag("MANTIS_SANDBOX_SCRUB_ENV")
+    raw_scrub = raw.get("scrubEnv", raw.get("scrub_env", True))
     return SandboxPolicy(
         enabled=bool(raw.get("enabled", False)) if enabled is None else enabled,
         writable_roots=[str(r) for r in roots if str(r).strip()],
         network=bool(raw.get("network", True)) if network is None else network,
         fail_if_unavailable=bool(raw.get("failIfUnavailable")
                                  or raw.get("fail_if_unavailable")),
+        scrub_env=bool(raw_scrub) if scrub is None else scrub,
     )
 
 
@@ -222,6 +234,45 @@ def wrap_command(argv: list[str], policy: SandboxPolicy | None = None,
     return [*bubblewrap_argv(policy, cwd), *argv]
 
 
+def child_env(policy: SandboxPolicy | None = None, *,
+              cwd: str | None = None,
+              extra_pass: Sequence[str] = ()) -> dict[str, str]:
+    """The environment a sandboxed command should run with.
+
+    ``wrap_command`` confines what a process may *touch*; this confines what it
+    already *knows*. They're separate calls because ``subprocess`` takes argv
+    and env separately — a caller has to pass both, and passing only the first
+    is the bug this exists to make visible.
+
+    With ``scrub_env`` off you get the parent's environment verbatim, which is
+    the pre-existing behaviour and occasionally the necessary one (a build that
+    genuinely needs ``NPM_TOKEN``); prefer ``extra_pass`` for that, since it
+    widens the hole by exactly one name instead of removing the wall.
+    """
+    policy = policy or load_policy()
+    if not policy.scrub_env:
+        # NOT verbatim. Before this module existed, the bash tool applied a
+        # credential-name denylist to every child environment unconditionally;
+        # handing back ``dict(os.environ)`` here would make turning the sandbox
+        # ON with scrubbing OFF *leakier* than having no sandbox at all, which
+        # is the one outcome a security control must never produce. Opting out
+        # of the allowlist falls back to the old denylist — weaker, never absent.
+        from .redaction import is_secret_name  # noqa: PLC0415 — keep import cheap
+
+        env = {k: v for k, v in os.environ.items() if not is_secret_name(k)}
+        if cwd:
+            env["PWD"] = str(cwd)
+        return env
+    from .redaction import build_child_env  # noqa: PLC0415 — keep import cheap
+
+    env = build_child_env(extra_pass=extra_pass)
+    if cwd:
+        # PWD is what `pwd` in a shell prints and what many build scripts trust
+        # over getcwd(); leaving the parent's value is actively misleading.
+        env["PWD"] = str(cwd)
+    return env
+
+
 def sandbox_status(policy: SandboxPolicy | None = None,
                    cwd: str | None = None) -> dict[str, object]:
     """A description of what's in force, for ``/sandbox`` and ``/status``."""
@@ -235,4 +286,5 @@ def sandbox_status(policy: SandboxPolicy | None = None,
         "writable": policy.roots_for(cwd),
         "network": policy.network,
         "fail_if_unavailable": policy.fail_if_unavailable,
+        "scrub_env": policy.scrub_env,
     }

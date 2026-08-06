@@ -111,8 +111,8 @@ def test_discover_custom_commands_user_and_project(tmp_path, monkeypatch) -> Non
 
 def test_custom_command_cannot_shadow_builtin(tmp_path) -> None:
     home = tmp_path / "home"
-    _write_cmd(home, "model", "Should never load.")
-    assert "model" not in discover_custom_commands(tmp_path / "nowhere")
+    _write_cmd(home, "models", "Should never load.")
+    assert "models" not in discover_custom_commands(tmp_path / "nowhere")
 
 
 def test_expand_custom_command_arguments(tmp_path) -> None:
@@ -146,7 +146,7 @@ def test_all_slash_commands_merges_and_tags(tmp_path) -> None:
     _write_cmd(home, "deploy", "Deploy.", desc="Ship to prod")
     merged = all_slash_commands()
     assert merged["/deploy"] == "Ship to prod (custom)"
-    assert merged["/model"] == SLASH_COMMANDS["/model"]  # built-ins intact
+    assert merged["/models"] == SLASH_COMMANDS["/models"]  # built-ins intact
     # /help renders them (uncategorized commands land in the trailing bucket)
     cmds = [c for _, c, _ in build_help_lines(merged)]
     assert "/deploy" in cmds
@@ -256,11 +256,23 @@ def test_release_notes_reads_changelog() -> None:
     assert "Release notes" in out and "##" in out
 
 
-def test_run_update_editable_checkout_says_git_pull() -> None:
+def test_run_update_editable_checkout_says_git_pull(monkeypatch) -> None:
+    # Pin the PyPI answer: /update now asks what the latest release is, and a
+    # test that reaches the network would flip with whatever is published.
+    from mantis_agent import update as _u
+    monkeypatch.setattr(_u, "latest_version", lambda **_: ("99.0.0", ""))
     t = _tui()
     msg = t._run_update()
     # tests run inside the source checkout → editable guidance, not pip
     assert "editable install" in msg and "git" in msg
+
+
+def test_run_update_says_nothing_to_do_when_current(monkeypatch) -> None:
+    from mantis_agent import update as _u
+    monkeypatch.setattr(_u, "latest_version",
+                        lambda **_: (_u.current_version(), ""))
+    msg = _tui()._run_update()
+    assert "already on the latest release" in msg
 
 
 def test_resume_flag_lists_sessions(monkeypatch, capsys, tmp_path) -> None:

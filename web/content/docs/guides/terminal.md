@@ -16,6 +16,26 @@ Resume where you left off:
 mantis --continue    # or -c: reopens your most recent conversation
 ```
 
+## Staying up to date
+
+```bash
+mantis update          # upgrade to the latest release
+mantis update --check  # just report what's available, install nothing
+```
+
+It works out how mantis was installed — `uv tool`, `pipx`, or plain pip —
+and runs the matching upgrade, so you don't have to remember. A uv-created
+venv has no `pip` inside it; mantis notices and uses `uv` instead rather
+than failing with "No module named pip".
+
+One case it won't touch: an **editable install from a source checkout**.
+That's your working tree, possibly with uncommitted changes, so `mantis
+update` prints the `git pull` you'd want and stops. `/update` inside the
+terminal does the same thing.
+
+`--check` exits `0` when you're current and `1` when an upgrade is waiting,
+so it drops straight into a shell condition or a cron job.
+
 ## Teach it your project
 
 - **`/init`** — analyzes the repo and writes `MANTIS.md`, the project
