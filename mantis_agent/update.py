@@ -290,6 +290,12 @@ def run_update(argv: list[str]) -> int:
             return 1
     elif is_newer(latest, cur):
         print(f"  update available: {cur} → {latest}")
+    elif is_newer(cur, latest):
+        # A local build ahead of PyPI — saying "already on the latest release
+        # (2.61.0)" while running 2.62.0 reads like the check misfired.
+        print(f"  ahead of the published release ({latest}) — nothing to update")
+        if not args.force:
+            return 0
     else:
         print(f"  already on the latest release ({latest})")
         if not args.force:

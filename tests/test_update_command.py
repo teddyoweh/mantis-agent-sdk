@@ -155,6 +155,16 @@ def test_already_current_exits_zero_and_runs_nothing(monkeypatch, _pypi, capsys)
     assert "already on the latest release" in capsys.readouterr().out
 
 
+def test_local_build_ahead_of_pypi_says_so(monkeypatch, _pypi, capsys) -> None:
+    # A dev build is newer than anything published; "already on the latest
+    # release (2.61.0)" while running 2.62.0 reads like the check misfired.
+    _pypi("2.61.0")
+    monkeypatch.setattr(u, "current_version", lambda: "2.62.0")
+    monkeypatch.setattr(u.subprocess, "run", _explode)
+    assert u.run_update([]) == 0
+    assert "ahead of the published release (2.61.0)" in capsys.readouterr().out
+
+
 def test_source_checkout_refuses_and_exits_one(monkeypatch, _pypi, capsys) -> None:
     _pypi("2.99.0")
     monkeypatch.setattr(u, "current_version", lambda: "2.61.0")
