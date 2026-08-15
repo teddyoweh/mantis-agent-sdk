@@ -83,7 +83,7 @@ def test_injected_into_agent_context(skills_home, monkeypatch) -> None:
     from mantis_agent.providers.mock import MockProvider
 
     _make_skill(skills_home, "pdf", "pdf-forms", "Fill PDF forms", "body")
-    agent = Agent(model="mock-7b", provider=MockProvider(),
+    agent = Agent(model="mock-7b", provider=MockProvider(), skills="auto",
                   include_env=False, include_memory=True)
     ctx = agent._build_user_context()
     assert "skills" in ctx
@@ -96,7 +96,7 @@ def test_agent_skill_tool_wiring_does_not_duplicate(skills_home) -> None:
     from mantis_agent.providers.mock import MockProvider
 
     _make_skill(skills_home, "pdf", "pdf-forms", "Fill PDF forms", "body")
-    agent = Agent(model="mock-7b", provider=MockProvider(), tools=[load_skill],
+    agent = Agent(model="mock-7b", provider=MockProvider(), skills="auto", tools=[load_skill],
                   include_env=False, include_memory=True)
     ctx = agent._build_user_context()
     assert "skills" in ctx
@@ -155,7 +155,7 @@ def test_relevant_skill_body_auto_injected_for_matching_turn(skills_home) -> Non
     async def main():
         agent = Agent(
             model="mock-7b",
-            provider=MockProvider(),
+            provider=MockProvider(), skills="auto",
             include_env=False,
             include_memory=True,
             include_recall=False,
@@ -188,7 +188,7 @@ def test_relevant_skill_auto_injection_deduped_across_turns(skills_home) -> None
     async def main():
         agent = Agent(
             model="mock-7b",
-            provider=MockProvider(),
+            provider=MockProvider(), skills="auto",
             include_env=False,
             include_memory=True,
             include_recall=False,
@@ -284,3 +284,49 @@ def test_options_skills_all_preloads_all_skill_bodies(skills_home) -> None:
         assert "PDF BODY" in joined
 
     anyio.run(main)
+
+
+# ---------------------------------------------------------------------------
+# The default: off for library callers
+# ---------------------------------------------------------------------------
+
+
+def test_skills_are_off_by_default_for_sdk_callers(skills_home) -> None:
+    """An SDK caller must not inherit skills from a home directory.
+
+    Dogfooded: an agent built in a temp directory with a three-tool belt called
+    ``check-internet`` and pinged google.com — a skill sitting in
+    ``~/.mantis-agent/skills`` on the developer's machine, injected into a
+    library caller's conversation. Whether an agent works then depends on whose
+    laptop it ran on, which is not a property a library should have.
+
+    ``skills="auto"`` (what the terminal passes) restores the old behavior.
+    """
+
+    from mantis_agent.agent import Agent
+    from mantis_agent.providers.mock import MockProvider
+
+    _make_skill(skills_home, "pdf", "pdf-forms", "Fill PDF forms", "body")
+
+    off = Agent(model="mock-7b", provider=MockProvider(),
+                include_env=False, include_memory=True)
+    assert "skills" not in off._build_user_context()
+    assert off.tools.get("load_skill") is None
+
+    on = Agent(model="mock-7b", provider=MockProvider(), skills="auto",
+               include_env=False, include_memory=True)
+    assert "pdf-forms" in on._build_user_context()["skills"]
+
+
+def test_explicit_skill_list_still_selects(skills_home) -> None:
+    from mantis_agent.agent import Agent
+    from mantis_agent.providers.mock import MockProvider
+
+    _make_skill(skills_home, "pdf", "pdf-forms", "Fill PDF forms", "body")
+    _make_skill(skills_home, "csv", "csv-clean", "Clean CSVs", "body")
+
+    agent = Agent(model="mock-7b", provider=MockProvider(), skills=["pdf-forms"],
+                  include_env=False, include_memory=True)
+    ctx = agent._build_user_context()
+    assert "pdf-forms" in ctx["skills"]
+    assert "csv-clean" not in ctx["skills"]

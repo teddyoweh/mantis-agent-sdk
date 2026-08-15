@@ -34,14 +34,18 @@ events are the final answer.
 In `query()` output, `ThinkingBlock` appears in `message.content`:
 
 ```python
-async for msg in query(prompt="...", options={"model": "deepseek-r1:1.5b"}):
+from mantis_agent import MantisAgentOptions, query
+
+async for msg in query(
+    prompt="...", options=MantisAgentOptions(model="deepseek-r1:1.5b")
+):
     if msg.type == "assistant":
-        for block in msg.message["content"]:
-            if block["type"] == "thinking":
-                # Hide from end users; show in a "details" UI element
-                ...
-            elif block["type"] == "text":
-                print(block["text"])
+        for block in msg.content:
+            # Blocks are objects, not dicts — check the attribute you want.
+            if getattr(block, "thinking", None):
+                ...      # hide from end users; show in a "details" element
+            elif getattr(block, "text", None):
+                print(block.text)
 ```
 
 ## Enabling / disabling
@@ -50,14 +54,36 @@ Some models gate thinking behind a request flag. Setting
 `include_thinking=False` strips it from the request body where supported,
 and removes any inline `<think>` blocks the model emits anyway:
 
+There is no `include_thinking` option. What exists:
+
 ```python
-options = {
-    "model": "deepseek-r1:1.5b",
-    "include_thinking": False,
-}
+from mantis_agent import MantisAgentOptions
+
+# Anthropic-style thinking block, passed through to providers that take one.
+options = MantisAgentOptions(
+    model="claude-opus-5",
+    backend="anthropic",
+    thinking={"type": "enabled", "budget_tokens": 4096},
+)
+
+# Cap the reasoning budget without naming a provider shape.
+capped = MantisAgentOptions(model="deepseek-r1:1.5b", max_thinking_tokens=2048)
+
+# Or steer effort: "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "none"
+effortful = MantisAgentOptions(model="gpt-5.6", effort="high")
+
+# reasoning_mode picks the provider's reasoning family where it has one:
+# "standard" or "pro".
+pro = MantisAgentOptions(model="gpt-5.6", reasoning_mode="pro")
 ```
 
-The default is `True` (surface everything).
+These are *control* keys: they never reach a provider's wire verbatim. Each
+adapter translates the ones it supports (Anthropic's `thinking` block, OpenAI's
+`reasoning_effort`, Ollama's `think`) and drops the rest, so setting one can't
+400 a provider that has never heard of it.
+
+Inline `<think>` blocks a model emits anyway are parsed out of the text stream
+regardless — see the capability check below.
 
 ## Capability check
 
@@ -65,9 +91,13 @@ The default is `True` (surface everything).
 from mantis_agent import lookup_model
 
 cap = lookup_model("deepseek-r1:1.5b")
-print(cap.supports_thinking)        # True
-print(cap.thinking_format)          # 'inline' | 'out_of_band' | 'hidden'
+print(cap.emits_thinking_blocks)    # True — reasoning arrives as its own blocks
+print(cap.emits_inline_thinking)    # True — and/or inline in the text stream
+print(cap.inline_thinking_tags)     # the tag pairs stripped from that stream
 ```
+
+(`supports_thinking` and `thinking_format` never existed on `ModelCapability`;
+these three are the real fields.)
 
 ## When you want to *use* thinking
 

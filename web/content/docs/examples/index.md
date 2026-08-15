@@ -17,7 +17,7 @@ The canonical starting point: `query()` with a single tool, byte-for-byte
 the Claude Agent SDK pattern.
 
 ```python
-from mantis_agent import query, tool
+from mantis_agent import MantisAgentOptions, query, tool
 
 @tool
 async def get_weather(city: str) -> str:
@@ -27,16 +27,16 @@ async def get_weather(city: str) -> str:
 async def main() -> None:
     async for msg in query(
         prompt="What's the weather in San Francisco?",
-        options={
-            "model": "qwen2.5-7b-instruct",
-            "system": "You are a concise weather assistant.",
-            "tools": [get_weather],
-            "max_turns": 5,
-        },
+        options=MantisAgentOptions(
+            model="qwen2.5-coder:7b",
+            system_prompt="You are a concise weather assistant.",
+            tools=[get_weather],
+            max_turns=5,
+        ),
     ):
         if msg.type == "assistant":
-            for block in msg.message.content:
-                if hasattr(block, "text"):
+            for block in msg.content:
+                if getattr(block, "text", None):
                     print(block.text)
         elif msg.type == "result":
             print(f"[{msg.subtype}] {msg.num_turns} turns, ${msg.total_cost_usd:.4f}")

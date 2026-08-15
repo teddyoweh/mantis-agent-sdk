@@ -279,6 +279,17 @@ class SubAgentSpec:
     max_turns: int = 10
     isolation: IsolationMode = "asyncio_task"
     description: str | None = None
+    #: Where the child's model runs, and the credential for it. Without these a
+    #: spec carried a model name and no destination, so ``as_subagent_tool(spec)``
+    #: minted a child that fell back to the openai_compat default
+    #: (``localhost:8000``) and raised ``ProviderError: Not Found``. Invoked
+    #: through a parent model that surfaced as the child politely reporting it
+    #: "couldn't find" the answer — a connection failure disguised as a result.
+    #: ``parent_provider=`` on :func:`as_subagent_tool` remains the better choice
+    #: when the child shares the parent's backend (it reuses the HTTP pool);
+    #: these are for a child that genuinely runs somewhere else.
+    backend: str | None = None
+    api_key: str | None = None
     # Inherited by the child Agent so a write-capable sub-agent still routes
     # mutating calls through the parent's gate, and stays under the parent's
     # spend cap. ``None`` leaves the child ungated / uncapped (v0 behaviour).
@@ -371,6 +382,11 @@ class SubAgentTool(Tool):
         child = Agent(
             model=self._spec.model,
             provider=self._parent_provider,  # share the parent's HTTP pool
+            # Only consulted when there's no parent provider to share: a spec
+            # with a model and no destination used to fall back to the
+            # openai_compat default and 404.
+            backend=self._spec.backend if self._parent_provider is None else None,
+            api_key=self._spec.api_key if self._parent_provider is None else None,
             system=self._spec.system_prompt,
             tools=registry,
             max_steps=self._spec.max_turns,

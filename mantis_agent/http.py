@@ -113,6 +113,7 @@ def raise_for_status(response: httpx.Response, *, body: dict[str, Any] | None = 
             body = {"raw": response.text[:512]}
 
     msg = _extract_error_message(body) or response.reason_phrase or "provider error"
+    msg = f"{msg}{_where(response, status)}"
 
     if status == 429:
         retry_after = response.headers.get("retry-after")
@@ -124,6 +125,42 @@ def raise_for_status(response: httpx.Response, *, body: dict[str, Any] | None = 
     if status in (401, 403):
         raise AuthError(msg, status_code=status, raw=body)
     raise ProviderError(msg, status_code=status, raw=body)
+
+
+#: Ports that mean "you're pointed at the wrong local server", with the thing
+#: to check. A bare ``Not Found`` against localhost is the single most
+#: time-consuming error in this SDK: it's what you get when a bare model name
+#: falls through to the openai_compat default and nothing is listening, and
+#: nothing in the message says which door was knocked on.
+_LOCAL_HINTS: dict[str, str] = {
+    "8000": "the vLLM default — nothing is serving there unless you started it",
+    "11434": "Ollama — is the daemon running, and is the model pulled? (`ollama list`)",
+    "8080": "llama.cpp — is `llama-server` running?",
+    "3000": "TGI — is the server running?",
+}
+
+
+def _where(response: httpx.Response, status: int) -> str:
+    """`` (404 from http://host/path)`` — plus a hint for the local cases.
+
+    The query string is dropped: some providers (Gemini among them) carry the
+    API key there, and an error message is exactly the string that ends up in
+    a log, a bug report, or a screenshot.
+    """
+
+    try:
+        url = response.request.url
+    except (AttributeError, RuntimeError):  # pragma: no cover — defensive
+        return f" ({status})"
+    shown = f"{url.scheme}://{url.netloc.decode('ascii', 'replace')}{url.path}"
+    out = f" ({status} from {shown})"
+
+    host = url.host or ""
+    if status == 404 and host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        hint = _LOCAL_HINTS.get(str(url.port or ""))
+        if hint:
+            out += f" — port {url.port} is {hint}"
+    return out
 
 
 def _extract_error_message(body: dict[str, Any]) -> str | None:

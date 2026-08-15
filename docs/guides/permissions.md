@@ -22,7 +22,7 @@ async def can_use_tool(
     ctx: ToolPermissionContext,
 ):
     if tool_name == "write_file" and tool_input["path"].startswith("/etc"):
-        return PermissionResultDeny(reason="No writes outside the project")
+        return PermissionResultDeny(message="No writes outside the project")
     return PermissionResultAllow()
 
 options = MantisAgentOptions(
@@ -81,7 +81,7 @@ If you don't pass `can_use_tool`, set a default policy via
 options = MantisAgentOptions(
     model="qwen2.5:7b",
     tools=[shell, write_file],
-    permissions={"default_mode": "ask"},
+    permission_mode="default",   # "default" | "auto" | "bypass"
 )
 ```
 

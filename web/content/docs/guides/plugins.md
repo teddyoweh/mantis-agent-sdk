@@ -25,9 +25,9 @@ analytics = Plugin(
         "Whenever the user reports a problem, call log_event "
         "with name='problem' and the relevant payload."
     ),
-    hooks=[
-        HookMatcher(event="PreToolUse", handler=attach_session_id),
-    ],
+    hooks={
+        "PreToolUse": [HookMatcher(hooks=[attach_session_id])],
+    },
 )
 ```
 
@@ -36,7 +36,8 @@ A plugin has four parts (all optional):
 - `name` — used in errors and logs.
 - `tools` — a list of `Tool` (functions decorated with `@tool`).
 - `system_prompt_addition` — appended to the agent's system prompt.
-- `hooks` — `HookMatcher` instances registered for the session.
+- `hooks` — a `{event: [HookMatcher(...)]}` dict, same shape as the
+  `hooks` option. See [Hooks](hooks.md) for the recognized event names.
 
 ## Attaching
 

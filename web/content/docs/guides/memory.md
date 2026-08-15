@@ -53,7 +53,7 @@ entry = MemoryEntry(
 )
 
 save_memory_entry(entry)
-update_memory_index([entry, ...])   # rewrites INDEX.md
+update_memory_index()               # rewrites MEMORY.md from what's on disk
 ```
 
 ## Reading memory
@@ -65,9 +65,12 @@ from mantis_agent import (
     load_memory_index,
 )
 
-# Headers only (cheap)
-for slug, name, desc in load_memory_index():
-    print(slug, name, desc)
+# The raw MEMORY.md index text, exactly as it is injected into context.
+print(load_memory_index())
+
+# Headers only (cheap) — skips reading each entry's body.
+for entry in list_memory_entries(frontmatter_only=True):
+    print(entry.slug, entry.name, entry.description)
 
 # Full entries
 for entry in list_memory_entries():
@@ -84,18 +87,33 @@ makes it available to the model as an `isMeta` system message. The
 model can then load specific entries on demand via the built-in
 `load_memory` tool.
 
-To preload specific entries instead:
+There is no `memory_entries` option — the only switch is `include_memory`, a
+bool:
 
 ```python
-options = {
-    "memory_entries": ["user_role", "feedback_no_pii"],
-}
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    include_memory=False,     # skip the memory context head entirely
+)
 ```
 
-To disable memory loading entirely:
+To control *which* entries reach the model, curate them yourself and put the
+result in the system prompt:
 
 ```python
-options = {"memory_entries": False}
+from mantis_agent import list_memory_entries
+
+wanted = {"user_role", "feedback_no_pii"}
+entries = [e for e in list_memory_entries() if e.slug in wanted]
+system = "\n\n".join(f"{e.name}: {e.body}" for e in entries)
+
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    system_prompt=system,
+    include_memory=False,
+)
 ```
 
 ## When to use memory vs. system prompt

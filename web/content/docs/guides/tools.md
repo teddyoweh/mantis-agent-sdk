@@ -32,10 +32,10 @@ Pass them in `options.tools`:
 ```python
 async for msg in query(
     prompt="What's the weather in Lagos?",
-    options={
-        "model": "qwen2.5:7b",
-        "tools": [get_weather, get_forecast, list_cities],
-    },
+    options=MantisAgentOptions(
+        model="qwen2.5:7b",
+        tools=[get_weather, get_forecast, list_cities],
+    ),
 ):
     ...
 ```
@@ -103,9 +103,9 @@ second is still streaming in. See [Streaming](streaming.md).
 ```python
 from mantis_agent import WebFetch, WebSearch
 
-options = {
-    "tools": [WebFetch(), WebSearch(num_results=5)],
-}
+options = MantisAgentOptions(
+    tools=[WebFetch, WebSearch],   # already Tool instances — don't call them
+)
 ```
 
 - `WebSearch` — backed by Exa (`EXA_API_KEY`). Returns top-N URLs with
@@ -126,7 +126,9 @@ calc = create_sdk_mcp_server(
     version="0.1.0",
     tools=[add, subtract, multiply, divide],
 )
-options = {"mcp_servers": [calc]}
+options = MantisAgentOptions(
+    mcp_servers=[calc],
+)
 ```
 
 See [MCP servers](mcp.md) for transport options (stdio / sse / http).
@@ -137,16 +139,23 @@ If your tool raises, the SDK catches the exception and returns a
 `ToolResultBlock(is_error=True)` to the model. The model sees a structured
 error and can recover (retry, ask the user, give up gracefully).
 
-To raise an error the SDK should *not* catch — e.g. an auth failure that
-should abort the whole agent loop — raise a `ToolExecutionError` with
-`fatal=True`:
+You raise ordinary exceptions; the runtime constructs the
+`ToolExecutionError` wrapper itself:
 
 ```python
-from mantis_agent import ToolExecutionError
+from mantis_agent import tool
+
 
 @tool
 async def query_db(sql: str) -> str:
+    """Run a read-only query."""
     if not _has_auth():
-        raise ToolExecutionError("Database auth missing", fatal=True)
-    ...
+        raise RuntimeError("Database auth missing")
+    return _run(sql)
 ```
+
+`ToolExecutionError(tool_name, tool_use_id, cause)` is what the loop raises
+internally so it can format the `tool_result`. There is no `fatal=` flag —
+every tool exception is recoverable by design, because a dead loop tells the
+model nothing. To actually stop a run, cancel the agent (`agent.cancel()`) or
+let a budget cap raise `BudgetExceededError`.

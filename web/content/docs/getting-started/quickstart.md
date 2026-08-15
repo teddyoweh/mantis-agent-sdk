@@ -1,8 +1,6 @@
 # Quickstart
 
-Five minutes from an empty folder to an agent that calls your Python
-functions. You need Python 3.11+ and one place to run a model — your own
-laptop counts.
+A working agent with tool use, on your own machine, for free. Two minutes.
 
 ## 1. Install
 
@@ -10,66 +8,48 @@ laptop counts.
 pip install mantis-agent-sdk
 ```
 
-## 2. Give it a model
+## 2. Get a model
 
-Pick **one** of these. If you're not sure, pick the first — it's free and
-runs on any laptop.
-
-**On your laptop (Ollama)**
+Free and local, no account:
 
 ```bash
-mantis-agent setup-local        # installs Ollama + pulls a small model
-# or, if you already have Ollama:
-ollama pull qwen2.5:7b
+ollama pull qwen2.5-coder:7b
 ```
 
-No keys, no env vars. mantis finds Ollama on `localhost:11434` by itself.
+Already have a hosted key? Skip this and see [step 5](#5-point-it-somewhere-else).
 
-**On a hosted provider (Together, Fireworks, Groq, …)**
+## 3. Your first agent
 
-```bash
-export MANTIS_AGENT_BASE_URL=https://api.together.xyz/v1
-export MANTIS_AGENT_API_KEY=$TOGETHER_API_KEY
-```
-
-Any provider with an OpenAI-compatible endpoint works the same way — set
-its URL and key. Full recipes per provider are in
-[Models and backends](../guides/models-and-backends.md).
-
-**OpenAI**
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-Use a model name like `gpt-4o-mini` and mantis routes to OpenAI directly.
-
-## 3. Write your first agent
-
-Save this as `quickstart.py`:
+`quickstart.py`:
 
 ```python
 import asyncio
-from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
+
+from mantis_agent import MantisAgentOptions, query, tool
+
 
 @tool
 async def get_weather(city: str) -> str:
-    """Get the current weather for a city."""
-    return f"{city}: 67°F, partly cloudy"
+    """Get the current weather for a city. Returns a one-line summary."""
+    return f"{city}: 67°F, partly cloudy, wind 8 mph NW"
 
-async def main():
+
+async def main() -> None:
     async for msg in query(
         prompt="What's the weather in Lagos?",
         options=MantisAgentOptions(
-            model="qwen2.5:7b",   # swap for "gpt-4o-mini" or any model you set up
+            model="qwen2.5-coder:7b",
             tools=[get_weather],
             max_turns=4,
         ),
     ):
-        if isinstance(msg, AssistantMessage):
+        if msg.type == "assistant":
             for block in msg.content:
-                if hasattr(block, "text"):
+                if getattr(block, "text", None):
                     print(block.text)
+        elif msg.type == "result":
+            print(f"[{msg.subtype}] {msg.num_turns} turns, ${msg.total_cost_usd:.4f}")
+
 
 asyncio.run(main())
 ```
@@ -78,50 +58,104 @@ asyncio.run(main())
 python quickstart.py
 ```
 
-The model reads your question, decides to call `get_weather("Lagos")`,
-gets the result back, and answers in plain English. That round-trip —
-model → your function → model — is the agent loop, and it's the whole
-foundation of the SDK.
-
-## What each piece does
-
-- **`@tool`** turns an async Python function into something the model can
-  call. The function signature and docstring become the schema the model
-  sees — no separate JSON to write.
-- **`query()`** runs the agent loop and streams back messages as they
-  happen: what the assistant said, which tools it called, and a final
-  result with the cost.
-- **`model="qwen2.5:7b"`** is the only routing you do. mantis reads the
-  name and works out where the model lives — this one goes to your local
-  Ollama. `gpt-4o-mini` would go to OpenAI. Nothing else changes.
-- **`max_turns=4`** caps the loop so it can't run away. Add
-  `max_usd=0.10` to cap spend too — see [Budget](../guides/budget.md).
-
-## Keep a conversation going
-
-`query()` is one-shot. For a conversation the model remembers, use
-`ClaudeSDKClient`:
-
-```python
-from mantis_agent import ClaudeSDKClient, MantisAgentOptions
-
-async def main():
-    options = MantisAgentOptions(model="qwen2.5:7b", tools=[get_weather])
-    async with ClaudeSDKClient(options) as client:
-        async for msg in client.query("What's the weather in Lagos?"):
-            ...
-        async for msg in client.query("Now compare it to Lisbon."):
-            ...   # the model remembers Lagos from the previous turn
+```text
+The current weather in Lagos is 67°F with partly cloudy skies.
+[success] 2 turns, $0.0000
 ```
 
-Every conversation is saved to `~/.mantis-agent/sessions/` as it happens,
-so you can [resume or fork it](../guides/sessions.md) later — even after a
-restart.
+Two turns: the model called `get_weather`, then answered from the result. No
+backend argument — `qwen2.5-coder:7b` is Ollama tag form, so it routed to
+`http://localhost:11434` on its own.
 
-## Where to go next
+## 4. What each piece does
 
-- [Models and backends](../guides/models-and-backends.md) — every provider, with copy-paste setup
-- [Tools](../guides/tools.md) — more tools, parallel calls, error handling
-- [MCP servers](../guides/mcp.md) — plug in the same servers Claude Code uses
-- [Streaming](../guides/streaming.md) — render tokens as they arrive
-- [API reference](../api/index.md) — every symbol, typed
+- **`@tool`** turns an async function into something the model can call. The
+  signature becomes the JSON schema; the docstring is what the model reads to
+  decide *when* to call it, so write it for that audience.
+- **`query()`** runs the whole loop — model call, tool dispatch, feeding the
+  result back — and yields messages as they happen.
+- **`MantisAgentOptions`** is the typed form. It infers a backend from the model
+  name, and yields flat messages (`msg.content`).
+- **`max_turns=4`** is a hard ceiling on model calls. Pair with
+  `max_budget_usd=` once you're on a paid provider.
+
+!!! warning "If you get silence, check `msg.subtype`"
+
+    `query()` does not raise on a provider failure — it reports it on the final
+    message. A loop that only prints assistant text will print *nothing* and
+    look like a hang. Always read the result:
+
+    ```python
+    async def report(messages):
+        async for msg in messages:
+            if msg.type == "result" and msg.is_error:
+                print("failed:", msg.errors)   # e.g. ['ProviderError: Not Found']
+    ```
+
+    `ProviderError: Not Found` almost always means the model isn't pulled, or the
+    backend URL is wrong. `ollama list` tells you the first.
+
+## 5. Point it somewhere else
+
+One line changes, nothing else does:
+
+```python
+import os
+
+from mantis_agent import MantisAgentOptions
+
+local = MantisAgentOptions(model="qwen2.5-coder:7b")
+
+hosted = MantisAgentOptions(
+    model="accounts/fireworks/models/deepseek-v3",
+    base_url="https://api.fireworks.ai/inference/v1",
+    api_key=os.environ["FIREWORKS_API_KEY"],
+)
+
+claude = MantisAgentOptions(
+    model="claude-opus-5",
+    backend="anthropic",
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+)
+```
+
+See [Models and backends](../guides/models-and-backends.md) for the full routing
+and auth rules.
+
+## 6. Next
+
+- [Recipes](../guides/recipes.md) — a coding agent, JSON extraction, guardrails,
+  sub-agents, each a complete script.
+- [How configuration works](../guides/how-it-works.md) — the option shapes, and
+  why an unknown key never errors.
+- [Tools](../guides/tools.md) — schemas, errors, built-ins.
+
+### The other option shape
+
+A plain `dict` also works, and it's what the wire-shape examples use. Two
+differences that bite: it does **not** infer a backend, and its messages nest
+under `.message`.
+
+```python
+import asyncio
+
+from mantis_agent import query
+
+
+async def main() -> None:
+    async for msg in query(
+        prompt="What's the weather in Lagos?",
+        options={
+            "model": "qwen2.5-coder:7b",
+            "backend": "http://localhost:11434",   # required here
+            "max_turns": 4,
+        },
+    ):
+        if msg.type == "assistant":
+            for block in msg.message.content:      # note: .message.content
+                if getattr(block, "text", None):
+                    print(block.text)
+
+
+asyncio.run(main())
+```

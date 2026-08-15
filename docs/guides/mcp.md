@@ -11,7 +11,7 @@ using the same `@tool` decorator).
 The fastest way to expose a set of tools as an MCP server:
 
 ```python
-from mantis_agent import create_sdk_mcp_server, tool
+from mantis_agent import MantisAgentOptions, create_sdk_mcp_server, tool
 
 @tool
 async def add(a: int, b: int) -> int:
@@ -24,7 +24,9 @@ calc = create_sdk_mcp_server(
     tools=[add],
 )
 
-options = {"mcp_servers": [calc]}
+options = MantisAgentOptions(
+    mcp_servers=[calc],
+)
 ```
 
 The server runs in the same process — no subprocess, no socket — but
@@ -34,8 +36,8 @@ model's point of view it's identical to an out-of-process server.
 ## External servers (stdio / sse / http)
 
 ```python
-options = {
-    "mcp_servers": [
+options = MantisAgentOptions(
+    mcp_servers=[
         # stdio: spawn a subprocess
         {"transport": "stdio", "command": "uvx", "args": ["mcp-server-fetch"]},
 
@@ -45,7 +47,7 @@ options = {
         # http: connect via streamable-http transport
         {"transport": "http", "url": "https://mcp.example.com/mcp"},
     ],
-}
+)
 ```
 
 Each transport starts its handshake at session start and tears down at
@@ -98,45 +100,69 @@ its current model + options, and returns the result to the server.
 
 To allow sampling, register a handler:
 
+`sampling_handler` is a constructor argument on `MCPClient`, not an options
+key — a `"sampling_handler"` entry in an options dict is silently ignored:
+
 ```python
-options = {
-    "sampling_handler": "auto",          # use the agent's own model
-    # or a custom handler that may route to a different model entirely:
-    "sampling_handler": my_sampler_fn,
-}
+from mantis_agent.mcp.client import MCPClient, SamplingResult
+
+
+async def my_sampler(request):
+    # request.messages carries what the server wants sampled.
+    return SamplingResult(content="…", model="qwen2.5:7b")
+
+
+client = MCPClient(config, sampling_handler=my_sampler)
 ```
 
-If a server requests sampling and no handler is set, the server sees a
-`SamplingNotSupportedError` and decides how to handle it.
+`MCPClient` also takes `elicitation_handler`, `notification_handler`, and
+`request_timeout_s`. If a server requests sampling and no handler is set, the
+server is told sampling is unsupported and decides how to proceed.
 
-## Authoring an out-of-process server
+## Serving your own tools over MCP
 
-The same `@tool` decorator works for stdio servers — `mantis-agent-sdk`
-ships a minimal runtime you can install as a script:
+`SdkServer` is **in-process**: it exposes `@tool` functions to the MCP
+machinery without a subprocess or a socket. Build one with
+`create_sdk_server`:
 
 ```python
-# my_server.py
 from mantis_agent import tool
-from mantis_agent.mcp import SdkServer
+from mantis_agent.mcp import create_sdk_server
+
 
 @tool
 async def echo(text: str) -> str:
+    """Echo the input back."""
     return text
 
-if __name__ == "__main__":
-    SdkServer(name="echo", version="0.1.0", tools=[echo]).serve_stdio()
+
+config = create_sdk_server(name="echo", tools=[echo])
 ```
 
-```bash
-uv run my_server.py        # or: python my_server.py
-```
+`create_sdk_server` returns an `SdkServerConfig` you hand to `MCPClient` (or
+list in `mcp_servers`) exactly like a remote server's config. Note that
+`SdkServer.run(inbox, outbox)` speaks anyio memory streams, not stdin/stdout —
+there is no stdio server runtime in this package, so a `serve_stdio()` call (as
+earlier versions of this page showed) does not exist.
 
-From the agent side:
+For an out-of-process server, write it with any MCP implementation and *connect*
+to it — the client side handles stdio, SSE, and HTTP:
 
 ```python
-options = {
-    "mcp_servers": [
+from mantis_agent.mcp import HttpServerConfig, StdioServerConfig
+
+local = StdioServerConfig(command="uv", args=["run", "my_server.py"])
+remote = HttpServerConfig(url="https://mcp.example.com", headers={"authorization": "Bearer …"})
+```
+
+From the agent side, the same servers as a plain options entry:
+
+```python
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    mcp_servers=[
         {"transport": "stdio", "command": "uv", "args": ["run", "my_server.py"]},
     ],
-}
+)
 ```

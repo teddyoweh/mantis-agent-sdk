@@ -51,6 +51,8 @@ export const DOCS_NAV: NavSection[] = [
     label: "guides",
     items: [
       { title: "Overview", slug: "guides" },
+      { title: "Recipes", slug: "guides/recipes" },
+      { title: "How configuration works", slug: "guides/how-it-works" },
       { title: "Models & backends", slug: "guides/models-and-backends" },
       { title: "Provider access", slug: "guides/providers" },
       { title: "The mantis terminal", slug: "guides/terminal" },

@@ -26,13 +26,48 @@ def _ollama_reachable(host: str = "127.0.0.1", port: int = 11434) -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _ollama_reachable(),
-    reason="Ollama not running on localhost:11434",
-)
-
-
 MODEL = os.environ.get("MANTIS_AGENT_OLLAMA_MODEL", "llama3.2:3b")
+
+
+def _model_installed(model: str) -> bool:
+    """Is ``model`` actually pulled?
+
+    Reachability alone isn't enough to run these. A developer with the daemon up
+    but a different tag pulled (``llama3.2:latest`` rather than
+    ``llama3.2:3b``) used to get two failures reading
+    ``ProviderError: model "llama3.2:3b" not found`` — which looks like a code
+    regression, not a missing download. Check the tag list and skip with a
+    message that says what to do.
+    """
+
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(  # noqa: S310 — fixed localhost URL
+            "http://127.0.0.1:11434/api/tags", timeout=2
+        ) as r:
+            tags = json.load(r).get("models") or []
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+    names = {m.get("name", "") for m in tags}
+    # Ollama reports "name:tag"; a bare name matches its ":latest".
+    return model in names or f"{model}:latest" in names
+
+
+if not _ollama_reachable():
+    pytestmark = pytest.mark.skip(reason="Ollama not running on localhost:11434")
+elif not _model_installed(MODEL):
+    pytestmark = pytest.mark.skip(
+        reason=(
+            f"Ollama is up but {MODEL!r} is not pulled — run "
+            f"`ollama pull {MODEL}`, or point these tests at a model you have "
+            f"with MANTIS_AGENT_OLLAMA_MODEL=<tag>"
+        )
+    )
+else:
+    pytestmark = pytest.mark.usefixtures()
 
 
 @tool

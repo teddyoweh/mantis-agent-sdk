@@ -98,6 +98,39 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+def _name_first_can_use_tool(
+    fn: Callable[..., Awaitable[Any]] | None,
+) -> Callable[..., Awaitable[Any]] | None:
+    """Adapt a user ``can_use_tool`` to the signature it is documented to have.
+
+    The Claude Agent SDK — and this package's own permissions guide — promise
+    ``can_use_tool(tool_name: str, tool_input: dict, context)``. Internally the
+    resolver passes the whole ``Tool`` object, because the terminal's own policy
+    needs ``tool.name`` and read-only flags. Handing that object to a *user*
+    callback made every documented comparison silently false::
+
+        if tool_name == "delete_account":       # never True: a Tool, not a str
+            return PermissionResultDeny(...)
+
+    and because nothing matched, the call fell through to allow — a guardrail
+    that looked wired up and failed open. Found by dogfooding: a deny rule for
+    ``delete_account`` let the deletion run.
+
+    So translate at the boundary: user callbacks get the name string the docs
+    promise, internal ones keep the object. A callback that genuinely wants the
+    Tool can still reach it — ``context`` is unchanged, and the second argument
+    is the tool input as before.
+    """
+
+    if fn is None:
+        return None
+
+    async def _adapter(tool: Any, tool_input: dict[str, Any], ctx: Any) -> Any:
+        return await fn(getattr(tool, "name", tool), tool_input, ctx)
+
+    return _adapter
+
+
 @dataclass
 class MantisAgentOptions:
     """Drop-in replacement for ``claude_agent_sdk.MantisAgentOptions``.
@@ -112,6 +145,13 @@ class MantisAgentOptions:
     system_prompt: str | dict[str, Any] | None = None
     model: str | None = None
     backend: str | None = None
+    #: Alias for ``backend`` — the name every OpenAI-compatible SDK uses.
+    #: Passing both with different values raises rather than picking one.
+    base_url: str | None = None
+    #: Explicit provider credential. ``None`` discovers a key from the
+    #: environment; ``""`` sends no auth. Excluded from ``repr`` so a logged
+    #: options object can't leak it.
+    api_key: str | None = field(default=None, repr=False)
     # ``max_turns`` and ``max_tokens`` default to ``None`` (not the
     # concrete number) so ``setting_sources`` can fill them from disk;
     # the runtime fallback (20 turns / 1024 tokens) lives in
@@ -168,6 +208,12 @@ class MantisAgentOptions:
     # Set False to restore the strict "stop at the first no-tool turn" behavior.
     persist: bool = True
     include_memory: bool = True
+    #: Raise instead of finishing quietly when the run fails. ``query()``
+    #: reports provider failures on the final message and never raises, so a
+    #: loop that only prints assistant text prints nothing, exits 0, and looks
+    #: like a hang. The result is still yielded first; the raise lands as the
+    #: iterator finishes.
+    raise_on_error: bool = False
     setting_sources: list[str] | None = None
 
     # Agents — Claude SDK supports ``agents={"reviewer": AgentDefinition(...)}``
@@ -185,6 +231,11 @@ class MantisAgentOptions:
     # ``{"type": "json_schema", "json_schema": {...}}``); the agent layer
     # translates per backend at provider-stream time.
     response_format: dict[str, Any] | None = None
+    #: A dataclass / msgspec Struct / TypedDict / pydantic model to decode the
+    #: reply into. Derives the JSON schema, sets ``response_format`` for you,
+    #: and puts the instance on ``ResultMessage.parsed`` — instead of you
+    #: hand-writing the provider envelope and ``json.loads``-ing the text.
+    response_model: Any = None
 
     # Diagnostics — Claude SDK exposes a ``stderr`` callable that
     # receives every line the underlying CLI writes to stderr. For
@@ -227,6 +278,11 @@ class MantisAgentOptions:
             opts["model"] = self.model
         if self.backend:
             opts["backend"] = self.backend
+        if self.base_url:
+            opts["base_url"] = self.base_url
+        if self.api_key is not None:
+            # Empty string is meaningful ("no auth"), so test against None.
+            opts["api_key"] = self.api_key
         if self.max_turns is not None:
             opts["max_turns"] = self.max_turns
         if self.max_tokens is not None:
@@ -321,7 +377,7 @@ class MantisAgentOptions:
 
             opts["permissions"] = PermissionContext(
                 mode=self.permission_mode or "default",
-                can_use_tool=self.can_use_tool,
+                can_use_tool=_name_first_can_use_tool(self.can_use_tool),
             )
         # Merge user-supplied hooks dict with any plugin-contributed dicts.
         # User hooks win on per-event collision (set last in dict update).
@@ -340,7 +396,17 @@ class MantisAgentOptions:
 
         if self.max_budget_usd is not None:
             opts["max_usd"] = self.max_budget_usd
+        if self.raise_on_error:
+            opts["raise_on_error"] = True
+        if self.response_model is not None:
+            opts["response_model"] = self.response_model
         if self.fallback_model:
+            # A top-level key, not an ``extra`` entry: ``Agent`` has a real
+            # ``fallback_model`` field driving the retry-on-a-second-model path,
+            # and nothing ever read it back out of ``extra`` — so the documented
+            # option quietly did nothing. Kept in ``extra`` as well for any
+            # adapter already reading it from there.
+            opts["fallback_model"] = self.fallback_model
             opts.setdefault("extra", {})["fallback_model"] = self.fallback_model
         if self.cwd:
             opts["cwd"] = self.cwd
@@ -483,6 +549,12 @@ class ResultMessage(msgspec.Struct, omit_defaults=True):
     permission system blocked without diffing the message stream.
     """
 
+    @property
+    def type(self) -> str:
+        """``"result"`` — parity with the wire-shape messages, so the same
+        ``if msg.type == "result":`` loop works on both option shapes."""
+        return "result"
+
     subtype: str = "success"
     duration_ms: int = 0
     duration_api_ms: int = 0
@@ -499,6 +571,15 @@ class ResultMessage(msgspec.Struct, omit_defaults=True):
     # where no usage was reported by the backend.
     usage: dict = msgspec.field(default_factory=dict)
     modelUsage: dict = msgspec.field(default_factory=dict)
+    #: Human-readable failure strings when ``is_error`` — e.g.
+    #: ``["ProviderError: Not Found (404 from http://localhost:8000/v1/…)"]``.
+    #: The detail used to be collected and then dropped: ``_build_result`` took
+    #: an ``errors`` argument it never forwarded, so a failed run on this path
+    #: reported ``is_error=True`` with nothing to act on.
+    errors: list[str] = msgspec.field(default_factory=list)
+    #: The decoded ``response_model`` instance, when one was requested and the
+    #: reply parsed. ``None`` otherwise (and the reason lands in ``errors``).
+    parsed: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +595,11 @@ class SystemMessage(msgspec.Struct, omit_defaults=True):
     dict carrying ``tools``, ``mcp_servers``, ``model``, etc. — matches
     how Claude Python SDK code reads ``msg.data.get("tools", [])``.
     """
+
+    @property
+    def type(self) -> str:
+        """``"system"`` — see ``ResultMessage.type``."""
+        return "system"
 
     subtype: str = "init"
     data: dict[str, Any] = msgspec.field(default_factory=dict)

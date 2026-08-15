@@ -124,6 +124,11 @@ class SystemMessage(msgspec.Struct, omit_defaults=True):
     content: str | list[TextBlock]
     role: Literal["system"] = "system"
 
+    @property
+    def type(self) -> str:
+        """``"system"`` — see ``UserMessage.type``."""
+        return "system"
+
 
 class UserMessage(msgspec.Struct, omit_defaults=True):
     """User-authored or tool-result-bearing message.
@@ -139,6 +144,18 @@ class UserMessage(msgspec.Struct, omit_defaults=True):
     role: Literal["user"] = "user"
     isMeta: bool = False
 
+    @property
+    def type(self) -> str:
+        """``"user"`` — mirrors the wire-shape messages' ``.type``.
+
+        The two ``query()`` shapes used to disagree here: dict options yield
+        objects with ``.type``, typed options yield these, which had only
+        ``.role``. So the documented ``if msg.type == "assistant":`` loop
+        raised AttributeError the moment you switched option shapes. A property
+        (not a field) keeps the encoded JSON unchanged.
+        """
+        return "user"
+
 
 class AssistantMessage(msgspec.Struct, omit_defaults=True):
     """Assistant turn. Content is a list of blocks; mutated during streaming."""
@@ -148,6 +165,11 @@ class AssistantMessage(msgspec.Struct, omit_defaults=True):
     # Populated when the message finalizes.
     stop_reason: str | None = None
     usage: Usage | None = None
+
+    @property
+    def type(self) -> str:
+        """``"assistant"`` — see ``UserMessage.type``."""
+        return "assistant"
 
 
 # ``Message`` is an *untagged* union: its members are discriminated by a plain

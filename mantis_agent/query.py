@@ -265,6 +265,9 @@ class SDKResultMessage(
     modelUsage: dict[str, ModelUsage] = msgspec.field(default_factory=dict)
     permission_denials: list[SDKPermissionDenial] = msgspec.field(default_factory=list)
     errors: list[str] = msgspec.field(default_factory=list)
+    #: The decoded ``response_model`` instance, when one was requested and the
+    #: reply parsed. ``None`` otherwise (the reason lands in ``errors``).
+    parsed: Any = None
     uuid: str = ""
     session_id: str = ""
 
@@ -341,7 +344,14 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
     # Recognized keys map to Agent constructor params.
     agent_kwargs: dict[str, Any] = {
         "model": model,
+        # ``base_url`` is an accepted alias for ``backend`` (Agent raises if
+        # both are given with different values).
         "backend": opts.get("backend"),
+        "base_url": opts.get("base_url"),
+        "api_key": opts.get("api_key"),
+        # Scopes the built-in file/shell tools. Previously this key only
+        # reached the settings loader and the env text shown to the model.
+        "cwd": opts.get("cwd"),
         "system": opts.get("system"),
         "tools": _build_registry(opts.get("tools")),
         "max_tokens": opts.get("max_tokens", 1024),
@@ -357,6 +367,10 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         "permissions",
         "budget",
         "include_memory",
+        # Agent implements the pre-output retry on a second model; without this
+        # line the option landed in ``extra`` and the documented
+        # ``fallback_model=...`` silently did nothing.
+        "fallback_model",
         "model_capability",
         "backend_capability",
         "provider",
@@ -367,9 +381,28 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         if key in opts:
             agent_kwargs[key] = opts[key]
 
+    # Permissions from the dict form. Previously ``can_use_tool`` fell through
+    # to ``extra`` (never called) and ``permission_mode`` was merely *consumed*
+    # — swallowed without building anything — so a caller who set either got an
+    # agent with ``permissions=None``: no gating at all. That reads as "bypass
+    # works" and hides that "default" gates nothing, which is a guardrail
+    # failing open. Build the same PermissionContext the typed path does.
+    if "permissions" not in agent_kwargs and (
+        opts.get("can_use_tool") is not None or opts.get("permission_mode") is not None
+    ):
+        from .claude_compat import _name_first_can_use_tool  # local: cycle
+        from .permissions import PermissionContext
+
+        agent_kwargs["permissions"] = PermissionContext(
+            mode=opts.get("permission_mode") or "default",
+            can_use_tool=_name_first_can_use_tool(opts.get("can_use_tool")),
+        )
+
     # Everything else goes on Agent.extra for adapter-specific knobs.
     consumed = set(agent_kwargs.keys()) | {
-        "api_key",
+        "can_use_tool",
+        "raise_on_error",
+        "response_model",
         "max_turns",
         "max_steps",
         "persist",
@@ -536,6 +569,9 @@ async def query(
         return
 
     opts = _normalize_options(options)
+    from .compat_query import _apply_response_model  # local: avoid a cycle
+
+    opts = _apply_response_model(opts)
     agent = _agent_from_options(opts)
 
     session_id = opts.get("session_id") or _new_uuid()
@@ -716,6 +752,14 @@ async def query(
             agent.model, agg_usage, backend_hint=backend_hint
         )
 
+    from .compat_query import _decode_response_model  # local: avoid a cycle
+
+    parsed, parse_error = _decode_response_model(opts, final_text, is_error)
+    if parse_error:
+        is_error = True
+        error_subtype = "error_during_execution"
+        error_strings = list(error_strings) + [parse_error]
+
     result_msg = SDKResultMessage(
         subtype=error_subtype,
         duration_ms=duration_ms,
@@ -724,6 +768,7 @@ async def query(
         num_turns=num_turns,
         result=final_text if not is_error else "",
         errors=error_strings,
+        parsed=parsed,
         stop_reason=last_stop_reason,
         total_cost_usd=total_cost_usd,
         usage=agg_usage,
@@ -743,6 +788,9 @@ async def query(
         transcript.write(result_msg)
         transcript.close()
     yield result_msg
+    from .compat_query import _raise_if_requested  # local: avoid a cycle
+
+    _raise_if_requested(opts, result_msg)
 
 
 __all__ = [

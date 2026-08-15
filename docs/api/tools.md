@@ -65,7 +65,7 @@ my_tool = Tool(
         "properties": {"user_id": {"type": "string"}},
         "required": ["user_id"],
     },
-    handler=lookup_user_impl,
+    fn=lookup_user_impl,
 )
 ```
 
@@ -133,15 +133,34 @@ These are pre-instantiated default versions of the classes above.
 
 ## Tool errors
 
+A tool signals failure by raising anything at all — you don't construct
+`ToolExecutionError` yourself:
+
 ```python
-from mantis_agent import ToolExecutionError
+from mantis_agent import tool
+
 
 @tool
 async def query_db(sql: str) -> str:
+    """Run a read-only query."""
     if not _has_auth():
-        raise ToolExecutionError("Database auth missing", fatal=True)
+        raise RuntimeError("Database auth missing")
+    return _run(sql)
 ```
 
-`fatal=True` raises out of the agent loop. `fatal=False` (default) is
-caught and threaded back to the model as a tool result with
-`is_error=True`.
+The runtime catches it, wraps it in `ToolExecutionError(tool_name, tool_use_id,
+cause)`, and threads a `tool_result` block back to the model with
+`is_error=True` — so the model can react instead of the loop dying. Catch it
+around your own dispatch if you need the structured form:
+
+```python
+from mantis_agent import ToolExecutionError
+
+try:
+    ...
+except ToolExecutionError as e:
+    print(e.tool_name, e.tool_use_id, repr(e.cause))
+```
+
+There is no `fatal=` flag; to stop the loop, raise a `BudgetExceededError` or
+cancel the agent.

@@ -71,6 +71,45 @@ def _scope() -> str:
     return TOOL_SCOPE.get()
 
 
+#: The agent's working directory, if it set one. Relative paths handed to any
+#: file tool resolve against this instead of the host process's cwd.
+#:
+#: WHY THIS EXISTS: ``Agent(cwd=...)`` is reported to the model in its env
+#: context block ("Working directory: /x"), so the model then emits relative
+#: paths in good faith. Without this var, ``Path("out.py")`` resolved against
+#: whatever directory the *host process* happened to be in — so the model was
+#: told one directory and its tools wrote to another. Files landed outside the
+#: intended tree, and the agent's own follow-up ``ls`` disagreed with its own
+#: writes. A server running two agents over two projects had no way to keep
+#: them apart short of ``os.chdir``, which is process-global and races.
+#:
+#: ``None`` (the default) means "use the process cwd" — identical to the old
+#: behavior, so nothing changes for callers that don't set it.
+AGENT_CWD: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mantis_agent_cwd", default=None
+)
+
+
+def agent_cwd() -> str | None:
+    """The active agent working directory, or None for the process cwd."""
+    return AGENT_CWD.get()
+
+
+def resolve_path(path: str | Path) -> Path:
+    """Resolve a tool-supplied path the way the *model* expects it to resolve.
+
+    Absolute paths and ``~`` are honored as given. A relative path is joined
+    onto the agent's working directory when one is set, so what the model was
+    told in its env block and what the tools actually touch are the same place.
+    """
+
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return p
+    base = AGENT_CWD.get()
+    return (Path(base).expanduser() / p) if base else p
+
+
 # Read-before-write guard (Claude Code's readFileState). Tracks the mtime of
 # every file a tool has *seen* (read or written) this run. write_file then
 # refuses to clobber an existing file the tools haven't seen, or one changed on
@@ -371,6 +410,13 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     # previous one ended, so `cd sub` then a later `ls` behaves like a real shell
     # (Claude Code parity) instead of resetting to the launch dir every call.
     cwd = _bash_cwd()["cwd"]
+    if cwd is None:
+        # First command of the run: start in the agent's working directory when
+        # it set one, so `ls` sees what `write_file` just wrote. Without this,
+        # bash began in the host process's cwd while the file tools resolved
+        # against the agent's — the two disagreed and the model got confused by
+        # its own output.
+        cwd = agent_cwd()
     if cwd is not None and not os.path.isdir(cwd):
         cwd = _bash_cwd()["cwd"] = None  # the tracked dir vanished — fall back
 
@@ -689,7 +735,7 @@ async def monitor(
         except re.error:
             rx = re.compile(re.escape(until_pattern))  # bad regex → literal
 
-    p = Path(path).expanduser() if path else None
+    p = resolve_path(path) if path else None
     existed = p.exists() if p is not None else False
     baseline = (p.stat().st_mtime_ns, p.stat().st_size) if (p is not None and existed and p.is_file()) else None
     # Scan from the log's start on the first monitor of this shell — a line
@@ -884,7 +930,7 @@ async def notebook_edit(
     """
     import json  # noqa: PLC0415
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     if not p.exists():
         raise _missing_file_error(path, p)
     # No write-guard here: notebook_edit reads the whole notebook fresh below,
@@ -1003,7 +1049,7 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
     offset = _coerce_int(offset, default=1, lo=1)
     limit = _coerce_int(limit, default=_MAX_READ_LINES, lo=1, hi=50_000)
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     if not p.exists():
         raise _missing_file_error(path, p)
     if p.is_dir():
@@ -1073,7 +1119,7 @@ async def write_file(path: str, content: str) -> str:
     if not isinstance(content, str):
         content = str(content)
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     _check_write_guard(p)  # don't blind-overwrite an unseen / externally-changed file
     old = ""
     if p.exists() and p.is_file():
@@ -1106,7 +1152,7 @@ async def edit_file(
         replace_all: Replace every occurrence instead of requiring a unique match.
     """
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     if not p.exists():
         raise _missing_file_error(path, p)
     if old_string == "":
@@ -1149,7 +1195,7 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
     if not isinstance(edits, list) or not edits:
         raise ValueError("edits must be a non-empty list of edit objects")
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     if not p.exists():
         raise _missing_file_error(path, p)
 
@@ -1199,7 +1245,7 @@ async def ls(path: str = ".") -> str:
         path: Directory to list (default: current working directory).
     """
 
-    p = Path(path).expanduser()
+    p = resolve_path(path)
     if not p.exists():
         raise FileNotFoundError(f"no such path: {path}")
     if not p.is_dir():
@@ -1239,7 +1285,7 @@ async def glob(pattern: str, path: str = ".") -> str:
         path: Base directory to search from (default: working directory).
     """
 
-    base = Path(path).expanduser()
+    base = resolve_path(path)
 
     # Skip dependency / VCS / build junk (like ripgrep's gitignore defaults) so a
     # broad ``**/*.py`` doesn't drown real files in .venv/node_modules matches —
@@ -1450,7 +1496,7 @@ def _py_grep(
     if multiline:
         flags |= re.DOTALL
     rx = re.compile(re.escape(pattern) if fixed_strings else pattern, flags)
-    base = Path(path).expanduser()
+    base = resolve_path(path)
     exts = _TYPE_EXTS.get(file_type or "", ())
     files: list[Path]
     if base.is_file():

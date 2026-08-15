@@ -2127,6 +2127,10 @@ class MantisTUI:
         return Agent(
             model=self.model,
             provider=provider,
+            # The terminal is the surface where a user's own SKILL.md files are
+            # the point, so it opts in explicitly. The SDK default is off — a
+            # library caller shouldn't inherit them from a home directory.
+            skills="auto",
             # Deferred tools are named in the prompt (cheap) instead of fully
             # described in the schema list (expensive) — so the model knows
             # they exist and how to load them.

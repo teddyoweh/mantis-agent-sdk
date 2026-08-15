@@ -101,19 +101,20 @@ async with ClaudeSDKClient(options) as client:
 If you need finer control than `ClaudeSDKClient`, use `Agent`:
 
 ```python
-from mantis_agent import Agent
+from mantis_agent import Agent, UserMessage
 
 agent = Agent(
     model="qwen2.5:7b",
+    backend="http://localhost:11434",
     tools=[get_weather],
-    system_prompt="...",
-)
+    system="...",          # `system`, not `system_prompt` — that name is the
+)                          # typed-options spelling, and Agent rejects it
 
-# Run to completion, return final ResultMessage
-result = await agent.run("What's the weather in Lagos?")
+# Agent works in messages, not prompt strings: pass a list, get a list back.
+messages = await agent.run([UserMessage(content="What's the weather in Lagos?")])
 
-# Stream every event
-async for event in agent.run_iter("..."):
+# Stream raw events instead
+async for event in agent.stream([UserMessage(content="...")]):
     ...
 
 # Cancel mid-stream
@@ -122,9 +123,10 @@ agent.cancel()
 
 `Agent` is what `ClaudeSDKClient` wraps. The public methods:
 
-- `agent.run(prompt) -> ResultMessage`
-- `agent.run_iter(prompt) -> AsyncIterator[StreamEvent]`
+- `agent.run(messages) -> list[Message]` — run to completion
+- `agent.run_iter(messages) -> AsyncIterator[Message]` — messages as they finish
+- `agent.stream(messages) -> AsyncIterator[StreamEvent]` — every low-level event
 - `agent.cancel()` — fires the cancellation signal
-- `agent.session` — current `Session` instance
+- `await agent.aclose()` — releases the HTTP client
 
 See [Streaming](../guides/streaming.md) for the full event taxonomy.

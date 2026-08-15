@@ -103,9 +103,9 @@ def test_body_lines_keep_their_indent_when_wrapped() -> None:
     with console.capture() as cap:
         for ln in _thinking_lines(long_line):
             console.print(ln)
-    body = [l for l in cap.get().splitlines() if l.strip() and "thinking" not in l]
+    body = [ln for ln in cap.get().splitlines() if ln.strip() and "thinking" not in ln]
     assert len(body) > 1, "expected the paragraph to wrap"
-    assert all(l.startswith("  ") for l in body), body
+    assert all(ln.startswith("  ") for ln in body), body
 
 
 def test_expand_view_actually_contains_the_reasoning(monkeypatch) -> None:

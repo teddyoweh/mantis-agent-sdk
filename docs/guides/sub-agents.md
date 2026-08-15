@@ -38,8 +38,9 @@ from mantis_agent import Agent, as_subagent_tool
 
 researcher = Agent(
     model="qwen2.5:7b",
-    system_prompt="...",
-    tools=[...],
+    backend="http://localhost:11434",
+    system="...",        # Agent's field is `system`; `system_prompt` is the
+    tools=[],            # SubAgentSpec / MantisAgentOptions spelling
 )
 researcher_tool = as_subagent_tool(
     researcher,
@@ -56,10 +57,10 @@ schema as `SubAgentTool`.
 Add the wrapped sub-agent to the parent's `tools` list:
 
 ```python
-options = {
-    "model": "qwen2.5:7b",
-    "tools": [researcher_tool, drafter_tool, reviewer_tool],
-}
+options = MantisAgentOptions(
+    model="qwen2.5:7b",
+    tools=[researcher_tool, drafter_tool, reviewer_tool],
+)
 ```
 
 The model invokes them like any other tool. The sub-agent runs in
@@ -80,14 +81,26 @@ with the parent (the sub-agent's turns interleave into the parent's
 transcript). Use this when the sub-agent should *append* to the
 parent's context, not branch off.
 
-```python
-from mantis_agent import IsolationMode
+Isolation is a property of the **spec**, not of the wrapper, and
+`IsolationMode` is a string literal type — `"asyncio_task"` (the default),
+`"subprocess"`, or `"remote"`. There is no `SHARED` member:
 
-researcher_tool = as_subagent_tool(
-    researcher,
-    isolation=IsolationMode.SHARED,
+```python
+from mantis_agent import SubAgentSpec, as_subagent_tool
+
+spec = SubAgentSpec(
+    name="researcher",
+    system_prompt="Research the topic and report back.",
+    model="qwen2.5:7b",
+    isolation="asyncio_task",
 )
+researcher_tool = as_subagent_tool(spec)
 ```
+
+`as_subagent_tool(spec_or_agent, *, name=None, description=None,
+parent_provider=None)` takes no `isolation` argument. Pass
+`parent_provider=parent.provider` to share the parent's HTTP pool —
+recommended in `asyncio_task` mode.
 
 ## Multiple sub-agents in parallel
 
@@ -96,13 +109,13 @@ concurrently (assuming `parallel_safe=True`, the default). Each gets
 its own task group; results thread back in emission order.
 
 ```python
-options = {
-    "tools": [
+options = MantisAgentOptions(
+    tools=[
         as_subagent_tool(spec_a),
         as_subagent_tool(spec_b),
         as_subagent_tool(spec_c),
     ],
-}
+)
 ```
 
 The parent model can fan out: "use researcher + drafter + reviewer in
@@ -114,10 +127,31 @@ Sub-agents accept a single `prompt` argument by default — whatever the
 parent passes. To accept structured input, define a custom schema on
 the spec:
 
+`SubAgentSpec` has no `input_schema` field — the wrapped tool always exposes a
+single `prompt` argument. For structured input, build the `Tool` yourself with
+the schema you want and dispatch to the sub-agent inside it:
+
 ```python
-researcher = SubAgentSpec(
+import json
+
+from mantis_agent import SubAgentSpec, Tool, as_subagent_tool
+
+spec = SubAgentSpec(
     name="researcher",
-    description="...",
+    system_prompt="Research the topic and report back.",
+    model="qwen2.5:7b",
+    description="Research a topic at a given depth.",
+)
+inner = as_subagent_tool(spec)
+
+
+async def research(topic: str, depth: str = "shallow") -> str:
+    return await inner.fn(prompt=json.dumps({"topic": topic, "depth": depth}))
+
+
+structured = Tool(
+    name="researcher",
+    description="Research a topic at a given depth.",
     input_schema={
         "type": "object",
         "properties": {
@@ -126,23 +160,41 @@ researcher = SubAgentSpec(
         },
         "required": ["topic"],
     },
+    fn=research,
 )
 ```
-
-The wrapped tool exposes that schema to the parent; the sub-agent gets
-the parsed input as a dict.
 
 ## Budgets and limits
 
 Apply caps separately to each sub-agent:
 
+Dollar caps live on a `Budget`, which the spec carries; `max_turns` is a field
+in its own right:
+
 ```python
-researcher = SubAgentSpec(..., max_usd=0.10, max_turns=8)
-drafter = SubAgentSpec(..., max_usd=0.05, max_turns=5)
+from mantis_agent import SubAgentSpec
+from mantis_agent.budget import Budget
+
+researcher = SubAgentSpec(
+    name="researcher",
+    system_prompt="Research.",
+    model="qwen2.5:7b",
+    max_turns=8,
+    budget=Budget(max_usd=0.10),
+)
+drafter = SubAgentSpec(
+    name="drafter",
+    system_prompt="Draft.",
+    model="qwen2.5:7b",
+    max_turns=5,
+    budget=Budget(max_usd=0.05),
+)
 ```
 
-The parent's `max_usd` rolls up everything (its own model calls plus
-all sub-agent spend).
+`Budget` also takes `max_input_tokens`, `max_output_tokens`,
+`max_total_tokens`, and a `fallback_model` to downshift to before the cap is
+hit. The parent's own cap rolls up everything: its model calls plus all
+sub-agent spend.
 
 ## Patterns
 

@@ -28,6 +28,7 @@ Performance notes
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import re
@@ -653,6 +654,26 @@ class Agent:
 
     model: str
     backend: str | None = None
+    #: Accepted alias for ``backend``. Every OpenAI-compatible SDK on earth
+    #: calls this ``base_url``, and both doc trees documented it as an option
+    #: long before anything read it, so honor the name rather than correcting
+    #: the reader. Folded into ``backend`` in ``__post_init__``; passing both
+    #: with different values is an error rather than a silent precedence rule.
+    base_url: str | None = None
+    #: Explicit provider credential. ``None`` means "discover from the
+    #: environment" (``MANTIS_AGENT_API_KEY``, then the provider-specific
+    #: chain in each adapter); ``""`` means "send no auth at all". Kept out of
+    #: ``repr`` so a stray ``print(agent)`` can't leak a key into a log.
+    api_key: str | None = field(default=None, repr=False)
+    #: Working directory for the built-in file and shell tools. Relative paths
+    #: the model emits resolve against this, and ``bash`` starts here.
+    #:
+    #: This value is already reported to the model in its env context block
+    #: ("Working directory: …"), so before it scoped the tools, the model was
+    #: told one directory while ``write_file`` used the host process's — files
+    #: landed outside the intended tree and the agent's own ``ls`` disagreed
+    #: with its own writes. ``None`` keeps the process cwd, unchanged.
+    cwd: str | None = None
     provider: Provider | None = None
     system: str | None = None
     tools: ToolRegistry | list = field(default_factory=ToolRegistry)
@@ -800,7 +821,13 @@ class Agent:
     _rules_surfaced: set[str] = field(default_factory=set, init=False)
     # Auto-loaded skill bodies already injected this session (dedup by skill name).
     _skills_surfaced: set[str] = field(default_factory=set, init=False)
-    # Explicit Claude-SDK-style skills requested via MantisAgentOptions(skills=...).
+    # Which SKILL.md files this agent may use.
+    #   None    — off (the default): a library caller does not inherit skills
+    #             from the developer's home directory.
+    #   "auto"  — discover + inject the ones matching each turn (what the
+    #             mantis terminal uses).
+    #   "all"   — every discovered skill.
+    #   [names] — exactly these.
     skills: list[str] | str | None = None
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
@@ -849,6 +876,21 @@ class Agent:
         # max_turns is a friendly alias for max_steps (Claude SDK parity).
         if self.max_turns is not None:
             self.max_steps = self.max_turns
+
+        # base_url is an alias for backend, resolved before any provider is
+        # built. Conflicting values raise: quietly preferring one would send
+        # requests to a URL the caller can see they didn't ask for, which is
+        # the exact failure mode this alias exists to end.
+        if self.base_url is not None:
+            if self.backend is not None and self.backend != self.base_url:
+                raise ValueError(
+                    "Agent(backend=..., base_url=...) got two different URLs "
+                    f"({self.backend!r} vs {self.base_url!r}) — they are aliases "
+                    "for the same thing, so pass only one."
+                )
+            self.backend = self.base_url
+        else:
+            self.base_url = self.backend
 
         # Resolve model capability if not given explicitly.
         if self.model_capability is None:
@@ -1194,11 +1236,18 @@ class Agent:
                 all_skills = discover_skills()
                 if self.skills == "all":
                     catalog_skills = all_skills
+                elif self.skills == "auto":
+                    catalog_skills = all_skills
                 elif isinstance(self.skills, list):
                     wanted = set(self.skills)
                     catalog_skills = [s for s in all_skills if s.name in wanted]
                 else:
-                    catalog_skills = all_skills
+                    # ``None`` means OFF. A library caller's agent should not
+                    # silently inherit whatever SKILL.md files happen to sit in
+                    # the developer's home directory — that made behavior depend
+                    # on the machine it ran on. The terminal opts in with
+                    # ``skills="auto"``.
+                    catalog_skills = []
                 catalog = render_skill_catalog(catalog_skills).strip()
                 if catalog:
                     ctx["skills"] = catalog
@@ -1227,7 +1276,14 @@ class Agent:
             kw["base_url"] = self.backend or os.environ.get(
                 "MANTIS_AGENT_BASE_URL", "http://localhost:8000/v1"
             )
-            kw["api_key"] = os.environ.get("MANTIS_AGENT_API_KEY")
+            # Explicit api_key wins over the environment; ``None`` leaves the
+            # adapter's own env chain (MANTIS_AGENT_API_KEY, then
+            # OPENAI_API_KEY / TOGETHER_API_KEY / … ) in charge, and ``""``
+            # deliberately sends no auth at all.
+            kw["api_key"] = (
+                self.api_key if self.api_key is not None
+                else os.environ.get("MANTIS_AGENT_API_KEY")
+            )
             if self.backend_capability is not None:
                 kw["backend_capability"] = self.backend_capability
         elif backend_kind == "ollama":
@@ -1244,12 +1300,32 @@ class Agent:
                 kw["base_url"] = self.backend
             if self.backend_capability is not None:
                 kw["backend_capability"] = self.backend_capability
-            # api_key is read from $ANTHROPIC_API_KEY inside the provider —
-            # surfacing it here too would shadow that resolution path.
+            # With no explicit key, api_key is read from $ANTHROPIC_API_KEY /
+            # $ANTHROPIC_AUTH_TOKEN inside the provider — surfacing it here
+            # too would shadow that resolution path.
         elif backend_kind == "mock":
             pass  # mock takes its own kwargs from `extra`
-        # Best-effort construction — adapters that don't accept some keys
-        # will tell us at instantiation.
+
+        # An explicit key is honored on every adapter that has somewhere to
+        # put it, not just openai_compat — the caller said "use this key",
+        # and silently dropping it is how the docs came to describe an option
+        # that did nothing.
+        if self.api_key is not None:
+            kw.setdefault("api_key", self.api_key)
+
+        # Drop kwargs this adapter doesn't take, rather than losing *all* of
+        # them to a blanket TypeError fallback (which is how a real base_url
+        # could vanish and leave the provider pointing at its own default).
+        try:
+            accepted = {
+                p.name
+                for p in inspect.signature(ProviderCls).parameters.values()
+                if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+            }
+        except (TypeError, ValueError):
+            accepted = set()
+        if accepted:
+            kw = {k: v for k, v in kw.items() if k in accepted}
         try:
             return ProviderCls(**kw)
         except TypeError:
@@ -1411,11 +1487,13 @@ class Agent:
                 all_skills = discover_skills()
                 if self.skills == "all":
                     selected = all_skills
+                elif self.skills == "auto":
+                    selected = match_skills(query, all_skills)
                 elif isinstance(self.skills, list):
                     wanted = set(self.skills)
                     selected = [s for s in all_skills if s.name in wanted]
                 else:
-                    selected = match_skills(query, all_skills)
+                    selected = []  # ``None`` means off — see the catalog site.
                 matches = [s for s in selected if s.name not in self._skills_surfaced]
                 if matches:
                     self._skills_surfaced.update(s.name for s in matches)
@@ -1569,8 +1647,11 @@ class Agent:
         # shells, read-guard) under a per-agent scope so concurrent agents /
         # subagents don't share it. Reset in the finally to restore the parent's
         # scope when a subagent's run (in the same task) returns.
-        from .builtin_tools.fs import TOOL_SCOPE  # noqa: PLC0415
+        from .builtin_tools.fs import AGENT_CWD, TOOL_SCOPE  # noqa: PLC0415
         _scope_token = TOOL_SCOPE.set(self._tool_scope)
+        # Scope the file/shell tools to this agent's working directory for the
+        # run, so relative paths land where the model was told they would.
+        _cwd_token = AGENT_CWD.set(self.cwd)
 
         # Spans are hoisted so the exception guard below can close whichever
         # is still open. The loop's normal-exit paths close them explicitly.
@@ -2051,6 +2132,10 @@ class Agent:
             # which can't happen here (set + reset in the same frame).
             try:
                 TOOL_SCOPE.reset(_scope_token)
+            except (ValueError, LookupError):  # pragma: no cover — defensive
+                pass
+            try:
+                AGENT_CWD.reset(_cwd_token)
             except (ValueError, LookupError):  # pragma: no cover — defensive
                 pass
 

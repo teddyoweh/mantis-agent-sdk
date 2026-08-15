@@ -34,7 +34,7 @@ from .claude_compat import (
     SystemMessage,
     UserMessage,
 )
-from .errors import BudgetExceededError
+from .errors import AgentError, BudgetExceededError
 from .tools import Tool, ToolRegistry
 from .types import (
     AssistantMessage as _InternalAssistantMessage,
@@ -72,6 +72,7 @@ async def query(
     """
 
     opts = _normalize_options(options)
+    opts = _apply_response_model(opts)
     agent = _build_agent(opts)
     # Claude-SDK parity that used to be silently dropped:
     #   * options.agents={"name": AgentDefinition(...)} → each becomes a real
@@ -226,7 +227,13 @@ async def query(
     # it serializes through msgspec cleanly.
     denials = list(getattr(agent, "_permission_denials", []))
 
-    yield _build_result(
+    parsed, parse_error = _decode_response_model(opts, final_text, is_error)
+    if parse_error:
+        is_error = True
+        error_subtype = "error_during_execution"
+        error_strings.append(parse_error)
+
+    result = _build_result(
         session_id=session_id,
         num_turns=num_turns,
         usage=agg_usage,
@@ -240,12 +247,86 @@ async def query(
         last_stop_reason=last_stop_reason,
         errors=error_strings,
         permission_denials=denials,
+        parsed=parsed,
     )
+    yield result
+    _raise_if_requested(opts, result)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _apply_response_model(opts: dict[str, Any]) -> dict[str, Any]:
+    """Turn ``response_model=SomeType`` into a provider ``response_format``.
+
+    An explicit ``response_format`` always wins — if a caller hand-wrote the
+    envelope they mean it, and silently replacing it would be the kind of
+    invisible override this SDK has been burned by.
+    """
+
+    model = opts.get("response_model")
+    if model is None:
+        return opts
+    from .response_model import build_response_format, is_supported
+
+    if not is_supported(model):
+        raise TypeError(
+            f"response_model must be a dataclass, msgspec.Struct, TypedDict or "
+            f"pydantic model describing an object; got {model!r}"
+        )
+    if opts.get("response_format") is not None:
+        return opts
+    out = dict(opts)
+    out["response_format"] = build_response_format(model)
+    return out
+
+
+def _decode_response_model(
+    opts: dict[str, Any], final_text: str, already_failed: bool
+) -> tuple[Any, str | None]:
+    """``(parsed, error)`` for the requested ``response_model``.
+
+    Skipped when the run already failed — the model never got to answer, and a
+    second error about unparseable text would bury the real cause.
+    """
+
+    model = opts.get("response_model")
+    if model is None or already_failed:
+        return None, None
+    from .response_model import parse_response
+
+    try:
+        return parse_response(model, final_text), None
+    except ValueError as e:
+        return None, str(e)
+
+
+def _raise_if_requested(opts: dict[str, Any], result: Any) -> None:
+    """With ``raise_on_error=True``, turn a failed run into an exception.
+
+    ``query()`` reports provider failures on the final message and never raises.
+    That's the right default for a streaming API — a consumer can render the
+    partial transcript and then the error — but it makes the *silent* failure
+    the easy one to write::
+
+        async for msg in query(prompt=..., options=...):
+            if msg.type == "assistant":
+                print(...)          # prints nothing, exits 0, looks like a hang
+
+    The result message is still yielded first, so nothing is hidden from a
+    consumer that does read it; the raise happens as the iterator finishes.
+    """
+
+    if not opts.get("raise_on_error"):
+        return
+    if not getattr(result, "is_error", False):
+        return
+    errors = list(getattr(result, "errors", None) or [])
+    subtype = getattr(result, "subtype", "error")
+    detail = "; ".join(str(e) for e in errors) or subtype
+    raise AgentError(f"agent run failed ({subtype}): {detail}")
 
 
 def _normalize_options(options: MantisAgentOptions | dict[str, Any] | None) -> dict[str, Any]:
@@ -288,7 +369,19 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # ``MantisAgentOptions(model="qwen2.5:7b")`` work with no extra
     # kwarg — same two-line drop-in story as the Claude SDK.
     from .routing import resolve_backend
-    backend = resolve_backend(model, opts.get("backend"))
+    # ``base_url`` is an accepted alias for ``backend`` — same URL, the name
+    # every OpenAI-compatible SDK uses. Two different values is a mistake
+    # worth surfacing rather than silently resolving.
+    explicit_backend, alias = opts.get("backend"), opts.get("base_url")
+    if alias:
+        if explicit_backend and explicit_backend != alias:
+            raise ValueError(
+                "options got two different URLs for backend and base_url "
+                f"({explicit_backend!r} vs {alias!r}) — they are aliases for the "
+                "same thing, so pass only one."
+            )
+        explicit_backend = alias
+    backend = resolve_backend(model, explicit_backend)
 
     # Tool registry from Tool instances; built-in name strings are stashed.
     registry = ToolRegistry()
@@ -363,6 +456,8 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     kw: dict[str, Any] = {
         "model": model,
         "backend": backend,
+        "api_key": opts.get("api_key"),
+        "cwd": opts.get("cwd"),
         "system": opts.get("system"),
         "tools": registry,
         "max_tokens": opts.get("max_tokens", 1024),
@@ -370,8 +465,11 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "max_steps": opts.get("max_turns", opts.get("max_steps", 20)),
         "max_usd": opts.get("max_usd"),
     }
+    # ``fallback_model`` is forwarded here for the same reason it is in
+    # ``query._agent_from_options``: Agent implements the retry-on-a-second-model
+    # path, and leaving the key out meant a documented option did nothing.
     for key in ("hooks", "permissions", "budget", "include_memory", "response_format",
-                "tracer", "skills", "persist", "effort"):
+                "tracer", "skills", "persist", "effort", "fallback_model"):
         if key in opts:
             kw[key] = opts[key]
 
@@ -381,7 +479,9 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # only the allowed names). We've already filtered the registry above.
     consumed = set(kw.keys()) | {
         "model", "backend", "tools", "system", "max_tokens", "temperature",
-        "max_turns", "max_steps", "max_usd", "api_key",
+        "max_turns", "max_steps", "max_usd", "api_key", "base_url",
+        "raise_on_error",
+        "response_model",
         "persist", "session_id", "cwd", "permission_mode",
         "mcp_servers", "agents", "setting_sources", "response_format",
         "tracer", "skills",
@@ -534,6 +634,7 @@ def _build_result(
     total_cost_usd: float,
     last_stop_reason: str | None,
     errors: list[str],
+    parsed: Any = None,
     permission_denials: list | None = None,
 ) -> ResultMessage:
     duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -565,4 +666,6 @@ def _build_result(
         permission_denials=list(permission_denials or []),
         usage=usage_dict,
         modelUsage=model_usage_dict,
+        errors=list(errors or []),
+        parsed=parsed,
     )

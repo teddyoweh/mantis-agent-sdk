@@ -142,9 +142,9 @@ from mantis_agent import (
 transcript = read_transcript("~/.mantis-agent/sessions/abc.jsonl")
 print(len(transcript.messages))
 
-# Walk all transcripts
-for path, t in iter_transcripts("~/.mantis-agent/sessions"):
-    print(path, len(t.messages))
+# Walk all transcripts — no argument; the root comes from $MANTIS_AGENT_HOME.
+for session_id, path in iter_transcripts():
+    print(session_id, path)
 ```
 
 Each line of a `.jsonl` file is one `Message` serialised via `msgspec`.

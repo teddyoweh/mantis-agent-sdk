@@ -90,6 +90,8 @@ nav:
       - Configuration: getting-started/configuration.md
   - Guides:
       - guides/index.md
+      - Recipes: guides/recipes.md
+      - How configuration works: guides/how-it-works.md
       - Models and backends: guides/models-and-backends.md
       - Tools: guides/tools.md
       - Streaming: guides/streaming.md

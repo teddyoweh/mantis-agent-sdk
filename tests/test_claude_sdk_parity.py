@@ -62,9 +62,25 @@ def test_usage_fields_snake_case() -> None:
     assert _fields(Usage) == expected
 
 
+#: Fields this SDK adds to the wire shape that upstream has no equivalent for.
+#: Every entry is a deliberate, documented extension — listed here so adding one
+#: is a decision someone made on purpose, not something that slipped in.
+#:
+#: ``parsed`` — the decoded ``response_model`` instance. Upstream has no
+#: ``response_model`` feature, so there is nothing to be compatible *with*. It
+#: rides as ``"parsed": null`` for runs that don't use it, which is additive:
+#: porting Claude-SDK code needs no diffs, since nothing upstream reads it.
+MANTIS_WIRE_EXTENSIONS = {"parsed"}
+
+
 def test_sdk_result_message_fields() -> None:
     """SDKResultMessage matches Claude SDK's union of Success + Error
-    subtypes — same fields, default subtype='success'."""
+    subtypes — same fields, default subtype='success'.
+
+    Extensions are allowed only if declared in ``MANTIS_WIRE_EXTENSIONS``; a
+    *missing* or *renamed* upstream field still fails, because that is what
+    would actually break a ported consumer.
+    """
 
     expected = {
         "subtype",
@@ -82,7 +98,12 @@ def test_sdk_result_message_fields() -> None:
         "uuid",
         "session_id",
     }
-    assert _fields(SDKResultMessage) == expected
+    actual = _fields(SDKResultMessage)
+    assert expected <= actual, f"missing upstream fields: {expected - actual}"
+    assert actual - expected == MANTIS_WIRE_EXTENSIONS, (
+        f"undeclared wire extension(s): {actual - expected - MANTIS_WIRE_EXTENSIONS}. "
+        f"Add to MANTIS_WIRE_EXTENSIONS with a reason, or keep it off the wire shape."
+    )
 
 
 def test_sdk_assistant_message_nests_message() -> None:

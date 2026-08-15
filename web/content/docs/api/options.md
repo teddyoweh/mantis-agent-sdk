@@ -8,28 +8,39 @@ from mantis_agent import MantisAgentOptions, HookMatcher, Plugin
 
 options = MantisAgentOptions(
     model="qwen2.5:7b",
-    backend=None,                   # auto-route from model
-    base_url=None,
-    api_key=None,
+    backend=None,                   # auto-routed from the model name when None
+    base_url=None,                  # alias for backend; passing both raises
+    api_key=None,                   # None = discover from env; "" = no auth
     tools=[get_weather],
     system_prompt="You are helpful.",
     max_turns=20,
     max_tokens=4096,
     temperature=0.7,
-    max_usd=1.0,
-    permissions={"default_mode": "allow"},
-    can_use_tool=None,
-    hooks=[],
-    plugins=[],
-    mcp_servers=[],
-    agents=[],                      # sub-agents
-    setting_sources=None,
+    max_budget_usd=1.0,             # the dict-options spelling is max_usd
+    permission_mode="default",      # "default" | "auto" | "bypass"
+    can_use_tool=None,              # async callback returning a PermissionResult
     allowed_tools=None,
     disallowed_tools=None,
+    hooks={},                       # {event: [HookMatcher(...)]} — a dict, not a list
+    plugins=[],
+    mcp_servers={},                 # {name: config} — a dict, not a list
+    agents={},                      # {name: AgentDefinition} — sub-agents, a dict
+    effort=None,                    # "minimal".."max" | "none"
+    thinking=None,
+    max_thinking_tokens=None,
+    fallback_model=None,
+    response_format=None,
+    response_model=None,            # a dataclass/Struct/TypedDict/pydantic model
+    raise_on_error=False,           # raise instead of failing quietly
+    skills=None,                    # None = off; "auto" = match per turn; "all"
+    setting_sources=None,           # ["user", "project", "local"] — names, not paths
     cwd=None,
     session_id=None,
     persist=True,
+    include_memory=True,
     stderr=None,
+    env=None,
+    extra={},                       # escape hatch for adapter-specific keys
 )
 ```
 

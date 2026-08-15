@@ -16,13 +16,17 @@ transcripts will keep deserialising as the SDK evolves.
 Override the location:
 
 ```python
-options = {"persist": "./my-sessions/"}
+options = MantisAgentOptions(
+    persist="./my-sessions/",
+)
 ```
 
 Or disable persistence entirely:
 
 ```python
-options = {"persist": False}
+options = MantisAgentOptions(
+    persist=False,
+)
 ```
 
 ## Session IDs
@@ -30,7 +34,9 @@ options = {"persist": False}
 You can supply your own:
 
 ```python
-options = {"session_id": "user-42/thread-abc"}
+options = MantisAgentOptions(
+    session_id="user-42/thread-abc",
+)
 ```
 
 Otherwise the SDK generates a ULID-shaped id (sortable, no central
@@ -80,15 +86,18 @@ Branch off a session at any checkpoint:
 ```python
 from mantis_agent import fork_session
 
-forked = fork_session(
-    source=session,
-    checkpoint="before-experiment",
-    new_session_id="user-42/thread-abc/alt-1",
-)
+# fork_session is async and takes the STORE plus the source id — positionally:
+#   fork_session(store, src_id, new_id=None, *, checkpoint=None)
+new_id = await fork_session(store, "user-42/thread-abc", "user-42/thread-abc/alt-1")
+
+# A checkpoint is an index (or a Checkpoint handle), not a label: `2` keeps
+# messages [0:2]. Omit it to copy the whole history.
+truncated = await fork_session(store, "user-42/thread-abc", checkpoint=2)
 ```
 
 The fork shares history up to the checkpoint, then diverges. Each branch
-journals to its own JSONL file. The original is untouched.
+journals under its own id, and the metadata records `forked_from` (plus
+`forked_at_index` for a truncated fork). The original is untouched.
 
 Use forks to:
 
@@ -141,14 +150,18 @@ class MyStore(SessionStore):
 ## Iterate over all transcripts
 
 ```python
-from mantis_agent import iter_transcripts
+from mantis_agent import iter_transcripts, read_transcript
 
-for path, transcript in iter_transcripts("~/.mantis-agent/sessions"):
-    print(path, len(transcript.messages))
+# Yields (session_id, path) for every persisted transcript. It takes no
+# arguments — the location comes from $MANTIS_AGENT_HOME.
+for session_id, path in iter_transcripts():
+    # read_transcript takes the SESSION ID, not the path, and yields one
+    # parsed dict per line (so it streams rather than loading the file).
+    lines = list(read_transcript(session_id))
+    print(session_id, len(lines))
 ```
 
-`JsonlTranscript` is the on-disk format; `read_transcript(path)` returns
-one.
+`JsonlTranscript` is the on-disk format; `read_transcript(path)` reads one back.
 
 ## Auto-compaction
 
@@ -159,10 +172,29 @@ the in-memory message list is replaced.
 
 Tune the threshold:
 
+There is no `compact_threshold` option. The threshold lives on the compactor,
+which you hand to `Agent` directly:
+
 ```python
-options = {
-    "compact_threshold": 0.85,  # at 85% of context window, compact
-}
+from mantis_agent import Agent
+from mantis_agent.compact import SimpleCompactor
+
+agent = Agent(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    # 0.85 of the context window is the default; keep_recent_turns controls how
+    # much verbatim tail survives a compaction.
+    compactor=SimpleCompactor(lambda *a, **k: "", threshold=0.9, keep_recent_turns=8),
+)
+
+no_compaction = Agent(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    auto_compact=False,
+)
 ```
 
-Set to `1.0` to disable.
+Passing `compactor=` builds the summarizer yourself; leaving `auto_compact=True`
+(the default) wires a `SimpleCompactor` to the agent's own model. Compaction
+tuning is an `Agent` concern — neither knob is reachable through `query()`
+options.

@@ -7,11 +7,15 @@ gives you per-token events the moment they arrive.
 ## `query()` — flat-shape messages
 
 ```python
-async for msg in query(prompt="...", options={...}):
+from mantis_agent import MantisAgentOptions, query
+
+async for msg in query(
+    prompt="...", options=MantisAgentOptions(model="qwen2.5:7b")
+):
     if msg.type == "assistant":
-        for block in msg.message["content"]:
-            if block["type"] == "text":
-                print(block["text"], end="", flush=True)
+        for block in msg.content:
+            if getattr(block, "text", None):
+                print(block.text, end="", flush=True)
     elif msg.type == "result":
         print(f"\n[done — ${msg.total_cost_usd:.4f}]")
 ```
@@ -23,39 +27,60 @@ message. It does not stream individual tokens — for that, use
 
 ## `Agent.run_iter()` — stream events
 
-```python
-from mantis_agent import Agent
+Events are `msgspec` structs, so you dispatch on **type**, not on a string
+tag. Deltas are nested: a text token arrives as
+`ContentBlockDelta(index, delta=TextDelta(text=...))`.
 
-agent = Agent(model="qwen2.5:7b", tools=[get_weather])
-async for event in agent.run_iter("What's the weather in Lagos?"):
-    match event.type:
-        case "content_block_start":
-            ...
-        case "text_delta":
-            print(event.text, end="", flush=True)
-        case "thinking_delta":
-            print(f"\033[2m{event.text}\033[0m", end="", flush=True)
-        case "input_json_delta":
-            ...  # tool-call args streaming in
-        case "content_block_stop":
-            # tool calls fire here, mid-stream
-            ...
-        case "message_stop":
-            ...
+```python
+import sys
+
+from mantis_agent import Agent, UserMessage
+from mantis_agent.events import (
+    ContentBlockDelta,
+    ContentBlockStop,
+    InputJsonDelta,
+    TextDelta,
+    ThinkingDelta,
+)
+
+agent = Agent(
+    model="qwen2.5:7b",
+    backend="http://localhost:11434",
+    tools=[get_weather],
+)
+
+async for event in agent.stream([UserMessage(content="Weather in Lagos?")]):
+    if isinstance(event, ContentBlockDelta):
+        if isinstance(event.delta, TextDelta):
+            sys.stdout.write(event.delta.text)
+        elif isinstance(event.delta, ThinkingDelta):
+            # note: ThinkingDelta's field is `thinking`, not `text`
+            sys.stdout.write(f"\033[2m{event.delta.thinking}\033[0m")
+        elif isinstance(event.delta, InputJsonDelta):
+            pass  # tool-call arguments streaming in
+    elif isinstance(event, ContentBlockStop):
+        pass  # a block finished; tool dispatch fires around here
 ```
 
-Event types:
+`agent.stream()` covers **one** assistant turn — it does not run the multi-turn
+loop. Append the assistant message and any tool results, then call it again.
+Use `agent.run_iter(messages)` for whole messages as they complete, or
+`query()` for the fully-managed loop.
 
-| Type | Meaning |
-|---|---|
-| `message_start` | New assistant message. |
-| `content_block_start` | New content block (text / thinking / tool_use). |
-| `text_delta` | Token of text. |
-| `thinking_delta` | Token of out-of-band thinking. |
-| `input_json_delta` | Token of a tool-call's JSON arguments. |
-| `content_block_stop` | Block finished. **Tool dispatch fires here.** |
-| `message_delta` | Mid-message metadata (e.g. stop_reason updates). |
-| `message_stop` | Message finished. |
+Event structs:
+
+| Struct | Fields | Meaning |
+|---|---|---|
+| `MessageStart` | `message_id`, `model`, `role` | New assistant message. |
+| `ContentBlockStart` | `index`, `block` | New block (text / thinking / tool_use). |
+| `ContentBlockDelta` | `index`, `delta` | A token; `delta` is one of the three below. |
+| `TextDelta` | `text` | Token of visible text. |
+| `ThinkingDelta` | `thinking` | Token of reasoning. |
+| `InputJsonDelta` | `partial_json` | Token of a tool call's JSON arguments. |
+| `ContentBlockStop` | `index` | Block finished. |
+| `MessageDelta` | `stop_reason`, `stop_sequence`, `usage` | Mid-message metadata. |
+| `MessageStop` | — | Message finished. |
+| `ErrorEvent` | `error_type`, `message`, `raw` | Provider-level error mid-stream. |
 
 ## Mid-stream tool dispatch
 
@@ -109,15 +134,24 @@ The session persists across `query()` calls — the second turn sees the
 full transcript from the first. State is written to
 `~/.mantis-agent/sessions/{session_id}.jsonl` between calls.
 
-## Stderr callback
+## About the `stderr` option
 
-If you want token-level visibility without writing your own event loop:
+`MantisAgentOptions` accepts a `stderr` callable for signature parity with the
+Claude SDK, where it receives lines from the CLI subprocess. This SDK doesn't
+shell out to a CLI, and **nothing currently invokes the callback** — passing it
+is harmless but does nothing. (In a plain options dict it isn't even a
+recognized key; it lands in `Agent.extra`.)
+
+For token-level visibility, stream the events yourself:
 
 ```python
-options = {
-    "model": "qwen2.5:7b",
-    "stderr": lambda line: print(line, file=sys.stderr),
-}
+from mantis_agent import Agent, UserMessage
+
+agent = Agent(model="qwen2.5:7b", backend="http://localhost:11434")
+
+async for event in agent.stream([UserMessage(content="hi")]):
+    print(event.type)
 ```
 
-`stderr` is invoked with each delta as it streams.
+`agent.stream` yields one assistant turn's events; append the resulting message
+(plus any tool results) and call it again to continue the conversation.

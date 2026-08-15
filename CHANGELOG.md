@@ -8,6 +8,203 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+### Added — the four things dogfooding said were missing
+
+- **`response_model` — ask for a type, get an instance.** Structured output
+  meant hand-writing the provider envelope (`{"type": "json_schema",
+  "json_schema": {...}}`), then `json.loads`-ing whatever came back, with every
+  field name living in two places. Now::
+
+      @dataclass
+      class Invoice:
+          vendor: str
+          total_usd: float
+
+      options = MantisAgentOptions(model=..., response_model=Invoice)
+      ...
+      result.parsed        # -> Invoice(vendor='Northwind Traders', ...)
+
+  Accepts dataclasses, `msgspec.Struct`, `TypedDict`, and pydantic models;
+  derives the schema (inlined and `additionalProperties: false`, which strict
+  mode requires), and decodes onto `parsed`. Two behaviors learned from watching
+  small models: a ```` ```json ```` fence is stripped before parsing, and a parse
+  failure is a *run* failure — `parsed=None` with a success flag would be the
+  same silent trap as everything else fixed this cycle, so the reason lands in
+  `errors` with the head of what the model actually said. An explicit
+  `response_format` still wins. `SDKResultMessage` gains a `parsed` field, the
+  first declared entry in the new `MANTIS_WIRE_EXTENSIONS` list in the parity
+  test — extensions are now a decision on the record rather than a silent drift.
+
+- **Errors name where they went.** `ProviderError: Not Found` was the most
+  expensive message in the SDK: it's what a bare model name produces when it
+  falls through to the openai_compat default and nothing is listening, and it
+  said nothing about which door was knocked on. Now `Not Found (404 from
+  http://localhost:8000/v1/chat/completions) — port 8000 is the vLLM default …`,
+  with hints for the Ollama, llama.cpp and TGI ports. The query string is
+  stripped: Gemini carries the API key there, and an error message is exactly
+  the string that ends up in a log or a screenshot.
+
+- **`raise_on_error`.** `query()` reports failures on the final message and
+  never raises, so the loop everyone writes — print assistant text — prints
+  nothing and exits 0 when the backend is down. Opt in and the result is still
+  yielded first, then `AgentError` is raised as the iterator finishes. Fixing
+  this exposed a companion bug: `_build_result` took an `errors` argument it
+  never forwarded, so every failed run on the typed path reported
+  `is_error=True` with an empty `errors` list — the detail was collected and
+  dropped. `ResultMessage.errors` now carries it.
+
+- **Skills are off by default for library callers.** `skills=None` used to mean
+  "discover every `SKILL.md` under `~/.mantis-agent/skills/` and inject the
+  matching ones" — into *any* agent, including a library caller's in an
+  unrelated directory. A coding agent with a three-tool belt called
+  `check-internet` and pinged google.com, and the tool was real: a skill on the
+  developer's machine. Whether an agent works should not depend on whose laptop
+  it runs on. `None` now means off; `"auto"` is the old behavior and is what the
+  `mantis` terminal passes; `"all"` and an explicit list are unchanged.
+
+
+### Fixed — found by dogfooding the SDK against a local model
+
+Four defects surfaced by building real agents with the package rather than
+reading it. Each was invisible from the source and obvious from a run.
+
+- **`can_use_tool` was fail-open.** A policy written exactly as the permissions
+  guide and the Claude Agent SDK document it — `if tool_name ==
+  "delete_account": return PermissionResultDeny(...)` — let the deletion
+  through, for two independent reasons. The resolver passed the whole `Tool`
+  object where a name string is promised, so every comparison was false and the
+  policy fell through to allow; and on the dict-options path neither
+  `can_use_tool` nor `permission_mode` built a `PermissionContext` at all, so the
+  agent ran with `permissions=None` and nothing was gated — `"bypass"` looked
+  like it worked only because *everything* was ungated. User callbacks now
+  receive the documented name string (translated at the boundary, so the
+  terminal's own policy keeps the `Tool` it needs), and both option paths build a
+  real context. A guardrail that looks configured and isn't is worse than no
+  guardrail.
+
+- **`cwd` didn't scope the built-in tools.** It was reported to the model in its
+  env context block ("Working directory: /x") while `write_file` and `bash`
+  resolved relative paths against the *host process's* directory. The model
+  emitted relative paths in good faith, its files landed outside the intended
+  tree, and its own follow-up `ls` disagreed with its own writes. The same
+  fizzbuzz-and-test prompt on the same 7B model went from **zero files created
+  and a confused model** to a correct, passing result once the tools resolved
+  against `cwd` — the "small model is dumb" failure was the SDK lying about where
+  it was. `Agent` gained a `cwd` field, both option paths forward it, relative
+  paths resolve against it, and `bash` starts there. Unset keeps the process cwd,
+  so existing callers are unaffected.
+
+- **`msg.type` existed on only one message shape.** The dict path yields objects
+  with `.type`; the typed path yielded objects with only `.role`, so the
+  documented `if msg.type == "assistant":` loop raised `AttributeError` the
+  moment you switched option shapes. The flat messages now expose `type` as a
+  property (not a field, so encoded JSON is unchanged) and the same loop works on
+  both.
+
+- **`SubAgentSpec` had a model but no destination.** `as_subagent_tool(spec)`
+  minted a child that fell back to the openai_compat default (`localhost:8000`)
+  and raised `ProviderError: Not Found`. Invoked through a parent model, that
+  surfaced as the child politely reporting it "couldn't find" the answer — a
+  connection failure disguised as a result. The spec now takes `backend` and
+  `api_key`; `parent_provider=` remains the better choice when the child shares
+  the parent's backend.
+
+- **Live Ollama tests failed instead of skipping** when the daemon was up but the
+  default tag wasn't pulled, reporting `ProviderError: model "llama3.2:3b" not
+  found` — which reads as a code regression rather than a missing download. The
+  guard now checks the tag list and skips with the `ollama pull` command to run.
+
+### Added
+
+
+- **`api_key` and `base_url` are real options.** Both doc trees documented them
+  for a long time while no code path read either one, and the failure was silent
+  in the worst way: unknown option keys flow into `Agent.extra`, so a reader who
+  copied the documented snippet got an agent pointing at the default URL with no
+  auth — a 401 or a connection refused, far from the cause. On the typed path
+  `MantisAgentOptions(api_key=…)` raised `TypeError` outright. Both now exist on
+  `Agent`, `MantisAgentOptions`, and the dict form, and reach the provider.
+
+  `base_url` is an accepted alias for `backend` (the name every
+  OpenAI-compatible SDK uses); passing both with *different* values raises
+  rather than silently preferring one, because quietly picking a URL the caller
+  can see they didn't ask for is the failure mode the alias exists to end.
+  `api_key` has three meanings: a string is used verbatim, `None` keeps the
+  environment discovery chain, and `""` sends no auth at all (for backends that
+  authenticate with their own headers). An explicit key beats the environment on
+  every adapter that has somewhere to put it, Anthropic's `x-api-key` included.
+
+  Provider construction also stopped losing kwargs: it previously fell back to
+  no-kwarg construction on any `TypeError`, so one unsupported argument could
+  drop a real `base_url` and leave the adapter on its own default. Kwargs the
+  adapter doesn't accept are now filtered individually.
+
+- **`fallback_model` works from options.** `Agent` has always implemented the
+  retry-a-failed-turn-on-a-second-model path, and both guides described
+  configuring it through options — but neither options path forwarded the key.
+  The typed path filed it under `extra`; the dict path never listed it. Nothing
+  read either, so a documented resilience feature was off for every caller who
+  didn't construct `Agent` by hand.
+
+- **`docs/guides/how-it-works.md` — the page you'd otherwise read source for.**
+  Unknown option keys are silent by design (they flow to `Agent.extra` so
+  adapters can take provider-specific knobs), which means a typo, a key from
+  another SDK, and a key that used to exist all behave identically: accepted,
+  inert. That rule, the two option shapes and their two message shapes, the
+  precedence chain across code/settings/env, the knobs reachable only on
+  `Agent`, and an honest table of the eleven Claude-SDK-parity fields that
+  accept a value and do nothing — all in one place, each entry verified by
+  probing behavior rather than by reading a docstring.
+
+- **`scripts/check_doc_coverage.py` — a gate for what's *missing*.** The snippet
+  checker answers "is what we wrote true?"; this answers "is any of it written
+  down?" It walks `__all__`, `MantisAgentOptions` fields, the environment
+  variables the package really reads, behavior-changing settings keys, and
+  mapped hook events, and fails on anything mentioned in neither doc tree.
+  Env names come from the AST — literals and resolved module constants, so
+  `f"MANTIS_SUBAGENT_{name}"` can't invent a variable and
+  `os.environ.get(_FAIL_CLOSED_ENV)` isn't missed. Deliberate omissions live in
+  an `ALLOWLIST` with a stated reason, putting that decision on the record.
+  Starting point was 89% of exports, 77% of option fields and 47% of env vars
+  documented; all five surfaces are now at 100%.
+
+- **`scripts/check_doc_snippets.py` — CI gate against doc drift.** A wrong
+  example is worse than a missing one, and nothing in the suite could tell the
+  difference. The checker extracts every fenced snippet from both doc trees and
+  asks the *live package* about each claim rather than comparing against a
+  hand-maintained list that would rot the same way the prose did: it puts a key
+  in an options dict and looks at whether the key does anything or lands in
+  `extra`; feeds one event to the hook converter and sees whether a slot gets
+  populated; hands `apply_settings_to_options` a single settings key and diffs
+  the result. Seven rules — `import`, `kwarg`, `option`, `settings`,
+  `hook_event`, `attr`, `shape`, `env`, `syntax` — wired into pytest via
+  `tests/test_docs_snippets.py`, with a test that plants one failure per rule so
+  the check can't silently stop working.
+
+### Fixed
+
+- **66 doc snippets that did not work.** Found by the checker above and fixed
+  across `docs/` and `web/content/docs/`. The substantive ones: `query()`'s two
+  option shapes were conflated (typed options yield `msg.content` and auto-route
+  from the model name; a plain dict yields `msg.message.content` and does not
+  infer a backend at all, defaulting a bare model name to vLLM's port);
+  `hooks=` is a dict keyed by event name, not a list of `HookMatcher(event=…)`,
+  hooks receive a single `HookContext`, and only 15 event names are mapped —
+  the rest were invented and would be silently dropped; `ModelCapability` never
+  had `tool_use_path` or `supports_thinking`; `setting_sources` takes the names
+  `"user"`/`"project"`/`"local"`, not file paths; `MANTIS_AGENT_BACKEND` never
+  existed; `register_pricing`, `pricing_override`, `compact_threshold`,
+  `include_thinking`, and `memory_entries` never existed; `PRICING_TABLE` is
+  keyed by `(provider, model_id)`; `Tool` takes `fn=`, not `handler=`;
+  `ToolExecutionError` is raised *by* the runtime and has no `fatal=` flag;
+  `SdkServer` is in-process and has no `serve_stdio()`; `Agent` takes `system=`
+  and works in message lists, not prompt strings. A `match` statement in the
+  streaming guide also broke on the package's own Python 3.9 floor.
+
+- **Stale `__version__` fallback.** `_detect_version()` still returned
+  `"2.61.0"` when package metadata is unreadable, one release behind
+  `pyproject.toml`.
+
 ## [2.62.0] - 2026-08-06
 
 ### Added

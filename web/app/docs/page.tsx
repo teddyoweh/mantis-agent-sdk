@@ -51,6 +51,8 @@ const SECTIONS: {
     title: "Guides",
     blurb: "How each part of the surface works, with runnable examples.",
     links: [
+      { title: "Recipes", href: "/docs/guides/recipes", desc: "Coding agent, JSON extraction, guardrails" },
+      { title: "How configuration works", href: "/docs/guides/how-it-works", desc: "Precedence, silent keys, what is inert" },
       { title: "Models & backends", href: "/docs/guides/models-and-backends", desc: "Auto-routing from the model name" },
       { title: "The mantis terminal", href: "/docs/guides/terminal", desc: "/init, @-mentions, /goal autonomy" },
       { title: "Headless & CI", href: "/docs/guides/headless", desc: "mantis-agent run --json for scripts" },
