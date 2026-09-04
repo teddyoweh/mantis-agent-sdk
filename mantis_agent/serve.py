@@ -8,8 +8,9 @@ single self-contained page showing:
   usage per day and per provider (session tokens *estimated* from transcript
   size, workflow runs *recorded*); live background jobs and workflow runs.
 * **Sessions** — every conversation across every project on this machine,
-  grouped by project, drilling into a timeline with context fill and cost
-  per turn. Secrets are masked before anything leaves the process.
+  as project and session cards (friendly titles, cost pills), drilling into a
+  timeline with context fill and cost per turn. Secrets are masked before
+  anything leaves the process.
 * **Models & hosting** — the model list grouped by family with context
   window and price per 1M tokens, local Ollama models with size and loaded
   state, and each provider's setup.
@@ -127,30 +128,129 @@ def _list_projects_compute() -> list[dict[str, Any]]:
             sessions = []
         last = max((s.modified_at for s in sessions),
                    default=d.stat().st_mtime)
+        first_prompt = next((x for x in (_clean_prompt(s.first_prompt or s.title) or _first_user_prompt(s.path)
+                                         for s in sessions) if x), None)
         out.append({
             "digest": d.name,
             "cwd": cwd,
             "name": Path(cwd).name if cwd else d.name,
+            "title": _project_title(cwd, d.name, first_prompt),
+            "first_prompt": first_prompt,
             "path": cwd or str(d),
             "session_count": len(sessions),
             "last_activity": last,
         })
+    # cost pills from the analytics pass (same signature → same cache)
+    try:
+        a = analytics()
+        pricing = _session_pricing(*_current_model_backend())
+        for p in out:
+            led = (a.get("projects") or {}).get(p["digest"]) or {}
+            p["msgs"] = int(led.get("msgs") or 0)
+            p["tokens_est"] = int(led.get("in_est") or 0) + int(led.get("out_est") or 0)
+            p["usd_est"] = _usd(pricing, int(led.get("in_est") or 0), int(led.get("out_est") or 0))
+    except Exception:  # noqa: BLE001 — pills are optional
+        pass
     out.sort(key=lambda p: p["last_activity"], reverse=True)
     return out
+
+
+_UUIDISH_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{12,}$", re.I)
+_META_BLOCK_RE = re.compile(r"<(system-reminder|env)>.*?</\1>|\[context\]", re.S | re.I)
+
+
+def _clean_prompt(text: Any, limit: int = 90) -> str | None:
+    """A prompt fit for a card title: meta blocks stripped, whitespace folded,
+    truncated. ``None`` when nothing human remains."""
+    if not text:
+        return None
+    t = _META_BLOCK_RE.sub(" ", str(text))
+    t = " ".join(t.split()).strip()
+    if not t:
+        return None
+    return t if len(t) <= limit else t[: limit - 1].rstrip() + "…"
+
+
+def _first_user_prompt(path: Any, max_lines: int = 60) -> str | None:
+    """The first human prompt in a transcript, read from the file head. The
+    session lister's own ``first_prompt`` skips prompts that open with an
+    injected block, which is exactly the case where a card needs a title."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for _ in range(max_lines):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("type") != "user" or obj.get("isMeta"):
+                    continue
+                content = (obj.get("message") or {}).get("content")
+                if isinstance(content, list):
+                    content = " ".join(str(b.get("text") or "") for b in content
+                                       if isinstance(b, dict) and b.get("type") == "text")
+                got = _clean_prompt(content)
+                if got:
+                    return got
+    except OSError:
+        return None
+    return None
+
+
+def _project_title(cwd: str | None, digest: str, first_prompt: str | None) -> str:
+    """Basename of the cwd, unless that is itself an id-shaped string (a temp
+    dir, a checkout named by hash) — then the first real prompt, then a short
+    label. Never a bare UUID: the id is a caption, not a name."""
+    base = Path(cwd).name if cwd else ""
+    if base and not _UUIDISH_RE.match(base):
+        return base
+    if first_prompt:
+        return first_prompt
+    return "project · " + digest[:8]
+
+
+def _current_model_backend() -> tuple[str | None, str | None]:
+    from . import catalog  # noqa: PLC0415
+
+    try:
+        last = catalog.get_last_model() or {}
+    except Exception:  # noqa: BLE001
+        last = {}
+    return last.get("model"), last.get("backend")
 
 
 def sessions_for(cwd: str) -> list[dict[str, Any]]:
     from . import session_tree  # noqa: PLC0415
 
     infos = session_tree.list_sessions(cwd=cwd)
-    return [{
-        "session_id": s.session_id,
-        "title": s.title,
-        "first_prompt": s.first_prompt,
-        "last_prompt": s.last_prompt,
-        "modified_at": s.modified_at,
-        "message_count": s.message_count,
-    } for s in infos]
+    try:
+        ledger = analytics().get("sessions") or {}
+        model, backend = _current_model_backend()
+        pricing = _session_pricing(model, backend)
+    except Exception:  # noqa: BLE001
+        ledger, pricing, model = {}, {"known": False}, None
+    out = []
+    for s in infos:
+        led = ledger.get(s.session_id) or {}
+        t_in, t_out = int(led.get("in_est") or 0), int(led.get("out_est") or 0)
+        prompt = _clean_prompt(s.first_prompt) or _first_user_prompt(s.path)
+        out.append({
+            "session_id": s.session_id,
+            "title": _clean_prompt(s.title) if s.title and not _UUIDISH_RE.match(str(s.title)) else None,
+            "display_title": (_clean_prompt(s.title) if s.title and not _UUIDISH_RE.match(str(s.title)) else None)
+                             or prompt or ("session · " + s.session_id[:8]),
+            "first_prompt": prompt,
+            "last_prompt": _clean_prompt(s.last_prompt),
+            "modified_at": s.modified_at,
+            "message_count": s.message_count,
+            "tokens_est": t_in + t_out,
+            "usd_est": _usd(pricing, t_in, t_out),
+            "tools": int(led.get("tools") or 0),
+            "model": model,   # what the estimate is priced at — transcripts record no model
+        })
+    return out
 
 
 def _content_chars(content: Any) -> int:
@@ -1140,6 +1240,7 @@ def _analytics_compute() -> dict[str, Any]:
     punchcard = [[0] * 24 for _ in range(7)]     # weekday × hour
     tools: dict[str, int] = {}
     projects: dict[str, dict[str, Any]] = {}
+    per_session: dict[str, dict[str, Any]] = {}   # session id (file stem) -> its own ledger
     total = user_m = asst_m = tool_calls = 0
     sessions = 0
     in_est_total = out_est_total = 0
@@ -1158,6 +1259,7 @@ def _analytics_compute() -> dict[str, Any]:
             for f in d.glob("*.jsonl"):
                 had_msg = False
                 ctx_chars = 0   # what the model re-reads on every assistant turn
+                sess = {"msgs": 0, "tools": 0, "in_est": 0, "out_est": 0, "first_ts": None, "last_ts": None}
                 try:
                     with f.open("r", encoding="utf-8") as fh:
                         for line in fh:
@@ -1179,6 +1281,7 @@ def _analytics_compute() -> dict[str, Any]:
                             had_msg = True
                             total += 1
                             proj["msgs"] += 1
+                            sess["msgs"] += 1
                             if typ == "user":
                                 user_m += 1
                             else:
@@ -1192,6 +1295,7 @@ def _analytics_compute() -> dict[str, Any]:
                                         n_tools += 1
                             tool_calls += n_tools
                             proj["tools"] += n_tools
+                            sess["tools"] += n_tools
                             chars = _content_chars(content)
                             t_in = t_out = 0
                             if typ == "assistant":
@@ -1200,6 +1304,8 @@ def _analytics_compute() -> dict[str, Any]:
                                 out_est_total += t_out
                                 proj["in_est"] += t_in
                                 proj["out_est"] += t_out
+                                sess["in_est"] += t_in
+                                sess["out_est"] += t_out
                             ctx_chars += chars
                             ts = obj.get("timestamp")
                             if ts:
@@ -1221,11 +1327,14 @@ def _analytics_compute() -> dict[str, Any]:
                                 ep = dt.timestamp()
                                 first_ts = ep if first_ts is None else min(first_ts, ep)
                                 last_ts = ep if last_ts is None else max(last_ts, ep)
+                                sess["first_ts"] = ep if sess["first_ts"] is None else min(sess["first_ts"], ep)
+                                sess["last_ts"] = ep if sess["last_ts"] is None else max(sess["last_ts"], ep)
                 except OSError:
                     continue
                 if had_msg:
                     sessions += 1
                     proj["sessions"] += 1
+                    per_session[f.stem] = sess
 
     top_tools = sorted(({"name": k, "count": v} for k, v in tools.items()),
                        key=lambda x: x["count"], reverse=True)[:10]
@@ -1260,6 +1369,10 @@ def _analytics_compute() -> dict[str, Any]:
         "punchcard": punchcard,
         "top_tools": top_tools,
         "top_projects": top_projects,
+        # every project's ledger by digest and every session's by id — what the
+        # project and session CARDS read their pills from (one cached pass)
+        "projects": {k: v for k, v in projects.items() if v["sessions"]},
+        "sessions": per_session,
     }
 
 
@@ -2310,6 +2423,58 @@ def deployments_live_count() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Events — a version counter over everything the pages render. The page
+# long-polls ``/api/events?since=<version>`` and refreshes only when it moves,
+# so nothing flickers on a timer while the world is still. Cheap: every input
+# is a stat() or an in-memory dict; no transcript is read.
+# ---------------------------------------------------------------------------
+
+
+def _state_version() -> str:
+    import hashlib  # noqa: PLC0415
+
+    parts: list[Any] = []
+    try:
+        parts.append(_projects_signature())
+    except Exception:  # noqa: BLE001
+        parts.append(None)
+    try:
+        parts.append(_runs_signature())
+    except Exception:  # noqa: BLE001
+        parts.append(None)
+    try:
+        from . import job_records  # noqa: PLC0415
+
+        jd = job_records.jobs_dir()
+        parts.append(tuple(sorted((f.name, f.stat().st_mtime) for f in jd.glob("*.json"))) if jd.is_dir() else ())
+    except Exception:  # noqa: BLE001
+        parts.append(None)
+    base = _base_dir()
+    for name in ("models.json", "settings.json", "mcp.json"):
+        try:
+            parts.append((name, (base / name).stat().st_mtime))
+        except OSError:
+            parts.append((name, None))
+    with _deploy_lock:
+        parts.append(tuple(sorted((j["id"], j["status"]) for j in _deploy_jobs.values())))
+        parts.append(tuple(sorted(_deploy_accounts)))
+    return hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def events(since: str | None, timeout_s: float = 25.0) -> dict[str, Any]:
+    """Block (up to ``timeout_s``) until the version differs from ``since``."""
+    import time  # noqa: PLC0415
+
+    timeout_s = max(0.0, min(float(timeout_s), 30.0))
+    t0 = time.monotonic()
+    v = _state_version()
+    while since and v == since and time.monotonic() - t0 < timeout_s:
+        time.sleep(0.5)
+        v = _state_version()
+    return {"version": v, "changed": bool(since) and v != since, "ts": time.time()}
+
+
+# ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
 
@@ -2481,6 +2646,13 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/overview":
             self._json(overview())
+            return
+        if path == "/api/events":
+            try:
+                to = float((q.get("timeout") or ["25"])[0])
+            except ValueError:
+                to = 25.0
+            self._json(events((q.get("since") or [None])[0], to))
             return
         if path == "/api/analytics":
             self._json(analytics())

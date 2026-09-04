@@ -19,6 +19,37 @@ The server is Python's standard-library `http.server` — no extra
 dependencies, no build step, one self-contained HTML page with every asset
 (including the provider logos) inlined, so it works with the wifi off.
 
+## The shell
+
+One slim top bar: the mantis mark, the seven page tabs (the active one
+carries a green underline; hover shows its number key), then on the right
+the **current model** with a live dot and the provider it's reached through,
+a **search or jump… ⌘K** button that opens the command palette, a **theme**
+toggle (system → dark → light, remembered in the browser) and a **local** /
+**lan · token** pill that says how the server is bound. Pages are
+full-width with a centred column; the sessions page is three resizable
+columns that each scroll on their own.
+
+Surfaces are neutral — near-black in dark mode, off-white in light — with
+hairline borders for elevation and **no shadows**. The mantis green appears
+only where it means something: the active tab, focus rings, primary
+buttons, status dots and the signal path. Status is colour-coded
+everywhere: green running, amber warming or tight, red failed, blue
+informational.
+
+Everything is a **card**: projects, sessions, provider families, deploy
+providers, deployments, jobs and runs share one shape — 1px border, 10px
+radius, hover brightens the border, selected turns it green.
+
+The page is **reactive** rather than polled: it long-polls
+`/api/events`, a version counter over everything it renders, and
+re-renders only when that moves — through a keyed diff so a refresh never
+resets your scroll or closes a drawer you opened. Lists show skeleton
+placeholders on first load; actions (test a provider, use a deployment,
+tear one down) update the page optimistically and roll back if the
+request fails. A 15-second timer stays as the fallback when the long-poll
+can't connect; both pause while the tab is hidden.
+
 ## What it shows
 
 ### Overview
@@ -26,9 +57,10 @@ dependencies, no build step, one self-contained HTML page with every asset
 The landing page. Reading top to bottom, in words:
 
 - **Signal path** — a one-line wiring diagram: *families ready → current
-  model → running jobs → sessions → last-7-day spend*. Each node is a real
-  count and turns amber when something is missing (no model set, no provider
-  ready).
+  model → running jobs → sessions → deployed (when any GPU deployment is
+  live) → last-7-day spend*. Each node is a real count, green-tinted when
+  wired, amber when something is missing (no model set, no provider ready).
+  It is the one decorative element on the page.
 - **Providers · five families** — five cards, one per family the SDK speaks:
   **OpenAI**, **Claude (Anthropic)**, **Gemini (Google)**, **Grok (xAI)** and
   **open source** (Ollama, vLLM, Together, Fireworks, Groq, OpenRouter, …).
@@ -63,18 +95,35 @@ The landing page. Reading top to bottom, in words:
 
 ### Sessions
 
-Three panes: projects, the sessions in the selected project (with a filter
-box — press `/`), and the conversation. The conversation opens with a strip
-of readings — turns, estimated tokens in/out, estimated cost, and the peak
+Three columns: **project cards**, the **session cards** in the selected
+project (with a filter box — press `/`), and the conversation.
+
+A project card's title is the basename of its working directory — or, when
+that is itself an id-shaped name (a temp dir, a checkout named by hash), the
+project's first real prompt. It is never a bare UUID; the id and path sit
+underneath as a small mono caption. Pills give the session count, the last
+activity and the estimated cost. A session card is titled by its first user
+prompt (meta blocks stripped), with pills for messages, age, estimated cost
+and the model the estimate is priced at (transcripts record no model), and
+the session id as a caption.
+
+The conversation opens with a strip of readings — turns, estimated tokens in/out, estimated cost, and the peak
 context fill as a percentage of the model's window — then a **context-fill
 chart**: one bar per assistant turn showing how full the window was, a dashed
 line at the window's ceiling, and a blue line for cumulative estimated cost.
 A compaction shows up as a visible cliff. Clicking a bar scrolls to that turn.
 
-Messages carry their timestamp and, on assistant turns, the context size and
-cost of that turn. Tool calls show their input; **tool results start
-collapsed** with a first-line preview and size, and open on click (errors
-open by default). Secrets are masked before anything is sent to the page:
+Messages are rows with a **role chip** (USER blue, ASSISTANT green,
+compaction amber), the timestamp and, on assistant turns, the context size
+and cost of that turn. Assistant text is rendered as light **markdown**
+(bold, lists, headings, inline and fenced code, links) by a tiny built-in
+renderer — no library. Each tool call is one collapsed row —
+`⚒ Grep · auth.py` with the result's size — that opens to the exact
+arguments and the result in a code block; errors open by default. Context
+the runtime injected — `<system-reminder>` blocks, `<env>`, `[context]`
+markers, meta messages — is **hidden by default** behind a small
+*show context (N)* toggle on the message it belonged to.
+Secrets are masked before anything is sent to the page:
 vendor key prefixes (`sk-…`, `xai-…`, `ghp_…`, …), bearer tokens,
 `NAME=value` pairs whose name looks like a credential, and tokens in URL
 query strings.
@@ -164,19 +213,34 @@ settings with the layer each value came from.
 
 | Keys | Action |
 |---|---|
-| `1` … `7` | jump to a page (the rail shows each key) |
+| `⌘K` / `ctrl+K` | the command palette (below) |
+| `1` … `7` | jump to a page (the tabs show each key on hover) |
 | `g` then `o` / `s` / `m` / `d` | overview / sessions / models / deploy |
 | `g` then `p` / `k` / `c` | mcp / skills / config |
 | `/` | focus the current page's search (models filter, sessions filter, …) |
 | `↑` `↓` `Enter` in the models filter | walk the visible rows and switch to one |
 | `Esc` | close a sheet |
 
+## Command palette
+
+`⌘K` (or `ctrl+K`, or the search button in the top bar) opens a palette
+over the page. Type to filter; `↑` `↓` move, `↵` runs, `esc` closes. It
+lists, in groups: the seven **pages** (with their `g` chord), every
+**project** known to the sessions page, the **sessions** of the project
+you're in, live **deployments** (*connect …* makes one the current model),
+and **actions** — *test <family> provider* for each provider family, *toggle
+theme*, *refresh now*. It reuses the data the pages already loaded, so it
+costs no extra requests.
+
 ## Theme and layout
 
-The page follows `prefers-color-scheme`: the same olive paper/ink palette,
-inverted (paper becomes ink) in dark mode. It reflows to a single column with
-a horizontal nav below about 900px wide; the sessions view then shows one
-pane at a time.
+The page follows `prefers-color-scheme` and the toggle in the top bar
+overrides it (`data-theme` on the root, remembered in the browser;
+`?theme=dark|light` in the URL forces one for screenshots). Both palettes
+are neutral — dark: `#0a0b0d` background, `#111316` panels, white-at-8%
+borders, `#ededed` / `#9a9ea6` text; light: `#fafafa`, `#fff`, black-at-8%,
+`#111` — with the mantis green as the single accent. Below about 900px the
+tabs scroll horizontally and the sessions view shows one column at a time.
 
 ## API
 
@@ -185,7 +249,10 @@ loopback bind:
 
 | Endpoint | Returns |
 |---|---|
-| `/api/overview` | rail readout: version, current model, counts, families ready, running jobs, 7-day spend |
+| `/api/overview` | top-bar readout: version, current model, counts, families ready, running jobs, live deployments, 7-day spend |
+| `/api/events?since=V&timeout=S` | long-poll: blocks until the state version differs from `V` (or `S` seconds pass); returns `{version, changed}` |
+| `/api/projects` | project cards: friendly `title`, first prompt, path, session count, last activity, estimated tokens and USD |
+| `/api/sessions?cwd=…` | session cards: `display_title`, prompts, message count, estimated tokens and USD, the pricing model |
 | `/api/providers` | the five families with auth state, last model, local Ollama status |
 | `/api/spend` | per-day estimated + recorded tokens/USD for 30 days, 7/30-day totals, per-provider and per-family breakdown |
 | `/api/activity?limit=N` | background job records and workflow runs with usage |

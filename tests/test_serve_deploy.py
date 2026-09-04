@@ -566,7 +566,7 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
                    "openLogs", "confirmTeardown", 'd: "deploy"', '"1234567"', "dp-grid", "dp-fit", "dp-deps",
                    "deployments_live", "MANTIS_AGENT_BASE_URL", "MantisAgentOptions(", "/api/deploy/job",
                    "Add a GPU provider to deploy any model", "Nothing deployed yet", "while running",
-                   "scale to zero", "public endpoint", "plain http", "vllm ✓", "<b>g</b> <b>d</b> deploy",
+                   "scale to zero", "public endpoint", "plain http", "vllm ✓", "<b>d</b> pages",
                    ".vd.tight", ".dp-drow", "refreshDeployments(false)"):
         assert marker in page, marker
     # the six new marks ship inline, no CDN
