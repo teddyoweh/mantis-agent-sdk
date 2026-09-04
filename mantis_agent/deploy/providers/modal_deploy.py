@@ -294,6 +294,18 @@ def _toml_has_profile(path: Path) -> bool:
     )
 
 
+def _modal_installed() -> bool:
+    """Is the ``modal`` SDK importable? Cheap and offline — the provider cards
+    ask this so a missing package is visible before anyone picks a GPU, rather
+    than surfacing as a failed deploy."""
+    from importlib.util import find_spec  # noqa: PLC0415
+
+    try:
+        return find_spec("modal") is not None
+    except (ImportError, ValueError):  # pragma: no cover - broken meta path
+        return False
+
+
 def _import_modal() -> Any:
     try:
         import modal  # noqa: PLC0415
@@ -349,6 +361,14 @@ class ModalDeployProvider:
         if os.environ.get("MODAL_TOKEN_ID") and os.environ.get("MODAL_TOKEN_SECRET"):
             return True
         return _toml_has_profile(_modal_toml_path())
+
+    def requirements(self) -> tuple[bool, str]:
+        """Modal deploys by running its own SDK, so the package has to be here.
+        Reported alongside ``configured()`` so the UI can say "needs the modal
+        package" up front instead of failing the deploy at zero seconds."""
+        if _modal_installed():
+            return True, ""
+        return False, "the `modal` package is not installed — pip install mantis-agent-sdk[modal]"
 
     def _env(self) -> dict[str, str]:
         env = dict(os.environ)

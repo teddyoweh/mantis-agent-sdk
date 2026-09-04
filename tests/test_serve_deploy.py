@@ -457,6 +457,27 @@ def test_models_search_passes_sort_and_limit_and_flags_curated(fake):
     assert m0["architectures"] == ["LlamaForCausalLM"]
 
 
+def test_provider_requirements_ride_the_providers_endpoint(fake, monkeypatch):
+    """An adapter can be fully keyed and still unable to run — Modal deploys
+    by driving its own SDK. The offline check rides the card endpoint."""
+    from mantis_agent.deploy import manager
+
+    async def providers():
+        return [manager.ProviderSummary({
+            "id": "modal", "display_name": "Modal", "configured": True, "credential_fields": [],
+            "engines": ["vllm"], "console_url": "https://modal.com", "scale_to_zero": True,
+            "public_by_default": False, "requirements_ok": False,
+            "requirements_hint": "the `modal` package is not installed — pip install mantis-agent-sdk[modal]"}),
+            manager.ProviderSummary({
+            "id": "runpod", "display_name": "RunPod", "configured": True, "credential_fields": [],
+            "engines": ["vllm"], "console_url": "https://runpod.io", "scale_to_zero": True,
+            "public_by_default": False, "requirements_ok": True, "requirements_hint": ""})]
+    monkeypatch.setattr(manager, "providers", providers)
+    rows = {p["id"]: p for p in fake["serve"].deploy_providers()["providers"]}
+    assert rows["modal"]["requirements_ok"] is False and "pip install" in rows["modal"]["requirements_hint"]
+    assert rows["runpod"]["requirements_ok"] is True and rows["runpod"]["requirements_hint"] == ""
+
+
 def test_hf_token_state_rides_the_card_endpoints(fake, monkeypatch):
     """A gated repo is only deployable with a Hugging Face token, so both
     endpoints that feed the model cards say whether one is configured."""
@@ -798,6 +819,18 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
                    "click Agree", 'm.gated_kind === "manual"', "Hugging Face token: ", 'HF_TOKEN: i.value.trim()'):
         assert marker in js, marker
     assert ".hf-notice" in page and ".hf-form" in page
+    # a provider whose package is missing: its own card state, an Install
+    # action and a re-check — and it can never reach the spend path
+    for marker in ("provReady", "reqShort", "reqCmd", "openInstallSheet", '"Needs the " + pkg + " package"',
+                   '"Needs package"', "uv tool install --force", "Re-check",
+                   "provReady(DEPLOY.providers.find", "openInstallSheet(p)"):
+        assert marker in js, marker
+    assert ".dpc.blocked" in page
+    # the full hint appears once — on the card; the toggle and table stay terse
+    fit = js[js.index("function fitTable("):js.index("function collectOpts(")]
+    assert "requirements_hint" not in fit
+    toggle = js[js.index("function providerToggle("):js.index("function openAddKey(")]
+    assert "requirements_hint" not in toggle and "reqShort(p)" in toggle
     # the credential form + guide are a SHEET, never an in-card panel: a card
     # that grew to fit a guide stretched its whole grid row
     for gone in ("dp-form", "dp-guide"):

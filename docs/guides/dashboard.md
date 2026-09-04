@@ -214,6 +214,17 @@ Reading top to bottom:
   `credential_field` with its help text. Saving validates straight away.
   Real vendor marks come from `mantis_agent/data/deploy_logos.json` when
   it is present (a letter tile otherwise).
+- **A provider that can't run says so up front.** Some adapters need their
+  own package (Modal deploys by driving its own SDK). That check is offline,
+  and a provider missing it shows a warn state — *Needs the modal package* —
+  is never counted as ready even with a key saved, and its primary action
+  becomes **Install**: a sheet with the exact `pip install
+  mantis-agent-sdk[modal]` line to copy, the `uv tool install --force` variant
+  in one note, and a **Re-check** that re-reads the providers and updates the
+  card in place. The dashboard never runs pip itself. Until it is satisfied,
+  that provider is dimmed in the model picker's toggle, its GPU group is not
+  offered, and any Deploy button for it reads **Needs package** — so the cost
+  path is closed before a GPU is chosen, not after.
 - **Gated models are stopped before the GPU, not after.** The Hub says how a
   repo gates: **auto** (click *Agree* while signed in and access is instant)
   or **manual** (the owner approves by hand, which can take days). With no

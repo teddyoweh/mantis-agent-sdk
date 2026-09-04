@@ -442,3 +442,40 @@ def test_registered():
         "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET", "MODAL_PROXY_TOKEN_ID", "MODAL_PROXY_TOKEN_SECRET", "HF_TOKEN",
     ]
     assert [f.required for f in prov.credential_fields] == [True, True, False, False, False]
+
+
+# ---------------------------------------------------------------------------
+# The `modal` SDK is a hard requirement for deploying there — it must be
+# visible as a provider state, not as a failed deploy at zero seconds.
+# ---------------------------------------------------------------------------
+
+
+def test_requirements_reports_the_missing_sdk(monkeypatch) -> None:
+    from mantis_agent.deploy.providers import modal_deploy as md
+
+    monkeypatch.setattr(md, "_modal_installed", lambda: False)
+    ok, hint = md.ModalDeployProvider().requirements()
+    assert ok is False
+    assert "modal" in hint and "pip install" in hint
+
+
+def test_requirements_satisfied_when_the_sdk_is_importable(monkeypatch) -> None:
+    from mantis_agent.deploy.providers import modal_deploy as md
+
+    monkeypatch.setattr(md, "_modal_installed", lambda: True)
+    assert md.ModalDeployProvider().requirements() == (True, "")
+
+
+def test_the_summary_carries_the_requirement(monkeypatch) -> None:
+    import anyio
+
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.providers import modal_deploy as md
+
+    monkeypatch.setattr(md, "_modal_installed", lambda: False)
+    rows = {p["id"]: p for p in anyio.run(manager.providers)}
+    assert rows["modal"]["requirements_ok"] is False
+    assert "pip install" in rows["modal"]["requirements_hint"]
+    # An adapter with no requirement of its own is reported as satisfied.
+    assert rows["runpod"]["requirements_ok"] is True
+    assert rows["runpod"]["requirements_hint"] == ""

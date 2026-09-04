@@ -86,6 +86,15 @@ def _provider(provider_id: str) -> DeployProvider:
 
 def _summary(cls: type[DeployProvider]) -> ProviderSummary:
     inst = cls()
+    # An adapter may need more than credentials (Modal deploys through its own
+    # SDK). Optional, so adapters without a requirement say nothing.
+    req = getattr(inst, "requirements", None)
+    req_ok, req_hint = (True, "")
+    if callable(req):
+        try:
+            req_ok, req_hint = req()
+        except Exception:  # noqa: BLE001 - a broken check never hides a provider
+            req_ok, req_hint = True, ""
     return ProviderSummary(
         id=cls.id,
         display_name=cls.display_name,
@@ -95,6 +104,8 @@ def _summary(cls: type[DeployProvider]) -> ProviderSummary:
         console_url=cls.console_url,
         scale_to_zero=bool(cls.scale_to_zero),
         public_by_default=bool(cls.public_by_default),
+        requirements_ok=bool(req_ok),
+        requirements_hint=str(req_hint or ""),
     )
 
 

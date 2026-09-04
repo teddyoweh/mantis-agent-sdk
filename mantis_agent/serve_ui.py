@@ -774,6 +774,8 @@ INDEX_HTML = r"""<!doctype html>
   .dpc:hover { background: var(--panel-2); }
   .dpc.on { background: var(--accent-soft); }
   .dpc.on:hover { background: var(--accent-soft-2); }
+  .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
+  .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
   .dpc .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex; align-items: center; justify-content: center;
     background: var(--fill); color: var(--ink); font-family: var(--mono); font-weight: 700; font-size: 15px; overflow: hidden; }
@@ -1875,9 +1877,15 @@ function providerToggle() {
   item("all", "All", null, false).onclick = () => setDeployProvider("all");
   DEPLOY.providers.forEach(p => {
     const short = PROV_SHORT[p.id] || p.display_name || p.id;
-    const c = item(p.id, short, providerMark(p.logo || p.id, short), !p.configured);
-    c.title = p.configured ? "scope to " + (p.display_name || p.id) : "no key yet — click to add one";
-    c.onclick = () => { if (p.configured) setDeployProvider(p.id); else openAddKey(p.id); };
+    const ready = provReady(p);
+    const c = item(p.id, short, providerMark(p.logo || p.id, short), !p.configured || !ready);
+    // a few words here; the full hint lives on the card
+    c.title = !ready ? reqShort(p) : p.configured ? "scope to " + (p.display_name || p.id) : "no key yet — click to add one";
+    c.onclick = () => {
+      if (!ready) openInstallSheet(p);
+      else if (p.configured) setDeployProvider(p.id);
+      else openAddKey(p.id);
+    };
   });
   return row;
 }
@@ -1953,6 +1961,19 @@ async function loadDeploy() {
 // validated (with the balance when the provider says), what it can do
 // (scale to zero, public endpoint), and the inline key form generated from
 // the adapter's own credential_fields. Values go up; only names come back.
+// An adapter can be fully keyed and still unable to run: Modal deploys by
+// driving its own SDK, so the package is a hard requirement. The check is
+// offline, and the full hint is shown once — on the card.
+const provReady = p => p && p.requirements_ok !== false;
+const reqPkg = p => { const m = /`([^`]+)`/.exec((p && p.requirements_hint) || ""); return m ? m[1] : null; };
+const reqShort = p => { const pkg = reqPkg(p); return pkg ? "Needs the " + pkg + " package" : "Needs a package installed"; };
+const reqCmd = p => {
+  const h = (p && p.requirements_hint) || "";
+  const m = /(pip install [^\s].*)$/.exec(h.trim());
+  if (m) return m[1].trim();
+  const pkg = reqPkg(p);
+  return "pip install mantis-agent-sdk" + (pkg ? "[" + pkg + "]" : "");
+};
 function providerDescriptor(p) {
   const kind = p.id === "vastai" ? "marketplace" : p.scale_to_zero ? "serverless" : "dedicated";
   return kind + " · " + (p.scale_to_zero ? "scale to zero" : "always warm") +
@@ -1967,7 +1988,11 @@ function renderDpProviders(box) {
   patchList(box, DEPLOY.providers, p => p.id, p => [p.configured, p.account, p.display_name, p.engines], (card, p) => {
     const acct = p.account;
     const ok = !!(acct && acct.ok);
-    card = card || el("div"); card.innerHTML = ""; card.className = "dpc" + (p.configured ? " on" : ""); card.id = "dpc-" + p.id;
+    const ready = provReady(p);
+    card = card || el("div"); card.innerHTML = "";
+    // configured but unrunnable must not read as ready
+    card.className = "dpc" + (p.configured && ready ? " on" : "") + (ready ? "" : " blocked");
+    card.id = "dpc-" + p.id;
     const fh = el("div","fh");
     fh.append(bigMark(p.logo || p.id, p.display_name));
     const ft = el("div","ft");
@@ -1975,6 +2000,13 @@ function renderDpProviders(box) {
     const fd = el("div","fd", providerDescriptor(p)); fd.title = fd.textContent; ft.append(fd);
     fh.append(ft);
     card.append(fh);
+    // the requirement is its own state, above the key state — a provider can need both
+    if (!ready) {
+      const rq = el("div","fs warn");
+      rq.append(el("span","dot2 warn"), el("b", null, reqShort(p)));
+      rq.append(el("span","fsx", "· can't deploy until it's installed"));
+      card.append(rq);
+    }
     // one state, read as a sentence
     const fs = el("div","fs" + (acct && !acct.ok ? " warn" : ""));
     fs.append(el("span","dot2 " + (ok ? "ok" : p.configured ? "warn" : "")));
@@ -1996,7 +2028,9 @@ function renderDpProviders(box) {
     const ff = el("div","ff");
     // the key form is a sheet, never an in-card panel: a card that grew to
     // fit a guide stretched its whole grid row and hollowed out its neighbours
-    const addB = btn(p.configured ? "Replace key" : "Add key", p.configured ? "gho" : "pri", () => openCredSheet(p));
+    // an adapter that can't run gets the install action as its primary one
+    if (!ready) ff.append(btn("Install", "pri", () => openInstallSheet(p)));
+    const addB = btn(p.configured ? "Replace key" : "Add key", p.configured || !ready ? "gho" : "pri", () => openCredSheet(p));
     ff.append(addB);
     if (p.configured) {
       const vb = btn("Validate", "gho", async () => {
@@ -2019,6 +2053,46 @@ function renderDpProviders(box) {
       setTimeout(() => openCredSheet(p), 40);
     return card;
   });
+}
+// What to run, and a way to prove it worked without leaving the page. The
+// server never runs pip — this is a copyable command and a re-check.
+function openInstallSheet(p) {
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  const head = el("div","cs-h");
+  head.append(bigMark(p.logo || p.id, p.display_name));
+  const ht = el("div","ft");
+  ht.append(el("div","fn", "Install " + (p.display_name || p.id) + "'s package"));
+  ht.append(el("div","fd", p.requirements_hint || reqShort(p)));
+  head.append(ht);
+  s.append(head);
+  const cmd = reqCmd(p);
+  const box = el("div","jsonbox");
+  const h2 = el("div","jh");
+  h2.append(el("span","jt", "run this in your shell"));
+  const cp = btn("Copy", "gho", () => copyText(cmd, "command")); cp.style.marginLeft = "auto"; h2.append(cp);
+  box.append(h2);
+  const pre = el("pre"); pre.textContent = cmd; box.append(pre);
+  s.append(box);
+  s.append(el("div","note2", "Installed mantis as a uv tool? Use " +
+    "uv tool install --force 'mantis-agent-sdk[" + (reqPkg(p) || "modal") + "]' instead, then re-check."));
+  const out = el("div"); s.append(out);
+  const foot = el("div","cs-foot");
+  const re = btn("Re-check", "pri", async () => {
+    re.disabled = true; re.textContent = "Checking…"; out.innerHTML = "";
+    try {
+      const r = await api("/api/deploy/providers");
+      DEPLOY.providers = r.providers || [];
+      const now = DEPLOY.providers.find(x => x.id === p.id) || {};
+      const grid = document.getElementById("dp-grid"); if (grid) renderDpProviders(grid);
+      if (provReady(now)) { toast("✓ " + (p.display_name || p.id) + " is ready"); hideModal(); loadDeploy(); }
+      else out.append(probeBox(false, "Still missing — " + (now.requirements_hint || reqShort(now))));
+    } catch (e) { out.append(probeBox(false, e.message)); }
+    finally { re.disabled = false; re.textContent = "Re-check"; }
+  });
+  foot.append(re, btn("Close", "gho", hideModal));
+  s.append(foot);
+  showModal();
+  trapFocus(s.parentElement);
 }
 // The credential sheet. What the user came for is first — the fields — with
 // the how-to-get-a-key guide collapsed underneath for whoever needs it, and
@@ -2298,13 +2372,23 @@ function renderFit(sec, loading) {
     return;
   }
   // scoped to one provider → one table, no grouping; "All" keeps the groups
-  const fits = DEPLOY.provider === "all" ? r.fits : r.fits.filter(f => f.provider === DEPLOY.provider);
+  // a provider that can't run is not offered a GPU group at all
+  const runnable = r.fits.filter(f => provReady(DEPLOY.providers.find(x => x.id === f.provider)));
+  const fits = DEPLOY.provider === "all" ? runnable : runnable.filter(f => f.provider === DEPLOY.provider);
+  const blocked = r.fits.length - runnable.length;
   if (!fits.length) {
     const p = DEPLOY.providers.find(x => x.id === DEPLOY.provider) || {};
+    if (!provReady(p)) {
+      sec.append(emptyState("socket", reqShort(p), "Install it to deploy here — see the provider card above.",
+        btn("Install", "pri", () => openInstallSheet(p))));
+      return;
+    }
     sec.append(zero("Nothing to fit on " + (p.display_name || DEPLOY.provider),
       "This provider has no key yet, or its catalogue didn't answer. Pick another above, or choose All."));
     return;
   }
+  if (blocked && DEPLOY.provider === "all")
+    sec.append(el("div","note2", blocked + " provider" + (blocked === 1 ? "" : "s") + " hidden — a package needs installing (see the cards above)."));
   fits.forEach(f => sec.append(fitTable(f, m)));
 }
 function fitTable(f, m) {
@@ -2363,6 +2447,7 @@ function fitTable(f, m) {
       // a gated repo with no token would fail the moment the GPU is paid for —
       // the button says so instead of the job dying at 0s
       if (gatedBlocked(m)) { b.disabled = true; b.textContent = "Needs HF token"; b.title = "gated repo · save a Hugging Face token above to deploy"; }
+      else if (!provReady(p)) { b.disabled = true; b.textContent = "Needs package"; b.title = reqShort(p); }
       ga.append(b);
       if (new URLSearchParams(location.search).get("confirm") === g.provider_id && !document.getElementById("modal").className)
         setTimeout(() => confirmDeploy(f, g, m, eng.value, A), 60);

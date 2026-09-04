@@ -70,6 +70,12 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ### Fixed
 
+- A provider whose prerequisites were missing failed the deploy at zero
+  seconds instead of saying so up front. Provider summaries now carry an
+  offline requirements check (Modal deploys through its own SDK, which ships
+  as an optional extra), the card shows a needs-package state with an install
+  sheet and a re-check, and that provider's deploy path is blocked until it
+  is satisfied — the same shape as the gated-model fix.
 - Native tool calls were silently disabled on every OpenAI-compatible request
   by a shadowed variable in the Azure work, which forced every call onto the
   prompt-engineered path. Caught by the truncated-tool-call tests.
