@@ -375,7 +375,7 @@ def test_provider_cards_are_uniform_tight_and_say_each_thing_once(fake):
     assert 'preserveAspectRatio="xMidYMid meet"' in js and "markSvg(m.svg)" in mark
     assert '/^#/.test(m.tint)' in mark and "TINT_ALPHA" in mark
     box = css.split(".ac-h .bigmark {")[1].split("}")[0]
-    assert "width: 40px" in box and "height: 40px" in box and "border-radius: 10px" in box
+    assert "width: 32px" in box and "height: 32px" in box and "border-radius: 9px" in box
     # 2. the description is the card's; oauth doesn't repeat it, and the env
     # var appears only in its field's help line
     oauth = js[js.index("function oauthFlow("):js.index("function unlockFamily(")]
@@ -390,7 +390,12 @@ def test_provider_cards_are_uniform_tight_and_say_each_thing_once(fake):
     assert ".ac-models .chips.clamp" in css and '"Show fewer"' in js and 'el("div","chips clamp")' in js
     # 4. even cards, and an open form still never stretches a neighbour
     card = css.split(".acard {")[1].split("}")[0]
-    assert "min-height" in card
+    assert "min-height: 160px" in card
+    # the status is a chip on the name row, the description one clamped line,
+    # and the model footer one row plus +N
+    assert 'el("div","ac-top")' in js and ".ac-top {" in css
+    assert "white-space: nowrap" in css.split(".ac-d {")[1].split("}")[0]
+    assert "max-height: 21px" in css.split(".ac-models .chips.clamp {")[1].split("}")[0]
     assert "align-items: start" in css.split(".auth-grid {")[1].split("}")[0]
     # 5. the toggle is one control: equal-height pills, active filled + ticked
     types = css.split(".ac-types .fchip {")[1].split("}")[0]

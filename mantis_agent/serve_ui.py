@@ -317,25 +317,30 @@ INDEX_HTML = r"""<!doctype html>
   /* provider setup — one card per provider, its auth types as a toggle */
   .auth-glabel { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
   /* start-aligned so a card that opens a form never stretches its neighbours */
-  .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
-  .acard { background: var(--panel); border-radius: var(--radius); padding: 14px 15px 13px; display: flex;
-    flex-direction: column; gap: 8px; min-width: 0; min-height: 208px; transition: background var(--t); }
+  .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
+  .acard { background: var(--panel); border-radius: var(--radius); padding: 12px 13px 11px; display: flex;
+    flex-direction: column; gap: 7px; min-width: 0; min-height: 160px; transition: background var(--t); }
   .acard:hover { background: var(--panel-2); }
   .acard.on { background: var(--accent-soft); }
   .acard.on:hover { background: var(--accent-soft-2); }
-  .ac-h { display: flex; align-items: center; gap: 12px; min-width: 0; }
-  .ac-h .bigmark { width: 40px; height: 40px; border-radius: 10px; }
-  .ac-h .bigmark svg { width: 22px; height: 22px; }
-  .ac-h .fn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ac-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ac-h .bigmark { width: 32px; height: 32px; border-radius: 9px; }
+  .ac-h .bigmark svg { width: 18px; height: 18px; }
+  .ac-h .ft { min-width: 0; flex: 1; }
+  .ac-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .ac-h .fn { font-weight: 600; font-size: 13.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex: 1; min-width: 0; }
   .acard.on .ac-h .fn { color: var(--accent); }
-  .ac-h .fd { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    background: none; padding: 0; }
-  .ac-s { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
-  .ac-s b { font-weight: 600; color: var(--ink); }
-  .ac-s .fsx { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+  .ac-h .fd { font-size: 10.5px; line-height: 1.35; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; background: none; padding: 0; }
+  /* the connection state is a chip on the name row, not a row of its own */
+  .ac-s { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 10.5px; font-weight: 600;
+    color: var(--ink-3); background: var(--fill); border-radius: 5px; padding: 2px 7px; white-space: nowrap; }
+  .ac-s.ok { background: var(--ok-soft); color: var(--ok); }
+  .ac-s.warn { background: var(--warn-soft); color: var(--warn); }
+  .acard.on .ac-s.ok { background: var(--panel); }
   /* the toggle is one control: equal pills, at most two rows */
-  .ac-types { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+  .ac-types { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 1px; }
   /* flex: none — a pill must never shrink its label to a sliver */
   .ac-types .fchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
     font-size: 12px; line-height: 1; flex: none; white-space: nowrap; max-width: 100%; }
@@ -347,23 +352,28 @@ INDEX_HTML = r"""<!doctype html>
   .ac-tick { font-size: 10px; line-height: 1; }
   .ac-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
   .ac-dot.cfg { background: var(--warn); }
-  .ac-one { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
-  .ac-d { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
-  .ac-models { margin-top: 12px; }
-  .ac-mh { font-size: 10.5px; color: var(--ink-3); margin-bottom: 5px; }
+  .ac-one { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+  .ac-d { font-size: 11.5px; line-height: 1.4; color: var(--ink-3); margin-bottom: 5px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .ac-models { margin-top: 9px; }
+  .ac-mh { font-size: 10px; color: var(--ink-3); margin-bottom: 4px; }
   .ac-models .chip { font-size: 10.5px; padding: 2px 7px; }
   /* two rows of models, then +N */
-  .ac-models .chips.clamp { max-height: 46px; overflow: hidden; }
+  /* one row by default; +N opens the rest */
+  .ac-models .chips.clamp { max-height: 21px; overflow: hidden; }
   .ac-models .chip.more { cursor: pointer; border: 0; font: inherit; font-family: var(--mono); font-size: 10.5px;
-    color: var(--ink-3); background: var(--fill); border-radius: 6px; padding: 2px 7px; margin-top: 5px; }
+    color: var(--ink-3); background: var(--fill); border-radius: 6px; padding: 2px 7px; margin-top: 4px; }
   .ac-models .chip.more:hover { color: var(--accent); }
   .acard.on .ac-models .chip { background: var(--panel); }
-  .ap-form { margin-top: 8px; }
-  .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 12px; margin-bottom: 8px; }
+  .ap-form { margin-top: 6px; }
+  .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 7px 10px; margin-bottom: 7px; }
+  .ap-fields .dp-field { gap: 3px; }
+  .ap-fields .kh-l { font-size: 9.5px; }
+  .ap-fields input.in { padding: 6px 9px; }
   .ap-fields .dp-field input.in { background: var(--panel); width: 100%; }
-  .ap-fields .kh-n { line-height: 1.45; }
+  .ap-fields .kh-n { font-size: 11px; line-height: 1.4; }
   .ap-fields .envn { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .ap-note { font-size: 12px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 7px 10px; margin-bottom: 8px; }
+  .ap-note { font-size: 11.5px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 6px 9px; margin-bottom: 7px; }
   /* one action row: Save is the only filled button, the rest are quiet */
   .ap-acts { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .ap-acts .b { padding: 6px 11px; font-size: 12px; }
@@ -3520,25 +3530,28 @@ function authCard(e) {
   const meta = provMeta(e);
   const card = el("div","acard" + (e.active ? " on" : ""));
   card.id = "auth-" + e.key.replace("/", "-");
+  const am = e.methods.find(x => x.id === e.active);
+  const cfg = e.methods.filter(x => x.status.configured);
   const head = el("div","ac-h");
   head.append(bigMark(e.logo || e.family, e.label));
   const ht = el("div","ft");
-  ht.append(el("div","fn", e.label));
+  // name and status share one line; the endpoint is the caption under it
+  const top = el("div","ac-top");
+  top.append(el("div","fn", e.label));
+  const st = el("span","ac-s" + (e.active ? " ok" : cfg.length ? " warn" : ""));
+  st.append(el("span","dot2 " + (e.active ? "ok" : cfg.length ? "warn" : "")));
+  if (am) {
+    const masked = Object.values(am.status.masked || {}).find(Boolean);
+    st.append(document.createTextNode(am.status.source === "env" ? "From env" : am.label));
+    st.title = (am.status.source === "env" ? "Connected from env · " : "Connected via " + am.label) + (masked ? " · " + masked : "");
+  } else if (cfg.length) { st.append(document.createTextNode("Not active")); st.title = "Configured, but not the active method"; }
+  else { st.append(document.createTextNode("Not connected")); st.title = "No credential saved yet"; }
+  top.append(st);
+  ht.append(top);
   const ep = (meta && meta.base_url) || (e.methods[0] && e.methods[0].backend) || "";
   const epl = el("div","fd mono", String(ep).replace(/^https?:\/\//, "") || "—"); epl.title = ep; ht.append(epl);
   head.append(ht);
   card.append(head);
-  const am = e.methods.find(x => x.id === e.active);
-  const cfg = e.methods.filter(x => x.status.configured);
-  const st = el("div","ac-s");
-  st.append(el("span","dot2 " + (e.active ? "ok" : cfg.length ? "warn" : "")));
-  if (am) {
-    const masked = Object.values(am.status.masked || {}).find(Boolean);
-    st.append(el("b", null, am.status.source === "env" ? "Connected from env" : "Connected via " + am.label));
-    if (masked) st.append(el("span","fsx", "· " + masked));
-  } else if (cfg.length) st.append(el("b", null, "Configured"), el("span","fsx", "· not active"));
-  else st.append(el("b", null, "Not connected"));
-  card.append(st);
   // the auth-type toggle — a lone method is a label, not a lonely pill
   let sel = AUTH.method[e.key] || e.active || (e.methods.find(x => x.recommended) || e.methods[0] || {}).id;
   const body = el("div","ac-body");
@@ -3546,7 +3559,7 @@ function authCard(e) {
     body.innerHTML = "";
     const m = e.methods.find(x => x.id === sel) || e.methods[0];
     if (!m) return;
-    body.append(el("div","ac-d", m.description || ""));
+    const d1 = el("div","ac-d", m.description || ""); d1.title = m.description || ""; body.append(d1);
     body.append(authMethodForm({ label: e.label, logo: e.logo, active: e.active }, m));
     if (meta && (meta.models || []).length) {
       const foot = el("div","ac-models");
@@ -3560,10 +3573,11 @@ function authCard(e) {
       });
       foot.append(chips);
       // two rows, then a +N that opens the rest in place
-      const more = el("button","chip more", "+" + Math.max(0, meta.models.length - 4) + " more");
-      more.onclick = ev => { ev.stopPropagation(); chips.classList.toggle("clamp"); more.textContent =
-        chips.classList.contains("clamp") ? "+" + Math.max(0, meta.models.length - 4) + " more" : "Show fewer"; };
-      if (meta.models.length > 4) foot.append(more);
+      const hidden = Math.max(0, meta.models.length - 2);
+      const more = el("button","chip more", "+" + hidden + " more");
+      more.onclick = ev => { ev.stopPropagation(); chips.classList.toggle("clamp");
+        more.textContent = chips.classList.contains("clamp") ? "+" + hidden + " more" : "Show fewer"; };
+      if (meta.models.length > 2) foot.append(more);
       body.append(foot);
     }
   };
