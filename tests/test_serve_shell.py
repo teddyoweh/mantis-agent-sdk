@@ -100,6 +100,25 @@ def test_sessions_carry_display_title_and_cost_pills(home):
 # ---------------------------------------------------------------------------
 
 
+def test_activity_counts_last_seven_days(home, monkeypatch):
+    from mantis_agent import job_records, serve, workflow_store
+
+    now = time.time()
+    a = serve.activity()
+    assert a["counts_7d"] == {"running": 0, "done": 0, "error": 0}
+    sid = home["sid"]
+    for seq, (status, when) in enumerate([("running", now - 5), ("done", now - 60), ("error", now - 120), ("done", now - 9 * 86400)], 1):
+        rec = job_records.JobRecord(session_id=sid, seq=seq, kind="task", status=status, desc="j%d" % seq,
+                                    started_at=when - 10, ended_at=None if status == "running" else when, cwd=home["named"])
+        rec.job_id = job_records.make_job_id(sid, seq)
+        job_records.save_job_record(rec)
+    workflow_store.save_run({"id": "r-ok", "name": "ok", "status": "done", "started": now - 50, "ended": now - 1, "phases": []}, definition="d")
+    workflow_store.save_run({"id": "r-bad", "name": "bad", "status": "failed", "started": now - 50, "ended": now - 1, "phases": []}, definition="d")
+    a = serve.activity(limit=10)
+    assert a["counts_7d"] == {"running": 1, "done": 2, "error": 2}       # the 9-day-old job is outside the window
+    assert {"jobs", "runs", "active_jobs", "active_runs", "jobs_dir", "runs_dir"} <= set(a)   # shape unchanged
+
+
 def test_events_version_moves_only_when_state_changes(home):
     from mantis_agent import serve, session_tree
 
@@ -197,6 +216,94 @@ def test_stylesheet_has_no_elevation_shadows():
             assert v == "none" or re.match(r"^0 0 0 \dpx var\(--[a-z-]+\)$", v), line.strip()
 
 
+def test_stylesheet_has_no_lines_at_all():
+    """Elevation is a background step, never a border. The only ``border``
+    declarations allowed are resets (``border: 0`` / ``none``) and radii; the
+    only outline is the 2px focus ring (a box-shadow)."""
+    css = _css()
+    offenders = []
+    for line in css.split("\n"):
+        for m in re.finditer(r"(?<![a-z-])(border(?:-top|-bottom|-left|-right|-color|-width|-style)?|outline)\s*:\s*([^;]+);", line):
+            prop, val = m.group(1), m.group(2).strip()
+            if prop == "outline" and val == "none":
+                continue
+            if prop == "border" and val in ("0", "none"):
+                continue
+            offenders.append(line.strip())
+    assert not offenders, offenders
+    assert "1px solid" not in css and "1px dashed" not in css and "border-color" not in css
+    # the focus ring survives
+    assert ":focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent)" in css
+
+
+def test_models_page_has_family_tabs_and_no_route_strip():
+    """The Models list is tabbed by family (with counts, remembered in the
+    hash) and the page-level "Test this route · recent" strip is gone."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    for marker in ("MODEL_TAB", "tabFromHash", "TAB_SLUG", "mtabs", 'MODEL_TAB === "local"',
+                   '"Open models"', '"Local"', 'el("span","tn2"', "applyModelFilter"):
+        assert marker in js, marker
+    assert ".mtabs" in css and ".mtabs .tn2" in css
+    # the tab narrows the rows and hides the group headers; "all" keeps them
+    assert 'r.dataset.fam === MODEL_TAB' in js and 'MODEL_TAB === "all" && perFam[h.dataset.fam]' in js
+    # the URL says the name people use, the code keeps the family id
+    assert 'anthropic: "claude"' in js and 'xai: "grok"' in js
+    # gone: the route strip, its chips, its CSS, and the data that fed it
+    for gone in ("Test this route", "routeBtn", "routeBar", "hero-lbl", '"recent"'):
+        assert gone not in js, gone
+    for gone in (".recent {", ".hero-lbl"):
+        assert gone not in css, gone
+    assert "Enable a provider, or point mantis at your own server." not in js
+
+
+def test_models_state_no_longer_ships_the_recent_list(home):
+    from mantis_agent import serve
+
+    m = serve.models_state()
+    assert "recent" not in m and {"current", "providers", "families", "model_info", "ollama"} <= set(m)
+
+
+def test_no_signal_path_and_short_captions():
+    """The pill-chain strips are gone from every page, and no page caption
+    runs longer than one short line."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css = _css()
+    assert ".path {" not in css and ".path .n" not in css and "arw" not in css
+    js = INDEX_HTML.split("<script>")[1]
+    assert "signalPath" not in js and "──▶" not in js
+    for m in re.finditer(r'pageHead\(pad, "([^"]+)", [^,]+,\s*"([^"]*)"', js):
+        assert len(m.group(2)) <= 70, (m.group(1), m.group(2))
+    assert 'section(pad, "Providers · " + readyN' in js and 'section(pad, "GPU providers · "' in js
+    # section labels are normal-weight title case now — the all-caps mono style is gone
+    sec = css.split(".sec-t {")[1].split("}")[0]
+    assert "uppercase" not in sec and "var(--mono)" not in sec
+    for lab in ('"Pick a model"', '"Fit & deploy"', '"Deployments"', '"Choose a model"', '"Local models · Ollama"',
+                '"Connect a provider"', '"Spend & usage"', "Curated · good first deploys", '"MCP servers"'):
+        assert lab in js, lab
+
+
+def test_nav_tabs_and_segmented_controls_are_pills():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css = _css()
+    nav_on = css.split("#nav button.on {")[1].split("}")[0]
+    assert "background: var(--accent-soft)" in nav_on and "color: var(--accent)" in nav_on
+    assert "::after" not in css.split("#nav button.on")[1].split("\n")[0]
+    assert "#nav button.on::after" not in css
+    chip_on = css.split(".fchip.on {")[1].split("}")[0]
+    assert "background: var(--accent-soft)" in chip_on
+    base = css.split("  #nav button {")[1].split("}")[0]
+    assert "padding: 6px 10px" in base and "border-radius: 6px" in base and "transition: background var(--t)" in base
+    assert "font-weight" not in nav_on and 'class="k"' not in INDEX_HTML and "#nav button .k" not in css
+    assert "gap: 3px" in css.split("  #nav {")[1].split("}")[0]
+    assert ".sec-t::after" not in css                      # no rule after section labels
+    zero = css.split(".zero {")[1].split("}")[0]
+    assert "dashed" not in zero and "background: var(--panel-2)" in zero
+
+
 def test_theme_tokens_are_neutral_and_defined_for_both_schemes():
     css = _css()
     assert "prefers-color-scheme: dark" in css and ':root[data-theme="dark"]' in css and ':root:not([data-theme="light"])' in css
@@ -204,7 +311,7 @@ def test_theme_tokens_are_neutral_and_defined_for_both_schemes():
     for tok in ("--bg: #0a0b0d", "--panel: #111316", "--line: rgba(255,255,255,.08)", "--ink: #ededed", "--ink-2: #9a9ea6"):
         assert tok in dark, tok
     light = css.split(":root {")[1].split("}")[0]
-    for tok in ("--bg: #fafafa", "--panel: #ffffff", "--line: rgba(0,0,0,.08)", "--ink: #111111", "--ok:", "--warn:", "--bad:", "--info:"):
+    for tok in ("--bg: #eff1f4", "--panel: #ffffff", "--panel-2: #f4f5f7", "--ink: #111111", "--ok:", "--warn:", "--bad:", "--info:"):
         assert tok in light, tok
     # olive is gone from the surfaces
     for old in ("#efece5", "#0d0f0a", "#1a1d15", "#14160f"):
@@ -221,13 +328,19 @@ def test_page_carries_the_shell_cards_transcript_and_palette(home):
         httpd.shutdown()
         httpd.server_close()
     for marker in ('<header id="top">', 'id="cmdk"', 'id="themebtn"', 'id="lanind"', 'id="palette"', 'id="palin"',
-                   'data-v="home" class="on">overview', 'data-v="config">config<span class="k">7</span>',
+                   'data-v="home" class="on">Overview', 'data-v="config">Config</button>',
+                   'data-v="activity">Activity</button>', 'data-v="mcp">MCP</button>', 'id="activitypad"', "loadActivity", "renderActivityPage",
+                   "counts_7d", "ACT_FILTERS", 'a: "activity"', '"12345678"', "xrow", "Load more",
                    "function patchList", "function skeleton", "function md(", "function splitMeta", "function ctxToggle",
                    "function toolCall", "META_RE", "system-reminder", "show context (",
                    'id="projcards"', 'id="sesscards"', "pcard", "selectProject", "selectSession", "UUIDISH",
                    "renderTopStatus", "watchEvents", "/api/events?", "EVENTS_OK", "openPalette", "paletteItems",
                    'e.key.toLowerCase() === "k"', "cycleTheme", "applyTheme", 'get("theme")', "rollback",
                    "grid-template-columns: 280px 320px", "repeat(auto-fill, minmax(260px, 1fr))", "max-width: 900px",
-                   "CHORDS", "visibilitychange", "sessfind", "fam-grid", "live-act", "spend-card", "$ / 1M in"):
+                   "CHORDS", "visibilitychange", "sessfind", "fam-grid", "spend-card", "$ / 1M in"):
         assert marker in page, marker
+    for gone in ("live-act", "renderActivitySummary", "act-sum", "see all"):
+        assert gone not in page, gone
     assert "cdn." not in page and "googleapis" not in page and "<aside" not in page
+    for marker in ("dp-mgrid", "mcard", "bigMark", "providerDescriptor", "gcard", "color-mix(in srgb", "VRAM_CAP_GB", "dp-glabel"):
+        assert marker in page, marker

@@ -326,6 +326,32 @@ Full guide: [docs/guides/workflows.md](docs/guides/workflows.md).
 
 ---
 
+## Connect a provider, any way you have
+
+Every family accepts more than one route in, and they all work:
+
+| Family | Ways in |
+| --- | --- |
+| Claude | API key · Claude subscription sign-in · Vertex AI · Bedrock · Azure AI Foundry |
+| OpenAI | API key · Azure OpenAI |
+| Gemini | API key · Vertex AI |
+| Grok | API key |
+| Open models | Local Ollama · your own server · any hosted provider in the catalog |
+
+```bash
+mantis-agent auth list claude          # every method, and which is active
+mantis-agent auth login claude         # browser sign-in with a subscription
+mantis-agent auth use claude bedrock   # or a cloud you already pay for
+mantis-agent auth check claude         # probe it, with latency and model ids
+```
+
+Configure several at once; one is active and switching is a click in
+`mantis serve` → Models, or one command. Cloud credentials resolve without
+extra SDKs, and Vertex and Bedrock never activate themselves just because a
+`gcloud` or AWS login happens to exist on the machine.
+
+---
+
 ## Deploy — bring your own GPU provider
 
 Add a GPU cloud credential once, then deploy **any open-weight model** as an
@@ -452,6 +478,11 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 - [x] Modal serverless adapter
 - [x] Anthropic native Messages API — `claude-*` routes to it automatically (API key or subscription OAuth)
 - [x] xAI Grok (`grok-*`) with reasoning effort mapped
+
+**Auth**
+- [x] Claude: API key · subscription OAuth · Vertex · Bedrock · Azure Foundry
+- [x] OpenAI: API key · Azure OpenAI · Gemini: API key · Vertex · Grok: API key
+- [x] `mantis-agent auth list|use|login|check|clear` and the dashboard setup surface
 
 **Deploy (bring your own GPU)**
 - [x] `DeployProvider` contract + store; RunPod, HF Inference Endpoints, Modal, DeepInfra, Baseten, Vast.ai

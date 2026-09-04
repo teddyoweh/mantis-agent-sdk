@@ -194,6 +194,11 @@ class ModelInfo:
     params_b: float | None = None        # billions of parameters
     dtype: str | None = None             # dominant safetensors dtype ("BF16", "F8_E4M3", ...)
     gated: bool = False
+    # The Hub reports ``gated`` as ``false | "auto" | "manual"``. The two gated
+    # kinds need different things from the user: ``auto`` is granted the moment
+    # you click Agree while logged in, ``manual`` waits on the repo owner. UIs
+    # say which, so nobody waits for an approval that was never coming.
+    gated_kind: str | None = None
     license: str | None = None
     downloads: int | None = None
     likes: int | None = None

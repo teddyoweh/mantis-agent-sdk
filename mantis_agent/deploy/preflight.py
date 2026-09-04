@@ -285,6 +285,7 @@ def build_model_info(
         quant = str(qc.get("quant_method") or qc.get("format") or "") or None
     gated_raw = meta.get("gated")
     gated = bool(gated_raw) and gated_raw is not False
+    gated_kind = gated_raw if isinstance(gated_raw, str) and gated else None
     card = meta.get("cardData") if isinstance(meta.get("cardData"), dict) else {}
     license_ = card.get("license") or card.get("license_name")
     if isinstance(license_, list):
@@ -314,7 +315,8 @@ def build_model_info(
     est = estimate_vram_gb(params_b, dtype, config, context_len=context_len, quant=quant)
     return ModelInfo(
         id=mid, source="hf", architectures=archs, params_b=round(params_b, 2) if params_b else None,
-        dtype=dtype, gated=gated, license=str(license_) if license_ else None,
+        dtype=dtype, gated=gated, gated_kind=gated_kind,
+        license=str(license_) if license_ else None,
         downloads=_int_or_none(meta.get("downloads")), likes=_int_or_none(meta.get("likes")),
         context_len=ctx, vllm_ok=ok, est_vram_gb=est, tags=tags[:40], reason=reason,
     )
@@ -357,12 +359,23 @@ def check_gated(info: ModelInfo, hf_token: str | None = None) -> None:
         return
     if (hf_token or os.environ.get("HF_TOKEN") or "").strip():
         return
+    if info.gated_kind == "manual":
+        access = (
+            f"request access at https://huggingface.co/{info.id} — this repo is "
+            "owner-approved, so it is granted by hand and may take a while"
+        )
+    else:
+        access = (
+            f"click Agree at https://huggingface.co/{info.id} while logged in — "
+            "access to this repo is granted instantly"
+        )
     raise DeployError(
-        f"{info.id} is a gated model and no HF_TOKEN is set",
+        f"{info.id} is a gated model and no Hugging Face token is set",
         hint=(
-            f"accept the licence at https://huggingface.co/{info.id} while logged in, create a "
-            "read token at https://huggingface.co/settings/tokens, then "
-            "`mantis-agent deploy creds hf --set HF_TOKEN=hf_...` (any provider reads it)"
+            f"{access}, create a read token at https://huggingface.co/settings/tokens, "
+            "then paste it into the Hugging Face token field on the deploy form "
+            "(or run `mantis-agent deploy creds hf --set HF_TOKEN=hf_...`) — every "
+            "provider reads the same token"
         ),
     )
 

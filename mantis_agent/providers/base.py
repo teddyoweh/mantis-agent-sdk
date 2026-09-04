@@ -184,6 +184,14 @@ _LAZY_PROVIDERS: dict[str, tuple[str, str]] = {
         "mantis_agent.providers.anthropic_passthrough",
         "AnthropicPassthroughProvider",
     ),
+    "anthropic_vertex": (
+        "mantis_agent.providers.anthropic_vertex",
+        "AnthropicVertexProvider",
+    ),
+    "anthropic_bedrock": (
+        "mantis_agent.providers.anthropic_bedrock",
+        "AnthropicBedrockProvider",
+    ),
     "mock": ("mantis_agent.providers.mock", "MockProvider"),
 }
 
@@ -220,6 +228,9 @@ def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> st
     * ``"anthropic"`` sentinel, an ``api.anthropic.com`` URL, an
       ``/anthropic/`` gateway path, or a bare ``claude-*`` model name →
       anthropic_passthrough (the native Messages adapter).
+    * ``vertex:anthropic`` / a ``publishers/anthropic`` URL → anthropic_vertex;
+      ``bedrock:anthropic`` / a ``bedrock-runtime`` host → anthropic_bedrock;
+      ``vertex:gemini`` / an ``endpoints/openapi`` URL → openai_compat.
     * ``modal:...`` model spec or URL ending in ``modal.run`` → modal.
     * URL with ``:11434`` or ``ollama`` → ollama.
     * URL with ``llamacpp`` or ``:8080`` → llamacpp.
@@ -238,6 +249,17 @@ def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> st
     s = model_or_url.lower()
     if s == "mock":
         return "mock"
+    # Cloud sentinels + the hosts they resolve to. Claude on Vertex and Bedrock
+    # speak the Messages body inside a cloud envelope (a publisher-model URL /
+    # SigV4 + event-stream), so they get their own adapters; Gemini on Vertex is
+    # OpenAI-compatible and only needs a bearer token, so it stays on the
+    # openai_compat path.
+    if s.startswith("vertex:gemini") or "endpoints/openapi" in s:
+        return "openai_compat"
+    if s.startswith("vertex:") or "publishers/anthropic" in s:
+        return "anthropic_vertex"
+    if s.startswith("bedrock:") or "bedrock-runtime." in s:
+        return "anthropic_bedrock"
     # Anthropic: the literal sentinel ``"anthropic"``, any URL on Anthropic's
     # API host, or a bare ``claude-*`` / ``claude/`` model name. Routed BEFORE
     # the generic URL fallback so api.anthropic.com doesn't silently pick the

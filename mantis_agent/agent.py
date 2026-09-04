@@ -106,6 +106,12 @@ _MALFORMED_TOOL_JSON_KEY = "__mantis_malformed_tool_json__"
 _TOOL_TEMPERATURE_CAP = 0.2
 
 
+def _is_azure_openai_url(url: Any) -> bool:
+    """Azure OpenAI endpoints authenticate with their own key variable."""
+    lower = str(url or "").lower()
+    return "openai.azure.com" in lower or "cognitiveservices.azure.com" in lower
+
+
 def _rejects_default_temperature(provider: Any) -> bool:
     """True where sending an UNREQUESTED temperature is worse than sending none.
 
@@ -1120,6 +1126,18 @@ class Agent:
         if self.backend_capability is None and self.backend:
             self.backend_capability = hosted_profile_from_url(self.backend)
 
+        # No backend given: take the one the family's ACTIVE auth method
+        # implies (Vertex / Bedrock / Azure / an API key), so a bare
+        # ``claude-opus-5`` reaches whichever Claude the user set up. Precedence
+        # is explicit backend > saved active method > model-name inference,
+        # which is why this only fills an empty value.
+        if self.backend is None and self.provider is None:
+            from .routing import active_method_backend  # noqa: PLC0415
+            chosen = active_method_backend(self.model)
+            if chosen:
+                self.backend = chosen
+                self.base_url = chosen
+
         # Build the provider if not given. ``detect_provider`` reads the URL
         # when there is one, else the model name — so a bare ``claude-*`` picks
         # the native Anthropic adapter with no other config.
@@ -1498,8 +1516,32 @@ class Agent:
             # implies its vendor's endpoint; every other bare name keeps the
             # vLLM localhost default so self-hosted setups are unchanged.
             from .routing import hosted_default_url  # noqa: PLC0415
+            backend = self.backend
+            if backend == "vertex:gemini":
+                # Gemini on Vertex: OpenAI-compatible, but the URL carries the
+                # project/region and the credential is an ADC bearer token that
+                # expires hourly — so it is re-read per request, not frozen
+                # into the client's headers.
+                from .providers.cloud_credentials import (  # noqa: PLC0415
+                    google_access_token,
+                    google_project,
+                )
+                project = google_project()
+                region = (os.environ.get("GOOGLE_CLOUD_REGION")
+                          or os.environ.get("CLOUD_ML_REGION") or "us-central1")
+                if not project:
+                    raise ValueError(
+                        "Gemini on Vertex needs GOOGLE_CLOUD_PROJECT (and Google "
+                        "credentials — `gcloud auth application-default login`)."
+                    )
+                backend = (
+                    f"https://{region}-aiplatform.googleapis.com/v1/projects/"
+                    f"{project}/locations/{region}/endpoints/openapi"
+                )
+                kw["api_key"] = ""          # auth rides on the token provider
+                kw["api_key_provider"] = google_access_token
             kw["base_url"] = (
-                self.backend
+                backend
                 or os.environ.get("MANTIS_AGENT_BASE_URL")
                 or hosted_default_url(self.model)
                 or "http://localhost:8000/v1"
@@ -1508,10 +1550,16 @@ class Agent:
             # adapter's own env chain (MANTIS_AGENT_API_KEY, then
             # OPENAI_API_KEY / TOGETHER_API_KEY / … ) in charge, and ``""``
             # deliberately sends no auth at all.
-            kw["api_key"] = (
-                self.api_key if self.api_key is not None
-                else os.environ.get("MANTIS_AGENT_API_KEY")
-            )
+            if "api_key" not in kw:
+                kw["api_key"] = (
+                    self.api_key if self.api_key is not None
+                    else os.environ.get("MANTIS_AGENT_API_KEY")
+                )
+            # Azure OpenAI keeps its key in its own variable and sends it as an
+            # ``api-key`` header (the adapter detects the host); without this a
+            # user who set only AZURE_OPENAI_API_KEY got no auth at all.
+            if not kw.get("api_key") and _is_azure_openai_url(kw.get("base_url")):
+                kw["api_key"] = os.environ.get("AZURE_OPENAI_API_KEY") or None
             if self.backend_capability is not None:
                 kw["backend_capability"] = self.backend_capability
         elif backend_kind == "ollama":
@@ -1531,6 +1579,14 @@ class Agent:
             # With no explicit key, api_key is read from $ANTHROPIC_API_KEY /
             # $ANTHROPIC_AUTH_TOKEN inside the provider — surfacing it here
             # too would shadow that resolution path.
+        elif backend_kind == "anthropic_vertex":
+            # Project/region come from the environment the auth method wrote;
+            # a real URL (a private endpoint) overrides the assembled one.
+            if self.backend and self.backend.lower().startswith(("http://", "https://")):
+                kw["base_url"] = self.backend
+        elif backend_kind == "anthropic_bedrock":
+            if self.backend and self.backend.lower().startswith(("http://", "https://")):
+                kw["base_url"] = self.backend
         elif backend_kind == "modal":
             # A modal.run URL, or a ``modal:workspace/app[/fn][@served]`` spec
             # (the served-model part becomes the adapter's ``inner_model``).

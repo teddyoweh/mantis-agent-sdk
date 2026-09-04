@@ -109,6 +109,7 @@ __all__ = [
     "ANTHROPIC_DEFAULT_BASE_URL",
     "ANTHROPIC_DEFAULT_VERSION",
     "AnthropicPassthroughProvider",
+    "build_messages_payload",
 ]
 
 
@@ -294,96 +295,20 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
                 "(e.g. 'claude-opus-5')."
             )
 
-        messages_list = list(messages)
-        system_text, body_messages = _split_system(system, messages_list)
-
-        encoded = [_encode_message(m) for m in body_messages]
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": encoded,
-            "max_tokens": int(max_tokens),
-            "stream": True,
-        }
-        cache = getattr(self, "cache_prompts", True)
-        # Prepend the Claude Code identity block when the credential is a
-        # subscription OAuth token, unless the caller already leads with it.
-        # It has to be a standalone first block, so the caller's own system text
-        # follows as a second one instead of being merged in.
-        identity = getattr(self, "_oauth_subscription", False) and not (
-            system_text or ""
-        ).startswith(CLAUDE_CODE_IDENTITY)
-        if system_text or identity:
-            blocks: list[dict[str, Any]] = []
-            if identity:
-                blocks.append({"type": "text", "text": CLAUDE_CODE_IDENTITY})
-            if system_text:
-                blocks.append({"type": "text", "text": system_text})
-            if cache:
-                # A cache breakpoint on the (stable) system prompt lets Anthropic
-                # read the whole prefix from cache on every later turn instead of
-                # re-billing it. The marker goes on the last block so it covers
-                # the identity block too.
-                blocks[-1]["cache_control"] = {"type": "ephemeral"}
-            # A single un-cached text block can stay a plain string; anything
-            # with the identity block in front must be an array.
-            payload["system"] = (
-                system_text if (not cache and len(blocks) == 1) else blocks
-            )
-        if cache and encoded:
-            _mark_cache_breakpoint(encoded[-1])  # cache the conversation so far
-        if temperature is not None:
-            payload["temperature"] = float(temperature)
-        if tools:
-            payload["tools"] = _normalize_tools(tools)
-        # Universal thinking config -> Anthropic thinking block. An explicit
-        # extra["thinking"] is already in Anthropic's native block shape, so it
-        # wins outright; extra["max_thinking_tokens"] is the Claude-SDK alias
-        # for a fixed budget and becomes one here (in whichever form this
-        # model generation accepts). extra["effort"] / ["reasoning_effort"]
-        # become ``output_config.effort`` on generations that have it.
-        # Everything else in the control set is an SDK-level knob with no
-        # Anthropic wire field — translated above or dropped, never forwarded
-        # (the Messages API 400s on any unrecognized top-level key).
-        generation = _claude_generation(model)
-        block: dict[str, Any] | None = None
-        effort: str | None = None
-        if extra and isinstance(extra.get("thinking"), dict):
-            block = dict(extra["thinking"])
-        else:
-            cfg: dict[str, Any] | None = None
-            if extra and extra.get("max_thinking_tokens") is not None:
-                cfg = {"type": "enabled",
-                       "budget_tokens": int(extra["max_thinking_tokens"])}
-            elif thinking is not None:
-                cfg = thinking
-            if cfg is not None:
-                block, effort, payload["max_tokens"] = _thinking_plan(
-                    cfg, generation, payload["max_tokens"]
-                )
-        if extra:
-            word = extra.get("reasoning_effort", extra.get("effort"))
-            if word is not None:
-                effort = _normalize_claude_effort(str(word), generation) or effort
-        if block is not None:
-            payload["thinking"] = block
-        if effort is not None and generation != "budget" and (
-            block is None or "budget_tokens" not in block
-        ) and (block is None or block.get("type") != "disabled" or effort in ("low", "medium", "high")):
-            # ``output_config.effort`` is GA on 4.6+; never paired with the
-            # deprecated budget form, and never sent to a pre-4.6 model.
-            payload.setdefault("output_config", {})["effort"] = effort
-        # With thinking on, Anthropic requires the default sampling
-        # temperature — a non-default temperature is a 400 on the models
-        # that take a thinking block. Opus 4.7+ / the 5-series / Fable have
-        # removed sampling parameters outright. Drop it so enabling thinking
-        # (or picking a current model) can't turn a valid request into a
-        # rejected one.
-        if (block is not None and block.get("type") != "disabled") or (
-            generation == "always_on" or _sampling_removed(model)
-        ):
-            payload.pop("temperature", None)
-        for k, v in strip_control_keys(extra).items():
-            payload.setdefault(k, v)
+        payload = build_messages_payload(
+            model=model,
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            extra=extra,
+            thinking=thinking,
+            cache=getattr(self, "cache_prompts", True),
+            # The Claude Code identity block is required only by a subscription
+            # OAuth token against api.anthropic.com — never on a cloud route.
+            identity=getattr(self, "_oauth_subscription", False),
+        )
 
         body = _PAYLOAD_ENCODER.encode(payload)
 
@@ -418,6 +343,124 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
 # ---------------------------------------------------------------------------
 # Outbound: convert internal types → Anthropic Messages API request shape
 # ---------------------------------------------------------------------------
+
+
+def build_messages_payload(
+    *,
+    model: str,
+    messages: Iterable[Message],
+    system: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    max_tokens: int = _DEFAULT_MAX_TOKENS,
+    temperature: float | None = None,
+    extra: dict[str, Any] | None = None,
+    thinking: dict[str, Any] | None = None,
+    cache: bool = True,
+    identity: bool = False,
+) -> dict[str, Any]:
+    """Build one Anthropic Messages request body.
+
+    Shared by all three Claude routes — the direct API, Vertex AI and Bedrock —
+    because the *body* is identical on all of them. Only the envelope differs:
+    the cloud routes carry the model in the URL and an ``anthropic_version``
+    string in the body instead of ``model``/``anthropic-version``, which their
+    adapters adjust after calling this (see
+    :func:`mantis_agent.providers.anthropic_vertex.to_vertex_body`).
+
+    ``thinking`` is the universal reasoning config; ``identity`` prepends the
+    Claude Code system block a subscription OAuth token requires; ``cache``
+    places the two ephemeral cache breakpoints.
+    """
+
+    messages_list = list(messages)
+    system_text, body_messages = _split_system(system, messages_list)
+
+    encoded = [_encode_message(m) for m in body_messages]
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": encoded,
+        "max_tokens": int(max_tokens),
+        "stream": True,
+    }
+    # Prepend the Claude Code identity block when the credential is a
+    # subscription OAuth token, unless the caller already leads with it.
+    # It has to be a standalone first block, so the caller's own system text
+    # follows as a second one instead of being merged in.
+    identity = identity and not (system_text or "").startswith(CLAUDE_CODE_IDENTITY)
+    if system_text or identity:
+        blocks: list[dict[str, Any]] = []
+        if identity:
+            blocks.append({"type": "text", "text": CLAUDE_CODE_IDENTITY})
+        if system_text:
+            blocks.append({"type": "text", "text": system_text})
+        if cache:
+            # A cache breakpoint on the (stable) system prompt lets Anthropic
+            # read the whole prefix from cache on every later turn instead of
+            # re-billing it. The marker goes on the last block so it covers
+            # the identity block too.
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+        # A single un-cached text block can stay a plain string; anything
+        # with the identity block in front must be an array.
+        payload["system"] = (
+            system_text if (not cache and len(blocks) == 1) else blocks
+        )
+    if cache and encoded:
+        _mark_cache_breakpoint(encoded[-1])  # cache the conversation so far
+    if temperature is not None:
+        payload["temperature"] = float(temperature)
+    if tools:
+        payload["tools"] = _normalize_tools(tools)
+    # Universal thinking config -> Anthropic thinking block. An explicit
+    # extra["thinking"] is already in Anthropic's native block shape, so it
+    # wins outright; extra["max_thinking_tokens"] is the Claude-SDK alias
+    # for a fixed budget and becomes one here (in whichever form this
+    # model generation accepts). extra["effort"] / ["reasoning_effort"]
+    # become ``output_config.effort`` on generations that have it.
+    # Everything else in the control set is an SDK-level knob with no
+    # Anthropic wire field — translated above or dropped, never forwarded
+    # (the Messages API 400s on any unrecognized top-level key).
+    generation = _claude_generation(model)
+    block: dict[str, Any] | None = None
+    effort: str | None = None
+    if extra and isinstance(extra.get("thinking"), dict):
+        block = dict(extra["thinking"])
+    else:
+        cfg: dict[str, Any] | None = None
+        if extra and extra.get("max_thinking_tokens") is not None:
+            cfg = {"type": "enabled",
+                   "budget_tokens": int(extra["max_thinking_tokens"])}
+        elif thinking is not None:
+            cfg = thinking
+        if cfg is not None:
+            block, effort, payload["max_tokens"] = _thinking_plan(
+                cfg, generation, payload["max_tokens"]
+            )
+    if extra:
+        word = extra.get("reasoning_effort", extra.get("effort"))
+        if word is not None:
+            effort = _normalize_claude_effort(str(word), generation) or effort
+    if block is not None:
+        payload["thinking"] = block
+    if effort is not None and generation != "budget" and (
+        block is None or "budget_tokens" not in block
+    ) and (block is None or block.get("type") != "disabled" or effort in ("low", "medium", "high")):
+        # ``output_config.effort`` is GA on 4.6+; never paired with the
+        # deprecated budget form, and never sent to a pre-4.6 model.
+        payload.setdefault("output_config", {})["effort"] = effort
+    # With thinking on, Anthropic requires the default sampling
+    # temperature — a non-default temperature is a 400 on the models
+    # that take a thinking block. Opus 4.7+ / the 5-series / Fable have
+    # removed sampling parameters outright. Drop it so enabling thinking
+    # (or picking a current model) can't turn a valid request into a
+    # rejected one.
+    if (block is not None and block.get("type") != "disabled") or (
+        generation == "always_on" or _sampling_removed(model)
+    ):
+        payload.pop("temperature", None)
+    for k, v in strip_control_keys(extra).items():
+        payload.setdefault(k, v)
+    return payload
+
 
 
 def _split_system(

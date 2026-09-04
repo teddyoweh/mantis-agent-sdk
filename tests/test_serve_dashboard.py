@@ -539,10 +539,10 @@ def test_new_endpoints_over_http_and_page_sections(home):
         code, html = get("/")
         page = html.decode()
         assert code == 200
-        for marker in ("renderFamilies", "renderSpend", "renderActivity", "ctxChart", "openRun",
-                       "fam-grid", "live-act", "spend-card", "local models", "sessfind",
+        for marker in ("renderFamilies", "renderSpend", "renderActivityPage", "ctxChart", "openRun",
+                       "fam-grid", "spend-card", "Local models", "sessfind",
                        "CHORDS", "visibilitychange", "prefers-color-scheme: dark", "max-width: 900px",
-                       'data-v="home" class="on">overview', "$ / 1M in"):
+                       'data-v="home" class="on">Overview', "$ / 1M in"):
             assert marker in page, marker
         assert '"xai"' in page                        # the Grok mark is inlined with the rest
         assert "http://" not in page.split("<script>")[0].replace("http://www.w3.org", "")  # no external assets in the shell

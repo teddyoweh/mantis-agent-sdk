@@ -302,6 +302,38 @@ def clear_key(provider_id: str) -> bool:
     return removed
 
 
+# ---------------------------------------------------------------------------
+# Active auth method per provider family (see ``mantis_agent.auth_methods``)
+# ---------------------------------------------------------------------------
+#
+# Stored beside the keys in models.json rather than in settings.json because it
+# is a *local* choice about this machine's credentials — the same reason keys
+# live here — and because settings.json is designed to be committed.
+
+
+def saved_auth_method(family: str) -> str | None:
+    """The method id the user last selected for ``family``, if any."""
+    return (_load_store().get("auth_methods") or {}).get(family)
+
+
+def set_auth_method(family: str, method_id: str) -> None:
+    """Record ``method_id`` as the family's active auth method."""
+    data = _load_store()
+    data.setdefault("auth_methods", {})[family] = method_id
+    _save_store(data)
+
+
+def clear_auth_method(family: str) -> bool:
+    """Forget the family's active method. True when something was removed."""
+    data = _load_store()
+    methods = data.get("auth_methods") or {}
+    removed = family in methods
+    if removed:
+        del methods[family]
+        _save_store(data)
+    return removed
+
+
 def looks_like_model_id(s: Any) -> bool:
     """Is ``s`` a syntactically plausible model id? Real ids are a single token of
     ``[A-Za-z0-9._:+/-]`` — no whitespace, no newlines, no empties. This is the
@@ -834,6 +866,9 @@ __all__ = [
     "CATALOG",
     "BY_ID",
     "saved_key",
+    "saved_auth_method",
+    "set_auth_method",
+    "clear_auth_method",
     "set_key",
     "clear_key",
     "api_key_for",

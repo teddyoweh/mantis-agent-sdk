@@ -13,6 +13,21 @@ pip install vastai
 vastai set api-key $VAST_API_KEY
 ```
 
+## Get a key for mantis
+
+1. Verify your email first — new accounts have a tiny spend limit until then.
+2. [Keys](https://cloud.vast.ai/manage-keys/) (Account → API Keys) → **+New**;
+   full permissions, or scoped to `user_read`, `instance_read`,
+   `instance_write`. Copy it — shown once.
+3. Billing → add credit: **$5 minimum deposit**, prepaid, no free tier. The
+   instance bills every hour it exists; `mantis-agent deploy down` is the
+   off switch.
+4. Optional — `HF_TOKEN` for gated repos (passed to the container).
+
+```bash
+mantis-agent deploy creds vastai --set VAST_API_KEY=…
+```
+
 ## Deploy
 
 Find a machine and rent it with the vLLM-friendly PyTorch image:

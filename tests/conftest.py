@@ -32,6 +32,26 @@ def _no_env_context(monkeypatch):
     monkeypatch.setenv("MANTIS_AGENT_NO_CONTEXT", "1")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_deploy_registry():
+    """Restore ``mantis_agent.deploy.base.DEPLOY_PROVIDERS`` after every test.
+
+    Several suites register a throwaway adapter (``@register_provider`` with
+    id ``fake``) to drive the manager / dashboard / CLI without a network.
+    Without this snapshot the fake leaks into later tests that iterate the
+    registry (e.g. "every deploy provider has a key guide"), making the
+    outcome depend on file ordering."""
+    try:
+        from mantis_agent.deploy import base as _deploy_base  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — deploy package absent in some layouts
+        yield
+        return
+    before = dict(_deploy_base.DEPLOY_PROVIDERS)
+    yield
+    _deploy_base.DEPLOY_PROVIDERS.clear()
+    _deploy_base.DEPLOY_PROVIDERS.update(before)
+
+
 # ---------------------------------------------------------------------------
 # Mock backend
 # ---------------------------------------------------------------------------

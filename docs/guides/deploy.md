@@ -88,6 +88,89 @@ later cold starts ~10 s plus engine load. Endpoint:
 (`mantis_agent/deploy/providers/modal_deploy.py`, `vastai.py`); Modal needs
 `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET`, Vast.ai `VAST_API_KEY`.
 
+## Getting a key
+
+The same steps the dashboard's *Add key* panel shows
+(`mantis_agent.provider_guides.deploy_guide(<id>)`). Every key is saved with
+`mantis-agent deploy creds <id> --set VAR=…`, which also validates it over
+the network.
+
+### RunPod — `RUNPOD_API_KEY`
+
+1. Sign in at [console.runpod.io](https://console.runpod.io/signup).
+2. Open [Settings](https://console.runpod.io/user/settings), expand **API
+   Keys**, click **Create API Key**.
+3. Permission **All** (or **Restricted** with Serverless set to *Read/Write*
+   — mantis creates endpoints).
+4. Copy the key now; RunPod does not store it.
+5. Add credit under Billing (prepaid, per-second; $10 is enough to start).
+   No free credit. [Pricing](https://www.runpod.io/pricing): H100 ≈ $4.20/h
+   flex, $0 idle at `--min 0`.
+
+### Hugging Face Inference Endpoints — `HF_TOKEN`
+
+1. [Settings → Access Tokens](https://huggingface.co/settings/tokens) →
+   **Create new token** → *Fine-grained*.
+2. Tick **Inference → Manage Inference Endpoints** and **Make calls to
+   Inference Endpoints**, plus read access to the repos you will deploy. A
+   classic *Write* token also works.
+3. Copy the `hf_…` token (shown once). The same token unlocks gated repos.
+4. Add a payment method under Settings → Billing — endpoints will not create
+   without one. No free tier; billed per minute while running, $0 at
+   scale-to-zero. [Pricing](https://huggingface.co/docs/inference-endpoints/pricing):
+   L4 ≈ $0.80/h, A100 ≈ $2.50/h.
+
+### Modal — `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET`
+
+1. Sign up at [modal.com](https://modal.com/signup) (GitHub login).
+2. [Settings → API Tokens](https://modal.com/settings/tokens) → **New
+   Token**; copy the id (`ak-…`) and secret (`as-…`). Or
+   `pip install modal && modal token new`.
+3. Optional — [Settings → Proxy Auth Tokens](https://modal.com/settings/proxy-auth-tokens)
+   → **New Token** (`wk-…` / `ws-…`) as `MODAL_PROXY_TOKEN_ID` /
+   `MODAL_PROXY_TOKEN_SECRET`. With them the endpoint only answers callers
+   holding the token (mantis sends `Modal-Key` / `Modal-Secret`); without
+   them it is deployed behind a generated vLLM `--api-key`.
+4. Optional — `HF_TOKEN` for gated repos (stored as a `modal.Secret`).
+5. $30/month of free compute on Starter ($100 on Team); a card is only
+   needed beyond that. [Pricing](https://modal.com/pricing): H100 ≈ $3.95/h,
+   L4 ≈ $0.80/h, per second.
+
+### DeepInfra — `DEEPINFRA_API_KEY`
+
+1. Sign in at [deepinfra.com](https://deepinfra.com/login) (GitHub, Google
+   or email).
+2. [Dashboard → API Keys](https://deepinfra.com/dash/api_keys) → **New API
+   key**; name it, copy it (shown once).
+3. Add a payment method under Billing — dedicated GPUs need one on file. No
+   advertised free credit. [Pricing](https://deepinfra.com/pricing): A100-80
+   $0.89/h, H100 $2.20/h, H200 $2.69/h, B200 $3.69/h per GPU, $0 scaled to
+   zero.
+
+### Baseten — `BASETEN_API_KEY`
+
+1. Sign up at [app.baseten.co](https://app.baseten.co/signup).
+2. [Organization settings → API keys](https://app.baseten.co/settings/api_keys)
+   → **Create API key**. A *Personal* key is fine locally; a *Team* key needs
+   **Full access** (deploy is more than *Inference only*).
+3. Copy the key — `abcd1234.…`, an 8-character prefix, a dot, the secret.
+4. New accounts start with free credits; add a card under Billing when they
+   run out. [Pricing](https://www.baseten.co/pricing/): H100 $6.50/h, A100
+   $4.00/h, per minute, $0 scaled to zero.
+
+### Vast.ai — `VAST_API_KEY`
+
+1. Sign up at [cloud.vast.ai](https://cloud.vast.ai/signup) and verify your
+   email (lifts the new-account spend limit).
+2. [Keys](https://cloud.vast.ai/manage-keys/) (Account → API Keys) → **+New**;
+   keep full permissions or scope to `user_read`, `instance_read`,
+   `instance_write`.
+3. Copy the key now — shown once; sent as a Bearer token.
+4. Billing → add credit: $5 minimum deposit, prepaid, no free tier.
+   [Pricing](https://vast.ai/pricing) is a market: H100 ≈ $1.5–2.3/h, a 4090
+   well under $0.50/h — charged every hour until `deploy down`.
+5. Optional — `HF_TOKEN` for gated repos (passed to the container).
+
 ## From Python
 
 ```python

@@ -13,6 +13,7 @@ Cold-start matters for ``mantis-agent --help`` to feel snappy.
 Subcommands::
 
     mantis-agent version
+    mantis-agent auth list [family]
     mantis-agent list-models
     mantis-agent probe   --backend http://localhost:11434
     mantis-agent run     "prompt..."   --model qwen2.5-7b-instruct --backend http://...
@@ -195,6 +196,60 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --backend, also append the bundled table for reference.",
     )
+
+    p_auth = sub.add_parser(
+        "auth",
+        help=(
+            "Show and choose how each provider family authenticates — API key, "
+            "Claude subscription login, Vertex, Bedrock, Azure, local Ollama."
+        ),
+    )
+    auth_sub = p_auth.add_subparsers(dest="auth_cmd", required=True, metavar="ACTION")
+
+    a_list = auth_sub.add_parser(
+        "list", help="List every auth method for a family (or all families)."
+    )
+    a_list.add_argument("family", nargs="?", default=None,
+                        help="anthropic | openai | gemini | xai | oss (default: all)")
+    a_list.add_argument("--json", action="store_true", dest="as_json",
+                        help="Machine-readable output.")
+
+    a_use = auth_sub.add_parser(
+        "use", help="Make one method active, optionally setting its fields."
+    )
+    a_use.add_argument("family")
+    a_use.add_argument("method")
+    a_use.add_argument("--set", action="append", default=[], metavar="ENV=VALUE",
+                       dest="set_values",
+                       help="A field value, e.g. --set ANTHROPIC_API_KEY=sk-ant-… "
+                            "(repeatable).")
+    a_use.add_argument("--json", action="store_true", dest="as_json")
+
+    a_login = auth_sub.add_parser(
+        "login", help="Browser login (Claude subscription). Prints a URL, takes the code."
+    )
+    a_login.add_argument("family", nargs="?", default="claude",
+                         help="claude / anthropic (default: claude)")
+    a_login.add_argument("--code", default=None,
+                         help="Finish a login non-interactively with a pasted code.")
+    a_login.add_argument("--handle", default=None,
+                         help="The handle from a previous `auth login --json` start.")
+    a_login.add_argument("--json", action="store_true", dest="as_json")
+
+    a_check = auth_sub.add_parser(
+        "check", help="Probe the active (or named) method over the network."
+    )
+    a_check.add_argument("family")
+    a_check.add_argument("--method", default=None,
+                         help="Method id to probe (default: the active one).")
+    a_check.add_argument("--model", default=None,
+                         help="Model to probe with, where the route needs one.")
+    a_check.add_argument("--json", action="store_true", dest="as_json")
+
+    a_clear = auth_sub.add_parser("clear", help="Forget what mantis saved for a method.")
+    a_clear.add_argument("family")
+    a_clear.add_argument("method")
+    a_clear.add_argument("--json", action="store_true", dest="as_json")
 
     p_probe = sub.add_parser(
         "probe", help="Hit a backend URL and report what we can detect."
@@ -586,6 +641,176 @@ def _anthropic_models_url(backend: str) -> str:
 
     base = backend if backend.lower().startswith(("http://", "https://")) else ANTHROPIC_DEFAULT_BASE_URL
     return f"{_normalize_base_url(base)}/models"
+
+
+# ---------------------------------------------------------------------------
+# auth
+# ---------------------------------------------------------------------------
+
+#: What people type versus the family ids. "claude" is the obvious word for
+#: the Anthropic family and typing the vendor name should not be a usage error.
+_FAMILY_ALIASES = {
+    "claude": "anthropic", "anthropic": "anthropic",
+    "openai": "openai", "gpt": "openai", "chatgpt": "openai",
+    "gemini": "gemini", "google": "gemini",
+    "xai": "xai", "grok": "xai",
+    "oss": "oss", "local": "oss", "open-source": "oss",
+}
+
+
+def _family_arg(value: str) -> str:
+    key = (value or "").strip().lower()
+    if key in _FAMILY_ALIASES:
+        return _FAMILY_ALIASES[key]
+    raise SystemExit(
+        f"unknown family {value!r} — expected one of "
+        + ", ".join(sorted(set(_FAMILY_ALIASES.values())))
+    )
+
+
+def _emit(payload: Any, as_json: bool, render: Any) -> int:
+    import json  # noqa: PLC0415
+
+    if as_json:
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        render(payload)
+    ok = payload.get("ok") if isinstance(payload, dict) else True
+    return 0 if ok is not False else 1
+
+
+def _cmd_auth(args: argparse.Namespace) -> int:
+    action = args.auth_cmd
+    if action == "list":
+        return _auth_list(args)
+    if action == "use":
+        return _auth_use(args)
+    if action == "login":
+        return _auth_login(args)
+    if action == "check":
+        return _auth_check(args)
+    if action == "clear":
+        return _auth_clear(args)
+    print(f"unknown auth action {action!r}", file=sys.stderr)  # pragma: no cover
+    return 2
+
+
+def _auth_list(args: argparse.Namespace) -> int:
+    from .auth_methods import FAMILIES, auth_methods, method_status  # noqa: PLC0415
+
+    families = [_family_arg(args.family)] if args.family else list(FAMILIES)
+    payload: dict[str, Any] = {"families": {}}
+    for family in families:
+        status = method_status(family)
+        payload["families"][family] = {
+            "active": next((m for m, i in status.items() if i["active"]), None),
+            "methods": [
+                {
+                    "id": m.id, "label": m.label, "kind": m.kind,
+                    "description": m.description, "backend": m.backend,
+                    "docs_url": m.docs_url, "recommended": m.recommended,
+                    "fields": [
+                        {"env": f.env, "label": f.label, "secret": f.secret,
+                         "required": f.required, "help": f.help,
+                         "placeholder": f.placeholder}
+                        for f in m.fields
+                    ],
+                    **status[m.id],
+                }
+                for m in auth_methods(family)
+            ],
+        }
+
+    def render(data: dict[str, Any]) -> None:
+        for family, info in data["families"].items():
+            print(f"\n{family}" + (f"  (active: {info['active']})" if info["active"] else ""))
+            for m in info["methods"]:
+                mark = "*" if m["active"] else ("+" if m["configured"] else " ")
+                envs = ", ".join(f["env"] for f in m["fields"])
+                print(f"  {mark} {m['id']:<12} {m['label']:<22} {m['hint']}")
+                if envs:
+                    print(f"      {envs}")
+
+    return _emit(payload, args.as_json, render)
+
+
+def _auth_use(args: argparse.Namespace) -> int:
+    from .auth_methods import set_method  # noqa: PLC0415
+
+    values: dict[str, str] = {}
+    for item in args.set_values or []:
+        if "=" not in item:
+            print(f"--set expects ENV=VALUE, got {item!r}", file=sys.stderr)
+            return 2
+        key, _, value = item.partition("=")
+        values[key.strip()] = value
+    result = set_method(_family_arg(args.family), args.method, values)
+    return _emit(result, args.as_json, lambda r: print(
+        ("✓ " if r["ok"] else "✗ ") + r["message"]
+        + (f"  → backend {r['backend']}" if r.get("backend") else "")))
+
+
+def _auth_login(args: argparse.Namespace) -> int:
+    from .auth_methods import oauth_finish, oauth_start  # noqa: PLC0415
+
+    family = _family_arg(args.family)
+    if args.code:
+        handle = args.handle
+        if not handle:
+            print("--code needs the --handle printed when the login started",
+                  file=sys.stderr)
+            return 2
+        result = oauth_finish(handle, args.code)
+        return _emit(result, args.as_json,
+                     lambda r: print(("✓ " if r["ok"] else "✗ ") + r["message"]))
+
+    start = oauth_start(family)
+    if args.as_json:
+        import json  # noqa: PLC0415
+
+        print(json.dumps(start, indent=2))
+        return 0
+    print("Opening your browser to sign in to Claude…")
+    print(start["url"])
+    try:
+        import webbrowser  # noqa: PLC0415
+
+        webbrowser.open(start["url"])
+    except Exception:  # noqa: BLE001 — a headless box just uses the printed URL
+        pass
+    print("\n" + start["instructions"])
+    try:
+        code = input("\nPaste the code here: ").strip()
+    except EOFError:
+        print("no code entered", file=sys.stderr)
+        return 1
+    result = oauth_finish(start["handle"], code)
+    print(("✓ " if result["ok"] else "✗ ") + result["message"])
+    return 0 if result["ok"] else 1
+
+
+def _auth_check(args: argparse.Namespace) -> int:
+    from .auth_methods import configured_method, validate_method  # noqa: PLC0415
+
+    family = _family_arg(args.family)
+    method = args.method or configured_method(family)
+    if not method:
+        payload = {"ok": False, "message": f"no {family} method is configured",
+                   "models": [], "latency_ms": 0}
+        return _emit(payload, args.as_json, lambda r: print("✗ " + r["message"]))
+    result = anyio.run(lambda: validate_method(family, method, model=args.model))
+    result["family"] = family
+    result["method"] = method
+    return _emit(result, args.as_json, lambda r: print(
+        ("✓ " if r["ok"] else "✗ ")
+        + f"{family}/{method}: {r['message']} ({r['latency_ms']} ms)"))
+
+
+def _auth_clear(args: argparse.Namespace) -> int:
+    from .auth_methods import clear_method  # noqa: PLC0415
+
+    result = clear_method(_family_arg(args.family), args.method)
+    return _emit(result, args.as_json, lambda r: print(r["message"]))
 
 
 def _cmd_probe(args: argparse.Namespace) -> int:
@@ -1171,6 +1396,7 @@ def _deploy_usage(msg: str) -> Exception:
 _HANDLERS: dict[str, Any] = {
     "version": _cmd_version,
     "deploy": _cmd_deploy,
+    "auth": _cmd_auth,
     "list-models": _cmd_list_models,
     "probe": _cmd_probe,
     "run": _cmd_run,

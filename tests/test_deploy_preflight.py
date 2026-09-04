@@ -125,10 +125,13 @@ def test_fit_tight_when_headroom_under_15_percent():
 
 def test_gated_without_token_is_a_hinted_error(monkeypatch):
     monkeypatch.delenv("HF_TOKEN", raising=False)
-    info = ModelInfo(id="meta-llama/Llama-3.1-8B-Instruct", source="hf", gated=True)
+    info = ModelInfo(id="meta-llama/Llama-3.1-8B-Instruct", source="hf",
+                     gated=True, gated_kind="manual")
     with pytest.raises(DeployError) as ei:
         preflight.check_gated(info)
-    assert "licence" in ei.value.hint and "HF_TOKEN" in ei.value.hint
+    # The hint names the access path (this repo is owner-approved) and the
+    # token env var every provider reads.
+    assert "request access" in ei.value.hint and "HF_TOKEN" in ei.value.hint
     preflight.check_gated(info, hf_token="hf_x")  # explicit token passes
     monkeypatch.setenv("HF_TOKEN", "hf_env")
     preflight.check_gated(info)  # env token passes
@@ -158,3 +161,43 @@ def test_curated_list_is_small_and_hf_shaped():
     assert 10 <= len(preflight.CURATED_MODELS) <= 30
     assert all("/" in m for m in preflight.CURATED_MODELS)
     assert "Qwen/Qwen3-8B" in preflight.CURATED_MODELS
+
+
+# ---------------------------------------------------------------------------
+# Gated repos: the Hub reports false | "auto" | "manual", and the two gated
+# kinds need different things from the user.
+# ---------------------------------------------------------------------------
+
+
+def _gated_info(kind):
+    from mantis_agent.deploy.base import ModelInfo
+
+    return ModelInfo(id="org/repo", source="hf", gated=bool(kind), gated_kind=kind)
+
+
+def test_auto_gated_says_access_is_instant() -> None:
+    from mantis_agent.deploy.base import DeployError
+    from mantis_agent.deploy.preflight import check_gated
+
+    with pytest.raises(DeployError) as ei:
+        check_gated(_gated_info("auto"))
+    assert "instantly" in ei.value.hint
+    assert "owner-approved" not in ei.value.hint
+
+
+def test_manual_gated_warns_the_owner_must_approve() -> None:
+    from mantis_agent.deploy.base import DeployError
+    from mantis_agent.deploy.preflight import check_gated
+
+    with pytest.raises(DeployError) as ei:
+        check_gated(_gated_info("manual"))
+    assert "owner-approved" in ei.value.hint
+    assert "request access" in ei.value.hint
+
+
+def test_a_token_clears_the_gate_whichever_kind() -> None:
+    from mantis_agent.deploy.preflight import check_gated
+
+    check_gated(_gated_info("auto"), "hf_token")
+    check_gated(_gated_info("manual"), "hf_token")
+    check_gated(_gated_info(None))  # ungated needs nothing

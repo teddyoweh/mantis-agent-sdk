@@ -26,6 +26,26 @@ Manual: [modal.com](https://modal.com) → **Settings → API Tokens** (or
 mantis reads those same two vars to sign requests to your endpoint
 (`Modal-Key`/`Modal-Secret` headers) — the endpoint stays private to you.
 
+## Get a key for mantis
+
+For `mantis-agent deploy` / the dashboard's **Deploy** page (rather than the
+manual route below):
+
+1. [Settings → API Tokens](https://modal.com/settings/tokens) → **New Token**
+   → copy the id (`ak-…`) and secret (`as-…`) → `MODAL_TOKEN_ID`,
+   `MODAL_TOKEN_SECRET`.
+2. Optional — [Settings → Proxy Auth Tokens](https://modal.com/settings/proxy-auth-tokens)
+   → **New Token** (`wk-…` / `ws-…`) → `MODAL_PROXY_TOKEN_ID`,
+   `MODAL_PROXY_TOKEN_SECRET`. The endpoint then only answers callers with
+   the token; without it, it sits behind a generated vLLM `--api-key`.
+3. Optional — `HF_TOKEN` for gated repos.
+
+```bash
+mantis-agent deploy creds modal --set MODAL_TOKEN_ID=ak-… --set MODAL_TOKEN_SECRET=as-…
+```
+
+Free tier: **$30/month** of compute on Starter, $100 on Team.
+
 ## Deploy
 
 ```python

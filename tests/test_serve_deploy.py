@@ -58,6 +58,9 @@ def fake(tmp_path, monkeypatch):
     serve._inspect_cache.clear()
     serve._deploy_jobs.clear()
     serve._deploy_accounts.clear()
+    serve._model_info_cache.clear()
+    serve._enrich_pending.clear()
+    serve._model_info_loaded = False
 
     calls: dict[str, list] = {}
 
@@ -140,7 +143,7 @@ def fake(tmp_path, monkeypatch):
 
     async def search_models(query="", *, limit=25, sort="trending"):
         rec("search_models", query, limit, sort)
-        return [info, ModelInfo(id="org/tiny", source="hf", params_b=0.5, vllm_ok=False, reason="MambaForCausalLM")]
+        return [info, ModelInfo(id="org/tiny", source="hf", params_b=0.5, vllm_ok=False, reason="MambaForCausalLM", est_vram_gb=2.0)]
 
     async def fit(i, candidates, *, context_len=None):
         rec("fit", i.id, [c.provider_id for c in candidates])
@@ -234,6 +237,168 @@ def test_providers_carry_logo_fields_and_no_secrets(fake):
     assert fg["account"] is None
 
 
+def test_providers_carry_a_key_guide_when_provider_guides_has_one(fake, monkeypatch):
+    from mantis_agent import provider_guides, serve
+
+    assert serve.deploy_providers()["providers"][0]["guide"] is None      # no entry yet → None, key present
+    monkeypatch.setitem(provider_guides.GUIDES, "fakegpu", {
+        "name": "Fake GPU", "env_var": "FAKEGPU_API_KEY", "keys_url": "https://console.fakegpu.test/keys",
+        "intro": "Serverless GPUs billed by the second.", "steps": ["Sign in", "Settings → API keys", "Create key"],
+        "key_shape": "fk-live-…", "free_note": "$10 free credit on signup.", "pricing_url": "https://fakegpu.test/pricing"})
+    g = serve.deploy_providers()["providers"][0]["guide"]
+    assert g["keys_url"] == "https://console.fakegpu.test/keys" and g["steps"] == ["Sign in", "Settings → API keys", "Create key"]
+    assert g["key_hint"] == "fk-live-…" and g["free_note"].startswith("$10") and g["name"] == "Fake GPU"
+    assert SECRET_VALUE not in json.dumps(g)
+
+
+def test_deploy_logos_load_from_json_and_replace_placeholders(tmp_path, monkeypatch):
+    from mantis_agent import serve_logos
+
+    f = tmp_path / "deploy_logos.json"
+    f.write_text(json.dumps({
+        "runpod": {"viewBox": "0 0 24 24", "paths": ["M2 2h20v20H2z", {"d": "M6 6h12v12H6z", "fill": "#fff", "opacity": "0.5"}],
+                   "tint": "#673ab7", "source": "runpod.io", "license": "trademark"},
+        "bogus": {"paths": []},
+        "vastai": "not a dict",
+    }), encoding="utf-8")
+    marks = serve_logos.load_deploy_logos(f)
+    assert set(marks) == {"runpod"} and marks["runpod"]["tint"] == "#673ab7"
+    assert '<path d="M2 2h20v20H2z"/>' in marks["runpod"]["svg"] and 'fill="#fff" opacity="0.5"' in marks["runpod"]["svg"]
+    assert serve_logos.load_deploy_logos(tmp_path / "missing.json") == {}
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert serve_logos.load_deploy_logos(tmp_path / "bad.json") == {}
+    # the served page inlines whatever PROVIDER_LOGOS holds at request time
+    monkeypatch.setitem(serve_logos.PROVIDER_LOGOS, "runpod", marks["runpod"])
+    httpd, base = _boot()
+    try:
+        with urllib.request.urlopen(base + "/", timeout=5) as r:
+            page = r.read().decode()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert "M2 2h20v20H2z" in page and "bigMark" in page and "cs-guide" in page and "addkey" in page
+
+
+def _wait(pred, timeout=5.0):
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_models_enrich_progressively_and_cache_with_ttl(fake, monkeypatch):
+    """Search returns bare ids at once (partial), background lookups fill
+    them, the second paint is complete from the on-disk cache, and a stale
+    cache entry is looked up again."""
+    serve, calls = fake["serve"], fake["calls"]
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.base import ModelInfo
+
+    serve._model_info_cache.clear()
+    serve._enrich_pending.clear()
+    serve._model_info_loaded = False
+
+    async def bare_search(query="", *, limit=25, sort="trending"):
+        return [ModelInfo(id="org/model-8b", source="hf"), ModelInfo(id="org/tiny", source="hf", params_b=0.5, vllm_ok=False, est_vram_gb=2.0)]
+
+    async def inspect_model(model, *, hf_token=None):
+        calls.setdefault("inspect_model", []).append(((model,), {}))
+        if model == "org/tiny":
+            raise AssertionError("already complete — must not be looked up")
+        return fake["info"]
+    monkeypatch.setattr(manager, "search_models", bare_search)
+    monkeypatch.setattr(manager, "inspect_model", inspect_model)
+
+    r = serve.deploy_models("")
+    assert r["ok"] and r["partial"] is True and r["pending"] == ["org/model-8b"]
+    assert r["models"][0]["org"] == "org" and r["models"][0]["params_b"] is None
+    assert _wait(lambda: not serve._enrich_pending)
+    e = serve.deploy_models_enrich("org/model-8b")          # the page asks only for what was pending
+    assert e["pending"] == []
+    got = e["models"]["org/model-8b"]
+    assert got["params_b"] == 8.0 and got["vllm_ok"] is True and got["est_vram_gb"] == 19.5 and "at" not in got
+    assert HF_TOKEN not in json.dumps(e)
+    # second paint: complete, from cache, no new lookup
+    n = len(calls["inspect_model"])
+    r2 = serve.deploy_models("")
+    assert r2["partial"] is False and r2["models"][0]["params_b"] == 8.0 and r2["models"][0]["license"] == "llama3"
+    assert len(calls["inspect_model"]) == n
+    assert (serve._cache_dir() / "model-info.json").exists()
+    # TTL: an entry older than a day is treated as missing and re-queued
+    with serve._deploy_lock:
+        serve._model_info_cache["org/model-8b"]["at"] = time.time() - serve.MODEL_INFO_TTL_S - 5
+    assert serve._model_info_get("org/model-8b") is None
+    r3 = serve.deploy_models("")
+    assert r3["partial"] is True and _wait(lambda: not serve._enrich_pending)
+    assert len(calls["inspect_model"]) == n + 1
+    # a failed lookup is remembered (briefly) and reported, not retried every paint
+    async def boom(model, *, hf_token=None):
+        raise RuntimeError("hub down")
+    monkeypatch.setattr(manager, "inspect_model", boom)
+    with serve._deploy_lock:
+        serve._model_info_cache.pop("org/model-8b", None)
+    serve.deploy_models("")
+    assert _wait(lambda: not serve._enrich_pending)
+    assert serve.deploy_models_enrich("org/model-8b")["models"]["org/model-8b"]["error"] == "hub down"
+    assert serve.deploy_models("")["partial"] is False
+
+
+def test_org_avatar_proxy_caches_misses_and_rejects_bad_ids(fake, monkeypatch):
+    serve = fake["serve"]
+    fetched = []
+
+    def fake_fetch(org):
+        fetched.append(org)
+        return (b"\x89PNG\r\n" + b"x" * 40, "image/png") if org.lower() == "qwen" else None
+    monkeypatch.setattr(serve, "_fetch_org_avatar", fake_fetch)
+    for bad in ("../etc", "a/b", "", ".hidden", "x" * 120, "org?x"):
+        assert serve.org_avatar(bad)[0] == 400, bad
+    code, body, ctype = serve.org_avatar("Qwen")
+    assert code == 200 and ctype == "image/png" and body.startswith(b"\x89PNG")
+    assert (serve._avatar_dir() / "qwen.png").exists() and (serve._avatar_dir() / "qwen.json").exists()
+    assert serve.org_avatar("qwen")[0] == 200 and fetched == ["Qwen"]          # cache hit, no refetch
+    assert serve.org_avatar("nobody")[0] == 204 and serve.org_avatar("nobody")[0] == 204
+    assert fetched == ["Qwen", "nobody"]                                        # the miss is cached too
+    # expire the hit → refetched
+    meta = serve._avatar_dir() / "qwen.json"
+    m = json.loads(meta.read_text())
+    m["at"] -= serve.ORG_AVATAR_TTL_S + 1
+    meta.write_text(json.dumps(m))
+    assert serve.org_avatar("qwen")[0] == 200 and fetched[-1] == "qwen"
+    # over HTTP: 200 with the image type, 204 for a miss, 400 for traversal
+    httpd, base = _boot()
+    try:
+        with urllib.request.urlopen(base + "/api/deploy/org-avatar?org=qwen", timeout=5) as r:
+            assert r.status == 200 and r.headers["Content-Type"] == "image/png"
+        with urllib.request.urlopen(base + "/api/deploy/org-avatar?org=nobody", timeout=5) as r:
+            assert r.status == 204
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(base + "/api/deploy/org-avatar?org=..%2F..%2Fetc", timeout=5)
+        assert ei.value.code == 400
+        with urllib.request.urlopen(base + "/api/deploy/models/enrich?ids=", timeout=5) as r:
+            assert json.loads(r.read()) == {"ok": True, "models": {}, "pending": []}
+        with urllib.request.urlopen(base + "/", timeout=5) as r:
+            page = r.read().decode()
+        assert "ORG_MARKS" in page and "org-avatar" in page and 'loading = "lazy"' in page and "enrichLoop" in page
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_org_logos_json_expands_aliases(tmp_path):
+    from mantis_agent import serve_logos
+
+    f = tmp_path / "org_logos.json"
+    f.write_text(json.dumps({"Qwen": {"paths": ["M0 0h24v24H0z"], "tint": "#615ced", "aliases": ["qwen-ai", "QwenLM"]},
+                             "meta-llama": {"paths": ["M1 1h2v2H1z"]}}), encoding="utf-8")
+    marks = serve_logos.load_org_logos(f)
+    assert set(marks) == {"qwen", "qwen-ai", "qwenlm", "meta-llama"}
+    assert marks["qwenlm"] is marks["qwen"] and marks["qwen"]["tint"] == "#615ced"
+    assert serve_logos.load_org_logos(tmp_path / "nope.json") == {}
+
+
 def test_save_creds_validates_and_never_echoes_the_value(fake):
     serve, calls = fake["serve"], fake["calls"]
     r = serve.deploy_save_creds("fakegpu", {"FAKEGPU_API_KEY": SECRET_VALUE, "FAKEGPU_REGION": " ", "junk": ""})
@@ -290,6 +455,50 @@ def test_models_search_passes_sort_and_limit_and_flags_curated(fake):
     assert m0["id"] == "org/model-8b" and m0["gated"] is True and m0["vllm_ok"] is True
     assert m1["vllm_ok"] is False and m1["reason"] == "MambaForCausalLM"
     assert m0["architectures"] == ["LlamaForCausalLM"]
+
+
+def test_hf_token_state_rides_the_card_endpoints(fake, monkeypatch):
+    """A gated repo is only deployable with a Hugging Face token, so both
+    endpoints that feed the model cards say whether one is configured."""
+    from mantis_agent import serve
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    assert serve.hf_token_set() is False
+    assert serve.deploy_models("x")["hf_token_set"] is False
+    assert serve.deploy_inspect("org/model-8b", ttl_s=0)["hf_token_set"] is False
+    monkeypatch.setenv("HF_TOKEN", "hf_" + "a" * 30)
+    assert serve.hf_token_set() is True
+    assert serve.deploy_models("x")["hf_token_set"] is True
+    assert serve.deploy_inspect("org/model-8b", ttl_s=0)["hf_token_set"] is True
+
+
+def test_saving_hf_token_busts_the_gated_verdict_cache(fake, monkeypatch):
+    """Saving HF_TOKEN changes what every gated model may do, so the cached
+    fit/gating verdicts computed without it are dropped."""
+    from mantis_agent import serve
+
+    serve.deploy_inspect("org/model-8b")
+    assert "org/model-8b" in serve._inspect_cache
+    r = serve.deploy_save_creds("hf", {"HF_TOKEN": "hf_" + "b" * 30})
+    assert r["ok"] and r["saved"] == ["HF_TOKEN"] and "hf_" + "b" * 30 not in json.dumps(r)
+    assert serve._inspect_cache == {}
+    # a non-token credential leaves the cache alone
+    serve.deploy_inspect("org/model-8b")
+    serve.deploy_save_creds("fakegpu", {"FAKEGPU_API_KEY": SECRET_VALUE})
+    assert "org/model-8b" in serve._inspect_cache
+
+
+def test_gated_kind_reaches_the_cards(fake, monkeypatch):
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.base import ModelInfo
+
+    async def search(query="", *, limit=25, sort="trending"):
+        return [ModelInfo(id="org/auto", source="hf", gated=True, gated_kind="auto", params_b=8.0, vllm_ok=True, est_vram_gb=19.0),
+                ModelInfo(id="org/manual", source="hf", gated=True, gated_kind="manual", params_b=8.0, vllm_ok=True, est_vram_gb=19.0)]
+    monkeypatch.setattr(manager, "search_models", search)
+    rows = {m["id"]: m for m in fake["serve"].deploy_models("x")["models"]}
+    assert rows["org/auto"]["gated"] is True and rows["org/auto"]["gated_kind"] == "auto"
+    assert rows["org/manual"]["gated_kind"] == "manual"
 
 
 def test_verdict_parsing():
@@ -560,12 +769,13 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    for marker in ('data-v="deploy">deploy<span class="k">4</span>', 'id="deploypad"', "loadDeploy",
-                   "renderDpProviders", "credForm", "renderDpPicker", "renderModelRows", "renderFit", "fitTable",
+    for marker in ('data-v="deploy">Deploy</button>', 'id="deploypad"', "loadDeploy",
+                   "renderDpProviders", "openCredSheet", "renderDpPicker", "renderModelRows", "renderFit", "fitTable",
                    "confirmDeploy", "openJobSheet", "renderDeployDone", "useDeployment", "renderDeployments",
-                   "openLogs", "confirmTeardown", 'd: "deploy"', '"1234567"', "dp-grid", "dp-fit", "dp-deps",
+                   "openLogs", "confirmTeardown", 'd: "deploy"', '"12345678"', "dp-grid", "dp-fit", "dp-deps",
                    "deployments_live", "MANTIS_AGENT_BASE_URL", "MantisAgentOptions(", "/api/deploy/job",
-                   "Add a GPU provider to deploy any model", "Nothing deployed yet", "while running",
+                   "Add a GPU provider to deploy any model", "No deployments yet", "highlightDeployment", "while running",
+                   "pairHeader", "spec-grid", "cost-big", '"Deploy to " +', "--dim", "backdrop-filter: blur(3px)", "deploys to",
                    "scale to zero", "public endpoint", "plain http", "vllm ✓", "<b>d</b> pages",
                    ".vd.tight", ".dp-drow", "refreshDeployments(false)"):
         assert marker in page, marker
@@ -573,17 +783,54 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
     for pid in ("runpod", "hf", "modal", "deepinfra", "baseten", "vastai"):
         assert f'"{pid}"' in page, pid
     assert "cdn." not in page and "googleapis" not in page
+    # section order on the Deploy page: providers → deployments → pick a model → fit & deploy
+    js = page.split("<script>")[1]
+    order = [js.index('section(pad, "GPU providers · "'), js.index('section(pad, "Deployments"'),
+             js.index('section(pad, "Pick a model"'), js.index('section(pad, "Fit & deploy")')]
+    assert order == sorted(order), order
+    # the provider toggle: pills with real marks, scoping, persistence
+    for marker in ("providerToggle", "dp-ptoggle", "PROV_SHORT", "setDeployProvider", "initDeployProvider",
+                   "DEPLOY_PROV_KEY", "openAddKey", 'f.provider === DEPLOY.provider', 'runpod: "RunPod"'):
+        assert marker in js, marker
+    # gated models are blocked before the confirm sheet, with the kind in the copy
+    for marker in ("gatedBlocked", "gatedChip", "hfTokenForm", "refreshGating", "renderHfState", "hf-notice",
+                   '"Needs HF token"', "huggingface.co/settings/tokens", "owner approves access by hand",
+                   "click Agree", 'm.gated_kind === "manual"', "Hugging Face token: ", 'HF_TOKEN: i.value.trim()'):
+        assert marker in js, marker
+    assert ".hf-notice" in page and ".hf-form" in page
+    # the credential form + guide are a SHEET, never an in-card panel: a card
+    # that grew to fit a guide stretched its whole grid row
+    for gone in ("dp-form", "dp-guide"):
+        assert gone not in page, gone
+    # the card renders a link to the key page and nothing else from the guide
+    card = js[js.index("function renderDpProviders("):js.index("// The credential sheet.")]
+    for gone in ("credential_fields", "guide.steps", "guide.intro", "key_hint", "free_note", "input(", "dp-form"):
+        assert gone not in card, "provider card still renders " + gone
+    assert "trapFocus" in js and ".cs-foot" in page and ".cs-guide" in page
+    assert 'grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))' in page
+    assert ".dp-ptoggle" in page and "flex-wrap: nowrap" in page
 
 
-def test_deploy_marks_are_valid_svg_on_the_24_grid():
+def test_deploy_marks_are_valid_svg_with_their_own_viewbox():
+    """Each mark is self-contained and carries a tint. The viewBox is per
+    entry — an official mark (Modal's) may be drawn on its own grid, and the
+    page sizes marks in CSS, so nothing may hardcode a 24-unit box."""
+    import re
     import xml.dom.minidom as md
 
     from mantis_agent.serve_logos import PROVIDER_LOGOS
+    from mantis_agent.serve_ui import INDEX_HTML
 
     for pid in ("runpod", "hf", "modal", "deepinfra", "baseten", "vastai"):
         svg = PROVIDER_LOGOS[pid]["svg"]
         md.parseString(svg)
-        assert 'viewBox="0 0 24 24"' in svg and "currentColor" in svg and PROVIDER_LOGOS[pid]["tint"]
+        assert re.search(r'viewBox="[-\d. ]+"', svg), pid
+        assert "currentColor" in svg and PROVIDER_LOGOS[pid]["tint"], pid
+        # the SVG namespace is the only URL allowed; nothing is fetched
+        body = svg.replace('xmlns="http://www.w3.org/2000/svg"', "")
+        for bad in ("http://", "https://", "<image", "xlink", "url("):
+            assert bad not in body, (pid, bad)
+    assert 'viewBox="0 0 24 24"' not in INDEX_HTML.split("<script>")[0]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")

@@ -44,6 +44,38 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   gemini-2.5 and 3, grok-4), with longest-prefix fallback. `mantis-agent probe`
   and `list-models` work against every family with the right auth headers.
 
+### Added — every way to connect a provider
+
+- **Auth methods.** `mantis_agent.auth_methods` describes, per provider family,
+  every way to connect: Claude via API key, a Claude subscription sign-in,
+  Vertex AI, Bedrock, or Azure AI Foundry; OpenAI via API key or Azure OpenAI;
+  Gemini via API key or Vertex; Grok via API key; and open models via a local
+  Ollama, your own server, or any hosted provider in the catalog (those are
+  generated from the catalog, so they cannot drift). Several methods can be
+  configured at once; one is active, and switching is a single call.
+- **The cloud routes are real.** Claude on Vertex posts to
+  `:streamRawPredict` with an ADC bearer token and the Vertex model spelling.
+  Claude on Bedrock signs with SigV4, streams `invoke-with-response-stream`,
+  and decodes the AWS event-stream framing (including mid-stream exception
+  frames, which now raise instead of truncating silently). Azure OpenAI
+  switches to the `api-key` header and deployment routing. Credentials resolve
+  without boto3 or google-auth: a service-account key is exchanged through the
+  JWT-bearer grant, and AWS profiles are read from `~/.aws` directly.
+- **Precedence** is explicit backend, then `MANTIS_AGENT_BASE_URL`, then the
+  family's active method, then model-name inference. Vertex and Bedrock never
+  auto-activate from a detected cloud login, so ambient credentials for
+  unrelated work cannot hijack Claude.
+- **`mantis-agent auth`** CLI (`list`, `use`, `login`, `check`, `clear`) and a
+  provider setup surface on the dashboard's Models page.
+
+### Fixed
+
+- Native tool calls were silently disabled on every OpenAI-compatible request
+  by a shadowed variable in the Azure work, which forced every call onto the
+  prompt-engineered path. Caught by the truncated-tool-call tests.
+- An unauthenticated machine sent a malformed bearer token instead of raising,
+  because the Google token helper double-wrapped the gcloud result.
+
 ### Added — bring your own GPU provider
 
 - **`mantis_agent.deploy`.** Save a GPU cloud credential once and deploy any
@@ -67,6 +99,29 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   "Use this model" button that makes it current for the SDK and terminal.
 - **`/deploy`** in the terminal mirrors the CLI, runs deploys as background
   jobs, and offers to switch to the endpoint when it comes up.
+
+### Changed — the dashboard, rebuilt
+
+- **A production shell.** Neutral palette, zero hairline borders (elevation is
+  background steps), pill tabs, title case, one-line captions, and no
+  decorative chrome. Lists patch in place by key so a refresh never resets
+  scroll or closes a sheet, and a version counter means pages refresh only
+  when something changed.
+- **New Activity page** owns jobs and workflow runs; the Overview no longer
+  carries them.
+- **Models page** groups by family tabs with a provider setup surface above
+  them, and every family shows which auth methods are configured.
+- **Deploy page** orders as providers, deployments, model picker, fit and
+  deploy, with a provider toggle in the picker, real vendor and model-org
+  logos, and a confirmation sheet that pairs the model and provider marks.
+  Gated models block before you can spend anything and offer an inline
+  Hugging Face token field, saying whether access is instant or
+  owner-approved.
+- **Skills page** is a library: identity glyphs, scope and loading chips,
+  a detail sheet with rendered markdown, and a create/edit sheet with slug
+  validation and live preview.
+- Credential forms open in a modal instead of expanding inside a card, and
+  seven hand-drawn empty states replace the blank panels.
 
 ### Added — the terminal, a lot better
 

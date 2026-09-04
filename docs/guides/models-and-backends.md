@@ -288,6 +288,97 @@ Anthropic resolves separately, matching Claude Code: `$ANTHROPIC_API_KEY`
 becomes an `x-api-key` header; `$ANTHROPIC_AUTH_TOKEN` becomes
 `Authorization: Bearer` (that is what OAuth logins and gateways use).
 
+## Auth methods
+
+Each provider family can be reached more than one way, and every way is a
+first-class *method*. Claude in particular: a console API key, a Claude
+subscription login, Google Vertex AI, Amazon Bedrock, or an Azure AI Foundry
+deployment — all of them serve `model="claude-opus-5"` from the same code.
+
+```bash
+mantis-agent auth list                 # every family, every method, what is configured
+mantis-agent auth list claude          # one family
+mantis-agent auth use claude vertex --set GOOGLE_CLOUD_PROJECT=my-project
+mantis-agent auth login claude         # browser login for a Claude subscription
+mantis-agent auth check claude         # probe the active method over the network
+mantis-agent auth clear claude api_key # forget what mantis saved
+```
+
+Every command takes `--json` for scripting, and the same surface is available
+in Python:
+
+```python
+from mantis_agent.auth_methods import auth_methods, configured_method, set_method
+
+for method in auth_methods("anthropic"):
+    print(method.id, method.label, [f.env for f in method.fields])
+
+set_method("anthropic", "bedrock", {"AWS_REGION": "us-east-1"})
+print(configured_method("anthropic"))   # 'bedrock'
+```
+
+| Family | Method | Fields (env vars) | Backend it selects |
+|---|---|---|---|
+| `anthropic` | `api_key` | `ANTHROPIC_API_KEY` | `anthropic` |
+| | `oauth` | *(browser login → `ANTHROPIC_AUTH_TOKEN`)* | `anthropic` |
+| | `vertex` | `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` | `vertex:anthropic` |
+| | `bedrock` | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE` | `bedrock:anthropic` |
+| | `azure` | `AZURE_ANTHROPIC_ENDPOINT`, `AZURE_ANTHROPIC_API_KEY` | *endpoint* + `/anthropic/v1` |
+| `openai` | `api_key` | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| | `azure_openai` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` | *endpoint* + `/openai/v1` |
+| `gemini` | `api_key` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Google's OpenAI-compat endpoint |
+| | `vertex` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` | `vertex:gemini` |
+| `xai` | `api_key` | `XAI_API_KEY` (or `GROK_API_KEY`) | `https://api.x.ai/v1` |
+| `oss` | `ollama` | *(none — a local daemon)* | `http://localhost:11434` |
+| | `selfhost` | `MANTIS_AGENT_BASE_URL`, `MANTIS_AGENT_API_KEY` | your URL |
+| | one per hosted provider | that provider's key variable | that provider's base URL |
+
+A field names the variable the SDK already reads, so a value you exported in
+your shell shows as configured without re-entering it, and a value entered
+here is written to the same name (user settings + this process's environment;
+API keys also land in the key store the model picker reads).
+
+### Which method a bare model name uses
+
+Precedence, highest first:
+
+1. an explicit `backend=` / `base_url=`
+2. `$MANTIS_AGENT_BASE_URL`
+3. the family's **active method** — what you chose with `auth use` (or the
+   dashboard), remembered in `~/.mantis-agent/models.json`
+4. model-name inference (the table above)
+
+If you never choose, the active method is the first *configured* one in the
+order listed — API key, then subscription, then the clouds. Vertex and Bedrock
+are the exception: they never activate on detection alone, because a working
+`gcloud` login or `~/.aws` profile usually exists for unrelated reasons, and
+silently billing Claude through a cloud you did not pick is worse than saying
+"no API key". One `auth use claude bedrock` makes it active.
+
+### How each cloud route is built
+
+* **Claude on Vertex** — `POST https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict`,
+  bearer ADC token, body carrying `anthropic_version: "vertex-2023-10-16"` and
+  **no** `model` field (it is in the URL). Model ids take Vertex's `@`-dated
+  spelling where it differs. Credentials: `GOOGLE_OAUTH_ACCESS_TOKEN`, else a
+  service-account key at `GOOGLE_APPLICATION_CREDENTIALS` (exchanged with the
+  RFC 7523 JWT-bearer grant), else `gcloud auth print-access-token`.
+* **Claude on Bedrock** — `POST https://bedrock-runtime.{region}.amazonaws.com/model/{modelId}/invoke-with-response-stream`,
+  signed with SigV4, body carrying `anthropic_version: "bedrock-2023-05-31"`.
+  Model ids become cross-region inference profiles (`us.anthropic.…`). The
+  response is an AWS event stream, decoded frame by frame. Credentials come
+  from the environment, `~/.aws` (honouring `AWS_PROFILE`), or boto3 when it
+  happens to be installed.
+* **Claude on Azure AI Foundry** — the `/anthropic/v1` gateway path, which the
+  native Messages adapter already handles; the key rides as `x-api-key`.
+* **Azure OpenAI** — `api-key` header instead of `Authorization`, and either
+  the `/openai/v1` surface or the classic
+  `/openai/deployments/{deployment}/chat/completions?api-version=…` route,
+  where the deployment name is what you pass as `model`.
+* **Gemini on Vertex** — Vertex's OpenAI-compatible endpoint
+  (`…/endpoints/openapi`) with an ADC bearer token, re-read per request so an
+  hourly token refresh never 401s a long session.
+
 ### Extra request headers
 
 Some endpoints authenticate with headers of their own rather than a key —

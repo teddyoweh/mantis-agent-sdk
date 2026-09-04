@@ -9,6 +9,21 @@ OpenAI-compatible URL. HF runs vLLM/TGI for you on AWS/GCP/Azure capacity.
 a **fine-grained token** with *Inference Endpoints* scope → `HF_TOKEN`.
 Billing: add a card at Settings → Billing (endpoints bill per minute).
 
+## Get a key for mantis
+
+1. [Settings → Access Tokens](https://huggingface.co/settings/tokens) →
+   **Create new token** → *Fine-grained*.
+2. Tick **Inference → Manage Inference Endpoints** and **Make calls to
+   Inference Endpoints**, plus read access to the repos you will deploy (a
+   classic *Write* token also works). The same token unlocks gated repos.
+3. Copy the `hf_…` token (shown once) and add a payment method under
+   Settings → Billing — endpoints will not create without one. No free tier;
+   per-minute billing, $0 at scale-to-zero.
+
+```bash
+mantis-agent deploy creds hf --set HF_TOKEN=hf_…
+```
+
 ## Deploy
 
 1. Open the model page (e.g. `Qwen/Qwen3-8B`) → **Deploy → Inference

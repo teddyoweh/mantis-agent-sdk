@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any
 from uuid import uuid4
 from xml.sax.saxutils import escape as _xml_escape
@@ -109,6 +109,41 @@ __all__ = ["OpenAICompatProvider", "env_key_candidates"]
 # ---------------------------------------------------------------------------
 
 DEFAULT_BASE_URL = "http://localhost:8000/v1"  # vLLM's default OpenAI-compat URL
+
+#: Azure pins the wire contract to a dated API version on its classic
+#: deployment surface. This is the current GA version for chat completions;
+#: override with ``AZURE_OPENAI_API_VERSION`` when a resource is older or when
+#: a preview feature is needed.
+DEFAULT_AZURE_API_VERSION = "2024-10-21"
+
+
+def _is_azure_openai(url: str) -> bool:
+    """Is this an Azure OpenAI endpoint? Matched on the host so a caller only
+    has to paste the endpoint Azure shows them."""
+
+    lower = (url or "").lower()
+    return (
+        "openai.azure.com" in lower
+        or "cognitiveservices.azure.com" in lower
+        or "services.ai.azure.com" in lower
+    )
+
+
+def _azure_base_url(url: str) -> str:
+    """Normalize an Azure endpoint to the base the request paths hang off.
+
+    Azure shows people ``https://{resource}.openai.azure.com`` (no path), and
+    its docs use both ``/openai/v1`` (the new surface, model in the body) and
+    ``/openai/deployments/{name}`` (the classic one). Land on ``…/openai`` or
+    ``…/openai/v1`` so both request shapes below resolve.
+    """
+
+    base = (url or "").rstrip("/")
+    if base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
+    if "/openai" not in base.lower():
+        base = base + "/openai"
+    return base
 
 # Order matters: first env var that's set wins. OPENAI_API_KEY first because
 # it's the de-facto standard and many users export it once for everything.
@@ -254,11 +289,32 @@ class OpenAICompatProvider(HTTPProviderMixin):
         *,
         base_url: str | None = None,
         api_key: str | None = None,
+        api_key_provider: Callable[[], str] | None = None,
+        api_version: str | None = None,
         default_headers: dict[str, str] | None = None,
         backend_capability: BackendCapability | None = None,
         model_capability: ModelCapability | None = None,
     ) -> None:
         url = base_url or DEFAULT_BASE_URL
+        # Azure OpenAI is the one OpenAI-compatible surface that authenticates
+        # differently: the key rides in an ``api-key`` header (not Bearer), the
+        # deployment name takes the place of the model, and the classic route
+        # requires an ``api-version`` query parameter. Detected from the host so
+        # a caller only has to give the endpoint.
+        self._azure = _is_azure_openai(url)
+        self._api_version = (
+            api_version
+            or os.environ.get("AZURE_OPENAI_API_VERSION")
+            or (DEFAULT_AZURE_API_VERSION if self._azure else "")
+        )
+        if self._azure:
+            url = _azure_base_url(url)
+        # The v1 surface reads the model from the body; the classic one routes
+        # by deployment path.
+        self._azure_v1 = self._azure and url.lower().rstrip("/").endswith("/openai/v1")
+        # A token that expires mid-session (Vertex ADC) is re-read per request
+        # rather than frozen into the client's headers at construction.
+        self._key_provider = api_key_provider
         # api_key semantics: a non-empty string is used verbatim; ``None`` means
         # "discover a key from the env chain"; an empty string ``""`` means
         # "explicitly NO auth — do not read the env" (used by providers like
@@ -279,7 +335,9 @@ class OpenAICompatProvider(HTTPProviderMixin):
             "content-type": "application/json",
             "accept": "text/event-stream",
         }
-        if key:
+        if key and self._azure:
+            headers["api-key"] = key
+        elif key:
             headers["authorization"] = f"Bearer {key}"
         # OpenRouter wants identifying headers for analytics; harmless elsewhere.
         if "openrouter" in url.lower():
@@ -368,6 +426,12 @@ class OpenAICompatProvider(HTTPProviderMixin):
             model_capability=cap,
         )
 
+        # NB: ``url_path``, not ``path`` — ``path`` is the resolved ToolUsePath
+        # above, and shadowing it sent every request down the prompt-engineered
+        # branch (silently disabling native tool calls on every backend).
+        url_path, params = self._chat_endpoint(model)
+        request_headers = self._per_request_headers()
+
         # why: ``client.stream(...)`` is the only httpx call that doesn't drain
         # the body up front; we need that to keep the SSE channel open.
         # One retry: some recent OpenAI models require ``max_completion_tokens``
@@ -384,7 +448,9 @@ class OpenAICompatProvider(HTTPProviderMixin):
         for _attempt in range(4):
             async with self.client.stream(
                 "POST",
-                "/chat/completions",
+                url_path,
+                params=params or None,
+                headers=request_headers or None,
                 content=_PAYLOAD_ENCODER.encode(payload),
             ) as response:
                 if response.status_code >= 400:
@@ -437,6 +503,35 @@ class OpenAICompatProvider(HTTPProviderMixin):
                     ):
                         yield ev
                 return
+
+    def _chat_endpoint(self, model: str) -> tuple[str, dict[str, str]]:
+        """``(path, query)`` for the chat-completions call.
+
+        Everything but classic Azure posts to ``/chat/completions`` relative to
+        the base URL. Azure's classic surface routes by *deployment*:
+        ``/openai/deployments/{deployment}/chat/completions?api-version=…``,
+        where the deployment name is what the caller passes as ``model`` (Azure
+        deployments are usually named after the model they serve). Azure's v1
+        surface takes the plain path and reads the model from the body, like
+        everyone else.
+        """
+
+        if not self._azure:
+            return "/chat/completions", {}
+        params = {"api-version": self._api_version} if self._api_version else {}
+        if self._azure_v1:
+            return "/chat/completions", ({} if self._api_version in ("", "v1") else params)
+        deployment = (model or "").rsplit("/", 1)[-1]
+        return f"/deployments/{deployment}/chat/completions", params
+
+    def _per_request_headers(self) -> dict[str, str]:
+        """Headers that cannot be frozen at construction — today just a bearer
+        token from a provider callback (Vertex ADC tokens expire hourly)."""
+
+        if self._key_provider is None:
+            return {}
+        token = (self._key_provider() or "").strip()
+        return {"authorization": f"Bearer {token}"} if token else {}
 
     # ------------------------------------------------------------------
     # Payload construction

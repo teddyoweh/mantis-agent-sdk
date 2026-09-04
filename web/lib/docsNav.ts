@@ -25,6 +25,8 @@ export const DOCS_NAV: NavSection[] = [
       { title: "Lambda", slug: "selfhost/lambda" },
       { title: "Vast.ai", slug: "selfhost/vastai" },
       { title: "HF Endpoints", slug: "selfhost/hf-endpoints" },
+      { title: "Baseten", slug: "selfhost/baseten" },
+      { title: "DeepInfra", slug: "selfhost/deepinfra" },
       { title: "Other platforms", slug: "selfhost/others" },
     ],
   },

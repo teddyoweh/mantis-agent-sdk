@@ -543,10 +543,6 @@ def models_state() -> dict[str, Any]:
         last = catalog.get_last_model() or {}
     except Exception:  # noqa: BLE001
         last = {}
-    try:
-        recent = catalog.get_recent_models()
-    except Exception:  # noqa: BLE001
-        recent = []
     backend_now = (last.get("backend") or "").rstrip("/")
 
     provs: list[dict[str, Any]] = []
@@ -606,7 +602,6 @@ def models_state() -> dict[str, Any]:
 
     return {
         "current": last,
-        "recent": recent,
         "providers": provs,
         "families": [{"id": f[0], "label": f[1], "logo": f[2]} for f in FAMILIES],
         "model_info": info,
@@ -853,13 +848,23 @@ def _read_skill(md: Path) -> dict[str, Any] | None:
         meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return None
+    # ``allowed-tools`` is the Claude-Code spelling; accept the underscore too
+    raw_tools = meta.get("allowed-tools") or meta.get("allowed_tools") or ""
+    tools = [t.strip() for t in re.split(r"[,\s]+", str(raw_tools)) if t.strip()]
+    try:
+        raw = md.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        raw = ""
     return {
         "name": (meta.get("name") or md.parent.name).strip(),
         "slug": md.parent.name,
         "description": meta.get("description", ""),
         "category": meta.get("category"),
         "always_load": str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
+        "tools": tools,
         "body": body,
+        "raw": raw,
+        "meta": {str(k): str(v) for k, v in meta.items()},
         "path": short_path(md),
     }
 
@@ -878,8 +883,20 @@ def skills_state() -> dict[str, Any]:
                     out.append(s)
         return out
 
-    return {"global": scan(g), "project": scan(p),
+    gs, ps = scan(g), scan(p)
+    for x in gs:
+        x["scope"] = "global"
+    for x in ps:
+        x["scope"] = "project"
+    everything = gs + ps
+    return {"global": gs, "project": ps,
             "global_dir": short_path(g), "project_dir": short_path(p),
+            "counts": {"total": len(everything),
+                       "always": sum(1 for x in everything if x["always_load"]),
+                       "on_demand": sum(1 for x in everything if not x["always_load"]),
+                       "global": len(gs), "project": len(ps)},
+            # every tool any skill declares — the editor offers these plus the built-ins
+            "tools_seen": sorted({t for x in everything for t in x["tools"]}),
             "cwd": os.getcwd()}
 
 
@@ -890,12 +907,16 @@ def _slugify(name: str) -> str:
 
 
 def _skill_md(name: str, description: str, body: str,
-              category: str = "", always_load: bool = False) -> str:
+              category: str = "", always_load: bool = False,
+              tools: Any = None) -> str:
     """Render a SKILL.md. Front-matter keys are only written when set, so a
     round-trip through the editor doesn't sprout empty fields."""
     lines = [f"name: {name}", f"description: {(description or '').strip()}"]
     if (category or "").strip():
         lines.append(f"category: {category.strip()}")
+    tool_list = [str(t).strip() for t in (tools or []) if str(t).strip()]
+    if tool_list:
+        lines.append("allowed-tools: " + ", ".join(tool_list))
     if always_load:
         lines.append("always_load: true")
     return "---\n" + "\n".join(lines) + "\n---\n\n" + (body or "").strip() + "\n"
@@ -903,7 +924,7 @@ def _skill_md(name: str, description: str, body: str,
 
 def add_skill(scope: str, name: str, description: str, body: str,
               category: str = "", always_load: bool = False,
-              slug: str | None = None) -> dict[str, Any]:
+              slug: str | None = None, tools: Any = None) -> dict[str, Any]:
     """Create a skill — or overwrite one when ``slug`` names an existing skill
     (the editor's save path). Renaming keeps the original directory so links
     and the agent's own references stay valid."""
@@ -920,8 +941,8 @@ def add_skill(scope: str, name: str, description: str, body: str,
         return {"ok": False, "error": f"'{slug}' not found in {scope}"}
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
-        _skill_md(name, description, body, category, always_load), encoding="utf-8")
-    return {"ok": True, "scope": scope, "slug": target_slug}
+        _skill_md(name, description, body, category, always_load, tools), encoding="utf-8")
+    return {"ok": True, "scope": scope, "slug": target_slug, "path": short_path(d / "SKILL.md")}
 
 
 def delete_skill(scope: str, slug: str) -> dict[str, Any]:
@@ -1866,8 +1887,25 @@ def activity(limit: int = 40) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     active_jobs = sum(1 for j in jobs if not j["terminal"])
+    # a 7-day roll-up for the overview's summary card: running · done · error
+    import time  # noqa: PLC0415
+
+    cutoff = time.time() - 7 * 86400
+    counts = {"running": 0, "done": 0, "error": 0}
+    for j in jobs:
+        ts = j.get("ended_at") or j.get("started_at") or j.get("created_at") or 0
+        if not j["terminal"]:
+            counts["running"] += 1
+        elif ts and ts >= cutoff:
+            counts["error" if str(j.get("status")) in ("error", "failed", "timeout", "cancelled", "canceled") else "done"] += 1
+    for r in runs:
+        if r["active"]:
+            counts["running"] += 1
+        elif (r.get("saved_at") or 0) >= cutoff:
+            counts["error" if str(r.get("status")) in ("error", "failed", "timeout", "cancelled", "canceled") else "done"] += 1
     return {"jobs": jobs, "runs": runs, "active_jobs": active_jobs,
             "active_runs": sum(1 for r in runs if r["active"]),
+            "counts_7d": counts,
             "jobs_dir": short_path(job_records.jobs_dir()),
             "runs_dir": short_path(workflow_store.runs_dir())}
 
@@ -2013,6 +2051,32 @@ _deploy_accounts: dict[str, dict[str, Any]] = {}
 _deploy_lock = threading.Lock()
 
 
+_GUIDE_KEYS = ("name", "intro", "steps", "keys_url", "key_hint", "free_note", "cost_note", "pricing_url", "docs_url", "env_var")
+
+
+def _deploy_guide(pid: str) -> dict[str, Any] | None:
+    """The how-to-get-a-key guide for a deploy provider, from
+    ``provider_guides`` — normalised to the keys the form renders, ``None``
+    when the module has no entry yet."""
+    try:
+        from . import provider_guides  # noqa: PLC0415
+
+        # Deploy providers live in their own table (``deploy_guide``); the
+        # general ``guide_for`` table is the fallback for ids shared with the
+        # inference catalog (e.g. ``hf``).
+        g = provider_guides.deploy_guide(pid) or provider_guides.guide_for(pid)
+    except Exception:  # noqa: BLE001
+        g = None
+    if not isinstance(g, dict):
+        return None
+    out = {k: g.get(k) for k in _GUIDE_KEYS if g.get(k) is not None}
+    if "key_hint" not in out and g.get("key_shape"):
+        out["key_hint"] = g["key_shape"]
+    if "steps" in out and not isinstance(out["steps"], list):
+        out["steps"] = [str(out["steps"])]
+    return out or None
+
+
 def deploy_providers() -> dict[str, Any]:
     from .deploy import manager as _dm  # noqa: PLC0415
     from .serve_logos import PROVIDER_LOGOS  # noqa: PLC0415
@@ -2026,6 +2090,7 @@ def deploy_providers() -> dict[str, Any]:
         d = _dc(dict(p))
         pid = str(d.get("id") or "")
         d["logo"] = pid if pid in PROVIDER_LOGOS else None
+        d["guide"] = _deploy_guide(pid)
         with _deploy_lock:
             d["account"] = _deploy_accounts.get(pid)
         out.append(d)
@@ -2051,6 +2116,8 @@ def deploy_save_creds(provider: str | None, values: Any) -> dict[str, Any]:
     ad = _dc(acct)
     with _deploy_lock:
         _deploy_accounts[provider] = ad
+        if "HF_TOKEN" in clean:
+            _inspect_cache.clear()      # gated verdicts were computed without it
     # Only NAMES go back — never the value, not even masked (it was just typed).
     return _deploy_redact({"ok": True, "provider": provider, "saved": sorted(clean), "account": ad})
 
@@ -2109,8 +2176,271 @@ def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> d
         models = _run_async(_dm.search_models, (query or "").strip(), limit=lim, sort=sort)
     except Exception as e:  # noqa: BLE001
         return {**_deploy_err(e), "models": [], "query": query or "", "sort": sort}
+    rows, missing = [], []
+    for m in models:
+        d = _deploy_redact(_dc(m))
+        d["org"] = _org_of(d.get("id"))
+        cached = _model_info_get(d.get("id") or "")
+        if cached and not cached.get("error"):
+            d = _merge_info(d, cached)
+        elif _needs_info(d) and not (cached and cached.get("error")):
+            missing.append(d["id"])
+        rows.append(d)
+    if missing:
+        enrich_models(missing)
     return {"ok": True, "query": query or "", "sort": sort, "curated": not (query or "").strip(),
-            "models": [_deploy_redact(_dc(m)) for m in models]}
+            "models": rows, "partial": bool(missing), "pending": missing,
+            "hf_token_set": hf_token_set()}
+
+
+# ---- progressive enrichment: search results are bare ids until inspect_model
+# has looked each one up. Results are cached on disk for a day so the second
+# paint is complete; a bounded pool of worker threads fills the gaps.
+_INFO_FIELDS = ("architectures", "params_b", "dtype", "gated", "license", "downloads", "likes", "context_len",
+                "vllm_ok", "est_vram_gb", "tags", "reason")
+MODEL_INFO_TTL_S = 24 * 3600
+MODEL_INFO_ERR_TTL_S = 3600
+ENRICH_WORKERS = 4
+_model_info_cache: dict[str, dict[str, Any]] = {}
+_model_info_loaded = False
+_enrich_pending: set[str] = set()
+_enrich_sem = threading.Semaphore(ENRICH_WORKERS)
+
+
+def _cache_dir() -> Path:
+    return _base_dir() / "cache"
+
+
+def _model_info_path() -> Path:
+    return _cache_dir() / "model-info.json"
+
+
+def hf_token_set() -> bool:
+    """Is a Hugging Face token configured? Gating is decided against this: a
+    gated repo is deployable the moment one is present. Same env the
+    preflight check and every adapter read (``HF_TOKEN``)."""
+    import os  # noqa: PLC0415
+
+    if (os.environ.get("HF_TOKEN") or "").strip():
+        return True
+    try:
+        from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
+
+        env = (load_settings(SETTING_SOURCES) or {}).get("env") or {}
+        return bool(str(env.get("HF_TOKEN") or "").strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _org_of(model_id: Any) -> str | None:
+    mid = str(model_id or "")
+    return mid.split("/", 1)[0].lower() if "/" in mid else None
+
+
+def _needs_info(d: dict[str, Any]) -> bool:
+    return d.get("params_b") is None or d.get("vllm_ok") is None or d.get("est_vram_gb") is None
+
+
+def _merge_info(d: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
+    out = dict(d)
+    for k in _INFO_FIELDS:
+        v = info.get(k)
+        if v is not None and (out.get(k) is None or k in ("vllm_ok", "est_vram_gb", "reason")):
+            out[k] = v
+    return out
+
+
+def _model_info_load() -> None:
+    global _model_info_loaded  # noqa: PLW0603
+    if _model_info_loaded:
+        return
+    _model_info_loaded = True
+    try:
+        data = json.loads(_model_info_path().read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _model_info_cache.update({str(k): v for k, v in data.items() if isinstance(v, dict)})
+    except (OSError, ValueError):
+        pass
+
+
+def _model_info_save() -> None:
+    try:
+        p = _model_info_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_model_info_cache), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def _model_info_get(model_id: str, *, now: float | None = None) -> dict[str, Any] | None:
+    """Cached facts for one id, or ``None`` when absent or past its TTL."""
+    import time  # noqa: PLC0415
+
+    with _deploy_lock:
+        _model_info_load()
+        entry = _model_info_cache.get(model_id)
+    if not entry:
+        return None
+    ttl = MODEL_INFO_ERR_TTL_S if entry.get("error") else MODEL_INFO_TTL_S
+    if (now or time.time()) - float(entry.get("at") or 0) > ttl:
+        return None
+    return entry
+
+
+def _enrich_one(model_id: str) -> None:
+    import time  # noqa: PLC0415
+
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    with _enrich_sem:
+        try:
+            info = _run_async(_dm.inspect_model, model_id)
+            entry = {k: v for k, v in _dc(info).items() if k in _INFO_FIELDS}
+            entry["at"] = time.time()
+        except Exception as e:  # noqa: BLE001 — remembered briefly so a bad id isn't re-asked every paint
+            entry = {"error": _redact_text(str(e) or type(e).__name__)[:200], "at": time.time()}
+        with _deploy_lock:
+            _model_info_cache[model_id] = entry
+            _enrich_pending.discard(model_id)
+            _model_info_save()
+
+
+def enrich_models(ids: list[str]) -> list[str]:
+    """Queue background lookups for ids without fresh cached info. Returns
+    the ids now pending (already-queued ones included)."""
+    started = []
+    with _deploy_lock:
+        for mid in ids:
+            mid = str(mid or "").strip()
+            if not mid or mid in _enrich_pending:
+                continue
+            _enrich_pending.add(mid)
+            started.append(mid)
+    for mid in started:
+        threading.Thread(target=_enrich_one, args=(mid,), name="mantis-enrich", daemon=True).start()
+    with _deploy_lock:
+        return sorted(_enrich_pending)
+
+
+def deploy_models_enrich(ids: Any) -> dict[str, Any]:
+    """What the background lookups have found so far for these ids."""
+    wanted = [x.strip() for x in str(ids or "").split(",") if x.strip()][:100]
+    found: dict[str, Any] = {}
+    pending: list[str] = []
+    for mid in wanted:
+        entry = _model_info_get(mid)
+        if entry and not entry.get("error"):
+            found[mid] = _deploy_redact({k: v for k, v in entry.items() if k != "at"})
+        elif entry and entry.get("error"):
+            found[mid] = {"error": entry["error"]}
+        else:
+            pending.append(mid)
+    if pending:
+        pending = [m for m in enrich_models(pending) if m in pending]
+    return {"ok": True, "models": found, "pending": pending}
+
+
+def warm_curated_models() -> None:
+    """At server start: enqueue lookups for the curated list so the first
+    paint of the Deploy page is usually complete. Best-effort, in a thread."""
+    def go() -> None:
+        try:
+            from .deploy import manager as _dm  # noqa: PLC0415
+
+            models = _run_async(_dm.search_models, "", limit=40, sort="trending")
+            enrich_models([m.id for m in models if _needs_info(_dc(m)) and not _model_info_get(m.id)])
+        except Exception:  # noqa: BLE001 — no deploy core, no network: nothing to warm
+            pass
+    threading.Thread(target=go, name="mantis-warm-curated", daemon=True).start()
+
+
+# ---- org avatars: a same-origin, disk-cached proxy for the Hub's org/user
+# avatar so model cards can show a mark without the page ever leaving the
+# machine. 30-day TTL; a miss is remembered for an hour; the org id is
+# validated so the cache path can't escape its directory.
+ORG_AVATAR_TTL_S = 30 * 86400
+ORG_AVATAR_MISS_TTL_S = 3600
+_ORG_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+
+
+def _avatar_dir() -> Path:
+    return _cache_dir() / "org-avatars"
+
+
+def _fetch_org_avatar(org: str) -> tuple[bytes, str] | None:
+    """(bytes, content-type) from the Hub, or ``None``. Overridable in tests."""
+    import httpx  # noqa: PLC0415
+
+    with httpx.Client(timeout=httpx.Timeout(connect=4.0, read=8.0, write=4.0, pool=4.0), follow_redirects=True) as c:
+        url = None
+        for kind in ("organizations", "users"):
+            try:
+                r = c.get(f"https://huggingface.co/api/{kind}/{org}/overview")
+            except Exception:  # noqa: BLE001
+                continue
+            if r.status_code == 200:
+                try:
+                    url = (r.json() or {}).get("avatarUrl")
+                except ValueError:
+                    url = None
+                if url:
+                    break
+        if not url:
+            return None
+        if url.startswith("/"):
+            url = "https://huggingface.co" + url
+        img = c.get(url)
+        if img.status_code != 200 or not img.content:
+            return None
+        ctype = (img.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if not ctype.startswith("image/"):
+            return None
+        return img.content[:2_000_000], ctype
+
+
+def org_avatar(org: str | None) -> tuple[int, bytes, str]:
+    """(status, body, content-type): 200 with the image, 204 when the Hub
+    has none (or is unreachable), 400 for an id that isn't an org id."""
+    import time  # noqa: PLC0415
+
+    org = (org or "").strip()
+    if not _ORG_ID_RE.match(org) or ".." in org:
+        return 400, b"bad org id", "text/plain; charset=utf-8"
+    key = org.lower()
+    d = _avatar_dir()
+    meta_p = d / f"{key}.json"
+    now = time.time()
+    try:
+        meta = json.loads(meta_p.read_text(encoding="utf-8"))
+        age = now - float(meta.get("at") or 0)
+        if meta.get("miss") and age < ORG_AVATAR_MISS_TTL_S:
+            return 204, b"", "application/octet-stream"
+        if not meta.get("miss") and age < ORG_AVATAR_TTL_S:
+            body = (d / meta["file"]).read_bytes()
+            return 200, body, meta.get("ctype") or "image/png"
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        got = _fetch_org_avatar(org)
+    except Exception:  # noqa: BLE001
+        got = None
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        if got is None:
+            meta_p.write_text(json.dumps({"miss": True, "at": now}), encoding="utf-8")
+            return 204, b"", "application/octet-stream"
+        body, ctype = got
+        ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/svg+xml": "svg", "image/gif": "gif"}.get(ctype, "img")
+        fname = f"{key}.{ext}"
+        (d / fname).write_bytes(body)
+        meta_p.write_text(json.dumps({"file": fname, "ctype": ctype, "at": now}), encoding="utf-8")
+    except OSError:
+        if got is None:
+            return 204, b"", "application/octet-stream"
+        body, ctype = got
+    return 200, body, ctype
 
 
 _inspect_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -2173,7 +2503,8 @@ def deploy_inspect(model: str | None, *, ttl_s: float = INSPECT_TTL_S) -> dict[s
             entry["error"] = _deploy_err(e)["error"]
         fits.append(entry)
     out = _deploy_redact({"ok": True, "model": _dc(info), "fits": fits,
-                          "checked_at": time.time(), "cache_ttl_s": ttl_s})
+                          "checked_at": time.time(), "cache_ttl_s": ttl_s,
+                          "hf_token_set": hf_token_set()})
     with _deploy_lock:
         _inspect_cache[model] = (now, out)
     return out
@@ -2423,6 +2754,201 @@ def deployments_live_count() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Auth methods — every way to authenticate each provider family. The contract
+# lives in ``mantis_agent.auth_methods``; this is the JSON skin over it.
+# Values only ever travel INWARD: what comes back is env var NAMES, the
+# contract's own masked hints, and whether each method is configured/active.
+# ---------------------------------------------------------------------------
+
+# auth family id -> (display label, logo id, the id serve.FAMILIES uses)
+_AUTH_FAMILY_UI: dict[str, tuple[str, str, str]] = {
+    "anthropic": ("Claude", "anthropic", "anthropic"),
+    "openai": ("OpenAI", "openai", "openai"),
+    "gemini": ("Gemini", "gemini", "google"),
+    "xai": ("Grok", "xai", "xai"),
+    "oss": ("Open models", "ollama", "oss"),
+}
+
+
+def _auth_err(e: BaseException) -> dict[str, Any]:
+    if isinstance(e, NotImplementedError):
+        return {"ok": False, "error": "provider setup isn't available in this build yet",
+                "hint": "update mantis-agent-sdk"}
+    return {"ok": False, "error": _redact_text(str(e) or type(e).__name__), "kind": type(e).__name__}
+
+
+def _mask_hint(v: Any) -> str | None:
+    """The contract already hands back masked hints; anything that still looks
+    whole is masked again here so a bug upstream can't leak a key."""
+    s = str(v or "")
+    if not s:
+        return None
+    return s if ("…" in s or "•" in s or len(s) <= 8) else (_mask_key(s) or None)
+
+
+def _field_dict(f: Any) -> dict[str, Any]:
+    return {"env": f.env, "label": f.label, "secret": bool(f.secret),
+            "required": bool(f.required), "help": f.help, "placeholder": f.placeholder}
+
+
+def _status_dict(st: Any) -> dict[str, Any]:
+    st = dict(st or {})
+    return {"configured": bool(st.get("configured")), "source": st.get("source"),
+            "active": bool(st.get("active")), "hint": _redact_text(str(st.get("hint") or "")),
+            "masked": {k: _mask_hint(v) for k, v in (st.get("masked") or {}).items()}}
+
+
+def _family_models(fam_ui_id: str) -> int:
+    try:
+        m = models_state()
+    except Exception:  # noqa: BLE001
+        return 0
+    n = sum(len(p.get("models") or ()) for p in m.get("providers") or [] if p.get("family") == fam_ui_id)
+    if fam_ui_id == "oss":
+        n += len((m.get("ollama") or {}).get("models") or [])
+    return n
+
+
+def auth_family_methods(family: str | None) -> dict[str, Any]:
+    """One family's methods with their fields and per-method status."""
+    from . import auth_methods as A  # noqa: PLC0415
+
+    family = (family or "").strip()
+    if family not in A.FAMILIES:
+        return {"ok": False, "error": f"unknown family {family!r}",
+                "hint": "expected one of " + ", ".join(A.FAMILIES)}
+    try:
+        methods = A.auth_methods(family)
+    except Exception as e:  # noqa: BLE001
+        return {**_auth_err(e), "methods": []}
+    try:
+        status = A.method_status(family)
+    except Exception:  # noqa: BLE001 — a broken probe must not hide the methods
+        status = {}
+    label, logo, ui_id = _AUTH_FAMILY_UI.get(family, (family, family, family))
+    out = []
+    for m in methods:
+        st = _status_dict(status.get(m.id) or {})
+        out.append({
+            "id": m.id, "family": m.family, "label": m.label, "kind": m.kind,
+            "description": m.description, "backend": m.backend, "docs_url": m.docs_url,
+            "recommended": bool(m.recommended),
+            "fields": [_field_dict(f) for f in m.fields],
+            "token_env": (m.extra or {}).get("token_env"),
+            "status": st,
+        })
+    active = next((m["id"] for m in out if m["status"]["active"]), None)
+    return {"ok": True, "family": family, "label": label, "logo": logo, "ui_family": ui_id,
+            "methods": out, "active": active,
+            "configured": [m["id"] for m in out if m["status"]["configured"]]}
+
+
+def auth_families() -> dict[str, Any]:
+    """Every family with its active method, a one-line status and model count."""
+    from . import auth_methods as A  # noqa: PLC0415
+
+    fams = []
+    for fam in A.FAMILIES:
+        d = auth_family_methods(fam)
+        label, logo, ui_id = _AUTH_FAMILY_UI.get(fam, (fam, fam, fam))
+        if not d.get("ok"):
+            fams.append({"family": fam, "label": label, "logo": logo, "ui_family": ui_id,
+                         "ok": False, "error": d.get("error"), "methods": [], "active": None,
+                         "configured": [], "model_count": _family_models(ui_id), "status_line": "Not connected"})
+            continue
+        active = d["active"]
+        am = next((m for m in d["methods"] if m["id"] == active), None)
+        if am:
+            masked = next((v for v in (am["status"]["masked"] or {}).values() if v), None)
+            line = "Connected via " + am["label"] + (" · " + masked if masked else "")
+        elif d["configured"]:
+            line = "Configured, not active"
+        else:
+            line = "Not connected"
+        fams.append({"family": fam, "label": label, "logo": logo, "ui_family": ui_id, "ok": True,
+                     "active": active, "active_label": am["label"] if am else None,
+                     "active_kind": am["kind"] if am else None,
+                     "configured": d["configured"], "methods": d["methods"],
+                     "method_count": len(d["methods"]), "model_count": _family_models(ui_id),
+                     "connected": bool(active), "status_line": line,
+                     "recommended": next((m["id"] for m in d["methods"] if m["recommended"]), None)})
+    return {"ok": True, "families": fams,
+            "connected_count": sum(1 for f in fams if f.get("connected"))}
+
+
+def auth_set(family: str | None, method: str | None, values: Any) -> dict[str, Any]:
+    from . import auth_methods as A  # noqa: PLC0415
+
+    family, method = (family or "").strip(), (method or "").strip()
+    if not family or not method:
+        return {"ok": False, "error": "family and method required"}
+    clean = {str(k).strip(): str(v) for k, v in (values or {}).items() if str(v).strip()}         if isinstance(values, dict) else {}
+    try:
+        r = dict(A.set_method(family, method, clean))
+    except Exception as e:  # noqa: BLE001
+        return _auth_err(e)
+    r["message"] = _redact_text(str(r.get("message") or ""))
+    # only the NAMES of what was saved travel back
+    return _deploy_redact({**r, "family": family, "method": method, "saved": sorted(clean),
+                           "status": auth_family_methods(family)})
+
+
+def auth_clear(family: str | None, method: str | None) -> dict[str, Any]:
+    from . import auth_methods as A  # noqa: PLC0415
+
+    family, method = (family or "").strip(), (method or "").strip()
+    if not family or not method:
+        return {"ok": False, "error": "family and method required"}
+    try:
+        r = dict(A.clear_method(family, method))
+    except Exception as e:  # noqa: BLE001
+        return _auth_err(e)
+    r["message"] = _redact_text(str(r.get("message") or ""))
+    return _deploy_redact({**r, "family": family, "method": method,
+                           "status": auth_family_methods(family)})
+
+
+def auth_validate(family: str | None, method: str | None, model: str | None = None) -> dict[str, Any]:
+    from . import auth_methods as A  # noqa: PLC0415
+
+    family, method = (family or "").strip(), (method or "").strip()
+    if not family or not method:
+        return {"ok": False, "error": "family and method required"}
+    try:
+        r = dict(_run_async(A.validate_method, family, method, model=(model or None)))
+    except Exception as e:  # noqa: BLE001
+        return _auth_err(e)
+    r["message"] = _redact_text(str(r.get("message") or ""))
+    r["models"] = [str(x) for x in (r.get("models") or [])][:8]
+    return _deploy_redact({**r, "family": family, "method": method})
+
+
+def auth_oauth_start(family: str | None) -> dict[str, Any]:
+    from . import auth_methods as A  # noqa: PLC0415
+
+    try:
+        r = dict(A.oauth_start((family or "").strip()))
+    except Exception as e:  # noqa: BLE001
+        return _auth_err(e)
+    return {"ok": True, "url": r.get("url"), "handle": r.get("handle"),
+            "instructions": _redact_text(str(r.get("instructions") or ""))}
+
+
+def auth_oauth_finish(handle: str | None, code: str | None) -> dict[str, Any]:
+    from . import auth_methods as A  # noqa: PLC0415
+
+    if not (handle or "").strip() or not (code or "").strip():
+        return {"ok": False, "error": "handle and code required"}
+    try:
+        r = dict(A.oauth_finish(handle.strip(), code.strip()))
+    except Exception as e:  # noqa: BLE001
+        return _auth_err(e)
+    r["message"] = _redact_text(str(r.get("message") or ""))
+    fam = r.get("family") or "anthropic"
+    return _deploy_redact({**r, "status": auth_family_methods(fam)})
+
+
+# ---------------------------------------------------------------------------
 # Events — a version counter over everything the pages render. The page
 # long-polls ``/api/events?since=<version>`` and refreshes only when it moves,
 # so nothing flickers on a timer while the world is still. Cheap: every input
@@ -2588,7 +3114,7 @@ class _Handler(BaseHTTPRequestHandler):
                                      body.get("description"), body.get("body"),
                                      body.get("category") or "",
                                      bool(body.get("always_load")),
-                                     body.get("slug")))
+                                     body.get("slug"), body.get("tools")))
                 return
             if path == "/api/skill/delete":
                 self._json(delete_skill(body.get("scope"), body.get("slug")))
@@ -2611,6 +3137,22 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/mcp/delete":
                 self._json(delete_mcp(body.get("scope"), body.get("name")))
+                return
+            # -- auth: how each provider family is authenticated --
+            if path == "/api/auth/set":
+                self._json(auth_set(body.get("family"), body.get("method"), body.get("values")))
+                return
+            if path == "/api/auth/clear":
+                self._json(auth_clear(body.get("family"), body.get("method")))
+                return
+            if path == "/api/auth/validate":
+                self._json(auth_validate(body.get("family"), body.get("method"), body.get("model")))
+                return
+            if path == "/api/auth/oauth/start":
+                self._json(auth_oauth_start(body.get("family")))
+                return
+            if path == "/api/auth/oauth/finish":
+                self._json(auth_oauth_finish(body.get("handle"), body.get("code")))
                 return
             # -- deploy: bring-your-own GPU provider (mutating) --
             if path == "/api/deploy/creds":
@@ -2642,6 +3184,9 @@ class _Handler(BaseHTTPRequestHandler):
             # Provider logos are inlined so the page stays offline and doesn't
             # phone twelve CDNs. json.dumps also escapes </script> safely.
             html = html.replace("__LOGOS__", json.dumps(PROVIDER_LOGOS).replace("</", "<\\/"))
+            from .serve_logos import ORG_LOGOS  # noqa: PLC0415
+
+            html = html.replace("__ORGLOGOS__", json.dumps(ORG_LOGOS).replace("</", "<\\/"))
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/overview":
@@ -2668,7 +3213,7 @@ class _Handler(BaseHTTPRequestHandler):
                 limit = int((q.get("limit") or ["40"])[0])
             except ValueError:
                 limit = 40
-            self._json(activity(limit=max(1, min(limit, 200))))
+            self._json(activity(limit=max(1, min(limit, 500))))
             return
         if path == "/api/workflow":
             self._json(workflow_detail((q.get("id") or [None])[0]))
@@ -2711,6 +3256,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(session_detail(cwd, sid))
             return
         # -- deploy: bring-your-own GPU provider (read) --
+        if path == "/api/auth/families":
+            self._json(auth_families())
+            return
+        if path == "/api/auth/methods":
+            self._json(auth_family_methods((q.get("family") or [""])[0]))
+            return
         if path == "/api/deploy/providers":
             self._json(deploy_providers())
             return
@@ -2720,6 +3271,13 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/deploy/models":
             self._json(deploy_models((q.get("q") or [""])[0], (q.get("sort") or ["trending"])[0],
                                      (q.get("limit") or ["25"])[0]))
+            return
+        if path == "/api/deploy/models/enrich":
+            self._json(deploy_models_enrich((q.get("ids") or [""])[0]))
+            return
+        if path == "/api/deploy/org-avatar":
+            code, body, ctype = org_avatar((q.get("org") or [""])[0])
+            self._send(code, body, ctype)
             return
         if path == "/api/deploy/inspect":
             self._json(deploy_inspect((q.get("model") or [""])[0]))
@@ -2848,6 +3406,7 @@ def run_serve(argv: list[str]) -> int:
     local_url = f"http://127.0.0.1:{args.port}{suffix}"
 
     _print_banner(loopback, args.port, suffix)
+    warm_curated_models()
 
     if not args.no_open:
         try:

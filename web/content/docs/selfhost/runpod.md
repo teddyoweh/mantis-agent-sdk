@@ -9,6 +9,19 @@ cheapest ways to run big models.
 [runpod.io → Settings → API Keys](https://www.runpod.io/console/user/settings)
 → `RUNPOD_API_KEY`. Add credit (pay-as-you-go).
 
+## Get a key for mantis
+
+1. [Settings](https://console.runpod.io/user/settings) → expand **API Keys**
+   → **Create API Key**.
+2. Permission **All**, or **Restricted** with Serverless set to *Read/Write*
+   (mantis creates endpoints).
+3. Copy it now — RunPod does not store keys. Then add prepaid credit ($10
+   is enough to start; no free credit, billed per second).
+
+```bash
+mantis-agent deploy creds runpod --set RUNPOD_API_KEY=…
+```
+
 ## Mode A — Serverless vLLM worker (recommended)
 
 1. Console → **Serverless → New Endpoint → vLLM** preset

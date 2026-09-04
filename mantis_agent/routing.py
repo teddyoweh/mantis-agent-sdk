@@ -46,6 +46,7 @@ __all__ = [
     "infer_backend",
     "resolve_backend",
     "hosted_default_url",
+    "active_method_backend",
     "BackendRoutingError",
 ]
 
@@ -65,6 +66,13 @@ XAI_DEFAULT = "https://api.x.ai/v1"
 #: the native Anthropic Messages adapter. Returned for ``claude-*`` models.
 ANTHROPIC_SENTINEL = "anthropic"
 
+#: Cloud sentinels. Like ``"anthropic"`` these are names, not URLs — the real
+#: endpoint is assembled per request from the project/region the credentials
+#: name, so there is nothing stable to write down here.
+VERTEX_ANTHROPIC = "vertex:anthropic"
+VERTEX_GEMINI = "vertex:gemini"
+BEDROCK_ANTHROPIC = "bedrock:anthropic"
+
 
 class BackendRoutingError(ValueError):
     """Raised when a model name is bound to a backend this SDK cannot reach.
@@ -76,11 +84,13 @@ class BackendRoutingError(ValueError):
 
 
 def resolve_backend(model: str, explicit: str | None = None) -> str:
-    """Return the backend to use for ``model`` — a URL, or the ``"anthropic"``
-    sentinel for Claude models.
+    """Return the backend to use for ``model`` — a URL, or a sentinel
+    (``"anthropic"``, ``"vertex:anthropic"``, ``"bedrock:anthropic"``,
+    ``"vertex:gemini"``) for the routes with no fixed URL.
 
-    Precedence: ``explicit`` > ``$MANTIS_AGENT_BASE_URL`` > inferred from
-    model name > Ollama default.
+    Precedence: ``explicit`` > ``$MANTIS_AGENT_BASE_URL`` > the family's
+    ACTIVE auth method (what the user selected in ``mantis-agent auth use`` /
+    the dashboard) > inferred from the model name > Ollama default.
     """
 
     if explicit:
@@ -88,7 +98,38 @@ def resolve_backend(model: str, explicit: str | None = None) -> str:
     env_url = os.environ.get("MANTIS_AGENT_BASE_URL")
     if env_url:
         return env_url
+    chosen = active_method_backend(model)
+    if chosen:
+        return chosen
     return infer_backend(model)
+
+
+def active_method_backend(model: str) -> str | None:
+    """The backend implied by the active auth method for ``model``'s family.
+
+    ``None`` when nothing is selected, when the selection is the family's
+    plain API-key method (whose backend is what inference would pick anyway),
+    or when the auth layer is unavailable. Kept lazy and failure-tolerant:
+    routing must never depend on a readable credential store.
+    """
+
+    try:
+        from .auth_methods import (  # noqa: PLC0415
+            active_backend,
+            family_of_model,
+        )
+
+        family = family_of_model(model)
+        if family == "oss":
+            # The open-source families already route by model-name shape, and a
+            # saved hosted-provider key must not hijack an Ollama tag.
+            return None
+        backend = active_backend(family)
+    except Exception:  # noqa: BLE001 — a broken store must never break routing
+        return None
+    if not backend:
+        return None
+    return None if backend == infer_backend(model) else backend
 
 
 def _is_openai_native(lower: str) -> bool:

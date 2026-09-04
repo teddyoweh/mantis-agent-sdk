@@ -21,8 +21,10 @@ dependencies, no build step, one self-contained HTML page with every asset
 
 ## The shell
 
-One slim top bar: the mantis mark, the seven page tabs (the active one
-carries a green underline; hover shows its number key), then on the right
+One slim top bar: the lowercase **mantis** wordmark, the eight page tabs —
+**Overview · Sessions · Activity · Models · Deploy · MCP · Skills · Config**
+— as one tight group of pills (the active one is green-tinted), then on the
+right
 the **current model** with a live dot and the provider it's reached through,
 a **search or jump… ⌘K** button that opens the command palette, a **theme**
 toggle (system → dark → light, remembered in the browser) and a **local** /
@@ -30,16 +32,23 @@ toggle (system → dark → light, remembered in the browser) and a **local** /
 full-width with a centred column; the sessions page is three resizable
 columns that each scroll on their own.
 
-Surfaces are neutral — near-black in dark mode, off-white in light — with
-hairline borders for elevation and **no shadows**. The mantis green appears
-only where it means something: the active tab, focus rings, primary
-buttons, status dots and the signal path. Status is colour-coded
-everywhere: green running, amber warming or tight, red failed, blue
-informational.
+Surfaces are neutral — near-black in dark mode, a soft grey in light — and
+there are **no lines**: no borders, no dividers, no shadows. Elevation is a
+background step (page → panel → panel-2 → fill), so a card is a filled
+rounded surface, hover is one step lighter, and the selected or active
+thing is a green-tinted fill with green text. Inputs are filled, tables are
+rows with hover fills, section headers are a normal-weight title-case label
+with its count ("Providers · 3/5 ready", "GPU providers · 1/3 configured"),
+and page captions are one short line. All-caps mono is reserved for tiny
+metadata captions (column heads, tags). The only stroke on the page is the 2px focus
+ring. The mantis green appears only where it means something: the active
+tab, focus rings, primary buttons, status dots. Status is colour-coded everywhere: green running,
+amber warming or tight, red failed, blue informational.
 
 Everything is a **card**: projects, sessions, provider families, deploy
-providers, deployments, jobs and runs share one shape — 1px border, 10px
-radius, hover brightens the border, selected turns it green.
+providers, models, GPUs, deployments, jobs and runs share one shape — a
+filled surface with a 12px radius, hover one step lighter, selected
+green-tinted.
 
 The page is **reactive** rather than polled: it long-polls
 `/api/events`, a version counter over everything it renders, and
@@ -56,12 +65,7 @@ can't connect; both pause while the tab is hidden.
 
 The landing page. Reading top to bottom, in words:
 
-- **Signal path** — a one-line wiring diagram: *families ready → current
-  model → running jobs → sessions → deployed (when any GPU deployment is
-  live) → last-7-day spend*. Each node is a real count, green-tinted when
-  wired, amber when something is missing (no model set, no provider ready).
-  It is the one decorative element on the page.
-- **Providers · five families** — five cards, one per family the SDK speaks:
+- **Providers · N/5 ready** — five cards, one per family the SDK speaks:
   **OpenAI**, **Claude (Anthropic)**, **Gemini (Google)**, **Grok (xAI)** and
   **open source** (Ollama, vLLM, Together, Fireworks, Groq, OpenRouter, …).
   Each card shows the vendor's mark, how that family is authenticated
@@ -72,13 +76,6 @@ The landing page. Reading top to bottom, in words:
   open-source card also says whether a local Ollama is answering and how
   many models it has loaded. Clicking a card lands in that provider's setup
   on the models page.
-- **Live · jobs & workflow runs** — background jobs (sub-agents, workers,
-  shells) and persisted workflow runs, newest and still-running first. Each
-  row carries a status dot (a breathing one means running), kind, elapsed
-  time, recorded tokens and dollars for runs, and opens either the run's
-  detail (phases, agents, per-agent usage, the last log lines) or the
-  session it belonged to. This section and the provider cards refresh every
-  15 seconds while the tab is visible, and pause when it isn't.
 - **Spend & usage** — a bar per day for the last 7 or 30 days. **Hatched**
   bars are *estimated*: transcripts store messages, not the provider's usage
   record, so session tokens are estimated from transcript size (≈4 characters
@@ -92,6 +89,18 @@ The landing page. Reading top to bottom, in words:
 - **Activity · last 26 weeks** — the message trace, the weekday×hour
   punchcard, the tool spectrum and the projects ledger (now with estimated
   tokens per project).
+
+### Activity
+
+The full ledger of background jobs (sub-agents, workers, shells) and
+persisted workflow runs, newest and still-running first, in filled rows:
+kind, name, agents, elapsed, tokens, USD, a status chip (a breathing dot
+means running) and age. Filter chips — *all · running · done · error ·
+workflows · jobs* — and a search box (`/`) narrow it; the first 50 rows
+show, **Load more** reveals the rest and **Load older** fetches beyond the
+first 200. A row opens the run's detail sheet (phases, agents, per-agent
+usage, the last log lines) or the session a job ran in. Running rows
+update in place through the live version counter.
 
 ### Sessions
 
@@ -130,8 +139,37 @@ query strings.
 
 ### Models
 
-The model list is grouped into the five families, with the vendor's mark on
-each group header. Every row shows the provider, the **context window** (an
+The page opens with **Providers**: one card per family — Claude, OpenAI,
+Gemini, Grok, Open models — each with the vendor's mark, how it is
+authenticated right now ("Connected via Claude subscription", "Connected via
+API key · sk-…7f21", "Not connected"), its model count, and **Set up** /
+**Manage**. Opening one lists that family's *methods* as selectable rows, not
+a dropdown: for Claude that is **API key**, **Claude subscription (OAuth)**,
+**Vertex AI**, **Bedrock** and **Azure AI Foundry**, each with a one-line
+description, a *recommended* chip where the contract flags one, and a badge
+for *active* / *configured* / *detected*. Selecting a row reveals only that
+method's fields — generated from the contract, masked where secret, each with
+its help text and the environment variable it persists under — plus **Save &
+test**, which saves and then probes the endpoint and reports latency and a
+couple of live model ids inline (or the explained error). Several methods can
+be configured at once; exactly one is active, and switching is one click.
+**Claude subscription** replaces Save with **Sign in with Claude**: it opens
+the authorize page in a new tab, then takes the pasted code or redirect URL
+and finishes the exchange. Cloud methods (Vertex, Bedrock, Azure) show a
+*detected* badge and name the CLI that already provides ambient credentials
+(`gcloud auth application-default login`, `aws configure`) so you can leave
+the fields blank. Nothing typed here ever comes back out: responses carry env
+var *names* and masked hints only.
+
+Below that, the model list is **tabbed by family** — *All · OpenAI · Claude · Gemini ·
+Grok · Open models · Local*, each pill carrying its count; a model whose
+family isn't connected shows **unlock**, which opens that family's setup
+panel with the recommended method preselected. **All** keeps the
+grouped view with the vendor's mark on each group header; a family tab
+narrows to that family and drops the headers, and **Local** shows just what
+Ollama has pulled. The choice lives in the URL (`#models/claude`), so a
+refresh or a pasted link lands on the same tab, and it combines with the
+filter chips and the search box. Every row shows the provider, the **context window** (an
 asterisk marks a ceiling mantis learned from the endpoint's own error, which
 overrides the declared number), **price per 1M tokens in · out** from the
 SDK's price table (a dash where the table has no row, *free* for local
@@ -144,8 +182,8 @@ model is **loaded** in memory right now (with its VRAM). If Ollama isn't
 answering the section says so and how to start it.
 
 Below that, the provider setup list — grouped by family, connected first —
-where you paste a key, check reachability, or open the how-to-get-a-key
-guide.
+where you paste a key, check reachability (per provider, in its own row), or
+open the how-to-get-a-key guide.
 
 ### Deploy
 
@@ -157,41 +195,76 @@ GPUs fit and what they cost, deploy with one click, watch it come up, then
 
 Reading top to bottom:
 
-- **Signal path** — *providers configured → model picked → deployed →
-  current model*. The overview's own signal path gains a **deployed** node
-  whenever a deployment is live, and the rail counts them.
+- **Header** — the page count is the number of live deployments; the
+  provider section's label carries "N/M configured"; the top bar counts
+  deployments.
 - **GPU providers** — one card per adapter (RunPod, Hugging Face Inference
-  Endpoints, Modal, DeepInfra, Baseten, Vast.ai, …) with the vendor's mark,
-  whether a key is saved and whether it **validated** (with the account's
-  balance or credits when the provider reports one), and badges for what the
-  provider does: **scale to zero** vs **always warm**, and **public endpoint**
-  in warning colours where the URL is reachable without our auth (Vast.ai's
-  plain-HTTP endpoints are flagged the same way). **Add key** opens an inline
-  form generated from the adapter's own `credential_fields` — secret fields
-  are password inputs, each with its help text and a link to the provider's
-  console. Saving validates straight away.
-- **Pick a model** — a Hugging Face Hub search with *trending / downloads /
-  likes* sort. Each row shows the id, parameter count, dominant dtype,
-  license, a **gated** tag, a **vllm ✓ / ✗ / ?** servability verdict and
-  the estimated VRAM. With an empty query the list is the curated set of
-  good first deploys. Clicking a row inspects it.
+  Endpoints, Modal, DeepInfra, Baseten, Vast.ai, …): the vendor's mark in a
+  square tinted with its own colour, the name over a one-line descriptor
+  (*serverless · scale to zero*, *marketplace · always warm · public
+  endpoint · plain http*), one status line that reads as a sentence — *No
+  key*, *Key saved · not validated yet*, *Validated · teddy · $12.40
+  balance* — quiet engine pills, and a single primary action: **Add key**
+  (green) or, once saved, ghost **Replace key** and **Validate** with an
+  *↗ api keys* link to the provider's key page. A configured provider's
+  card is green-tinted. **Add key** opens an inline form: above the fields,
+  a how-to-get-a-key guide from `provider_guides` — a one-line intro,
+  numbered steps, an **Open <provider> API keys ↗** button, what the key
+  looks like, and the free-credit note — then one input per
+  `credential_field` with its help text. Saving validates straight away.
+  Real vendor marks come from `mantis_agent/data/deploy_logos.json` when
+  it is present (a letter tile otherwise).
+- **Gated models are stopped before the GPU, not after.** The Hub says how a
+  repo gates: **auto** (click *Agree* while signed in and access is instant)
+  or **manual** (the owner approves by hand, which can take days). With no
+  Hugging Face token configured, a gated model's card shows
+  *gated · auto* / *gated · manual*, its **Deploy** buttons read **Needs HF
+  token** and are disabled, and selecting it raises a notice above *Fit &
+  deploy* with the access line, a link to the repo page, and a masked
+  **token field**. Saving it stores `HF_TOKEN` through the same credentials
+  path as any provider key, re-inspects the model and re-enables Deploy with
+  no reload; the same field sits in the confirm sheet's *Advanced*
+  disclosure. Once set, the *Pick a model* header reads **Hugging Face
+  token: set** and gated cards show a quiet *gated · token set*.
+- **Pick a model** — the section header carries a **provider toggle**: a
+  segmented control of *All* plus every GPU provider, each with its real mark
+  and short name (RunPod · HF · Modal · DeepInfra · Baseten · Vast.ai).
+  Providers without a key are dimmed and clicking one opens its Add-key form
+  instead of selecting it. Choosing a provider scopes **Fit & deploy** to
+  that provider alone — model, then GPU, two clicks — and sticks: it lives in
+  the URL (`#deploy/modal`) and in this browser, defaulting to your single
+  configured provider when there is only one. *All* restores the
+  per-provider grouping. Below it, a Hugging Face Hub search with a
+  *trending / downloads / likes* segmented control. Results are a grid of **model cards**: the model
+  name over its org, pills for parameter count, dtype, license, a **gated**
+  lock and a coloured **vllm ✓ / ? / ✗** verdict, and the estimated
+  VRAM drawn as a bar against an 80 GB card. Hover shows *inspect →*; the
+  selected card is green-tinted. With an empty query the grid is the curated
+  set of good first deploys under a quiet label. New results replace the
+  grid in place — no flash.
 - **Fit & deploy** — for the selected model: its architectures, size, dtype,
-  context length and VRAM estimate, then one table per *configured*
-  provider: GPU, VRAM, price per hour, a **fits / tight / no** verdict (tight
-  means under 15% headroom) and whether it cold-starts from zero or stays
-  warm. Pick the engine the provider supports (vLLM, SGLang, TGI,
+  context length and VRAM estimate, then — for the selected provider, or one
+  group per *configured* provider under *All* (each labelled with its mark) —
+  **GPU cards**: the GPU family with its
+  VRAM, the price per hour set large, a coloured **fits / tight / no** pill
+  (tight means under 15% headroom), the cold-start hint, and **Deploy** on
+  the right. Pick the engine the provider supports (vLLM, SGLang, TGI,
   llama.cpp), open **advanced** for `max_model_len`, tensor parallel,
   quantisation, min/max replicas, idle timeout, `trust_remote_code` and an HF
-  token for gated repos, and press **Deploy** on a row. A confirmation names
-  the cost first: *$X/h while running · $Y/h idle*. Results are cached for a
-  minute.
+  token for gated repos, and press **Deploy** on a row. The confirmation sheet
+  pairs the model (its org mark) with the provider (its mark) as the
+  headline, lays the spec out as tiles (GPU, engine, replicas, context),
+  keeps the advanced knobs behind a disclosure, and puts the cost where you
+  can't miss it — *$X/h while running*, then the idle cost and cold-start
+  hint (amber when the provider is always warm). **Deploy to <provider>**
+  or `Enter` deploys; `Esc` cancels. Results are cached for a minute.
 - **Progress sheet** — the deploy runs as a background job; the sheet streams
   its progress lines with the elapsed time, then shows the endpoint URL, the
   served model name (what goes in `model=`) and the auth env var, with
   **Use this model** and **Copy** buttons for the one-line shell form
   (`MANTIS_AGENT_MODEL=… MANTIS_AGENT_BASE_URL=… mantis`) and the Python form
   (`MantisAgentOptions(model=…, backend=…)`).
-- **Deployments** — every deployment the store knows about: provider mark,
+- **Deployments** — every deployment the store knows about, as filled rows: provider mark,
   name, model, GPU, a status chip (a breathing dot while it's starting),
   endpoint (click to copy), price per hour plus accrued cost where the
   provider's billing API reports it, age, and **Use / Logs / Teardown**.
@@ -203,19 +276,41 @@ Empty states teach the path: with no provider configured the model picker
 says *Add a GPU provider to deploy any model*; with nothing deployed the
 table shows the three steps.
 
-### MCP · Skills · Config
+### Skills
 
-Unchanged from before: an inspector for every configured MCP server with a
-live connection test, an editor for `SKILL.md` playbooks, and the effective
-settings with the layer each value came from.
+A library, not a list. The header states what you have — how many skills, how
+many always-loaded versus on-demand, how many are global versus from this
+repo — as quiet pills, with **New skill**. Below it, a responsive grid of
+**skill cards**: the name, the description clamped to two lines, a scope chip
+(*Global* / *This project*, differently tinted), a loading chip (*Always
+loaded* / *On demand*), the tools the skill declares as small mono pills, and
+its file path as a caption. Each card carries a generated **identity glyph** —
+a symmetric pattern derived deterministically from the skill's name, drawn on
+the same 24-unit grid as the provider marks — so the grid is scannable at a
+glance. Hover reveals *Edit* / *Delete*; a search box and pill filters (*All ·
+Global · This project · Always loaded · On demand*) narrow it.
+
+Clicking a card opens the **detail sheet**: the frontmatter as fields, the
+body rendered with the built-in markdown renderer, the raw `SKILL.md` behind a
+*Source* toggle, and Edit / Delete. **New skill** and **Edit** use the same
+sheet: name, description, scope, category, an allowed-tools multi-select
+(the built-ins plus every tool your other skills already name), and a
+monospace body editor with a **live preview** beside it above ~1100px and
+stacked below. The name is validated as you type — the exact path it will be
+written to is shown before you save.
+
+### MCP · Config
+
+An inspector for every configured MCP server with a live connection test, and
+the effective settings with the layer each value came from.
 
 ## Keyboard
 
 | Keys | Action |
 |---|---|
 | `⌘K` / `ctrl+K` | the command palette (below) |
-| `1` … `7` | jump to a page (the tabs show each key on hover) |
-| `g` then `o` / `s` / `m` / `d` | overview / sessions / models / deploy |
+| `1` … `8` | jump to a page (the ⌘K palette lists each page's keys) |
+| `g` then `o` / `s` / `a` / `m` / `d` | overview / sessions / activity / models / deploy |
 | `g` then `p` / `k` / `c` | mcp / skills / config |
 | `/` | focus the current page's search (models filter, sessions filter, …) |
 | `↑` `↓` `Enter` in the models filter | walk the visible rows and switch to one |
@@ -225,12 +320,24 @@ settings with the layer each value came from.
 
 `⌘K` (or `ctrl+K`, or the search button in the top bar) opens a palette
 over the page. Type to filter; `↑` `↓` move, `↵` runs, `esc` closes. It
-lists, in groups: the seven **pages** (with their `g` chord), every
+lists, in groups: the eight **pages** (with their `g` chord), every
 **project** known to the sessions page, the **sessions** of the project
 you're in, live **deployments** (*connect …* makes one the current model),
 and **actions** — *test <family> provider* for each provider family, *toggle
 theme*, *refresh now*. It reuses the data the pages already loaded, so it
 costs no extra requests.
+
+## Empty states
+
+Every empty place on the dashboard explains itself with a small hand-drawn
+illustration (inline SVG on the same 24-unit grid as the provider marks,
+`currentColor` for the structure and the accent token for the one live
+detail — so they work in both themes and ship with the wheel), a one-line
+headline, one line of what to do, and where it helps a button that does it:
+an idle GPU card for *no deployments*, an empty socket for *no GPU provider*,
+a two-turn transcript for *no sessions*, a server handing tools across a
+dashed link for *no MCP servers*, an open playbook for *no skills*, a flat
+trace for *nothing has run*, and a magnifier for *nothing matches*.
 
 ## Theme and layout
 
@@ -255,10 +362,16 @@ loopback bind:
 | `/api/sessions?cwd=…` | session cards: `display_title`, prompts, message count, estimated tokens and USD, the pricing model |
 | `/api/providers` | the five families with auth state, last model, local Ollama status |
 | `/api/spend` | per-day estimated + recorded tokens/USD for 30 days, 7/30-day totals, per-provider and per-family breakdown |
-| `/api/activity?limit=N` | background job records and workflow runs with usage |
+| `/api/activity?limit=N` | background job records and workflow runs with usage, plus `counts_7d` (running · done · error); `limit` up to 500 |
 | `/api/workflow?id=RUN` | one run: phases, agents, per-agent usage, redacted inputs, last log lines |
 | `/api/ollama` | the local daemon's models with size and loaded state |
 | `/api/models` | providers (with family and auth), model info (window, price, capabilities), local models |
+| `/api/auth/families` | every provider family: active method, one-line status, model count, all its methods |
+| `/api/auth/methods?family=` | one family's methods with their fields (names, not values) and per-method status |
+| `POST /api/auth/set` `{family, method, values}` | persist a method's fields and make it the active one |
+| `POST /api/auth/clear` `{family, method}` | forget one method's saved values |
+| `POST /api/auth/validate` `{family, method}` | probe it: latency, a few live model ids, or the explained error |
+| `POST /api/auth/oauth/start` `{family}` · `POST /api/auth/oauth/finish` `{handle, code}` | the subscription sign-in, two steps |
 | `/api/session?cwd=…&id=…` | the transcript with per-turn ledger and session stats |
 | `/api/analytics`, `/api/projects`, `/api/sessions`, `/api/skills`, `/api/mcp`, `/api/config` | as before |
 
