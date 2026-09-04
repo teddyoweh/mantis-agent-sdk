@@ -108,6 +108,23 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ### Changed — the dashboard, rebuilt
 
+- **One way to connect a provider.** The old API-key-only list is gone,
+  replaced by fifteen cards in two groups (first-party, and open-source with
+  self-host). Each card carries an auth-type toggle as its core: Claude offers
+  API key, subscription, Vertex, Bedrock and Azure; OpenAI and Gemini two each;
+  a provider with one method renders a plain label rather than a lone pill.
+  Connected cards show their live model list, and switching the active method
+  is one click.
+- **Model picker filters by company, not by GPU provider.** Org pills with real
+  marks and counts, a Recent sort and a New-in-30-days filter backed by the
+  Hub's last-modified date, and a VRAM bar scaled against the largest GPU the
+  selected provider actually rents, coloured by whether the model fits. An
+  architecture the vLLM table doesn't know now says so instead of showing a
+  bare question mark. The GPU provider toggle moved to Fit and deploy, where
+  it applies.
+- Nav reads Overview, My models, Sessions, Activity, Deploy, MCP, Skills,
+  Config, with existing links still resolving.
+
 - **A production shell.** Neutral palette, zero hairline borders (elevation is
   background steps), pill tabs, title case, one-line captions, and no
   decorative chrome. Lists patch in place by key so a refresh never resets

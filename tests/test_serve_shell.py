@@ -251,7 +251,7 @@ def test_models_page_has_family_tabs_and_no_route_strip():
     # the URL says the name people use, the code keeps the family id
     assert 'anthropic: "claude"' in js and 'xai: "grok"' in js
     # gone: the route strip, its chips, its CSS, and the data that fed it
-    for gone in ("Test this route", "routeBtn", "routeBar", "hero-lbl", '"recent"'):
+    for gone in ("Test this route", "routeBtn", "routeBar", "hero-lbl", "m.recent"):
         assert gone not in js, gone
     for gone in (".recent {", ".hero-lbl"):
         assert gone not in css, gone
@@ -263,6 +263,35 @@ def test_models_state_no_longer_ships_the_recent_list(home):
 
     m = serve.models_state()
     assert "recent" not in m and {"current", "providers", "families", "model_info", "ollama"} <= set(m)
+
+
+def test_model_picker_filters_by_company_and_shows_recency():
+    """The company pills come from the results, the New pill and the Recent
+    sort exist, dates read relative inside a year and absolute beyond it, and
+    the VRAM bar is scaled against real GPUs rather than a fixed 80 GB."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], _css()
+    for marker in ("renderOrgPills", "modelShown", "paintModels", "DEPLOY.org", "dp-orgs", "whenText",
+                   "isFresh", "gpuCeiling", "DEPLOY.gpuMax", "writeDeployHash", '"Recent"', '"New"'):
+        assert marker in js, marker
+    # the pills are derived from the current results, with counts and marks
+    pills = js[js.index("function renderOrgPills("):js.index("function modelShown(")]
+    assert "orgMark(o)" in pills and "counts[o]" in pills and 'add("all", "All"' in pills
+    # org + New combine with the search box and the sort control
+    shown = js[js.index("function modelShown("):js.index("function paintModels(")]
+    assert "DEPLOY.org" in shown and "DEPLOY.fresh" in shown
+    # the date rule: months inside a year, month+year beyond it
+    when = js[js.index("function whenText("):js.index("const isFresh")]
+    assert "365 * DAY" in when and "month: \"short\", year: \"numeric\"" in when and "updated today" in when
+    # the bar is measured against the provider's largest card and coloured by fit
+    assert "DEPLOY.gpuMax[DEPLOY.provider]" in js and "frac > 1 ?" in js
+    for cls in (".mcard .vr .vbar.fits i", ".mcard .vr .vbar.tight i", ".mcard .vr .vbar.no i"):
+        assert cls in css, cls
+    assert "size unknown" in js and "not in the vLLM support list" in js
+    # the GPU-provider toggle left the model picker for Fit & deploy
+    assert 'fSec.querySelector(".sec-t").append(providerToggle())' in js
+    assert "dp-orgs" in js[js.index('section(pad, "Pick a model"'):js.index('section(pad, "Fit & deploy")')]
 
 
 def test_no_signal_path_and_short_captions():
@@ -281,8 +310,28 @@ def test_no_signal_path_and_short_captions():
     sec = css.split(".sec-t {")[1].split("}")[0]
     assert "uppercase" not in sec and "var(--mono)" not in sec
     for lab in ('"Pick a model"', '"Fit & deploy"', '"Deployments"', '"Choose a model"', '"Local models · Ollama"',
-                '"Connect a provider"', '"Spend & usage"', "Curated · good first deploys", '"MCP servers"'):
+                '"Providers"', '"Spend & usage"', "Curated · good first deploys", '"MCP servers"'):
         assert lab in js, lab
+
+
+def test_nav_order_rename_and_hash_alias():
+    """My models sits right after Overview; the number keys follow the nav
+    order; the `g` chords and the #models hash keep working."""
+    import re as _re
+
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    tabs = _re.findall(r'data-v="(\w+)"[^>]*>([^<]+)</button>', INDEX_HTML)
+    assert tabs == [("home", "Overview"), ("models", "My models"), ("sessions", "Sessions"),
+                    ("activity", "Activity"), ("deploy", "Deploy"), ("mcp", "MCP"),
+                    ("skills", "Skills"), ("config", "Config")]
+    assert 'const VIEWS = ["home","models","sessions","activity","deploy","mcp","skills","config"];' in js
+    assert '"12345678".indexOf(e.key)' in js and "showTab(VIEWS[i])" in js
+    # the chords still address pages by name, and #models still resolves
+    assert 'm: "models"' in js and 'o: "home"' in js and 's: "sessions"' in js
+    assert 'models: "My models"' in js
+    assert 'tabFromHash' in js and 't === "models"' in js
 
 
 def test_nav_tabs_and_segmented_controls_are_pills():

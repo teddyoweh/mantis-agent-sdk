@@ -22,7 +22,7 @@ dependencies, no build step, one self-contained HTML page with every asset
 ## The shell
 
 One slim top bar: the lowercase **mantis** wordmark, the eight page tabs —
-**Overview · Sessions · Activity · Models · Deploy · MCP · Skills · Config**
+**Overview · My models · Sessions · Activity · Deploy · MCP · Skills · Config**
 — as one tight group of pills (the active one is green-tinted), then on the
 right
 the **current model** with a live dot and the provider it's reached through,
@@ -137,29 +137,40 @@ vendor key prefixes (`sk-…`, `xai-…`, `ghp_…`, …), bearer tokens,
 `NAME=value` pairs whose name looks like a credential, and tokens in URL
 query strings.
 
-### Models
+### My models
 
-The page opens with **Providers**: one card per family — Claude, OpenAI,
-Gemini, Grok, Open models — each with the vendor's mark, how it is
-authenticated right now ("Connected via Claude subscription", "Connected via
-API key · sk-…7f21", "Not connected"), its model count, and **Set up** /
-**Manage**. Opening one lists that family's *methods* as selectable rows, not
-a dropdown: for Claude that is **API key**, **Claude subscription (OAuth)**,
-**Vertex AI**, **Bedrock** and **Azure AI Foundry**, each with a one-line
-description, a *recommended* chip where the contract flags one, and a badge
-for *active* / *configured* / *detected*. Selecting a row reveals only that
-method's fields — generated from the contract, masked where secret, each with
-its help text and the environment variable it persists under — plus **Save &
-test**, which saves and then probes the endpoint and reports latency and a
-couple of live model ids inline (or the explained error). Several methods can
-be configured at once; exactly one is active, and switching is one click.
+The page opens with **Providers** — the one and only way to connect one.
+A progress line states how many of your providers are connected and reminds
+you that keys live in `~/.mantis-agent` (chmod 600) and are only ever shown
+masked. Below it, two labelled grids: **First-party** (Claude, OpenAI,
+Gemini, Grok) and **Open-source & self-host** (the hosted catalogue, Ollama,
+your own server).
+
+Each is a card: the vendor's mark in a tinted square, the name, the endpoint
+as a quiet mono caption, and one status line — *Connected via Claude
+subscription · sk-…7f21*, *Connected from env*, *Configured · not active* or
+*Not connected*. The provider in use is accent-tinted. The card's interactive
+core is an **auth-type toggle**: Claude offers *API key · Claude subscription ·
+Vertex AI · Bedrock · Azure AI Foundry*, OpenAI *API key · Azure OpenAI*,
+Gemini *API key · Vertex AI*; a provider with only one way in shows that way
+as a plain label rather than a lonely pill. Each pill carries a dot when that
+method is configured (amber) or active (green). Picking a type swaps in only
+that method's fields — generated from `auth_methods`, masked where secret,
+each with its help text and the environment variable it persists under —
+plus **Save & test** (saves, then probes and reports latency and live model
+ids inline, or the explained error), **Check reachability** once configured,
+and **Forget**. Several methods can be configured at once; exactly one is
+active, and switching is one click.
+
 **Claude subscription** replaces Save with **Sign in with Claude**: it opens
 the authorize page in a new tab, then takes the pasted code or redirect URL
 and finishes the exchange. Cloud methods (Vertex, Bedrock, Azure) show a
 *detected* badge and name the CLI that already provides ambient credentials
 (`gcloud auth application-default login`, `aws configure`) so you can leave
-the fields blank. Nothing typed here ever comes back out: responses carry env
-var *names* and masked hints only.
+the fields blank. A connected card grows a quiet footer with the models it
+serves ("11 listed · 11 live"), the current one highlighted and each one
+click from becoming current. Nothing typed here ever comes back out:
+responses carry env var *names* and masked hints only.
 
 Below that, the model list is **tabbed by family** — *All · OpenAI · Claude · Gemini ·
 Grok · Open models · Local*, each pill carrying its count; a model whose
@@ -237,26 +248,30 @@ Reading top to bottom:
   no reload; the same field sits in the confirm sheet's *Advanced*
   disclosure. Once set, the *Pick a model* header reads **Hugging Face
   token: set** and gated cards show a quiet *gated · token set*.
-- **Pick a model** — the section header carries a **provider toggle**: a
-  segmented control of *All* plus every GPU provider, each with its real mark
-  and short name (RunPod · HF · Modal · DeepInfra · Baseten · Vast.ai).
-  Providers without a key are dimmed and clicking one opens its Add-key form
-  instead of selecting it. Choosing a provider scopes **Fit & deploy** to
-  that provider alone — model, then GPU, two clicks — and sticks: it lives in
-  the URL (`#deploy/modal`) and in this browser, defaulting to your single
-  configured provider when there is only one. *All* restores the
-  per-provider grouping. Below it, a Hugging Face Hub search with a
-  *trending / downloads / likes* segmented control. Results are a grid of **model cards**: the model
+- **Pick a model** — the section header carries a **company filter**: one
+  pill per organisation present in the results, each with its real mark and
+  count, plus *All*. It combines with the search box, the sort control and
+  the **New** pill (released or updated in the last 30 days), and it lives in
+  the URL alongside the provider. Sorting offers *Trending · Downloads ·
+  Likes · Recent* (the Hub's `lastModified`). Below it, the Hub search. Results are a grid of **model cards**: the model
   name over its org, pills for parameter count, dtype, license, a **gated**
   lock and a coloured **vllm ✓ / ? / ✗** verdict, and the estimated
-  VRAM drawn as a bar against an 80 GB card. Hover shows *inspect →*; the
+  VRAM drawn as a bar measured against the largest GPU the selected provider
+  actually rents (1 TB under *All*) and coloured by whether it fits — green
+  fits, amber tight, grey larger than anything on offer. A quiet caption says
+  how current the model is ("updated 3 days ago" inside a year, "updated Aug
+  2026" beyond it). Where the Hub has nothing to derive from, the card says
+  *size unknown* rather than showing an empty bar, and an unrecognised
+  architecture explains itself on hover ("not in the vLLM support list —
+  deploy may still work"). Hover shows *inspect →*; the
   selected card is green-tinted. With an empty query the grid is the curated
   set of good first deploys under a quiet label. New results replace the
   grid in place — no flash.
 - **Fit & deploy** — for the selected model: its architectures, size, dtype,
-  context length and VRAM estimate, then — for the selected provider, or one
-  group per *configured* provider under *All* (each labelled with its mark) —
-  **GPU cards**: the GPU family with its
+  context length and VRAM estimate, then — for the provider chosen with the
+  **provider toggle** in this section's header (*All* · RunPod · HF · Modal ·
+  DeepInfra · Baseten · Vast.ai, unconfigured ones dimmed), or one group per
+  configured provider under *All* — **GPU cards**: the GPU family with its
   VRAM, the price per hour set large, a coloured **fits / tight / no** pill
   (tight means under 15% headroom), the cold-start hint, and **Deploy** on
   the right. Pick the engine the provider supports (vLLM, SGLang, TGI,
@@ -321,7 +336,7 @@ the effective settings with the layer each value came from.
 |---|---|
 | `⌘K` / `ctrl+K` | the command palette (below) |
 | `1` … `8` | jump to a page (the ⌘K palette lists each page's keys) |
-| `g` then `o` / `s` / `a` / `m` / `d` | overview / sessions / activity / models / deploy |
+| `g` then `o` / `m` / `s` / `a` / `d` | overview / my models / sessions / activity / deploy |
 | `g` then `p` / `k` / `c` | mcp / skills / config |
 | `/` | focus the current page's search (models filter, sessions filter, …) |
 | `↑` `↓` `Enter` in the models filter | walk the visible rows and switch to one |
@@ -379,7 +394,7 @@ loopback bind:
 | `/api/models` | providers (with family and auth), model info (window, price, capabilities), local models |
 | `/api/auth/families` | every provider family: active method, one-line status, model count, all its methods |
 | `/api/auth/methods?family=` | one family's methods with their fields (names, not values) and per-method status |
-| `POST /api/auth/set` `{family, method, values}` | persist a method's fields and make it the active one |
+| `POST /api/auth/set` `{family, method, values}` | persist a method's fields and make it the active one — the only way the dashboard connects a provider |
 | `POST /api/auth/clear` `{family, method}` | forget one method's saved values |
 | `POST /api/auth/validate` `{family, method}` | probe it: latency, a few live model ids, or the explained error |
 | `POST /api/auth/oauth/start` `{family}` · `POST /api/auth/oauth/finish` `{handle, code}` | the subscription sign-in, two steps |

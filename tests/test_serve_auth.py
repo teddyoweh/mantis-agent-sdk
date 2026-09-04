@@ -338,12 +338,25 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    for marker in ("loadAuthFamilies", "renderAuthCards", "openAuthPanel", "authMethodForm", "oauthFlow",
-                   "unlockFamily", 'section(pad, "Providers")', 'authBox.id = "auth-cards"', "auth-panel", "ap-row",
-                   "/api/auth/families", "/api/auth/methods?", "/api/auth/set", "/api/auth/validate",
+    for marker in ("loadAuthFamilies", "renderAuthCards", "authCard", "authEntries", "authMethodForm", "oauthFlow",
+                   "unlockFamily", 'section(pad, "Providers")', 'authBox.id = "auth-cards"', "acard", "ac-types",
+                   "/api/auth/families", "/api/auth/set", "/api/auth/validate",
                    "/api/auth/oauth/start", "/api/auth/oauth/finish", "Sign in with", "Save & test",
-                   "recommended", "detected", "Ambient credentials detected"):
+                   "recommended", "detected", "Ambient credentials detected",
+                   "First-party", "Open-source & self-host", "Check reachability", "connected",
+                   "chmod 600", "FIRST_PARTY"):
         assert marker in page, marker
+    js2 = page.split("<script>")[1]
+    # ONE way to connect a provider: the legacy expanding list is gone
+    for gone in ("providerDetail", '"Connect a provider"', "Enable provider", "Save new key",
+                 "saveKeyFn", "removeKeyFn", "focusProvider", '"/api/key"'):
+        assert gone not in js2, gone
+    # a lone method renders as a label, several render as a toggle
+    assert 'el("div","ac-one"' in js2 and "e.methods.length > 1" in js2
+    # the useful parts of the old row survive inside the card
+    assert "ac-models" in js2 and "listed" in js2 and "live" in js2 and "ac-env" in js2
+    # grouped, and a card that opens a form must not stretch its neighbours
+    assert "auth-grid" in page and "align-items: start" in page
     # a locked model row deep-links into its family's setup, not a generic list
     assert "unlockFamily(fid)" in page and "focusProvider(a.pid)" not in page
     js = page.split("<script>")[1]

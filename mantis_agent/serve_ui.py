@@ -262,6 +262,22 @@ INDEX_HTML = r"""<!doctype html>
   .dp-ptoggle .fchip.dim:hover { opacity: 1; }
   .dp-ptoggle .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none; }
   .dp-ptoggle .mark2 svg { width: 13px; height: 13px; }
+  /* the company filter — one line of org pills, scrolls rather than wraps */
+  .dp-orgs { display: flex; align-items: center; gap: 3px; margin-left: 6px; min-width: 0; overflow-x: auto;
+    flex-wrap: nowrap; scrollbar-width: none; }
+  .dp-orgs::-webkit-scrollbar { display: none; }
+  .dp-orgs .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; flex: none; font-weight: 500;
+    text-transform: capitalize; }
+  .dp-orgs .fchip.on { font-weight: 600; }
+  .dp-orgs .omark { width: 16px; height: 16px; border-radius: 4px; background: none; font-size: 9px; }
+  .dp-orgs .omark svg { width: 13px; height: 13px; }
+  .dp-orgs .tn2 { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .dp-orgs .fchip.on .tn2 { color: var(--accent); }
+  .mcard .mwhen { font-size: 11px; color: var(--ink-3); }
+  .mcard .mwhen.fresh { color: var(--accent); }
+  .mcard .vr .vbar.fits i { background: var(--ok); }
+  .mcard .vr .vbar.tight i { background: var(--warn); }
+  .mcard .vr .vbar.no i { background: var(--ink-3); }
   /* skills — a library of cards, each with its own identity glyph */
   .sk-state { display: flex; gap: 6px; flex-wrap: wrap; margin: -8px 0 16px; }
   .sk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
@@ -298,20 +314,40 @@ INDEX_HTML = r"""<!doctype html>
     min-height: 220px; max-height: 40vh; }
   @media (max-width: 1100px) { .sk-split, .sk-frow { grid-template-columns: 1fr; } }
 
-  /* provider setup — methods as selectable rows, one active at a time */
-  .auth-panel { background: var(--panel); border-radius: var(--radius); padding: 14px 16px 16px; margin-top: 12px; }
-  .ap-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .ap-h b { font-size: 14px; font-weight: 600; }
-  .ap-list { display: flex; flex-direction: column; gap: 6px; }
-  .ap-row { background: var(--panel-2); border-radius: var(--r-sm); padding: 11px 13px; cursor: pointer; transition: background var(--t); }
-  .ap-row:hover { background: var(--fill); }
-  .ap-row.on { background: var(--accent-soft); cursor: default; }
-  .ap-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .ap-top b { font-size: 13px; font-weight: 600; }
-  .ap-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; opacity: .45; }
-  .ap-dot.cfg { background: var(--warn); opacity: 1; }
-  .ap-dot.act { background: var(--ok); opacity: 1; }
-  .ap-d { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+  /* provider setup — one card per provider, its auth types as a toggle */
+  .auth-glabel { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
+  /* start-aligned so a card that opens a form never stretches its neighbours */
+  .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+  .acard { background: var(--panel); border-radius: var(--radius); padding: 15px 16px 14px; display: flex;
+    flex-direction: column; gap: 10px; min-width: 0; transition: background var(--t); }
+  .acard:hover { background: var(--panel-2); }
+  .acard.on { background: var(--accent-soft); }
+  .acard.on:hover { background: var(--accent-soft-2); }
+  .ac-h { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .ac-h .bigmark { width: 38px; height: 38px; border-radius: 10px; }
+  .ac-h .bigmark svg { width: 21px; height: 21px; }
+  .ac-h .fn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acard.on .ac-h .fn { color: var(--accent); }
+  .ac-h .fd { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: none; padding: 0; }
+  .ac-s { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+  .ac-s b { font-weight: 600; color: var(--ink); }
+  .ac-s .fsx { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .ac-types { display: flex; gap: 3px; flex-wrap: wrap; }
+  .ac-types .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; }
+  .acard.on .ac-types .fchip.on { background: var(--panel); color: var(--accent); }
+  .ac-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .ac-dot.cfg { background: var(--warn); }
+  .ac-dot.act { background: var(--ok); }
+  .ac-one { font-size: 12px; color: var(--ink-3); }
+  .ac-d { font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+  .ac-meta { margin-top: 8px; }
+  .ac-env { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .ac-models { margin-top: 10px; }
+  .ac-mh { font-size: 10.5px; color: var(--ink-3); margin-bottom: 6px; }
+  .ac-models .chip { font-size: 10.5px; padding: 2px 7px; }
+  .acard.on .ac-models .chip { background: var(--panel); }
   .ap-form { margin-top: 11px; }
   .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 12px; margin-bottom: 10px; }
   .ap-fields .dp-field input.in { background: var(--panel); width: 100%; }
@@ -950,9 +986,9 @@ INDEX_HTML = r"""<!doctype html>
   <div class="brand"><img src="/mantis.svg" alt=""> <span>mantis</span></div>
   <nav id="nav">
     <button data-v="home" class="on">Overview</button>
+    <button data-v="models">My models</button>
     <button data-v="sessions">Sessions</button>
     <button data-v="activity">Activity</button>
-    <button data-v="models">Models</button>
     <button data-v="deploy">Deploy</button>
     <button data-v="mcp">MCP</button>
     <button data-v="skills">Skills</button>
@@ -1098,27 +1134,6 @@ function ctxToggle(metas) {
 }
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const input = (ph, pw) => { const i = el("input","in"); i.placeholder = ph; if (pw) i.type = "password"; return i; };
-function saveKeyFn(p, inp, btn) {
-  return async () => {
-    if (!inp.value.trim()) { toast("paste a key first", true); return; }
-    btn.disabled = true;
-    try {
-      const r = await post("/api/key", { provider: p.id, key: inp.value });
-      if (r.ok) {
-        if (r.valid === false) toast("saved, but the check failed: " + (r.detail || ""), true);
-        else toast("✓ enabled " + (p.label || p.id) + (r.detail && r.detail !== "saved" ? " · " + r.detail : ""));
-        loadOverview(); loadModels();
-      } else toast(r.error || "failed", true);
-    } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
-  };
-}
-function removeKeyFn(p, btn) {
-  return async () => {
-    btn.disabled = true;
-    try { await post("/api/key", { provider: p.id, key: "" }); toast("removed key for " + (p.label || p.id)); loadOverview(); loadModels(); }
-    catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
-  };
-}
 // Switch the current model. Passing the provider's base_url as backend keeps
 // routing correct for a cross-provider pick. Takes effect on the next launch.
 async function useModel(model, backend) {
@@ -1127,18 +1142,6 @@ async function useModel(model, backend) {
     if (r.ok) { toast("current model → " + (r.model || model)); loadOverview(); loadModels(); }
     else toast(r.error || "failed", true);
   } catch (e) { toast(e.message, true); }
-}
-// Clicking a locked model should land you in that provider's setup, not just
-// near it: open the row, scroll it into view, focus the key field.
-function focusProvider(pid) {
-  const row = document.getElementById("prov-" + pid);
-  if (!row) return;
-  if (row.openDrawer) row.openDrawer();
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
-  row.classList.add("flash");
-  setTimeout(() => row.classList.remove("flash"), 1200);
-  const inp = row.querySelector(".lbody input");
-  if (inp) setTimeout(() => inp.focus(), 380);
 }
 function showModal(wide) {
   document.getElementById("modal").className = "on";
@@ -1405,7 +1408,7 @@ function renderFamilies(box, g) {
     });
     tb.title = "GET /models with the key mantis would use";
     ff.append(tb, pr); card.append(ff);
-    card.onclick = () => { showTab("models"); if (target) setTimeout(() => focusProvider(target.id), 260); };
+    card.onclick = () => unlockFamily(f.id);
     return card;
   });
 }
@@ -1777,7 +1780,41 @@ async function loadHome() {
 // the provider's own API (catalogue prices, account balance, deployment
 // status); the page never guesses a dollar figure it wasn't given.
 // ==========================================================================
-const DEPLOY = { providers: [], deployments: [], model: null, inspect: null, q: "", sort: "trending", provider: "all", hfToken: false };
+const DEPLOY = { providers: [], deployments: [], model: null, inspect: null, q: "", sort: "trending",
+                 provider: "all", org: "all", fresh: false, hfToken: false, gpuMax: {}, results: [] };
+const DAY = 86400000;
+// How current a model is. Inside a year people think in "3 days ago"; beyond
+// it, the month and year say more than "14 months ago".
+function whenText(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  const age = Date.now() - t;
+  if (age > 365 * DAY) return "updated " + new Date(t).toLocaleDateString([], { month: "short", year: "numeric" });
+  if (age < DAY) return "updated today";
+  const d = Math.round(age / DAY);
+  if (d < 30) return "updated " + d + " day" + (d === 1 ? "" : "s") + " ago";
+  const mo = Math.round(d / 30);
+  return "updated " + mo + " month" + (mo === 1 ? "" : "s") + " ago";
+}
+const isFresh = m => { const t = Date.parse(m && m.last_modified); return !isNaN(t) && Date.now() - t < 30 * DAY; };
+// The biggest card the chosen provider actually rents — what an est-VRAM bar
+// should be measured against. "All" falls back to a 1 TB ceiling.
+async function gpuCeiling() {
+  const pid = DEPLOY.provider;
+  if (pid === "all") {
+    const cfg = DEPLOY.providers.filter(p => p.configured && provReady(p));
+    const known = cfg.map(p => DEPLOY.gpuMax[p.id]).filter(v => v);
+    return known.length ? Math.max(...known) : 1024;
+  }
+  if (DEPLOY.gpuMax[pid]) return DEPLOY.gpuMax[pid];
+  try {
+    const r = await api("/api/deploy/gpus?" + q({ provider: pid }));
+    const mx = Math.max(0, ...(r.gpus || []).map(g => g.total_vram_gb || 0));
+    if (mx) DEPLOY.gpuMax[pid] = mx;
+    return mx || 1024;
+  } catch (e) { return 1024; }
+}
 // A gated repo needs a Hugging Face token before anything is worth deploying.
 // The Hub tells us HOW it gates: "auto" grants access the moment you click
 // Agree while signed in; "manual" waits on the repo owner, which can take
@@ -1848,18 +1885,26 @@ const PROV_SHORT = { runpod: "RunPod", hf: "HF", modal: "Modal", deepinfra: "Dee
 const provFromHash = () => { const [t, sub] = location.hash.slice(1).split("/"); return t === "deploy" && sub ? sub : null; };
 function initDeployProvider(configured) {
   const known = id => id === "all" || DEPLOY.providers.some(p => p.id === id);
+  DEPLOY.org = location.hash.slice(1).split("/")[2] || DEPLOY.org || "all";
   let want = provFromHash();
   if (!want) { try { want = localStorage.getItem(DEPLOY_PROV_KEY); } catch (e) { want = null; } }
   if (!want || !known(want)) want = configured.length === 1 ? configured[0].id : "all";
   DEPLOY.provider = want;
 }
+function writeDeployHash() {
+  const p = DEPLOY.provider === "all" ? "" : DEPLOY.provider;
+  const o = DEPLOY.org === "all" ? "" : DEPLOY.org;
+  const want = "deploy" + (p || o ? "/" + (p || "all") : "") + (o ? "/" + o : "");
+  if (location.hash !== "#" + want) location.hash = want;
+}
 function setDeployProvider(id) {
   DEPLOY.provider = id;
   try { if (id === "all") localStorage.removeItem(DEPLOY_PROV_KEY); else localStorage.setItem(DEPLOY_PROV_KEY, id); } catch (e) { /* private mode */ }
-  const want = "deploy" + (id === "all" ? "" : "/" + id);
-  if (location.hash !== "#" + want) location.hash = want;
+  writeDeployHash();
   document.querySelectorAll("#dp-ptoggle .fchip").forEach(x => x.classList.toggle("on", x.dataset.prov === id));
   const sec = document.getElementById("dp-fit"); if (sec) renderFit(sec);
+  const grid = document.getElementById("dp-models");
+  if (grid) gpuCeiling().then(() => { grid.querySelectorAll(".mcard").forEach(c => (c.dataset.sig = "")); paintModels(); });
 }
 // The segmented control itself: every provider, its real mark and short name.
 // An unconfigured one is dimmed and, clicked, opens its Add-key form rather
@@ -1943,14 +1988,18 @@ async function loadDeploy() {
   initDeployProvider(configured);
   const mSec = section(pad, "Pick a model", "huggingface.co");
   const secT = mSec.querySelector(".sec-t");
-  secT.append(providerToggle());
+  // the org filter belongs to choosing a model; the GPU-provider toggle is a
+  // deploy target and now lives on Fit & deploy, where it scopes the table
+  const orgRow = el("div","dp-orgs"); orgRow.id = "dp-orgs"; secT.append(orgRow);
   const hfState = el("div","hf-state"); hfState.id = "hf-state"; renderHfState(hfState); secT.append(hfState);
   if (!configured.length) {
     mSec.append(emptyState("socket", "Add a GPU provider to deploy any model",
       "Paste one provider key above, then search every open model on the Hub."));
   } else renderDpPicker(mSec);
 
-  const fSec = section(pad, "Fit & deploy"); fSec.id = "dp-fit"; renderFit(fSec);
+  const fSec = section(pad, "Fit & deploy"); fSec.id = "dp-fit";
+  fSec.querySelector(".sec-t").append(providerToggle());
+  renderFit(fSec);
   // deep link: /?model=<hf id>#deploy lands with that model inspected
   const want = new URLSearchParams(location.search).get("model");
   if (want && configured.length && DEPLOY.model !== want) pickModel(want);
@@ -2189,12 +2238,16 @@ function renderDpPicker(sec) {
   find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = DEPLOY.q;
   bar.append(find.wrap);
   const chips = el("div","fchips");
-  [["trending","trending"], ["downloads","downloads"], ["likes","likes"]].forEach(([k, lab]) => {
+  [["trending","Trending"], ["downloads","Downloads"], ["likes","Likes"], ["recent","Recent"]].forEach(([k, lab]) => {
     const c = el("button","fchip" + (k === DEPLOY.sort ? " on" : ""), lab);
     c.onclick = () => { DEPLOY.sort = k; chips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c)); runSearch(); };
     chips.append(c);
   });
-  bar.append(chips); sec.append(bar);
+  const fresh = el("button","fchip" + (DEPLOY.fresh ? " on" : ""), "New");
+  fresh.title = "released or updated in the last 30 days";
+  fresh.onclick = () => { DEPLOY.fresh = !DEPLOY.fresh; fresh.classList.toggle("on", DEPLOY.fresh); paintModels(); };
+  const chipWrap = el("div","fchips"); chipWrap.append(fresh);
+  bar.append(chips, chipWrap); sec.append(bar);
   const status = el("div","dp-status"); status.id = "dp-mstatus";
   const head = sec.querySelector(".sec-t"); if (head) head.append(status);
   const grid = el("div","dp-mgrid"); grid.id = "dp-models"; sec.append(grid);
@@ -2209,6 +2262,9 @@ function renderDpPicker(sec) {
     if (my !== modelSearchReq) return;
     if (r.hf_token_set != null) DEPLOY.hfToken = !!r.hf_token_set;
     (r.models || []).forEach(m => { if ((r.pending || []).includes(m.id)) m._pending = true; });
+    DEPLOY.results = r;
+    await gpuCeiling();
+    renderOrgPills();
     renderModelRows(grid, r);
     status.textContent = r.ok === false ? "" : (r.models || []).length + (r.curated ? " curated" : " results");
     if (r.partial) enrichLoop(r, grid, status, my);
@@ -2232,7 +2288,7 @@ function renderDpPicker(sec) {
         m._pending = false; changed = true;
       });
       pending = e.pending || [];
-      if (changed) renderModelRows(grid, r);
+      if (changed) { renderOrgPills(); renderModelRows(grid, r); }
       status.textContent = (r.models || []).length + (r.curated ? " curated" : " results") + (pending.length ? " · " + pending.length + " looking up" : "");
     }
     (r.models || []).forEach(m => { m._pending = false; });
@@ -2249,6 +2305,42 @@ function renderDpPicker(sec) {
 // pre-flight facts, the VRAM estimate as a bar against an 80 GB card, and
 // "inspect →" on hover. Results replace the grid in place — keyed, no flash.
 const VRAM_CAP_GB = 80;
+// One pill per company present in the results, with its real mark and count.
+function renderOrgPills() {
+  const row = document.getElementById("dp-orgs"); if (!row) return;
+  const models = (DEPLOY.results && DEPLOY.results.models) || [];
+  const counts = {};
+  models.forEach(m => { const o = (m.org || _orgOf(m.id) || "").toLowerCase(); if (o) counts[o] = (counts[o] || 0) + 1; });
+  const orgs = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  if (!orgs.some(o => o === DEPLOY.org)) DEPLOY.org = DEPLOY.org === "all" ? "all" : "all";
+  row.innerHTML = "";
+  const add = (id, label, mark, n) => {
+    const c = el("button","fchip" + (DEPLOY.org === id ? " on" : ""));
+    c.dataset.org = id;
+    if (mark) c.append(mark);
+    c.append(el("span", null, label));
+    if (n != null) c.append(el("span","tn2", String(n)));
+    c.onclick = () => {
+      DEPLOY.org = id;
+      row.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
+      writeDeployHash();
+      paintModels();
+    };
+    row.append(c);
+  };
+  add("all", "All", null, models.length);
+  orgs.forEach(o => add(o, o, orgMark(o), counts[o]));
+}
+function modelShown(m) {
+  if (m._label) return true;
+  if (DEPLOY.org !== "all" && (m.org || _orgOf(m.id) || "").toLowerCase() !== DEPLOY.org) return false;
+  if (DEPLOY.fresh && !isFresh(m)) return false;
+  return true;
+}
+function paintModels() {
+  const grid = document.getElementById("dp-models");
+  if (grid && DEPLOY.results) renderModelRows(grid, DEPLOY.results);
+}
 function renderModelRows(grid, r) {
   const items = [];
   if (r.ok === false) { grid.innerHTML = ""; grid.append(el("div","browse-empty", errText(r))); return; }
@@ -2259,9 +2351,18 @@ function renderModelRows(grid, r) {
     return;
   }
   grid.querySelectorAll(".zero, .browse-empty").forEach(x => x.remove());
+  const shown = (r.models || []).filter(modelShown);
+  if (!shown.length) {
+    grid.innerHTML = "";
+    grid.append(emptyState("search", "No model matches those filters",
+      "Clear the company pill or the New filter, or search the Hub for something else."));
+    return;
+  }
   if (r.curated) items.push({ _label: "Curated · good first deploys", id: "__label" });
-  r.models.forEach(m => items.push(m));
-  patchList(grid, items, m => m.id, m => [m._label, m.params_b, m.dtype, m.license, m.gated, m.gated_kind, DEPLOY.hfToken, m.vllm_ok, m.est_vram_gb, m.reason, m.downloads, m._pending], (card, m) => {
+  shown.forEach(m => items.push(m));
+  patchList(grid, items, m => m.id, m => [m._label, m.params_b, m.dtype, m.license, m.gated, m.gated_kind, DEPLOY.hfToken,
+                                          m.vllm_ok, m.est_vram_gb, m.reason, m.downloads, m._pending, m.last_modified,
+                                          DEPLOY.gpuMax[DEPLOY.provider] || 0], (card, m) => {
     if (m._label) { card = card || el("div"); card.innerHTML = ""; card.className = "dp-glabel"; card.textContent = m._label; return card; }
     card = card || el("div"); card.innerHTML = "";
     card.className = "mcard" + (m.id === DEPLOY.model ? " on" : ""); card.dataset.model = m.id;
@@ -2281,16 +2382,34 @@ function renderModelRows(grid, r) {
     if (m.vllm_ok === true) { const v = pill("vllm ✓", "", "acc"); v.title = "architecture served by vLLM"; pills.append(v); }
     else if (m.vllm_ok === false) { const v = pill("vllm ✗", "", "red"); v.title = m.reason || "not servable by vLLM"; pills.append(v); }
     else if (pend) { const v = pill("…", " looking up"); v.title = "reading the Hub's metadata"; pills.append(v); }
-    else { const v = pill("vllm ?", ""); v.title = "architecture not in the table"; pills.append(v); }
+    else { const v = pill("vllm ?", "");
+      v.title = (m.architectures || []).length
+        ? (m.architectures[0] + " is not in the vLLM support list — deploy may still work")
+        : "architecture not in the vLLM support list — deploy may still work";
+      pills.append(v); }
     if (m.downloads != null) pills.append(pill(fmtTok(m.downloads), " downloads"));
     card.append(pills);
+    // the bar is measured against the biggest card the chosen provider rents,
+    // so 744 GB and 730 GB no longer look identical — and its colour says
+    // whether anything available can actually hold it
     const vr = el("div","vr" + (pend ? " pend" : ""));
+    const ceil = DEPLOY.gpuMax[DEPLOY.provider] || (DEPLOY.provider === "all"
+      ? Math.max(1024, ...Object.values(DEPLOY.gpuMax).concat([0])) : 1024);
     if (m.est_vram_gb == null && pend) vr.append(el("span", null, "sizing…"));
     else if (m.est_vram_gb != null) {
-      const bar = el("div","vbar"); const fill = el("i"); fill.style.width = Math.min(100, m.est_vram_gb / VRAM_CAP_GB * 100).toFixed(0) + "%"; bar.append(fill);
-      vr.append(bar, el("b", null, fmtGb(m.est_vram_gb)), document.createTextNode("est. vram"));
-    } else vr.append(el("span", null, "vram unknown"));
+      const frac = m.est_vram_gb / ceil;
+      const cls = frac > 1 ? " no" : frac > 0.85 ? " tight" : " fits";
+      const bar = el("div","vbar" + cls); const fill = el("i");
+      fill.style.width = Math.max(3, Math.min(100, frac * 100)).toFixed(0) + "%"; bar.append(fill);
+      const b = el("b", null, fmtGb(m.est_vram_gb));
+      vr.append(bar, b, document.createTextNode("est. vram"));
+      vr.title = fmtGb(m.est_vram_gb) + " of " + fmtGb(ceil) + " available" +
+        (frac > 1 ? " — larger than anything on offer" : frac > 0.85 ? " — tight" : "");
+    } else if (m.params_b == null) vr.append(el("span", null, "size unknown"));
+    else vr.append(el("span", null, "vram unknown"));
     card.append(vr);
+    const when = whenText(m.last_modified);
+    if (when) { const w = el("div","mwhen", when); if (isFresh(m)) w.classList.add("fresh"); card.append(w); }
     card.append(el("span","go", m.id === DEPLOY.model ? "selected ✓" : "inspect →"));
     card.onclick = () => pickModel(m.id);
     return card;
@@ -2801,7 +2920,7 @@ async function loadOverview() {
   OVERVIEW = o;
   renderTopStatus(o);
 }
-const VIEWS = ["home","sessions","activity","models","deploy","mcp","skills","config"];
+const VIEWS = ["home","models","sessions","activity","deploy","mcp","skills","config"];
 let curView = "home";
 function showTab(name) {
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
@@ -2904,7 +3023,7 @@ let PAL = { idx: 0, items: [] };
 function paletteItems(qs) {
   const items = [];
   const chordFor = v => { const k = Object.keys(CHORDS).find(k => CHORDS[k] === v); const n = VIEWS.indexOf(v) + 1; return (n ? n + " · " : "") + (k ? "g " + k : ""); };
-  const PAGE_NAMES = { home: "Overview", sessions: "Sessions", activity: "Activity", models: "Models", deploy: "Deploy", mcp: "MCP", skills: "Skills", config: "Config" };
+  const PAGE_NAMES = { home: "Overview", models: "My models", sessions: "Sessions", activity: "Activity", deploy: "Deploy", mcp: "MCP", skills: "Skills", config: "Config" };
   VIEWS.forEach(v => items.push({ g: "Pages", t: PAGE_NAMES[v] || v, k: chordFor(v), run: () => showTab(v) }));
   (PROJECTS || []).forEach(p => items.push({ g: "Projects", t: p.title || p.name, s: p.session_count + " session" + (p.session_count===1?"":"s"),
     run: () => { showTab("sessions"); setTimeout(() => selectProject(p.digest), 60); } }));
@@ -2959,7 +3078,12 @@ window.addEventListener("hashchange", () => {
   // Only react to a REAL change (back/forward, manual edit) — showTab already
   // handled the tab it set the hash to, so don't reload it a second time.
   if (VIEWS.includes(t) && t !== curView) { if (t === "models") MODEL_TAB = tabFromHash(); showTab(t); return; }
-  if (t === "deploy" && curView === "deploy" && (sub || "all") !== DEPLOY.provider) { setDeployProvider(sub || "all"); return; }
+  if (t === "deploy" && curView === "deploy") {
+    const org = location.hash.slice(1).split("/")[2] || "all";
+    if (org !== DEPLOY.org) { DEPLOY.org = org; renderOrgPills(); paintModels(); }
+    if ((sub || "all") !== DEPLOY.provider) setDeployProvider(sub || "all");
+    return;
+  }
   // a family tab picked from the URL while Models is already open
   if (t === "models" && curView === "models" && tabFromHash() !== MODEL_TAB) {
     MODEL_TAB = tabFromHash();
@@ -3308,6 +3432,31 @@ async function loadAuthFamilies(box) {
   AUTH.families = r.families || [];
   renderAuthCards(box, r);
 }
+// What the models page knows: endpoints, key envs, live model lists.
+let MSTATE = {};
+const FIRST_PARTY = ["anthropic", "openai", "gemini", "xai"];
+// The connectable things: each first-party family is one card (its methods
+// are the auth-type toggle inside it), and every open-source method — a
+// hosted provider, Ollama, your own server — is a card of its own.
+function authEntries() {
+  const out = [];
+  FIRST_PARTY.forEach(fid => {
+    const f = AUTH.families.find(x => x.family === fid);
+    if (f) out.push({ key: fid, family: fid, label: f.label, logo: f.logo, methods: f.methods || [],
+                      active: f.active, ui: f.ui_family, kind: "family" });
+  });
+  const oss = AUTH.families.find(x => x.family === "oss");
+  (oss ? oss.methods || [] : []).forEach(mm => {
+    out.push({ key: "oss/" + mm.id, family: "oss", label: mm.label, logo: mm.id, methods: [mm],
+               active: mm.status.active ? mm.id : null, ui: "oss", kind: "method" });
+  });
+  return out;
+}
+function provMeta(e) {
+  const provs = MSTATE.providers || [];
+  if (e.kind === "method") return provs.find(x => x.id === e.logo) || null;
+  return provs.find(x => x.family === e.ui) || null;
+}
 function renderAuthCards(box, r) {
   box.innerHTML = "";
   if (r.ok === false && !(r.families || []).length) {
@@ -3315,75 +3464,105 @@ function renderAuthCards(box, r) {
     t.innerHTML = "<b>Provider setup isn't available:</b> " + esc(r.error || "unknown error");
     b.append(t); box.append(b); return;
   }
-  const grid = el("div","dp-grid");
-  AUTH.families.forEach(f => {
-    const card = el("div","dpc" + (f.connected ? " on" : "")); card.id = "auth-" + f.family;
-    const fh = el("div","fh");
-    fh.append(bigMark(f.logo || f.family, f.label));
-    const ft = el("div","ft");
-    ft.append(el("div","fn", f.label));
-    ft.append(el("div","fd", f.model_count + " model" + (f.model_count === 1 ? "" : "s") + " · " +
-      f.method_count + " way" + (f.method_count === 1 ? "" : "s") + " to connect"));
-    fh.append(ft);
-    card.append(fh);
-    card.append(authStatusLine(f));
-    if ((f.configured || []).length > 1) {
-      const chips = el("div","chips");
-      f.configured.forEach(id => {
-        const mm = (f.methods || []).find(x => x.id === id) || {};
-        chips.append(el("span","chip" + (id === f.active ? " cur" : ""), mm.label || id));
-      });
-      card.append(chips);
-    }
-    const ff = el("div","ff");
-    ff.append(btn(f.connected ? "Manage" : "Set up", f.connected ? "gho" : "pri", () => openAuthPanel(f.family)));
-    card.append(ff);
-    grid.append(card);
+  const entries = authEntries();
+  const connected = entries.filter(e => e.active).length;
+  const prog = el("div","setup");
+  const ph = el("div","setup-h");
+  ph.append(el("span","setup-n", connected + " of " + entries.length + " connected"));
+  ph.append(el("span","setup-s", connected
+    ? "Add another to switch between them mid-session."
+    : "Connect one and mantis is ready to run."));
+  prog.append(ph);
+  const track = el("div","setup-bar"); const fill = el("i");
+  fill.style.width = Math.round(connected / Math.max(1, entries.length) * 100) + "%";
+  track.append(fill); prog.append(track);
+  prog.append(el("div","setup-note",
+    "Keys are written to ~/.mantis-agent (chmod 600) on this machine and are only ever shown masked."));
+  box.append(prog);
+  [["First-party", entries.filter(e => e.kind === "family")],
+   ["Open-source & self-host", entries.filter(e => e.kind === "method")]].forEach(([label, list]) => {
+    if (!list.length) return;
+    box.append(el("div","auth-glabel", label));
+    const grid = el("div","auth-grid");
+    list.forEach(e => grid.append(authCard(e)));
+    box.append(grid);
   });
-  box.append(grid);
-  const panel = el("div"); panel.id = "auth-panel"; box.append(panel);
-  if (AUTH.open) openAuthPanel(AUTH.open, true);
 }
-// The panel: the family's methods as rows, the selected one's fields below.
-async function openAuthPanel(family, keep) {
-  AUTH.open = family;
-  const panel = document.getElementById("auth-panel"); if (!panel) return;
-  let d;
-  try { d = await api("/api/auth/methods?" + q({ family })); }
-  catch (e) { d = { ok: false, error: e.message, methods: [] }; }
-  if (AUTH.open !== family) return;
-  panel.innerHTML = "";
-  if (!d.ok) { panel.append(el("div","pe", (d.error || "failed") + (d.hint ? " — " + d.hint : ""))); return; }
-  const box = el("div","auth-panel");
-  const head = el("div","ap-h");
-  head.append(providerMark(d.logo || family, d.label));
-  head.append(el("b", null, "Connect " + d.label));
-  const sp = el("span"); sp.style.flex = "1"; head.append(sp);
-  head.append(btn("Close", "gho", () => { AUTH.open = null; panel.innerHTML = ""; }));
-  box.append(head);
-  const want = AUTH.method[family] || d.active || (d.methods.find(m => m.recommended) || d.methods[0] || {}).id;
-  const list = el("div","ap-list");
-  d.methods.forEach(m => {
-    const row = el("div","ap-row" + (m.id === want ? " on" : ""));
-    row.dataset.method = m.id;
-    const top = el("div","ap-top");
-    top.append(el("span","ap-dot" + (m.status.active ? " act" : m.status.configured ? " cfg" : "")));
-    top.append(el("b", null, m.label));
-    if (m.recommended) top.append(tag2("recommended", "acc"));
-    if (m.status.active) top.append(tag2("active", "acc"));
-    else if (m.status.configured) top.append(tag2(m.status.source === "cli" ? "detected" : "configured", m.status.source === "cli" ? "blu" : ""));
-    row.append(top);
-    row.append(el("div","ap-d", m.description));
-    if (m.id === want) row.append(authMethodForm(d, m));
-    row.onclick = e => {
-      if (row.classList.contains("on") || e.target.closest(".ap-form")) return;
-      AUTH.method[family] = m.id; openAuthPanel(family, true);
-    };
-    list.append(row);
-  });
-  box.append(list);
-  panel.append(box);
-  if (!keep) box.scrollIntoView({ behavior: "smooth", block: "center" });
+// One provider: the mark and name as the headline, endpoint and key env as
+// quiet metadata, the auth-type toggle as the interactive core, and — only
+// once connected — the models it serves as a footer.
+function authCard(e) {
+  const meta = provMeta(e);
+  const card = el("div","acard" + (e.active ? " on" : ""));
+  card.id = "auth-" + e.key.replace("/", "-");
+  const head = el("div","ac-h");
+  head.append(bigMark(e.logo || e.family, e.label));
+  const ht = el("div","ft");
+  ht.append(el("div","fn", e.label));
+  const ep = (meta && meta.base_url) || (e.methods[0] && e.methods[0].backend) || "";
+  const epl = el("div","fd mono", String(ep).replace(/^https?:\/\//, "") || "—"); epl.title = ep; ht.append(epl);
+  head.append(ht);
+  card.append(head);
+  const am = e.methods.find(x => x.id === e.active);
+  const cfg = e.methods.filter(x => x.status.configured);
+  const st = el("div","ac-s");
+  st.append(el("span","dot2 " + (e.active ? "ok" : cfg.length ? "warn" : "")));
+  if (am) {
+    const masked = Object.values(am.status.masked || {}).find(Boolean);
+    st.append(el("b", null, am.status.source === "env" ? "Connected from env" : "Connected via " + am.label));
+    if (masked) st.append(el("span","fsx", "· " + masked));
+  } else if (cfg.length) st.append(el("b", null, "Configured"), el("span","fsx", "· not active"));
+  else st.append(el("b", null, "Not connected"));
+  card.append(st);
+  // the auth-type toggle — a lone method is a label, not a lonely pill
+  let sel = AUTH.method[e.key] || e.active || (e.methods.find(x => x.recommended) || e.methods[0] || {}).id;
+  const body = el("div","ac-body");
+  const draw = () => {
+    body.innerHTML = "";
+    const m = e.methods.find(x => x.id === sel) || e.methods[0];
+    if (!m) return;
+    body.append(el("div","ac-d", m.description || ""));
+    body.append(authMethodForm({ label: e.label, logo: e.logo, active: e.active }, m));
+    const kv = el("div","ac-meta");
+    const envs = (m.fields || []).map(f => f.env).join(" · ");
+    if (envs) kv.append(el("span","ac-env", envs));
+    if (meta && meta.api_key_env && !envs) kv.append(el("span","ac-env", meta.api_key_env));
+    body.append(kv);
+    if (meta && (meta.models || []).length) {
+      const foot = el("div","ac-models");
+      foot.append(el("div","ac-mh", (meta.models.length + " listed") + (meta.live_count ? " · " + meta.live_count + " live" : "")));
+      const chips = el("div","chips");
+      const cur = (MSTATE.current || {}).model;
+      meta.models.slice(0, 8).forEach(x => {
+        const c = el("span","chip" + (e.active ? " clk" : "") + (x === cur ? " cur" : ""), x);
+        if (e.active) c.onclick = ev => { ev.stopPropagation(); useModel(x, meta.base_url); };
+        chips.append(c);
+      });
+      if (meta.models.length > 8) chips.append(el("span","chip more", "+" + (meta.models.length - 8)));
+      foot.append(chips);
+      body.append(foot);
+    }
+  };
+  if (e.methods.length > 1) {
+    const seg = el("div","ac-types");
+    e.methods.forEach(m => {
+      const c = el("button","fchip" + (m.id === sel ? " on" : ""), m.label);
+      if (m.status.active) c.append(el("span","ac-dot act"));
+      else if (m.status.configured) c.append(el("span","ac-dot cfg"));
+      c.onclick = () => {
+        sel = m.id; AUTH.method[e.key] = m.id;
+        seg.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
+        draw();
+      };
+      seg.append(c);
+    });
+    card.append(seg);
+  } else if (e.methods.length === 1) {
+    card.append(el("div","ac-one", e.methods[0].label));
+  }
+  card.append(body);
+  draw();
+  return card;
 }
 // One method's fields + its action. OAuth swaps Save for a two-step sign-in.
 function authMethodForm(d, m) {
@@ -3409,6 +3588,16 @@ function authMethodForm(d, m) {
   if (m.kind === "cloud" && m.status.source === "cli")
     f.append(el("div","ap-note", "Ambient credentials detected — " + (m.status.hint || "leave the fields blank to use them")));
   const acts = el("div","ap-acts");
+  const check = btn("Check reachability", "gho", async () => {
+    check.disabled = true; check.textContent = "Reaching…"; out.innerHTML = "";
+    try {
+      const v = await post("/api/auth/validate", { family: m.family, method: m.id });
+      out.append(probeBox(v.ok, v.ok
+        ? "Reachable · " + (v.latency_ms != null ? v.latency_ms + "ms" : "") + ((v.models || []).length ? " · " + v.models.length + " models live" : "")
+        : (v.message || errText(v))));
+    } catch (e) { out.append(probeBox(false, e.message)); }
+    finally { check.disabled = false; check.textContent = "Check reachability"; }
+  });
   const save = btn(m.status.active ? "Save & test" : m.status.configured ? "Make active & test" : "Save & test", "pri", async () => {
     const values = {};
     Object.entries(inputs).forEach(([k, i]) => { if (i.value.trim()) values[k] = i.value.trim(); });
@@ -3427,18 +3616,18 @@ function authMethodForm(d, m) {
         : (v.message || errText(v))));
       toast(r.ok ? "✓ " + d.label + " · " + m.label : "saved", false);
       loadAuthFamilies(document.getElementById("auth-cards"));
-      openAuthPanel(m.family, true);
       loadOverview();
     } catch (e) { out.append(probeBox(false, e.message)); }
     finally { save.disabled = false; save.textContent = "Save & test"; }
   });
   acts.append(save);
+  if (m.status.configured) acts.append(check);
   if (m.status.configured && m.status.source !== "cli") {
     const del = btn("Forget", "gho dan", null);
     del.onclick = () => armDelete(del, async () => {
       try {
         const r = await post("/api/auth/clear", { family: m.family, method: m.id });
-        if (r.ok !== false) { toast("forgot " + m.label); loadAuthFamilies(document.getElementById("auth-cards")); openAuthPanel(m.family, true); }
+        if (r.ok !== false) { toast("forgot " + m.label); loadAuthFamilies(document.getElementById("auth-cards")); }
         else toast(r.message || errText(r), true);
       } catch (e) { toast(e.message, true); }
     });
@@ -3474,7 +3663,7 @@ function oauthFlow(d, m, out) {
       if (r.ok !== false) {
         toast("✓ signed in with Claude");
         code.value = ""; paste.classList.remove("on");
-        loadAuthFamilies(document.getElementById("auth-cards")); openAuthPanel(m.family, true); loadOverview();
+        loadAuthFamilies(document.getElementById("auth-cards")); loadOverview();
       } else out.append(probeBox(false, r.message || errText(r)));
     } catch (e) { out.append(probeBox(false, e.message)); }
     finally { finish.disabled = false; finish.textContent = "Finish sign-in"; }
@@ -3500,7 +3689,7 @@ function oauthFlow(d, m, out) {
     const del = btn("Sign out", "gho dan", null);
     del.onclick = () => armDelete(del, async () => {
       try { await post("/api/auth/clear", { family: m.family, method: m.id }); toast("signed out");
-        loadAuthFamilies(document.getElementById("auth-cards")); openAuthPanel(m.family, true); }
+        loadAuthFamilies(document.getElementById("auth-cards")); }
       catch (e) { toast(e.message, true); }
     });
     acts.append(del);
@@ -3515,9 +3704,15 @@ function unlockFamily(uiFam) {
   const f = AUTH.families.find(x => x.ui_family === uiFam || x.family === uiFam);
   if (!f) { toast("no setup for that family yet", true); return; }
   AUTH.method[f.family] = f.recommended || f.active || null;
-  const card = document.getElementById("auth-" + f.family);
-  if (card) { card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1400); }
-  openAuthPanel(f.family);
+  const land = () => {
+    const card = document.getElementById("auth-" + f.family);
+    if (!card) return false;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1400);
+    const i = card.querySelector("input"); if (i) setTimeout(() => i.focus(), 340);
+    return true;
+  };
+  if (!land()) setTimeout(land, 400);
 }
 
 // ---- models & hosting ----
@@ -3545,9 +3740,12 @@ async function loadModels() {
 
   // Reachability is a per-provider action on the provider's own card below —
   // a page-level "test this route" strip said less and sat in the way.
-  pageHead(pad, "Models", null, null);
+  pageHead(pad, "My models", null, null);
 
-  // Providers first: a model list means nothing until a family is connected.
+  // Providers first: a model list means nothing until one is connected. This
+  // is the ONLY way to connect a provider — every auth type each family
+  // offers, not just an API key.
+  MSTATE = m;
   const authSec = section(pad, "Providers");
   const authBox = el("div"); authBox.id = "auth-cards"; authSec.append(authBox);
   loadAuthFamilies(authBox);
@@ -3744,61 +3942,6 @@ async function loadModels() {
   // This is setup, so it reads as setup: a progress bar over the twelve, the
   // connected ones first, and every unconnected row offering the one action
   // that changes its state. Expanding a row IS the setup form.
-  const provSec = section(pad, "Connect a provider");
-  const prog = el("div","setup");
-  const ph2 = el("div","setup-h");
-  ph2.append(el("span","setup-n", m.enabled_count + " of " + m.providers.length + " connected"));
-  const need = el("span","setup-s", m.enabled_count
-    ? "Add another to switch between them mid-session."
-    : "Paste one key and mantis is ready to run.");
-  ph2.append(need);
-  prog.append(ph2);
-  const track = el("div","setup-bar");
-  const fillp = el("i");
-  fillp.style.width = Math.round(m.enabled_count / Math.max(1, m.providers.length) * 100) + "%";
-  track.append(fillp); prog.append(track);
-  prog.append(el("div","setup-note", "Keys stay in ~/.mantis-agent (chmod 600), shown masked."));
-  provSec.append(prog);
-
-  const plist = el("div","list");
-  // Family order first (OpenAI · Claude · Gemini · Grok · open source), then
-  // connected before not-yet — so the five kinds read as five groups.
-  const fIdx = p => { const i = (m.families || []).findIndex(f => f.id === (p.family || "oss")); return i < 0 ? 99 : i; };
-  const ordered = [...m.providers].sort((a, b) => (fIdx(a) - fIdx(b)) || ((b.enabled ? 1 : 0) - (a.enabled ? 1 : 0)));
-  const famName = {}; (m.families || []).forEach(f => famName[f.id] = f.label);
-  ordered.forEach(p => {
-    const tags = [];
-    if (famName[p.family]) tags.push({ text: famName[p.family], cls: "" });
-    if (p.is_current) tags.push({ text: "in use", cls: "acc" });
-    if (p.auth === "oauth") tags.push({ text: "oauth", cls: "vio" });
-    const acts = [];
-    if (p.enabled) {
-      const st = el("span","ready");
-      st.append(el("span","dot2 ok"));
-      st.append(document.createTextNode("connected" + (p.key_source === "env" ? " · from env" : p.auth === "oauth" ? " · token" : "")));
-      acts.push(st);
-    } else {
-      acts.push(btn("Add key", "pri", null));   // click bubbles to the row → opens setup
-    }
-    const row = listRow({
-      name: p.label || p.id,
-      sub: (p.base_url || "").replace(/^https?:\/\//, ""),
-      tags, actions: acts, mark: providerMark(p.id, p.label),
-      build: (body) => providerDetail(p, body, cur, m),
-    });
-    row.id = "prov-" + p.id;
-    row.dataset.q = ((p.label || "") + " " + p.id + " " + (p.base_url || "")).toLowerCase();
-    // The "Add key" button and the row open the same drawer, then focus the field.
-    if (!p.enabled) {
-      row.querySelector(".acts").onclick = (e) => {
-        e.stopPropagation(); row.openDrawer();
-        const i = row.querySelector(".lbody input"); if (i) i.focus();
-      };
-    }
-    plist.append(row);
-  });
-  provSec.append(plist);
-
   // self-host / custom endpoint — a first-class card in the same visual system
   const shSec = section(pad, "Or bring your own server");
   const sh = el("div","card selfhost-card");
@@ -3837,90 +3980,6 @@ async function loadModels() {
   else if (gp) { const pp = m.providers.find(x => x.id === gp); if (pp) openGuide(pp); }
 }
 
-// One provider, expanded: where it points, what key it's using, whether that
-// key actually works, and its models one click from being current.
-function providerDetail(p, body, cur, m) {
-  const dl = el("dl","kvs");
-  kvRow(dl, "endpoint", p.base_url || "—");
-  kvRow(dl, "key env", p.api_key_env || "—");
-  if (p.note) kvRow(dl, "note", p.note, false);
-  body.append(dl);
-
-  // A provider that already has a key shows the key — masked, with where it
-  // came from — and replacing it is an opt-in. Only an unconnected provider
-  // gets a paste field up front, because that's the only one that needs one.
-  const keyRow = el("div"); keyRow.style = "display:flex;gap:8px;margin-top:14px";
-  const inp = input("paste your " + (p.api_key_env || "API key"), true);
-  const save = el("button","b pri", p.key_masked ? "Save new key" : "Enable provider");
-  const doSave = saveKeyFn(p, inp, save);
-  save.onclick = doSave;
-  inp.onkeydown = e => { if (e.key === "Enter") doSave(); };
-  keyRow.append(inp, save);
-
-  if (p.key_masked) {
-    const held = el("div","keyheld");
-    held.append(el("span","kh-l", p.api_key_env || "key"));
-    held.append(el("span","kh-v", p.key_masked));
-    held.append(el("span","t2 " + (p.key_source === "env" ? "blu" : "acc"),
-      p.key_source === "env" ? "from your environment" : "saved on this machine"));
-    const sp = el("span"); sp.style.flex = "1"; held.append(sp);
-    keyRow.style.display = "none";
-    const rep = btn("Replace", "gho", () => {
-      const open = keyRow.style.display === "none";
-      keyRow.style.display = open ? "flex" : "none";
-      rep.textContent = open ? "Cancel" : "Replace";
-      rep.classList.toggle("on", open);
-      if (open) inp.focus();
-    });
-    held.append(rep);
-    if (p.key_source === "saved") {
-      const rm = btn("Forget", "gho dan", null);
-      rm.onclick = () => armDelete(rm, removeKeyFn(p, rm));
-      held.append(rm);
-    } else {
-      held.append(el("span","kh-n", "unset the env var to change it"));
-    }
-    body.append(held);
-  }
-  body.append(keyRow);
-
-  const acts = el("div"); acts.style = "display:flex;gap:8px;margin-top:12px;flex-wrap:wrap";
-  const out = el("div");
-  const test = btn("Check reachability", "", async () => {
-    test.disabled = true; test.textContent = "Reaching…"; out.innerHTML = "";
-    try {
-      const r = await post("/api/model/test", { provider: p.id });
-      const box = el("div","probe " + (r.ok ? "ok" : "bad"));
-      const hd = el("div","ph2");
-      hd.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
-      hd.append(document.createTextNode(r.ok
-        ? "Reachable · " + (r.count != null ? r.count + " models live · " : "") + r.ms + "ms"
-        : "Not reachable · " + r.ms + "ms"));
-      box.append(hd);
-      if (!r.ok) box.append(el("div","pe", r.error || "unknown error"));
-      out.append(box);
-    } catch (e) { toast(e.message, true); }
-    finally { test.disabled = false; test.textContent = "Check reachability"; }
-  });
-  acts.append(test);
-  if (p.docs_url) acts.append(extLink("b gho", "Provider docs ↗", p.docs_url));
-  body.append(acts, out);
-
-  const models = p.models || [];
-  if (models.length) {
-    const lab = el("div","kvs"); lab.style.marginTop = "14px";
-    kvRow(lab, "models", String(models.length) + (p.live_count ? " listed · " + p.live_count + " live" : ""));
-    body.append(lab);
-    const chips = el("div","chips"); chips.style.marginTop = "8px";
-    models.forEach(x => {
-      const c = el("span","chip" + (p.enabled ? " clk" : "") + (x===cur ? " cur" : ""), x);
-      if (p.enabled) c.onclick = () => useModel(x, p.base_url);
-      else { c.title = "enable " + (p.label||p.id) + " first"; c.onclick = () => inp.focus(); }
-      chips.append(c);
-    });
-    body.append(chips);
-  }
-}
 
 // ---- shared page furniture ----
 // Every non-session view is built from these four helpers, so Models, Skills,

@@ -305,18 +305,22 @@ def test_models_enrich_progressively_and_cache_with_ttl(fake, monkeypatch):
 
     async def inspect_model(model, *, hf_token=None):
         calls.setdefault("inspect_model", []).append(((model,), {}))
-        if model == "org/tiny":
-            raise AssertionError("already complete — must not be looked up")
-        return fake["info"]
+        return fake["info"] if model != "org/tiny" else ModelInfo(id="org/tiny", source="hf", params_b=0.5,
+                                                                  vllm_ok=False, est_vram_gb=2.0)
+
+    # the Hub record supplies the recency date; without it a card is incomplete
+    monkeypatch.setattr(serve, "_hub_dates", lambda mid: {"last_modified": "2026-08-01T00:00:00.000Z"})
     monkeypatch.setattr(manager, "search_models", bare_search)
     monkeypatch.setattr(manager, "inspect_model", inspect_model)
 
     r = serve.deploy_models("")
-    assert r["ok"] and r["partial"] is True and r["pending"] == ["org/model-8b"]
+    # both are queued: one lacks its facts, the other lacks a date
+    assert r["ok"] and r["partial"] is True and r["pending"] == ["org/model-8b", "org/tiny"]
     assert r["models"][0]["org"] == "org" and r["models"][0]["params_b"] is None
     assert _wait(lambda: not serve._enrich_pending)
-    e = serve.deploy_models_enrich("org/model-8b")          # the page asks only for what was pending
+    e = serve.deploy_models_enrich("org/model-8b,org/tiny")
     assert e["pending"] == []
+    assert e["models"]["org/model-8b"]["last_modified"].startswith("2026-08-01")
     got = e["models"]["org/model-8b"]
     assert got["params_b"] == 8.0 and got["vllm_ok"] is True and got["est_vram_gb"] == 19.5 and "at" not in got
     assert HF_TOKEN not in json.dumps(e)
@@ -324,6 +328,7 @@ def test_models_enrich_progressively_and_cache_with_ttl(fake, monkeypatch):
     n = len(calls["inspect_model"])
     r2 = serve.deploy_models("")
     assert r2["partial"] is False and r2["models"][0]["params_b"] == 8.0 and r2["models"][0]["license"] == "llama3"
+    assert r2["models"][0]["last_modified"].startswith("2026-08-01")
     assert len(calls["inspect_model"]) == n
     assert (serve._cache_dir() / "model-info.json").exists()
     # TTL: an entry older than a day is treated as missing and re-queued
@@ -520,6 +525,62 @@ def test_gated_kind_reaches_the_cards(fake, monkeypatch):
     rows = {m["id"]: m for m in fake["serve"].deploy_models("x")["models"]}
     assert rows["org/auto"]["gated"] is True and rows["org/auto"]["gated_kind"] == "auto"
     assert rows["org/manual"]["gated_kind"] == "manual"
+
+
+def test_recent_sort_maps_to_the_hubs_last_modified(fake):
+    serve, calls = fake["serve"], fake["calls"]
+    assert serve.deploy_models("x", "recent")["sort"] == "updated"
+    assert calls["search_models"][-1][0][2] == "updated"
+    assert serve.deploy_models("x", "created")["sort"] == "created"
+    for alias in ("lastModified", "new"):
+        assert serve.deploy_models("x", alias)["sort"] == "updated"
+    assert serve.deploy_models("x", "nonsense")["sort"] == "trending"
+
+
+def test_org_rides_every_model_row(fake):
+    """The company pills are derived from the results, so every row names its
+    org — including a bare id with no slash."""
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.base import ModelInfo
+
+    async def search(query="", *, limit=25, sort="trending"):
+        return [ModelInfo(id="Qwen/Qwen3-8B", source="hf"), ModelInfo(id="meta-llama/Llama-3.1-8B", source="hf"),
+                ModelInfo(id="gpt2", source="hf")]
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(manager, "search_models", search)
+    try:
+        rows = {m["id"]: m for m in fake["serve"].deploy_models("x")["models"]}
+    finally:
+        monkeypatch.undo()
+    assert rows["Qwen/Qwen3-8B"]["org"] == "qwen"
+    assert rows["meta-llama/Llama-3.1-8B"]["org"] == "meta-llama"
+    assert rows["gpt2"]["org"] is None
+
+
+def test_enrichment_retries_a_thin_answer_once(fake, monkeypatch):
+    """A model that comes back without its facts is asked exactly once more
+    before the card is left with gaps."""
+    from mantis_agent import serve
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.base import ModelInfo
+
+    serve._model_info_cache.clear()
+    serve._enrich_pending.clear()
+    seen = []
+
+    async def thin(model, *, hf_token=None):
+        seen.append(model)
+        return ModelInfo(id=model, source="hf")          # no params, no vllm verdict, no vram
+    monkeypatch.setattr(manager, "inspect_model", thin)
+    monkeypatch.setattr(serve, "_hub_dates", lambda mid: {"last_modified": "2026-01-02T00:00:00Z"})
+    serve.enrich_models(["org/thin"])
+    assert _wait(lambda: not serve._enrich_pending)
+    # tried once, retried once, then gave up (other ids may be in flight from
+    # an earlier test's background pass — only this one is under test)
+    assert [x for x in seen if x == "org/thin"] == ["org/thin", "org/thin"]
+    got = serve.deploy_models_enrich("org/thin")["models"]["org/thin"]
+    assert got["vllm_ok"] is None and got["last_modified"].startswith("2026-01-02")
+    assert "retried" not in got                          # an internal flag, not page data
 
 
 def test_verdict_parsing():

@@ -773,6 +773,9 @@ def config_state() -> dict[str, Any]:
 
 
 def set_provider_key(provider_id: str | None, key: str | None) -> dict[str, Any]:
+    """Save or clear one catalogue provider's key. No longer routed: the
+    dashboard connects providers through ``/api/auth/set`` only, so there is
+    exactly one way in. Kept because the setup flows still call it directly."""
     from . import catalog  # noqa: PLC0415
 
     prov = catalog.BY_ID.get((provider_id or "").strip())
@@ -2170,7 +2173,9 @@ def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> d
     except (TypeError, ValueError):
         lim = 25
     sort = (sort or "trending").strip().lower()
-    if sort not in ("trending", "downloads", "likes", "updated"):
+    # "recent" is what the page calls it; the Hub layer's key is "updated"
+    sort = {"recent": "updated", "lastmodified": "updated", "new": "updated"}.get(sort, sort)
+    if sort not in ("trending", "downloads", "likes", "updated", "created"):
         sort = "trending"
     try:
         models = _run_async(_dm.search_models, (query or "").strip(), limit=lim, sort=sort)
@@ -2196,8 +2201,11 @@ def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> d
 # ---- progressive enrichment: search results are bare ids until inspect_model
 # has looked each one up. Results are cached on disk for a day so the second
 # paint is complete; a bounded pool of worker threads fills the gaps.
-_INFO_FIELDS = ("architectures", "params_b", "dtype", "gated", "license", "downloads", "likes", "context_len",
-                "vllm_ok", "est_vram_gb", "tags", "reason")
+_INFO_FIELDS = ("architectures", "params_b", "dtype", "gated", "gated_kind", "license", "downloads", "likes",
+                "context_len", "vllm_ok", "est_vram_gb", "tags", "reason")
+# how current a model is — the Hub knows, but ModelInfo has no field for it,
+# so the enrichment pass reads it from the Hub's own model record
+_DATE_FIELDS = ("last_modified", "created_at")
 MODEL_INFO_TTL_S = 24 * 3600
 MODEL_INFO_ERR_TTL_S = 3600
 ENRICH_WORKERS = 4
@@ -2238,11 +2246,15 @@ def _org_of(model_id: Any) -> str | None:
 
 
 def _needs_info(d: dict[str, Any]) -> bool:
-    return d.get("params_b") is None or d.get("vllm_ok") is None or d.get("est_vram_gb") is None
+    return (d.get("params_b") is None or d.get("vllm_ok") is None
+            or d.get("est_vram_gb") is None or not d.get("last_modified"))
 
 
 def _merge_info(d: dict[str, Any], info: dict[str, Any]) -> dict[str, Any]:
     out = dict(d)
+    for k in _DATE_FIELDS:
+        if info.get(k):
+            out[k] = info[k]
     for k in _INFO_FIELDS:
         v = info.get(k)
         if v is not None and (out.get(k) is None or k in ("vllm_ok", "est_vram_gb", "reason")):
@@ -2289,18 +2301,52 @@ def _model_info_get(model_id: str, *, now: float | None = None) -> dict[str, Any
     return entry
 
 
+def _hub_dates(model_id: str) -> dict[str, Any]:
+    """``lastModified`` / ``createdAt`` from the Hub's model record. Best
+    effort: a card without a date just shows no date."""
+    from .deploy import hf_hub  # noqa: PLC0415
+
+    try:
+        raw = _run_async(hf_hub.model_info, model_id)
+    except Exception:  # noqa: BLE001
+        return {}
+    out: dict[str, Any] = {}
+    for src, dst in (("lastModified", "last_modified"), ("createdAt", "created_at")):
+        v = (raw or {}).get(src)
+        if v:
+            out[dst] = str(v)
+    return out
+
+
+def _thin(entry: dict[str, Any]) -> bool:
+    """Did the lookup come back without the facts the card needs?"""
+    return entry.get("vllm_ok") is None or entry.get("params_b") is None or entry.get("est_vram_gb") is None
+
+
 def _enrich_one(model_id: str) -> None:
     import time  # noqa: PLC0415
 
     from .deploy import manager as _dm  # noqa: PLC0415
 
     with _enrich_sem:
-        try:
-            info = _run_async(_dm.inspect_model, model_id)
-            entry = {k: v for k, v in _dc(info).items() if k in _INFO_FIELDS}
-            entry["at"] = time.time()
-        except Exception as e:  # noqa: BLE001 — remembered briefly so a bad id isn't re-asked every paint
-            entry = {"error": _redact_text(str(e) or type(e).__name__)[:200], "at": time.time()}
+        entry: dict[str, Any] = {}
+        # A thin first answer is usually a slow config fetch, not a missing
+        # one — so try exactly once more before leaving the card with gaps.
+        for attempt in (1, 2):
+            try:
+                info = _run_async(_dm.inspect_model, model_id)
+                entry = {k: v for k, v in _dc(info).items() if k in _INFO_FIELDS}
+                if not _thin(entry):
+                    break
+                if attempt == 1:
+                    entry["retried"] = True
+                    time.sleep(0.8)
+            except Exception as e:  # noqa: BLE001 — remembered briefly so a bad id isn't re-asked every paint
+                entry = {"error": _redact_text(str(e) or type(e).__name__)[:200]}
+                break
+        if not entry.get("error"):
+            entry.update(_hub_dates(model_id))
+        entry["at"] = time.time()
         with _deploy_lock:
             _model_info_cache[model_id] = entry
             _enrich_pending.discard(model_id)
@@ -2332,7 +2378,7 @@ def deploy_models_enrich(ids: Any) -> dict[str, Any]:
     for mid in wanted:
         entry = _model_info_get(mid)
         if entry and not entry.get("error"):
-            found[mid] = _deploy_redact({k: v for k, v in entry.items() if k != "at"})
+            found[mid] = _deploy_redact({k: v for k, v in entry.items() if k not in ("at", "retried")})
         elif entry and entry.get("error"):
             found[mid] = {"error": entry["error"]}
         else:
@@ -3099,9 +3145,6 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": "invalid JSON body"}, 400)
             return
         try:
-            if path == "/api/key":
-                self._json(set_provider_key(body.get("provider"), body.get("key")))
-                return
             if path == "/api/connect":
                 self._json(connect_selfhost(body.get("backend"), body.get("model"),
                                             body.get("key")))
