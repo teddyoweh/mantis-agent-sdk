@@ -354,7 +354,7 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     # a lone method renders as a label, several render as a toggle
     assert 'el("div","ac-one"' in js2 and "e.methods.length > 1" in js2
     # the useful parts of the old row survive inside the card
-    assert "ac-models" in js2 and "listed" in js2 and "live" in js2 and "ac-env" in js2
+    assert "ac-models" in js2 and "listed" in js2 and "live" in js2
     # grouped, and a card that opens a form must not stretch its neighbours
     assert "auth-grid" in page and "align-items: start" in page
     # a locked model row deep-links into its family's setup, not a generic list
@@ -362,6 +362,45 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     js = page.split("<script>")[1]
     panel = js[js.index("function authMethodForm("):js.index("function probeBox(")]
     assert "secret" in panel and "masked" in panel      # fields render masked + saved hints
+
+
+def test_provider_cards_are_uniform_tight_and_say_each_thing_once(fake):
+    """Marks render identically, no fact is printed twice, the actions are one
+    row, the model footer clamps, and the cards keep an even height."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    # 1. one square, one inset, never clipped — tinted only by a real colour
+    mark = js[js.index("function bigMark("):js.index("function providerMark(")]
+    assert 'preserveAspectRatio="xMidYMid meet"' in js and "markSvg(m.svg)" in mark
+    assert '/^#/.test(m.tint)' in mark and "TINT_ALPHA" in mark
+    box = css.split(".ac-h .bigmark {")[1].split("}")[0]
+    assert "width: 40px" in box and "height: 40px" in box and "border-radius: 10px" in box
+    # 2. the description is the card's; oauth doesn't repeat it, and the env
+    # var appears only in its field's help line
+    oauth = js[js.index("function oauthFlow("):js.index("function unlockFamily(")]
+    assert "no API key, no per-token bill" not in oauth
+    assert 'el("div","ac-env"' not in js and 'class="ac-meta"' not in js
+    assert 'help.append(el("span","envn"' in js
+    # 3. one action row, Save the only filled button, Docs an icon at the end
+    acts = css.split(".ap-acts {")[1].split("}")[0]
+    assert "flex-wrap: nowrap" in acts
+    assert '.ac-doc { margin-left: auto' in css and 'extLink("ac-doc", "↗"' in js
+    # 3b. the model footer clamps to two rows with a +N that expands
+    assert ".ac-models .chips.clamp" in css and '"Show fewer"' in js and 'el("div","chips clamp")' in js
+    # 4. even cards, and an open form still never stretches a neighbour
+    card = css.split(".acard {")[1].split("}")[0]
+    assert "min-height" in card
+    assert "align-items: start" in css.split(".auth-grid {")[1].split("}")[0]
+    # 5. the toggle is one control: equal-height pills, active filled + ticked
+    types = css.split(".ac-types .fchip {")[1].split("}")[0]
+    assert "height: 26px" in types
+    # a pill must never shrink its label to a sliver
+    assert "flex: none" in types and "white-space: nowrap" in types
+    assert ".ac-types .fchip.ac-live { background: var(--accent)" in css
+    assert 'el("span","ac-tick"' in js and 'm.status.active ? " ac-live" : ""' in js
+    # ".live" is the 6px status dot: a pill must never borrow its width
+    assert '? " live" : ""' not in js and ".fchip.live" not in css
 
 
 def test_every_empty_state_has_an_illustration(fake):

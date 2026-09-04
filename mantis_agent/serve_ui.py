@@ -318,14 +318,14 @@ INDEX_HTML = r"""<!doctype html>
   .auth-glabel { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
   /* start-aligned so a card that opens a form never stretches its neighbours */
   .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
-  .acard { background: var(--panel); border-radius: var(--radius); padding: 15px 16px 14px; display: flex;
-    flex-direction: column; gap: 10px; min-width: 0; transition: background var(--t); }
+  .acard { background: var(--panel); border-radius: var(--radius); padding: 14px 15px 13px; display: flex;
+    flex-direction: column; gap: 8px; min-width: 0; min-height: 208px; transition: background var(--t); }
   .acard:hover { background: var(--panel-2); }
   .acard.on { background: var(--accent-soft); }
   .acard.on:hover { background: var(--accent-soft-2); }
   .ac-h { display: flex; align-items: center; gap: 12px; min-width: 0; }
-  .ac-h .bigmark { width: 38px; height: 38px; border-radius: 10px; }
-  .ac-h .bigmark svg { width: 21px; height: 21px; }
+  .ac-h .bigmark { width: 40px; height: 40px; border-radius: 10px; }
+  .ac-h .bigmark svg { width: 22px; height: 22px; }
   .ac-h .fn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .acard.on .ac-h .fn { color: var(--accent); }
   .ac-h .fd { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -334,27 +334,43 @@ INDEX_HTML = r"""<!doctype html>
   .ac-s b { font-weight: 600; color: var(--ink); }
   .ac-s .fsx { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
-  .ac-types { display: flex; gap: 3px; flex-wrap: wrap; }
-  .ac-types .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12px; }
-  .acard.on .ac-types .fchip.on { background: var(--panel); color: var(--accent); }
+  /* the toggle is one control: equal pills, at most two rows */
+  .ac-types { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+  /* flex: none — a pill must never shrink its label to a sliver */
+  .ac-types .fchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    font-size: 12px; line-height: 1; flex: none; white-space: nowrap; max-width: 100%; }
+  /* NB: not ".live" — that class is the 6px status dot, and its width would
+     collapse the button to a sliver */
+  .ac-types .fchip.ac-live { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .ac-types .fchip.ac-live:hover { background: var(--accent); filter: brightness(1.06); }
+  .acard.on .ac-types .fchip.on:not(.ac-live) { background: var(--panel); color: var(--accent); }
+  .ac-tick { font-size: 10px; line-height: 1; }
   .ac-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
   .ac-dot.cfg { background: var(--warn); }
-  .ac-dot.act { background: var(--ok); }
-  .ac-one { font-size: 12px; color: var(--ink-3); }
-  .ac-d { font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
-  .ac-meta { margin-top: 8px; }
-  .ac-env { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .ac-models { margin-top: 10px; }
-  .ac-mh { font-size: 10.5px; color: var(--ink-3); margin-bottom: 6px; }
+  .ac-one { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+  .ac-d { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  .ac-models { margin-top: 12px; }
+  .ac-mh { font-size: 10.5px; color: var(--ink-3); margin-bottom: 5px; }
   .ac-models .chip { font-size: 10.5px; padding: 2px 7px; }
+  /* two rows of models, then +N */
+  .ac-models .chips.clamp { max-height: 46px; overflow: hidden; }
+  .ac-models .chip.more { cursor: pointer; border: 0; font: inherit; font-family: var(--mono); font-size: 10.5px;
+    color: var(--ink-3); background: var(--fill); border-radius: 6px; padding: 2px 7px; margin-top: 5px; }
+  .ac-models .chip.more:hover { color: var(--accent); }
   .acard.on .ac-models .chip { background: var(--panel); }
-  .ap-form { margin-top: 11px; }
-  .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 12px; margin-bottom: 10px; }
+  .ap-form { margin-top: 8px; }
+  .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 12px; margin-bottom: 8px; }
   .ap-fields .dp-field input.in { background: var(--panel); width: 100%; }
   .ap-fields .kh-n { line-height: 1.45; }
   .ap-fields .envn { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .ap-note { font-size: 12px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 8px 11px; margin-bottom: 10px; }
-  .ap-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ap-note { font-size: 12px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 7px 10px; margin-bottom: 8px; }
+  /* one action row: Save is the only filled button, the rest are quiet */
+  .ap-acts { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+  .ap-acts .b { padding: 6px 11px; font-size: 12px; }
+  .ap-acts .b.gho { background: transparent; color: var(--ink-3); }
+  .ap-acts .b.gho:hover { background: var(--fill); color: var(--ink); }
+  .ac-doc { margin-left: auto; color: var(--ink-3); font-size: 13px; text-decoration: none; padding: 0 2px; }
+  .ac-doc:hover { color: var(--accent); }
   .oauth-paste { display: none; gap: 8px; margin-top: 10px; max-width: 560px; }
   .oauth-paste.on { display: flex; }
   .oauth-paste input.in { background: var(--panel); }
@@ -3392,12 +3408,21 @@ function orgMark(org) {
   }
   return w;
 }
+// One square, one inset, one alpha — whatever grid the vendor drew on. The
+// square is tinted only when the vendor's own colour is known (a hex); a
+// monochrome mark inherits the ink and sits on the neutral square, so no
+// provider gets a stray grey box while its neighbour glows.
+const TINT_ALPHA = "12%";
+function markSvg(svg) {
+  return String(svg).replace(/<svg\b/, '<svg preserveAspectRatio="xMidYMid meet"');
+}
 function bigMark(pid, label) {
   const m = MARKS[pid];
   const w = el("span","bigmark");
   if (m && m.svg) {
-    w.innerHTML = m.svg;
-    if (m.tint) { w.style.color = m.tint; w.style.background = "color-mix(in srgb, " + m.tint + " 16%, transparent)"; }
+    w.innerHTML = markSvg(m.svg);
+    if (m.tint) w.style.color = m.tint;
+    if (m.tint && /^#/.test(m.tint)) w.style.background = "color-mix(in srgb, " + m.tint + " " + TINT_ALPHA + ", transparent)";
   } else w.textContent = (label || pid || "?").slice(0, 1).toUpperCase();
   return w;
 }
@@ -3405,7 +3430,7 @@ function providerMark(pid, label) {
   const m = MARKS[pid];
   const w = el("span","mark2");
   if (m && m.svg) {
-    w.innerHTML = m.svg;
+    w.innerHTML = markSvg(m.svg);
     if (m.tint) w.style.color = m.tint;
   } else {
     w.textContent = (label || pid || "?").slice(0, 1).toUpperCase();
@@ -3523,31 +3548,32 @@ function authCard(e) {
     if (!m) return;
     body.append(el("div","ac-d", m.description || ""));
     body.append(authMethodForm({ label: e.label, logo: e.logo, active: e.active }, m));
-    const kv = el("div","ac-meta");
-    const envs = (m.fields || []).map(f => f.env).join(" · ");
-    if (envs) kv.append(el("span","ac-env", envs));
-    if (meta && meta.api_key_env && !envs) kv.append(el("span","ac-env", meta.api_key_env));
-    body.append(kv);
     if (meta && (meta.models || []).length) {
       const foot = el("div","ac-models");
       foot.append(el("div","ac-mh", (meta.models.length + " listed") + (meta.live_count ? " · " + meta.live_count + " live" : "")));
-      const chips = el("div","chips");
+      const chips = el("div","chips clamp");
       const cur = (MSTATE.current || {}).model;
-      meta.models.slice(0, 8).forEach(x => {
+      meta.models.forEach(x => {
         const c = el("span","chip" + (e.active ? " clk" : "") + (x === cur ? " cur" : ""), x);
         if (e.active) c.onclick = ev => { ev.stopPropagation(); useModel(x, meta.base_url); };
         chips.append(c);
       });
-      if (meta.models.length > 8) chips.append(el("span","chip more", "+" + (meta.models.length - 8)));
       foot.append(chips);
+      // two rows, then a +N that opens the rest in place
+      const more = el("button","chip more", "+" + Math.max(0, meta.models.length - 4) + " more");
+      more.onclick = ev => { ev.stopPropagation(); chips.classList.toggle("clamp"); more.textContent =
+        chips.classList.contains("clamp") ? "+" + Math.max(0, meta.models.length - 4) + " more" : "Show fewer"; };
+      if (meta.models.length > 4) foot.append(more);
       body.append(foot);
     }
   };
   if (e.methods.length > 1) {
     const seg = el("div","ac-types");
     e.methods.forEach(m => {
-      const c = el("button","fchip" + (m.id === sel ? " on" : ""), m.label);
-      if (m.status.active) c.append(el("span","ac-dot act"));
+      const c = el("button","fchip" + (m.id === sel ? " on" : "") + (m.status.active ? " ac-live" : ""), m.label);
+      // the active method is the filled one with a tick; configured-but-idle
+      // carries a dot; unconfigured stays plain
+      if (m.status.active) c.append(el("span","ac-tick", "✓"));
       else if (m.status.configured) c.append(el("span","ac-dot cfg"));
       c.onclick = () => {
         sel = m.id; AUTH.method[e.key] = m.id;
@@ -3633,7 +3659,7 @@ function authMethodForm(d, m) {
     });
     acts.append(del);
   }
-  if (m.docs_url) acts.append(extLink("b gho", "Docs ↗", m.docs_url));
+  if (m.docs_url) { const dl = extLink("ac-doc", "↗", m.docs_url); dl.title = "Provider docs"; acts.append(dl); }
   f.append(acts, out);
   return f;
 }
@@ -3647,9 +3673,10 @@ function probeBox(ok, text) {
 // OAuth: start → open the URL → paste what comes back → finish.
 function oauthFlow(d, m, out) {
   const w = el("div");
+  // the card already states what this method is; only say what's NEW here
   const step = el("div","ap-note");
-  step.textContent = m.status.active ? "Signed in." + (m.status.hint ? " " + m.status.hint : "")
-                                     : "Sign in with your Claude account — no API key, no per-token bill.";
+  step.textContent = m.status.active ? "Signed in." + (m.status.hint ? " " + m.status.hint : "") : "";
+  step.style.display = step.textContent ? "" : "none";
   w.append(step);
   const acts = el("div","ap-acts");
   const paste = el("div","oauth-paste");
@@ -3678,6 +3705,7 @@ function oauthFlow(d, m, out) {
       if (!r.ok) { out.append(probeBox(false, errText(r))); return; }
       if (r.url) window.open(r.url, "_blank", "noopener");
       step.textContent = r.instructions || "A browser tab opened — approve there, then paste the code you get back.";
+      step.style.display = "";
       paste.classList.add("on"); paste.dataset.handle = r.handle || "";
       setTimeout(() => code.focus(), 60);
       if (r.url) { const a = extLink("a-link", "Open the sign-in page again ↗", r.url); a.style.marginLeft = "10px"; acts.append(a); }
@@ -3694,7 +3722,7 @@ function oauthFlow(d, m, out) {
     });
     acts.append(del);
   }
-  if (m.docs_url) acts.append(extLink("b gho", "Docs ↗", m.docs_url));
+  if (m.docs_url) { const dl = extLink("ac-doc", "↗", m.docs_url); dl.title = "Provider docs"; acts.append(dl); }
   w.append(acts, paste);
   return w;
 }
