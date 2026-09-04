@@ -3,8 +3,10 @@
 `mantis serve` starts a small local web page over everything mantis keeps in
 `~/.mantis-agent`: which providers you can reach, what the agent has been
 doing, what it cost, every session on the machine, and the skills and MCP
-servers it's wired to. It is an instrument panel for a local agent runtime —
-not a hosted service. Nothing leaves your machine.
+servers it's wired to — and, on the **Deploy** page, the GPU clouds you can
+stand any open model up on. It is an instrument panel for a local agent
+runtime — not a hosted service. Nothing leaves your machine unless you click
+a button that says so.
 
 ```bash
 mantis serve                 # http://127.0.0.1:8787, opens a browser tab
@@ -96,6 +98,62 @@ Below that, the provider setup list — grouped by family, connected first —
 where you paste a key, check reachability, or open the how-to-get-a-key
 guide.
 
+### Deploy
+
+Bring your own GPU cloud. The page is the hub for the `mantis_agent.deploy`
+feature (the same thing `mantis-agent deploy` and the terminal's `/deploy`
+drive): add a provider credential once, search any open model, see which
+GPUs fit and what they cost, deploy with one click, watch it come up, then
+**Use this model** so the SDK and the terminal point at it.
+
+Reading top to bottom:
+
+- **Signal path** — *providers configured → model picked → deployed →
+  current model*. The overview's own signal path gains a **deployed** node
+  whenever a deployment is live, and the rail counts them.
+- **GPU providers** — one card per adapter (RunPod, Hugging Face Inference
+  Endpoints, Modal, DeepInfra, Baseten, Vast.ai, …) with the vendor's mark,
+  whether a key is saved and whether it **validated** (with the account's
+  balance or credits when the provider reports one), and badges for what the
+  provider does: **scale to zero** vs **always warm**, and **public endpoint**
+  in warning colours where the URL is reachable without our auth (Vast.ai's
+  plain-HTTP endpoints are flagged the same way). **Add key** opens an inline
+  form generated from the adapter's own `credential_fields` — secret fields
+  are password inputs, each with its help text and a link to the provider's
+  console. Saving validates straight away.
+- **Pick a model** — a Hugging Face Hub search with *trending / downloads /
+  likes* sort. Each row shows the id, parameter count, dominant dtype,
+  license, a **gated** tag, a **vllm ✓ / ✗ / ?** servability verdict and
+  the estimated VRAM. With an empty query the list is the curated set of
+  good first deploys. Clicking a row inspects it.
+- **Fit & deploy** — for the selected model: its architectures, size, dtype,
+  context length and VRAM estimate, then one table per *configured*
+  provider: GPU, VRAM, price per hour, a **fits / tight / no** verdict (tight
+  means under 15% headroom) and whether it cold-starts from zero or stays
+  warm. Pick the engine the provider supports (vLLM, SGLang, TGI,
+  llama.cpp), open **advanced** for `max_model_len`, tensor parallel,
+  quantisation, min/max replicas, idle timeout, `trust_remote_code` and an HF
+  token for gated repos, and press **Deploy** on a row. A confirmation names
+  the cost first: *$X/h while running · $Y/h idle*. Results are cached for a
+  minute.
+- **Progress sheet** — the deploy runs as a background job; the sheet streams
+  its progress lines with the elapsed time, then shows the endpoint URL, the
+  served model name (what goes in `model=`) and the auth env var, with
+  **Use this model** and **Copy** buttons for the one-line shell form
+  (`MANTIS_AGENT_MODEL=… MANTIS_AGENT_BASE_URL=… mantis`) and the Python form
+  (`MantisAgentOptions(model=…, backend=…)`).
+- **Deployments** — every deployment the store knows about: provider mark,
+  name, model, GPU, a status chip (a breathing dot while it's starting),
+  endpoint (click to copy), price per hour plus accrued cost where the
+  provider's billing API reports it, age, and **Use / Logs / Teardown**.
+  Logs open in a side sheet with a tail size and a refresh button (providers
+  without a logs API say so). Teardown asks first and names the hourly cost
+  it stops. The table refreshes with the page's 15-second timer.
+
+Empty states teach the path: with no provider configured the model picker
+says *Add a GPU provider to deploy any model*; with nothing deployed the
+table shows the three steps.
+
 ### MCP · Skills · Config
 
 Unchanged from before: an inspector for every configured MCP server with a
@@ -106,8 +164,8 @@ settings with the layer each value came from.
 
 | Keys | Action |
 |---|---|
-| `1` … `6` | jump to a page (the rail shows each key) |
-| `g` then `o` / `s` / `m` | overview / sessions / models |
+| `1` … `7` | jump to a page (the rail shows each key) |
+| `g` then `o` / `s` / `m` / `d` | overview / sessions / models / deploy |
 | `g` then `p` / `k` / `c` | mcp / skills / config |
 | `/` | focus the current page's search (models filter, sessions filter, …) |
 | `↑` `↓` `Enter` in the models filter | walk the visible rows and switch to one |
@@ -137,6 +195,23 @@ loopback bind:
 | `/api/session?cwd=…&id=…` | the transcript with per-turn ledger and session stats |
 | `/api/analytics`, `/api/projects`, `/api/sessions`, `/api/skills`, `/api/mcp`, `/api/config` | as before |
 
+Deploy endpoints (`POST` bodies are JSON; every `POST` needs the token):
+
+| Endpoint | Does |
+|---|---|
+| `GET /api/deploy/providers` | every deploy adapter: configured, credential fields, engines, console URL, scale-to-zero / public flags, last validation result, logo id |
+| `POST /api/deploy/creds` `{provider, values:{ENV: value}}` | save credentials into the user settings env, validate, return the account (only the env *names* come back) |
+| `POST /api/deploy/validate` `{provider}` | network check of the saved credentials |
+| `GET /api/deploy/gpus?provider=&min_vram=` | the provider's GPU catalogue, cheapest first |
+| `GET /api/deploy/models?q=&sort=&limit=` | HF Hub search (curated list when `q` is empty) |
+| `GET /api/deploy/inspect?model=` | pre-flight facts plus, per configured provider, which GPUs fit (cached 60 s) |
+| `POST /api/deploy/up` `{provider, model, gpu, engine, opts}` | start a deploy job → `{job}` |
+| `GET /api/deploy/job?id=` | job progress lines, status, and the final deployment or error |
+| `GET /api/deploy/list?refresh=1` | stored deployments with cost |
+| `GET /api/deploy/status?id=`, `GET /api/deploy/logs?id=&tail=` | one deployment refreshed from the provider; its last log lines |
+| `POST /api/deploy/connect` `{id}` | verify the endpoint answers, make it the current model; returns `{model, backend, api_key_env, headers}` plus ready-to-paste shell and Python lines |
+| `POST /api/deploy/down` `{id}` | start a teardown job → `{job}` |
+
 ## Security notes
 
 - **Loopback by default.** Without `--lan` the server binds `127.0.0.1` and
@@ -157,6 +232,22 @@ loopback bind:
   key-shaped strings. The masking is a safety net for screenshots and shared
   screens, not a guarantee — a transcript can still contain something the
   patterns don't recognise.
+- **Deploy credentials go to your user settings env.** Saving a provider key
+  on the Deploy page writes it to the `env` block of the *user* settings file
+  under `~/.mantis-agent` (the same place `catalog.set_key` puts provider
+  keys) and exports it into the running process. The value is never sent back
+  to the page — not even masked — only the names of the variables that were
+  saved.
+- **Deployed endpoints may be public.** On some providers the endpoint URL is
+  reachable by anyone who has it (the card and the confirm dialog say so).
+  Keep the auth env var set, don't paste endpoint URLs into chat, and tear a
+  deployment down when you're done — it bills by the hour either way.
+- **Deploy actions need the token, like every write.** Saving credentials,
+  deploying, connecting and tearing down are `POST`s behind the per-launch
+  token; under `--lan` the reads are too. Anyone holding the `--lan` URL can
+  start and stop GPU spend on your accounts — treat it as the credential it
+  is.
 - **Nothing phones home.** No CDN, no analytics, no fonts fetched; the
-  provider **test** buttons and the MCP connection test are the only outbound
-  requests, and only when you click them.
+  provider **test** buttons, the MCP connection test and the Deploy page's
+  provider calls (search, validate, deploy, logs, teardown) are the only
+  outbound requests, and only when you click them.

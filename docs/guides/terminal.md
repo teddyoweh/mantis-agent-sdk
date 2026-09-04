@@ -200,6 +200,76 @@ A few rendering rules keep the transcript scannable at 80 columns:
     ╰──────────────────────────────────────────────────────────────────────╯
     ```
 
+## Deploy — bring your own GPU
+
+`/deploy` turns an account on a GPU cloud into an OpenAI-compatible endpoint
+serving any open-weight model, without leaving the session. It is the terminal
+face of `mantis_agent.deploy` (the same operations as `mantis-agent deploy` on
+the command line and the Deploy page of `mantis serve`).
+
+```text
+› /deploy
+╭─ mantis · deploy ────────────────────────────────────────────────────────────╮
+│ providers ● RunPod Serverless                                                │
+│           ○ Modal  run /deploy creds modal                                   │
+│ deploys   1 deployment · 1 running · $2.49/h                                 │
+│           ep-123  runpod · meta-llama/Llama-3.1-8B-Instruct · H100 80GB · r… │
+╰───────────────────────────────────────── /deploy up · ls · connect · down ─╯
+```
+
+Three steps the first time — the empty panel prints them:
+
+```text
+› /deploy creds runpod            paste the cloud's API key (masked), validated on the spot
+› /deploy gpus runpod             the GPU catalogue, cheapest first (--min-vram 40 to filter)
+› /deploy up runpod Qwen/Qwen3-8B --gpu "NVIDIA H100 80GB"
+⚒ Deploy runpod · Qwen/Qwen3-8B · NVIDIA H100 80GB (42s)
+    pre-flight: 8.2B · BF16 · ~20 GB
+    creating endpoint
+    cold start… 503
+(job #3 · /jobs to watch · the input stays live)
+```
+
+`up` runs as a background job, so you keep typing while the endpoint comes
+up; its progress lines stream under the `⚒ Deploy …` call line in the same
+in-place window a long `bash` call gets, with the elapsed clock on the call
+line. When it finishes the block collapses to the outcome and the exact
+connect line — and the full-screen UI asks **Use it now?** (Yes/No) so the
+session can switch immediately:
+
+```text
+⚒ Deploy runpod · Qwen/Qwen3-8B · NVIDIA H100 80GB ✓
+  └ ep-123 · running · 3m12s · $2.49/h · https://api.runpod.ai/v2/ep-123/openai/v1
+    use it: /deploy connect ep-123  · logs: /deploy logs ep-123 · stop: /deploy down ep-123
+```
+
+`/deploy connect <id>` verifies the endpoint, makes it the session's
+model/backend exactly as `/model` would, and prints the same routing line
+(`model → Qwen/Qwen3-8B · ⚙ Self-host · via api.runpod.ai/… · deployed`).
+`/deploy down <id>` asks first and names the money: *Tear down ep-123:
+Qwen/Qwen3-8B on runpod (H100 80GB) — stops $2.49/h from accruing?*
+
+The full grammar (`/deploy help`):
+
+| Command | What it does |
+|---|---|
+| `/deploy` | Status panel: providers, live deployments, $/h |
+| `/deploy providers` | Every adapter, its engines, and the env vars it needs |
+| `/deploy creds <provider>` | Prompt for each credential (masked), save, validate, print the account |
+| `/deploy gpus <provider> [--min-vram N]` | GPU catalogue, cheapest first |
+| `/deploy models [query]` | Search open models on the HF Hub |
+| `/deploy inspect <model>` | Pre-flight: params, dtype, VRAM estimate, vLLM servability |
+| `/deploy up <provider> <model> --gpu <id> [--engine vllm] [--max-model-len N] [--tp N] [--min 0] [--max 1] [--idle 300] [--name X]` | Deploy as a background job |
+| `/deploy ls` | Stored deployments (`--refresh` to poll the provider) |
+| `/deploy status <id>` | Refresh one deployment |
+| `/deploy logs <id> [--tail N]` | Provider logs |
+| `/deploy connect <id>` | Switch this session to the endpoint |
+| `/deploy down <id>` | Tear it down (confirms) |
+
+`/dash` gains a `deploy` row — live count, how many are running, and the
+combined $/h — whenever at least one deployment exists, and the one-line
+`/status` summary carries `N deploy · $x/h`.
+
 ## Command reference for this page
 
 | Command | What it does |
@@ -213,3 +283,4 @@ A few rendering rules keep the transcript scannable at 80 columns:
 | `/connect <url> [model]` | Point at your own OpenAI-compatible server |
 | `/pull <tag>` | Download an open model with Ollama and switch to it |
 | `/thinking show\|hide\|collapse` | How reasoning blocks render |
+| `/deploy …` | Bring-your-own GPU: creds · gpus · up · connect · down (see above) |

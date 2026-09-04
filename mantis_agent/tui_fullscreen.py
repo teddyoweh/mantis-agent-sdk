@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import term_caps, term_measure
-from .tui import MODES, SLASH_COMMANDS, SPINNER_FRAMES, THINKING_WORDS, print_banner
+from .tui import LEG, MODES, SLASH_COMMANDS, SPINNER_FRAMES, THINKING_WORDS, print_banner
 
 # ANSI 256/standard colors (work in Terminal.app — no truecolor needed).
 #
@@ -2763,6 +2763,111 @@ async def run_fullscreen(tui: Any) -> int:
             tail.erase(out.write)
             out.flush()
 
+    # -- /deploy: the full-screen UI adapter ------------------------------------
+    # Same five operations the classic adapter provides, backed by this app's
+    # overlays: printing through run_in_terminal, a masked line prompt that
+    # resolves a Future, the AskUserQuestion picker for yes/no, the shared job
+    # manager, and a BashTail-style live window under a ``⚒ Deploy`` call line
+    # whose header carries the elapsed clock.
+
+    async def _ask_line(prompt: str) -> str:
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        state["awaiting_key"] = {"provider_id": None, "model": None, "future": fut}
+        input_buffer.reset()
+        await _announce(f"{prompt} · enter to confirm · esc to cancel")
+        try:
+            return await fut
+        finally:
+            if state.get("awaiting_key") is not None and state["awaiting_key"].get("future") is fut:
+                state["awaiting_key"] = None
+            get_app().invalidate()
+
+    class _FsDeployUI:
+        can_prompt_after_job = True
+
+        async def emit(self, fn: Any) -> None:
+            await _print(fn)
+
+        async def secret(self, prompt: str) -> str:
+            return await _ask_line(prompt)
+
+        async def confirm(self, question: str) -> bool:
+            answers = await _ask_questions([{
+                "question": question, "header": "Deploy", "multiSelect": False,
+                "options": [{"label": "Yes", "description": "go ahead"},
+                            {"label": "No", "description": "leave it"}],
+            }])
+            picked = answers[0]["answers"][0] if answers and answers[0]["answers"] else ""
+            return picked.lower().startswith("y")
+
+        def spawn(self, coro: Any, desc: str) -> Any:
+            return tui._jobs.spawn(coro, desc=desc, kind="deploy", max_runtime_s=None)
+
+        async def switch(self, model: str, backend: str, api_key: str | None) -> None:
+            from . import catalog  # noqa: PLC0415
+            _old = tui.agent.provider if tui.agent is not None else None
+            tui.backend, tui.api_key, tui.model = backend, api_key, model
+            tui.agent = await asyncio.to_thread(tui._build_agent)
+            _retire_provider(_old, tui.agent.provider if tui.agent is not None else None)
+            if tui.agent is not None and tui.agent.permissions is not None:
+                tui.agent.permissions.asker = _ask_permission
+            try:
+                catalog.set_last_model(model, backend)
+                catalog.push_recent_model(model)
+            except Exception:  # noqa: BLE001
+                pass
+            state.pop("model_cache", None)
+            await _announce(_switch_msg() + " · deployed")
+
+        def progress(self, label: str) -> Any:
+            from .tui import BashTail  # noqa: PLC0415
+            started = time.monotonic()
+
+            def _header() -> str:
+                return f"⚒ Deploy {label} ({int(time.monotonic() - started)}s)"
+
+            tail = BashTail(_width(), header=_header)
+            rec: dict[str, Any] = {"tail": tail, "task": None}
+
+            def _paint() -> None:
+                out = tui.console.file
+                tail.paint(out.write)
+                out.flush()
+
+            async def _painter() -> None:
+                try:
+                    while rec["tail"] is not None:
+                        if not state["working"]:
+                            await _print(_paint)
+                        await asyncio.sleep(1.0)
+                except asyncio.CancelledError:
+                    pass
+
+            rec["task"] = get_app().create_background_task(_painter())
+
+            class _P:
+                def line(self, text: str) -> None:
+                    tail.feed(text.rstrip("\n") + "\n")
+
+                async def finish(self, dep: Any, err: BaseException | None) -> None:
+                    rec["tail"] = None
+                    if rec["task"] is not None:
+                        rec["task"].cancel()
+                    elapsed = time.monotonic() - started
+
+                    def _final() -> None:
+                        out = tui.console.file
+                        tail.erase(out.write)
+                        out.flush()
+                        mark = "[ansired]✗[/]" if err is not None else "[green]✓[/]"
+                        tui.console.print(f"[{LEG}]⚒[/] [bold white]Deploy[/] [bright_black]{label}[/] {mark}",
+                                          highlight=False)
+                        tui._deploy_print_outcome(dep, err, elapsed)
+                    await _print(_final)
+            return _P()
+
+    _deploy_ui = _FsDeployUI()
+
     async def _handle(text: str) -> None:
         state["suggested_prompt"] = None  # a submitted turn invalidates the ghost
         input_buffer.suggestion = None
@@ -3476,8 +3581,13 @@ async def run_fullscreen(tui: Any) -> int:
         if cmd == "/thinking":
             await _print(lambda: tui._cmd_thinking(arg))
             return True
+        if cmd == "/deploy":
+            await tui._cmd_deploy(arg, ui=_deploy_ui)
+            get_app().invalidate()
+            return True
         if cmd == "/dash":
             sub = arg.strip().lower()
+            await tui._refresh_deploy_snapshot()
 
             def _draw_dash() -> None:
                 tui._show_dash(state["ctx_tokens"], state["session_cost"], _ctx_window(),
@@ -4651,6 +4761,14 @@ async def run_fullscreen(tui: Any) -> int:
             key = input_buffer.text.strip()
             input_buffer.reset()
             state["awaiting_key"] = None
+            fut = ak.get("future")
+            if fut is not None:
+                # A generic masked prompt (/deploy creds): hand the line to
+                # whoever is awaiting it; an empty line reads as cancel there.
+                if not fut.done():
+                    fut.set_result(key)
+                event.app.invalidate()
+                return
             if key:
                 event.app.create_background_task(
                     _apply_key(ak["provider_id"], ak["model"], key,
@@ -4873,6 +4991,10 @@ async def run_fullscreen(tui: Any) -> int:
             has_input=bool(input_buffer.text),
         )
         if action == "cancel_key":
+            ak = state.get("awaiting_key") or {}
+            fut = ak.get("future")
+            if fut is not None and not fut.done():
+                fut.set_result("")
             state["awaiting_key"] = None
             input_buffer.reset()
         elif action == "close_picker":
@@ -5109,6 +5231,8 @@ async def run_fullscreen(tui: Any) -> int:
     def _notify_job(job: Any) -> None:
         from .tui import format_job_completion_line  # noqa: PLC0415
 
+        if str(getattr(job, "kind", "") or "") == "deploy":
+            return  # the ⚒ Deploy block already printed its outcome
         line = format_job_completion_line(job, width=shutil.get_terminal_size((80, 24)).columns)
         get_app().create_background_task(_announce(line))
         get_app().invalidate()

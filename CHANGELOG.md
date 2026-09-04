@@ -44,6 +44,30 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   gemini-2.5 and 3, grok-4), with longest-prefix fallback. `mantis-agent probe`
   and `list-models` work against every family with the right auth headers.
 
+### Added — bring your own GPU provider
+
+- **`mantis_agent.deploy`.** Save a GPU cloud credential once and deploy any
+  open-weight model as an OpenAI-compatible endpoint: RunPod Serverless,
+  Hugging Face Inference Endpoints, Modal, DeepInfra, Baseten, and Vast.ai.
+  One `DeployProvider` contract (credentials described as fields, GPU
+  catalogue with prices, deploy, status, wait-ready with cold-start 503
+  handling, logs, delete, cost) and a manager that runs pre-flight, persists
+  deployments to `~/.mantis-agent/deployments.json` (env var names only,
+  never secrets), and connects the result as the current model.
+- **Pre-flight from the Hub.** Architecture, parameter count, dtype, licence,
+  gated flag, vLLM servability, and a VRAM estimate (weights plus KV cache)
+  for any Hugging Face id, plus Ollama tags; GPUs are filtered to what fits
+  with fits / tight / no verdicts.
+- **`mantis-agent deploy`** CLI: `providers`, `creds`, `gpus`, `models`,
+  `inspect`, `up`, `ls`, `status`, `logs`, `connect`, `down`, all with
+  `--json`.
+- **`mantis serve` → Deploy.** Provider cards with inline credential forms,
+  model search, fit and cost table per GPU, one-click deploy with a live
+  progress sheet, deployments table with logs and teardown, and a
+  "Use this model" button that makes it current for the SDK and terminal.
+- **`/deploy`** in the terminal mirrors the CLI, runs deploys as background
+  jobs, and offers to switch to the endpoint when it comes up.
+
 ### Added — the terminal, a lot better
 
 - **`/dash` — a mini dashboard inside the terminal.** One panel that fits

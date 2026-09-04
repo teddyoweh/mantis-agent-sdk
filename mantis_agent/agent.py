@@ -71,7 +71,7 @@ from .permissions import (
     recheck_mutated_input,
 )
 from .compact import Compactor, SimpleCompactor
-from .providers.base import Provider, detect_provider, resolve
+from .providers.base import Provider, detect_provider, extra_headers_from_env, resolve
 from .streaming.executor import StreamingToolExecutor
 from .tools import ToolRegistry
 from .tracing import Span, Tracer, maybe_start_span
@@ -849,6 +849,14 @@ class Agent:
     #: chain in each adapter); ``""`` means "send no auth at all". Kept out of
     #: ``repr`` so a stray ``print(agent)`` can't leak a key into a log.
     api_key: str | None = field(default=None, repr=False)
+    #: Extra HTTP headers sent on every provider request, after the auth
+    #: header (an explicit header wins). How a proxy-authenticated endpoint
+    #: is reached — ``{"Modal-Key": …, "Modal-Secret": …}`` for a Modal
+    #: deployment, a gateway token, a tracing id. ``None`` falls back to
+    #: ``$MANTIS_AGENT_EXTRA_HEADERS`` (a JSON object), which is what
+    #: ``mantis deploy … connect`` exports for the terminal. Kept out of
+    #: ``repr``: header values are usually secrets.
+    extra_headers: dict[str, str] | None = field(default=None, repr=False)
     #: Working directory for the built-in file and shell tools. Relative paths
     #: the model emits resolve against this, and ``bash`` starts here.
     #:
@@ -1523,6 +1531,20 @@ class Agent:
             # With no explicit key, api_key is read from $ANTHROPIC_API_KEY /
             # $ANTHROPIC_AUTH_TOKEN inside the provider — surfacing it here
             # too would shadow that resolution path.
+        elif backend_kind == "modal":
+            # A modal.run URL, or a ``modal:workspace/app[/fn][@served]`` spec
+            # (the served-model part becomes the adapter's ``inner_model``).
+            # Without this branch the adapter was built with no location at
+            # all and raised before the first request.
+            if self.backend and self.backend.lower().startswith(("http://", "https://")):
+                kw["base_url"] = self.backend
+            elif (self.model or "").lower().startswith("modal:"):
+                from .providers.modal_provider import parse_modal_model_spec  # noqa: PLC0415
+                parts = parse_modal_model_spec(self.model)
+                kw.update(workspace=parts["workspace"], app=parts["app"],
+                          function=parts["function"], inner_model=parts["served_model"])
+            if self.backend_capability is not None:
+                kw["backend_capability"] = self.backend_capability
         elif backend_kind == "mock":
             pass  # mock takes its own kwargs from `extra`
 
@@ -1532,6 +1554,15 @@ class Agent:
         # that did nothing.
         if self.api_key is not None:
             kw.setdefault("api_key", self.api_key)
+        # Extra headers ride on every adapter that takes ``default_headers``
+        # (openai_compat, modal, llamacpp, tgi, anthropic); the signature
+        # filter below drops them for the rest.
+        headers = (
+            self.extra_headers if self.extra_headers is not None
+            else extra_headers_from_env()
+        )
+        if headers:
+            kw.setdefault("default_headers", dict(headers))
 
         # Drop kwargs this adapter doesn't take, rather than losing *all* of
         # them to a blanket TypeError fallback (which is how a real base_url

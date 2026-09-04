@@ -32,9 +32,11 @@ async def main():
 
 asyncio.run(main())`;
 
-const SWAP = `# same script, three backends — change one line
+const SWAP = `# same script, five families — change one line
 options = MantisAgentOptions(model="qwen2.5:7b")                       # → local Ollama
 options = MantisAgentOptions(model="Qwen/Qwen2.5-72B-Instruct-Turbo")  # → Together
+options = MantisAgentOptions(model="claude-opus-5")                    # → Claude, native
+options = MantisAgentOptions(model="grok-4")                           # → xAI
 options = MantisAgentOptions(model="llama-3.3-70b-versatile",
                             backend="https://api.groq.com/openai/v1")  # → Groq`;
 
@@ -53,9 +55,14 @@ agent = Agent(model="qwen2.5:7b", tracer=OTelTracer(service_name="my-agent"))`;
 
 const FEATURES = [
   {
-    k: "any backend",
+    k: "five families",
     t: "Name the model and go",
-    d: "A local Ollama, your own GPU server, a hosted provider — even closed models like GPT and Gemini. mantis works out where the model lives and speaks its dialect. Moving is a one-line change, not a rewrite.",
+    d: "Claude, GPT, Gemini, Grok, or any open model — on a local Ollama, your own GPU server, or a hosted provider. mantis works out where the model lives and speaks its dialect; a bare name like claude-opus-5 or grok-4 is the whole configuration. Moving is a one-line change, not a rewrite.",
+  },
+  {
+    k: "deploy",
+    t: "Bring your own GPU cloud",
+    d: "Save a RunPod, Modal, Hugging Face, DeepInfra, Baseten or Vast.ai credential once. mantis pre-flights the model, shows which GPUs fit and what they cost, deploys it, and connects — from the dashboard, the CLI, or /deploy in the terminal.",
   },
   {
     k: "tools",
@@ -81,6 +88,16 @@ const FEATURES = [
     k: "budget",
     t: "Spend with a ceiling",
     d: "Cap any run in dollars or turns. Every response tells you what it cost, and the run stops cleanly before it overspends — no surprise bills from a runaway loop.",
+  },
+  {
+    k: "dashboard",
+    t: "An instrument panel, local",
+    d: "mantis serve opens a page over everything on your machine: which of the five families are ready, every session with its context fill and cost, models with prices, and the Deploy page. /dash puts the same readout inside the terminal.",
+  },
+  {
+    k: "autonomy",
+    t: "Hand it the whole job",
+    d: "/goal plans, executes, and adversarially verifies until the task is done. /watch wakes the agent the moment a command starts failing; /loop and /cron run prompts on a schedule, sandboxed by default when nobody is watching.",
   },
 ];
 
@@ -211,7 +228,7 @@ export default function Home() {
               </div>
               <p className="text-[14.5px] text-ink-2 leading-relaxed mb-6">
                 The same engine, as an SDK. A tool-calling loop is a few lines away — and the exact same
-                script runs against Together, Fireworks, vLLM, or Groq by changing one string.
+                script runs against Claude, GPT, Gemini, Grok, Together, vLLM, or Groq by changing one string.
               </p>
               <Shiki code={QUICKSTART} lang="python" title="quickstart.py" />
               <div className="mt-4">
@@ -350,7 +367,7 @@ python my_agent.py           # two tools, a 5-turn task — first try`}
             </div>
             <p className="mt-8 text-[15px] text-ink-2 max-w-[540px] mx-auto leading-relaxed">
               Change one word — <span className="mono text-clay">model=</span> — and the same script runs
-              against Together, Fireworks, vLLM, llama.cpp, or Groq.
+              against Claude, GPT, Gemini, Grok, Together, Fireworks, vLLM, llama.cpp, or Groq.
             </p>
             <div className="mt-9 flex flex-wrap gap-3 justify-center">
               <Link

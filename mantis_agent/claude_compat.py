@@ -152,6 +152,11 @@ class MantisAgentOptions:
     #: environment; ``""`` sends no auth. Excluded from ``repr`` so a logged
     #: options object can't leak it.
     api_key: str | None = field(default=None, repr=False)
+    #: Extra HTTP headers on every provider request — proxy auth for a
+    #: deployed endpoint (``{"Modal-Key": …, "Modal-Secret": …}``), a gateway
+    #: token, a tracing id. ``None`` falls back to
+    #: ``$MANTIS_AGENT_EXTRA_HEADERS`` (JSON object). Excluded from ``repr``.
+    extra_headers: dict[str, str] | None = field(default=None, repr=False)
     # ``max_turns`` and ``max_tokens`` default to ``None`` (not the
     # concrete number) so ``setting_sources`` can fill them from disk;
     # the runtime fallback (20 turns / 1024 tokens) lives in
@@ -283,6 +288,8 @@ class MantisAgentOptions:
         if self.api_key is not None:
             # Empty string is meaningful ("no auth"), so test against None.
             opts["api_key"] = self.api_key
+        if self.extra_headers is not None:
+            opts["extra_headers"] = dict(self.extra_headers)
         if self.max_turns is not None:
             opts["max_turns"] = self.max_turns
         if self.max_tokens is not None:

@@ -100,12 +100,12 @@ def _write_cmd(root, name, body, desc="Does things.") -> None:
 def test_discover_custom_commands_user_and_project(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
     proj = tmp_path / "proj"
-    _write_cmd(home, "deploy", "Deploy the app with $ARGUMENTS")
+    _write_cmd(home, "ship", "Deploy the app with $ARGUMENTS")
     (proj / ".mantis" / "commands").mkdir(parents=True)
     (proj / ".mantis" / "commands" / "review-pr.md").write_text("Review PR $ARGUMENTS deeply.")
     cmds = discover_custom_commands(proj)
-    assert "deploy" in cmds and "review-pr" in cmds
-    assert cmds["deploy"][0] == "Does things."
+    assert "ship" in cmds and "review-pr" in cmds
+    assert cmds["ship"][0] == "Does things."
     assert cmds["review-pr"][0] == "custom command"  # no frontmatter → default desc
 
 
@@ -117,9 +117,9 @@ def test_custom_command_cannot_shadow_builtin(tmp_path) -> None:
 
 def test_expand_custom_command_arguments(tmp_path) -> None:
     home = tmp_path / "home"
-    _write_cmd(home, "deploy", "Deploy the app to $ARGUMENTS now.")
-    assert expand_custom_command("/deploy staging") == "Deploy the app to staging now."
-    assert expand_custom_command("/deploy") == "Deploy the app to  now."
+    _write_cmd(home, "ship", "Deploy the app to $ARGUMENTS now.")
+    assert expand_custom_command("/ship staging") == "Deploy the app to staging now."
+    assert expand_custom_command("/ship") == "Deploy the app to  now."
 
 
 def test_expand_custom_command_appends_args_without_placeholder(tmp_path) -> None:
@@ -143,13 +143,13 @@ def test_expand_slash_prompt_routes_custom(tmp_path) -> None:
 
 def test_all_slash_commands_merges_and_tags(tmp_path) -> None:
     home = tmp_path / "home"
-    _write_cmd(home, "deploy", "Deploy.", desc="Ship to prod")
+    _write_cmd(home, "ship", "Deploy.", desc="Ship to prod")
     merged = all_slash_commands()
-    assert merged["/deploy"] == "Ship to prod (custom)"
+    assert merged["/ship"] == "Ship to prod (custom)"
     assert merged["/models"] == SLASH_COMMANDS["/models"]  # built-ins intact
     # /help renders them (uncategorized commands land in the trailing bucket)
     cmds = [c for _, c, _ in build_help_lines(merged)]
-    assert "/deploy" in cmds
+    assert "/ship" in cmds
 
 
 # -- /status /cost /doctor /permissions -------------------------------------------

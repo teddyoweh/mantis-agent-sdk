@@ -7,6 +7,13 @@ idle. The best option if you don't own a GPU — and mantis authenticates
 **Cost feel:** L4 ≈ $0.80/h · A100-80 ≈ $2.50/h · H100 ≈ $4/h — only while
 warm. Free tier includes **$30/month** of compute.
 
+Or let mantis deploy it for you: `mantis-agent deploy creds modal --set
+MODAL_TOKEN_ID=… --set MODAL_TOKEN_SECRET=…` once, then `mantis-agent deploy
+up modal zai-org/GLM-4-9B-0414 --gpu L4` renders and deploys the vLLM app,
+waits for it, and connects the session — same thing from the **Deploy** page
+of `mantis serve` or `/deploy` in the terminal. See
+[Deploy — bring your own GPU](/docs/guides/deploy). Below is the manual route.
+
 ## Credentials
 
 ```bash

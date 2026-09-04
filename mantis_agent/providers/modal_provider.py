@@ -12,12 +12,23 @@ different and worth a thin adapter:
    Building that by hand is tedious and easy to typo. We accept either a
    full URL OR ``(workspace, app, function)`` and assemble it.
 
-2. **Token-pair auth.** Modal uses **two** secret values
-   (``MODAL_TOKEN_ID`` + ``MODAL_TOKEN_SECRET``) sent on every request as
-   ``Modal-Key`` / ``Modal-Secret`` headers — not a single bearer token.
-   OpenAI-compat's env-key chain doesn't speak that pattern, so we don't
-   want users to pretend Modal is just another ``OPENAI_API_KEY`` style
-   endpoint.
+2. **Token-pair auth.** A Modal web endpoint behind proxy auth wants
+   **two** secret values on every request as ``Modal-Key`` /
+   ``Modal-Secret`` headers — not a single bearer token. Modal issues two
+   *kinds* of pair, and they are not interchangeable:
+
+   * a **proxy auth token** (``wk-…`` / ``ws-…``, from the workspace's
+     "Proxy Auth Tokens" page) — the one a web endpoint / Modal Server
+     actually checks. Env: ``MODAL_PROXY_TOKEN_ID`` /
+     ``MODAL_PROXY_TOKEN_SECRET``. This is what ``mantis deploy`` exports.
+   * the **API token** (``ak-…`` / ``as-…``, from ``modal token new``) —
+     what the ``modal`` CLI/SDK uses to deploy. Older proxy setups accept
+     it too, so it stays as the fallback. Env: ``MODAL_TOKEN_ID`` /
+     ``MODAL_TOKEN_SECRET``.
+
+   The proxy pair is read first. OpenAI-compat's env-key chain doesn't
+   speak either pattern, so we don't want users to pretend Modal is just
+   another ``OPENAI_API_KEY`` style endpoint.
 
 3. **Sensible default capability.** Modal-hosted vLLM is the dominant
    shape, so default to the ``modal`` ``BackendCapability`` (native
@@ -206,10 +217,14 @@ class ModalProvider:
        ``inner_model`` reflects the ``@served-model`` part of the spec
        if any.
 
-    Auth comes from constructor args or, falling back, the standard
-    ``MODAL_TOKEN_ID`` + ``MODAL_TOKEN_SECRET`` env vars. Either both or
+    Auth comes from constructor args or, falling back, the environment:
+    the proxy auth token pair ``MODAL_PROXY_TOKEN_ID`` +
+    ``MODAL_PROXY_TOKEN_SECRET`` first, then the API token pair
+    ``MODAL_TOKEN_ID`` + ``MODAL_TOKEN_SECRET``. Within a pair it's both or
     neither — passing only one raises ``ModalProviderError`` so you don't
-    deploy to prod with a half-configured proxy.
+    deploy to prod with a half-configured proxy. Alternatively pass a single
+    ``api_key`` — Modal also accepts the pair joined as one bearer token
+    (``Authorization: Bearer wk-<id>.ws-<secret>``) — and it is sent as-is.
     """
 
     name = "modal"
@@ -226,6 +241,7 @@ class ModalProvider:
         api_path: str = "/v1",
         token_id: str | None = None,
         token_secret: str | None = None,
+        api_key: str | None = None,
         default_headers: dict[str, str] | None = None,
         backend_capability: BackendCapability | None = None,
         model_capability: ModelCapability | None = None,
@@ -248,15 +264,29 @@ class ModalProvider:
                 api_path=api_path,
             )
 
-        # Token-pair auth. Either both or neither — never just one.
-        tid = token_id if token_id is not None else os.environ.get("MODAL_TOKEN_ID")
-        tsec = token_secret if token_secret is not None else os.environ.get("MODAL_TOKEN_SECRET")
+        # Token-pair auth. Two kinds of pair exist (see module docstring): the
+        # proxy auth token (wk-/ws-, what an endpoint checks) is read before
+        # the API token (ak-/as-, what the CLI deploys with). Never mix the
+        # halves of different pairs — within whichever pair is chosen it's
+        # both or neither.
+        tid, tsec = token_id, token_secret
+        if tid is None and tsec is None:
+            tid = os.environ.get("MODAL_PROXY_TOKEN_ID")
+            tsec = os.environ.get("MODAL_PROXY_TOKEN_SECRET")
+            if tid is None and tsec is None:
+                tid = os.environ.get("MODAL_TOKEN_ID")
+                tsec = os.environ.get("MODAL_TOKEN_SECRET")
         if (tid is None) != (tsec is None):
             raise ModalProviderError(
-                "Modal proxy auth needs BOTH MODAL_TOKEN_ID and "
-                "MODAL_TOKEN_SECRET (or both constructor args); got one without "
-                "the other"
+                "Modal proxy auth needs BOTH halves of a token pair — "
+                "MODAL_PROXY_TOKEN_ID + MODAL_PROXY_TOKEN_SECRET (or "
+                "MODAL_TOKEN_ID + MODAL_TOKEN_SECRET, or both constructor "
+                "args); got one without the other"
             )
+        # A single key is Modal's joined form ``wk-<id>.ws-<secret>`` (or a
+        # gateway's own bearer) and goes in ``Authorization: Bearer``. ``""``
+        # keeps the explicit-no-auth meaning; ``None`` means "use the pair".
+        bearer: str = (api_key or "").strip()
 
         headers: dict[str, str] = {}
         if tid and tsec:
@@ -275,12 +305,12 @@ class ModalProvider:
 
         self._inner = OpenAICompatProvider(
             base_url=url,
-            # Modal authenticates via Modal-Key/Modal-Secret headers, never a
-            # Bearer token. Pass api_key="" (NOT None) — empty string means
-            # "explicitly no auth", whereas None tells the inner provider to walk
-            # the OPENAI_API_KEY/TOGETHER_API_KEY/... env chain, which would
-            # otherwise leak an unrelated key as a Bearer header to Modal.
-            api_key="",
+            # Modal authenticates via Modal-Key/Modal-Secret headers or the
+            # joined ``wk-….ws-…`` bearer. Pass "" (NOT None) when there is no
+            # bearer — empty string means "explicitly no auth", whereas None
+            # tells the inner provider to walk the OPENAI_API_KEY/… env chain,
+            # which would leak an unrelated key as a Bearer header to Modal.
+            api_key=bearer,
             default_headers=headers,
             backend_capability=chosen_cap,
             model_capability=model_capability,
@@ -305,6 +335,7 @@ class ModalProvider:
         api_path: str = "/v1",
         token_id: str | None = None,
         token_secret: str | None = None,
+        api_key: str | None = None,
         default_headers: dict[str, str] | None = None,
         backend_capability: BackendCapability | None = None,
         model_capability: ModelCapability | None = None,
@@ -325,6 +356,7 @@ class ModalProvider:
             api_path=api_path,
             token_id=token_id,
             token_secret=token_secret,
+            api_key=api_key,
             default_headers=default_headers,
             backend_capability=backend_capability,
             model_capability=model_capability,

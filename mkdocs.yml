@@ -107,6 +107,7 @@ nav:
       - Plugins: guides/plugins.md
       - Memory: guides/memory.md
       - Dashboard (mantis serve): guides/dashboard.md
+      - Deploy on your GPU cloud: guides/deploy.md
   - API reference:
       - api/index.md
       - query / ClaudeSDKClient: api/client.md

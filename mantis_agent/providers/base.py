@@ -15,6 +15,7 @@ the ``ollama`` adapter.
 from __future__ import annotations
 
 import importlib
+import os
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, Protocol, runtime_checkable
 
@@ -50,6 +51,49 @@ PROVIDER_CONTROL_KEYS: frozenset[str] = frozenset({
     "allowed_tools",
     "disallowed_tools",
 })
+
+
+#: JSON object of extra request headers applied to every provider request —
+#: what ``mantis deploy … connect`` exports so the terminal can reach a
+#: proxy-authenticated endpoint (Modal-Key / Modal-Secret, a gateway token)
+#: without code changes. ``Agent(extra_headers=…)`` wins over it.
+EXTRA_HEADERS_ENV = "MANTIS_AGENT_EXTRA_HEADERS"
+
+
+def extra_headers_from_env(raw: str | None = None) -> dict[str, str] | None:
+    """Parse ``$MANTIS_AGENT_EXTRA_HEADERS`` (or ``raw``) into a header dict.
+
+    ``None`` when unset/blank. Malformed input raises ``ValueError`` naming
+    the variable and the problem — a header block that silently failed to
+    apply would surface later as an opaque 401/403 from the endpoint.
+    """
+
+    import json  # noqa: PLC0415
+
+    text = os.environ.get(EXTRA_HEADERS_ENV) if raw is None else raw
+    if text is None or not text.strip():
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"{EXTRA_HEADERS_ENV} is not valid JSON ({exc}); expected an object "
+            'like {"Modal-Key": "wk-…", "Modal-Secret": "ws-…"}'
+        ) from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{EXTRA_HEADERS_ENV} must be a JSON object of header name → value, "
+            f"got {type(data).__name__}"
+        )
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        if not isinstance(k, str) or not isinstance(v, (str, int, float)) or isinstance(v, bool):
+            raise ValueError(
+                f"{EXTRA_HEADERS_ENV}: header {k!r} must map to a string value, "
+                f"got {type(v).__name__}"
+            )
+        out[k] = str(v)
+    return out or None
 
 
 def strip_control_keys(extra: dict[str, Any] | None) -> dict[str, Any]:

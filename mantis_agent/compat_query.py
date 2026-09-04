@@ -464,6 +464,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "model": model,
         "backend": backend,
         "api_key": opts.get("api_key"),
+        "extra_headers": opts.get("extra_headers"),
         "cwd": opts.get("cwd"),
         "system": opts.get("system"),
         "tools": registry,
@@ -487,7 +488,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     consumed = set(kw.keys()) | {
         "model", "backend", "tools", "system", "max_tokens", "temperature",
         "max_turns", "max_steps", "max_usd", "api_key", "base_url",
-        "raise_on_error",
+        "extra_headers", "raise_on_error",
         "response_model",
         "persist", "session_id", "cwd", "permission_mode",
         "mcp_servers", "agents", "setting_sources", "response_format",

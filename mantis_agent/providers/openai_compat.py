@@ -286,7 +286,15 @@ class OpenAICompatProvider(HTTPProviderMixin):
             headers.setdefault("http-referer", "https://github.com/teddyoweh/mantis-agent-sdk")
             headers.setdefault("x-title", "mantis-agent-sdk")
         if default_headers:
-            headers.update(default_headers)
+            # Header names are case-insensitive on the wire but not in a
+            # dict: an explicit ``Authorization`` must REPLACE the
+            # ``authorization`` set above, not ride beside it (httpx would
+            # send both, joined — "Bearer k, Bearer wk-…" — and the endpoint
+            # rejects it).
+            for name, value in default_headers.items():
+                for existing in [k for k in headers if k.lower() == name.lower()]:
+                    del headers[existing]
+                headers[name] = value
 
         self.client = make_client(base_url=url, headers=headers)
 

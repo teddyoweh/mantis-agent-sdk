@@ -1309,6 +1309,7 @@ def overview() -> dict[str, Any]:
         "active_jobs": active_jobs,
         "active_runs": active_runs,
         "spend_7d": spend_7,
+        "deployments_live": deployments_live_count(),
     }
 
 
@@ -1790,6 +1791,525 @@ def workflow_detail(run_id: str | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Deploy — bring-your-own GPU provider. The dashboard is the hub: add a
+# provider credential once, search any open model, see which GPUs fit and what
+# they cost, deploy, watch it come up, then "Use this model" so the SDK and the
+# terminal point at it. Everything below is a thin, sync, JSON-shaped skin over
+# ``mantis_agent.deploy.manager`` (the async contract). Long operations —
+# deploy, teardown — run in a background thread as a *job* the page polls.
+# Nothing here ever echoes a credential value.
+# ---------------------------------------------------------------------------
+
+_DEPLOY_SECRET_KEYS = frozenset({
+    "hf_token", "token", "secret", "password", "api_key", "apikey", "key", "value", "values",
+})
+_ENV_REF_RE = re.compile(r"^\$\{?[A-Z0-9_]+\}?$")
+
+
+def _deploy_redact(obj: Any, key: str | None = None) -> Any:
+    """Deploy-shaped redaction. Unlike :func:`_redact_content` it leaves env
+    var *names* (``auth_env``, ``api_key_env``, ``credential_fields[].env``)
+    readable — those are the labels the page needs — while masking every
+    value under a secret-shaped key, every header value that isn't an env
+    reference, and every key-shaped substring in free text."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            ks = str(k)
+            if ks in ("auth_headers", "headers") and isinstance(v, dict):
+                out[ks] = {hk: (hv if isinstance(hv, str) and _ENV_REF_RE.match(hv)
+                                else _mask_key(str(hv))) for hk, hv in v.items()}
+            elif ks.lower() in _DEPLOY_SECRET_KEYS and isinstance(v, str):
+                out[ks] = _mask_key(v)
+            elif ks.lower() in _DEPLOY_SECRET_KEYS and isinstance(v, dict):
+                out[ks] = {vk: _mask_key(str(vv)) if vv else None for vk, vv in v.items()}
+            else:
+                out[ks] = _deploy_redact(v, ks)
+        return out
+    if isinstance(obj, list):
+        return [_deploy_redact(x, key) for x in obj]
+    if isinstance(obj, str) and key in ("message", "error", "hint", "lines", "reason", "logs", "detail"):
+        return _redact_text(obj)
+    return obj
+
+
+def _dc(obj: Any) -> Any:
+    """Dataclass / datetime / tuple → JSON-able, recursively. ``Deployment.raw``
+    is dropped: it is the provider's own object and may carry anything."""
+    import dataclasses  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
+
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        out = {}
+        for f in dataclasses.fields(obj):
+            if f.name == "raw":
+                continue
+            out[f.name] = _dc(getattr(obj, f.name))
+        return out
+    if isinstance(obj, datetime):
+        return obj.timestamp()
+    if isinstance(obj, dict):
+        return {str(k): _dc(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_dc(x) for x in obj]
+    return obj
+
+
+def _gpu_dict(g: Any) -> dict[str, Any]:
+    d = _dc(g)
+    d["display"] = getattr(g, "display", None) or d.get("label") or d.get("provider_id")
+    d["total_vram_gb"] = getattr(g, "total_vram_gb", None) or (
+        int(d.get("vram_gb") or 0) * int(d.get("count") or 1))
+    return d
+
+
+def _dep_dict(dep: Any) -> dict[str, Any]:
+    d = _dc(dep)
+    d["gpu"] = _gpu_dict(dep.gpu) if getattr(dep, "gpu", None) is not None else None
+    d["is_live"] = bool(getattr(dep, "is_live", False))
+    return d
+
+
+def _run_async(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run one coroutine function to completion on this (request) thread.
+    ``anyio.run`` is what the CLI uses for the same calls."""
+    import anyio  # noqa: PLC0415
+
+    return anyio.run(lambda: fn(*args, **kwargs))
+
+
+def _deploy_err(e: BaseException) -> dict[str, Any]:
+    """A provider failure is an answer, not a 500. ``hint`` is user-facing."""
+    if isinstance(e, NotImplementedError):
+        return {"ok": False, "error": "deploy core isn't available in this build yet",
+                "hint": "update mantis-agent-sdk"}
+    d: dict[str, Any] = {"ok": False, "error": _redact_text(str(e) or type(e).__name__),
+                         "kind": type(e).__name__}
+    hint = getattr(e, "hint", None)
+    if hint:
+        d["hint"] = _redact_text(str(hint))
+    prov = getattr(e, "provider", None)
+    if prov:
+        d["provider"] = prov
+    return d
+
+
+# What the last validate/save learned per provider — so the strip can show
+# "validated · $12.40 balance" without a network call on every refresh.
+_deploy_accounts: dict[str, dict[str, Any]] = {}
+_deploy_lock = threading.Lock()
+
+
+def deploy_providers() -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+    from .serve_logos import PROVIDER_LOGOS  # noqa: PLC0415
+
+    try:
+        provs = _run_async(_dm.providers)
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "providers": []}
+    out = []
+    for p in provs:
+        d = _dc(dict(p))
+        pid = str(d.get("id") or "")
+        d["logo"] = pid if pid in PROVIDER_LOGOS else None
+        with _deploy_lock:
+            d["account"] = _deploy_accounts.get(pid)
+        out.append(d)
+    return {"ok": True, "providers": _deploy_redact(out),
+            "configured_count": sum(1 for p in out if p.get("configured"))}
+
+
+def deploy_save_creds(provider: str | None, values: Any) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    provider = (provider or "").strip()
+    if not provider:
+        return {"ok": False, "error": "provider required"}
+    if not isinstance(values, dict) or not values:
+        return {"ok": False, "error": "values required — {ENV_VAR: value}"}
+    clean = {str(k).strip(): str(v).strip() for k, v in values.items() if str(v).strip()}
+    if not clean:
+        return {"ok": False, "error": "no credential values given"}
+    try:
+        acct = _run_async(_dm.save_credentials, provider, clean)
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    ad = _dc(acct)
+    with _deploy_lock:
+        _deploy_accounts[provider] = ad
+    # Only NAMES go back — never the value, not even masked (it was just typed).
+    return _deploy_redact({"ok": True, "provider": provider, "saved": sorted(clean), "account": ad})
+
+
+def deploy_validate(provider: str | None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    provider = (provider or "").strip()
+    if not provider:
+        return {"ok": False, "error": "provider required"}
+    try:
+        acct = _run_async(_dm.validate, provider)
+    except Exception as e:  # noqa: BLE001
+        d = _deploy_err(e)
+        with _deploy_lock:
+            _deploy_accounts[provider] = {"ok": False, "provider": provider, "message": d["error"]}
+        return d
+    ad = _dc(acct)
+    with _deploy_lock:
+        _deploy_accounts[provider] = ad
+    return _deploy_redact({"ok": bool(getattr(acct, "ok", False)), "provider": provider, "account": ad})
+
+
+def deploy_gpus(provider: str | None, min_vram: Any = None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    provider = (provider or "").strip()
+    if not provider:
+        return {"ok": False, "error": "provider required", "gpus": []}
+    try:
+        mv = int(min_vram) if min_vram not in (None, "") else None
+    except ValueError:
+        mv = None
+    try:
+        gpus = _run_async(_dm.gpus, provider, min_vram_gb=mv)
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "gpus": []}
+    rows = [_gpu_dict(g) for g in gpus]
+    # cheapest first; unpriced rows sink to the bottom rather than sorting as $0
+    rows.sort(key=lambda r: (r.get("price_per_hour") is None, r.get("price_per_hour") or 0.0,
+                             r.get("total_vram_gb") or 0))
+    return {"ok": True, "provider": provider, "gpus": rows}
+
+
+def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    try:
+        lim = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        lim = 25
+    sort = (sort or "trending").strip().lower()
+    if sort not in ("trending", "downloads", "likes", "updated"):
+        sort = "trending"
+    try:
+        models = _run_async(_dm.search_models, (query or "").strip(), limit=lim, sort=sort)
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "models": [], "query": query or "", "sort": sort}
+    return {"ok": True, "query": query or "", "sort": sort, "curated": not (query or "").strip(),
+            "models": [_deploy_redact(_dc(m)) for m in models]}
+
+
+_inspect_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+INSPECT_TTL_S = 60.0
+
+
+def _verdict_parts(v: Any) -> tuple[str, str]:
+    """``"fits"`` / ``"tight"`` / ``"no: needs 48 GB"`` → (kind, reason)."""
+    s = str(v or "").strip()
+    head = re.split(r"[\s:—–-]+", s, maxsplit=1)
+    kind = (head[0] or "").lower()
+    reason = head[1].strip() if len(head) > 1 else ""
+    if kind not in ("fits", "tight", "no"):
+        kind, reason = "no", s
+    return kind, reason
+
+
+def deploy_inspect(model: str | None, *, ttl_s: float = INSPECT_TTL_S) -> dict[str, Any]:
+    """Pre-flight facts for one model plus, per configured provider, which
+    of its GPUs fit. Cached for a minute: the page re-asks on every click."""
+    import time  # noqa: PLC0415
+
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    model = (model or "").strip()
+    if not model:
+        return {"ok": False, "error": "model required"}
+    now = time.monotonic()
+    with _deploy_lock:
+        hit = _inspect_cache.get(model)
+        if hit and hit[0] + ttl_s > now:
+            return hit[1]
+    try:
+        info = _run_async(_dm.inspect_model, model)
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "model": model}
+    try:
+        provs = [dict(p) for p in _run_async(_dm.providers) if p.get("configured")]
+    except Exception:  # noqa: BLE001
+        provs = []
+    fits: list[dict[str, Any]] = []
+    for p in provs:
+        pid = str(p.get("id") or "")
+        entry: dict[str, Any] = {"provider": pid, "display_name": p.get("display_name") or pid,
+                                 "engines": list(p.get("engines") or ()),
+                                 "scale_to_zero": bool(p.get("scale_to_zero")),
+                                 "public_by_default": bool(p.get("public_by_default")),
+                                 "gpus": []}
+        try:
+            cands = _run_async(_dm.gpus, pid)
+            pairs = _run_async(_dm.fit, info, list(cands))
+            for pair in pairs:
+                g, v = pair[0], pair[1]
+                kind, reason = _verdict_parts(v)
+                row = _gpu_dict(g)
+                row["verdict"] = kind
+                row["reason"] = reason
+                entry["gpus"].append(row)
+        except Exception as e:  # noqa: BLE001 — one provider's outage must not blank the panel
+            entry["error"] = _deploy_err(e)["error"]
+        fits.append(entry)
+    out = _deploy_redact({"ok": True, "model": _dc(info), "fits": fits,
+                          "checked_at": time.time(), "cache_ttl_s": ttl_s})
+    with _deploy_lock:
+        _inspect_cache[model] = (now, out)
+    return out
+
+
+# -- jobs: deploy / teardown run in the background; the page polls -------------
+
+_deploy_jobs: dict[str, dict[str, Any]] = {}
+JOB_MAX_LINES = 400
+JOB_KEEP = 40
+
+
+def _new_job(kind: str, target: str) -> dict[str, Any]:
+    import time  # noqa: PLC0415
+
+    job = {"id": secrets.token_urlsafe(9), "kind": kind, "target": target, "status": "running",
+           "lines": [], "started_at": time.time(), "ended_at": None, "result": None,
+           "error": None, "hint": None}
+    with _deploy_lock:
+        _deploy_jobs[job["id"]] = job
+        # bounded: forget the oldest finished jobs
+        done = [j for j in _deploy_jobs.values() if j["status"] != "running"]
+        for old in sorted(done, key=lambda j: j["started_at"])[:-JOB_KEEP] if len(done) > JOB_KEEP else []:
+            _deploy_jobs.pop(old["id"], None)
+    return job
+
+
+def _job_progress(job: dict[str, Any]) -> Any:
+    def progress(line: Any) -> None:
+        s = _redact_text(str(line))[:400]
+        with _deploy_lock:
+            if len(job["lines"]) < JOB_MAX_LINES:
+                job["lines"].append(s)
+            else:
+                job["lines"][-1] = s
+    return progress
+
+
+def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> None:
+    import time  # noqa: PLC0415
+
+    def body() -> None:
+        try:
+            res = _run_async(coro_fn, *args, **kwargs)
+            with _deploy_lock:
+                job["result"] = _deploy_redact(_dep_dict(res)) if res is not None and hasattr(res, "gpu") \
+                    else (_deploy_redact(_dc(res)) if res is not None else None)
+                job["status"] = "done"
+        except BaseException as e:  # noqa: BLE001 — the job record is the error channel
+            d = _deploy_err(e)
+            with _deploy_lock:
+                job["status"] = "error"
+                job["error"] = d.get("error")
+                job["hint"] = d.get("hint")
+        finally:
+            with _deploy_lock:
+                job["ended_at"] = time.time()
+        # a finished deploy/teardown changes the list — drop the fit cache too,
+        # the provider's availability may have moved
+        with _deploy_lock:
+            _inspect_cache.clear()
+
+    threading.Thread(target=body, name=f"mantis-deploy-{job['kind']}", daemon=True).start()
+
+
+def deploy_job(job_id: str | None) -> dict[str, Any]:
+    import time  # noqa: PLC0415
+
+    with _deploy_lock:
+        job = _deploy_jobs.get(job_id or "")
+        if job is None:
+            return {"ok": False, "error": f"job {job_id!r} not found"}
+        d = dict(job)
+        d["lines"] = list(job["lines"])
+    d["ok"] = True
+    d["elapsed_s"] = round((d["ended_at"] or time.time()) - d["started_at"], 1)
+    return d
+
+
+_OPT_INT = ("max_model_len", "tensor_parallel", "min_replicas", "max_replicas", "idle_timeout_s",
+            "request_timeout_s")
+_OPT_STR = ("name", "hf_token", "served_model_name", "quantization", "region", "engine_version")
+
+
+def _build_opts(raw: Any) -> Any:
+    from .deploy.base import DeployOpts  # noqa: PLC0415
+
+    opts = DeployOpts()
+    if not isinstance(raw, dict):
+        return opts
+    for k in _OPT_STR:
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            setattr(opts, k, v.strip())
+    for k in _OPT_INT:
+        v = raw.get(k)
+        if v in (None, ""):
+            continue
+        try:
+            setattr(opts, k, int(v))
+        except (TypeError, ValueError):
+            continue
+    if "trust_remote_code" in raw:
+        opts.trust_remote_code = bool(raw.get("trust_remote_code"))
+    ea = raw.get("extra_engine_args")
+    if isinstance(ea, str):
+        opts.extra_engine_args = ea.split()
+    elif isinstance(ea, list):
+        opts.extra_engine_args = [str(x) for x in ea]
+    if isinstance(raw.get("extra"), dict):
+        opts.extra = dict(raw["extra"])
+    return opts
+
+
+def deploy_up(provider: str | None, model: str | None, gpu: Any, engine: str | None,
+              opts: Any = None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    provider = (provider or "").strip()
+    model = (model or "").strip()
+    if not provider or not model:
+        return {"ok": False, "error": "provider and model required"}
+    gpu_id = gpu.get("provider_id") if isinstance(gpu, dict) else gpu
+    gpu_id = str(gpu_id or "").strip()
+    if not gpu_id:
+        return {"ok": False, "error": "gpu required"}
+    engine = (engine or "vllm").strip().lower()
+    if engine not in ("vllm", "sglang", "tgi", "llamacpp"):
+        return {"ok": False, "error": f"unknown engine {engine!r}"}
+    job = _new_job("deploy", model)
+    _run_job(job, _dm.deploy, provider, model, gpu=gpu_id, engine=engine,
+             opts=_build_opts(opts), wait=True, progress=_job_progress(job))
+    return {"ok": True, "job": job["id"], "provider": provider, "model": model, "gpu": gpu_id,
+            "engine": engine}
+
+
+def _deploy_cost(dep: Any) -> dict[str, Any] | None:
+    """Best-effort cost for one deployment via its adapter. ``None`` where the
+    provider can't say — the page shows a dash, never a guess."""
+    from .deploy import base as _db  # noqa: PLC0415
+
+    try:
+        prov = _db.get_provider(dep.provider)
+        return _dc(_run_async(prov.cost, dep))
+    except Exception:  # noqa: BLE001 — NotSupported, network, unconfigured
+        return None
+
+
+def deploy_list(refresh: Any = False, with_cost: bool = True) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    ref = str(refresh).lower() in ("1", "true", "yes")
+    try:
+        deps = _run_async(_dm.list_deployments, refresh=ref)
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "deployments": []}
+    rows = []
+    for dep in deps:
+        d = _dep_dict(dep)
+        d["cost"] = _deploy_cost(dep) if with_cost and dep.status not in ("deleted", "deleting") else None
+        rows.append(d)
+    rows.sort(key=lambda r: (not r.get("is_live"), -(r.get("created_at") or 0)))
+    return _deploy_redact({"ok": True, "refreshed": ref, "deployments": rows,
+                           "live_count": sum(1 for r in rows if r.get("is_live"))})
+
+
+def deploy_status(dep_id: str | None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    try:
+        dep = _run_async(_dm.status, dep_id, refresh=True)
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    d = _dep_dict(dep)
+    d["cost"] = _deploy_cost(dep)
+    return _deploy_redact({"ok": True, "deployment": d})
+
+
+def deploy_logs(dep_id: str | None, tail: Any = 200) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+    from .deploy.base import NotSupported  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    try:
+        n = max(10, min(int(tail), 2000))
+    except (TypeError, ValueError):
+        n = 200
+
+    async def collect() -> list[str]:
+        out: list[str] = []
+        async for line in _dm.logs(dep_id, tail=n):
+            out.append(_redact_text(str(line))[:1000])
+            if len(out) >= n:
+                break
+        return out
+
+    try:
+        lines = _run_async(collect)
+    except NotSupported as e:
+        return {"ok": False, "supported": False, "error": _redact_text(str(e)),
+                "hint": getattr(e, "hint", None) or "this provider has no logs API — use its console"}
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    return {"ok": True, "supported": True, "id": dep_id, "tail": n, "lines": lines}
+
+
+def deploy_connect(dep_id: str | None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    try:
+        info = _run_async(_dm.connect, dep_id, set_current=True)
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    d = dict(info or {})
+    model, backend = d.get("model"), d.get("backend")
+    d["shell"] = (f"MANTIS_AGENT_MODEL={model} MANTIS_AGENT_BASE_URL={backend} mantis"
+                  if model and backend else None)
+    d["python"] = (f'MantisAgentOptions(model="{model}", backend="{backend}")'
+                   if model and backend else None)
+    return _deploy_redact({"ok": True, "id": dep_id, **d})
+
+
+def deploy_down(dep_id: str | None) -> dict[str, Any]:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    job = _new_job("teardown", dep_id)
+    _run_job(job, _dm.teardown, dep_id, progress=_job_progress(job))
+    return {"ok": True, "job": job["id"], "id": dep_id}
+
+
+def deployments_live_count() -> int:
+    """Live deployments from the store only (no network) — for the rail and
+    the overview's signal path. Zero when the deploy core isn't present."""
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    try:
+        return sum(1 for d in _run_async(_dm.list_deployments, refresh=False) if d.is_live)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
 
@@ -1927,6 +2447,23 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/mcp/delete":
                 self._json(delete_mcp(body.get("scope"), body.get("name")))
                 return
+            # -- deploy: bring-your-own GPU provider (mutating) --
+            if path == "/api/deploy/creds":
+                self._json(deploy_save_creds(body.get("provider"), body.get("values")))
+                return
+            if path == "/api/deploy/validate":
+                self._json(deploy_validate(body.get("provider")))
+                return
+            if path == "/api/deploy/up":
+                self._json(deploy_up(body.get("provider"), body.get("model"), body.get("gpu"),
+                                     body.get("engine"), body.get("opts")))
+                return
+            if path == "/api/deploy/connect":
+                self._json(deploy_connect(body.get("id")))
+                return
+            if path == "/api/deploy/down":
+                self._json(deploy_down(body.get("id")))
+                return
             self._send(404, b"not found", "text/plain; charset=utf-8")
         except Exception as e:  # noqa: BLE001
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
@@ -2000,6 +2537,32 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": "cwd and id query params required"}, 400)
                 return
             self._json(session_detail(cwd, sid))
+            return
+        # -- deploy: bring-your-own GPU provider (read) --
+        if path == "/api/deploy/providers":
+            self._json(deploy_providers())
+            return
+        if path == "/api/deploy/gpus":
+            self._json(deploy_gpus((q.get("provider") or [""])[0], (q.get("min_vram") or [None])[0]))
+            return
+        if path == "/api/deploy/models":
+            self._json(deploy_models((q.get("q") or [""])[0], (q.get("sort") or ["trending"])[0],
+                                     (q.get("limit") or ["25"])[0]))
+            return
+        if path == "/api/deploy/inspect":
+            self._json(deploy_inspect((q.get("model") or [""])[0]))
+            return
+        if path == "/api/deploy/list":
+            self._json(deploy_list((q.get("refresh") or ["0"])[0]))
+            return
+        if path == "/api/deploy/status":
+            self._json(deploy_status((q.get("id") or [""])[0]))
+            return
+        if path == "/api/deploy/logs":
+            self._json(deploy_logs((q.get("id") or [""])[0], (q.get("tail") or ["200"])[0]))
+            return
+        if path == "/api/deploy/job":
+            self._json(deploy_job((q.get("id") or [""])[0]))
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 

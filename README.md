@@ -326,6 +326,40 @@ Full guide: [docs/guides/workflows.md](docs/guides/workflows.md).
 
 ---
 
+## Deploy — bring your own GPU provider
+
+Add a GPU cloud credential once, then deploy **any open-weight model** as an
+OpenAI-compatible endpoint from the dashboard, the CLI, or the terminal, and
+use it immediately. Six providers ship in the box: **RunPod**, **Hugging Face
+Inference Endpoints**, **Modal**, **DeepInfra**, **Baseten**, and **Vast.ai**.
+
+```bash
+mantis-agent deploy creds runpod --set RUNPOD_API_KEY=...      # once
+mantis-agent deploy models qwen3                              # search the HF Hub, see params · VRAM · vLLM-ok
+mantis-agent deploy gpus runpod --min-vram 48                 # what fits, cheapest first
+mantis-agent deploy up runpod Qwen/Qwen3-32B --gpu <id>       # deploys, waits, prints the endpoint
+mantis-agent deploy connect <id>                              # makes it the current model
+mantis                                                        # the terminal now runs on it
+```
+
+Or open `mantis serve` → **Deploy**: pick a model, see which GPUs fit and what
+they cost per hour, click deploy, watch it come up, click **Use this model**.
+
+Pre-flight reads the model's architecture, parameter count, dtype, licence,
+and gated flag from the Hub, estimates VRAM (weights plus KV cache), and
+only offers GPUs that fit. Every deployment remembers its endpoint, the
+name the endpoint answers to, and which env var authenticates it, so the
+SDK side is just:
+
+```python
+options = MantisAgentOptions(model=dep.served_model_name, backend=dep.endpoint_url)
+```
+
+Scale-to-zero, idle timeouts, logs, and teardown are one call each where
+the provider supports them. Full guide: [docs/guides/deploy.md](docs/guides/deploy.md).
+
+---
+
 ## Observability
 
 ```python
@@ -418,6 +452,12 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 - [x] Modal serverless adapter
 - [x] Anthropic native Messages API — `claude-*` routes to it automatically (API key or subscription OAuth)
 - [x] xAI Grok (`grok-*`) with reasoning effort mapped
+
+**Deploy (bring your own GPU)**
+- [x] `DeployProvider` contract + store; RunPod, HF Inference Endpoints, Modal, DeepInfra, Baseten, Vast.ai
+- [x] Hub pre-flight: architecture, params, dtype, licence, gated, vLLM-ok, VRAM estimate, GPU fit
+- [x] `mantis-agent deploy` CLI · `mantis serve` Deploy page · `/deploy` in the terminal
+- [ ] Together / Fireworks custom-model upload path; Koyeb / Northflank; Lambda raw-VM reuse of the Vast bootstrap
 
 **Tool use**
 - [x] Path A: native via OpenAI-compat `tools[]`

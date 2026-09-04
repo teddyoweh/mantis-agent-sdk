@@ -225,7 +225,94 @@ def _build_parser() -> argparse.ArgumentParser:
         "--system", default=None, help="System prompt for the chat session."
     )
 
+    _add_deploy_parser(sub)
+
     return p
+
+
+def _add_deploy_parser(sub: Any) -> None:
+    """``mantis-agent deploy ...`` — bring-your-own GPU provider. Everything
+    heavy (httpx, the provider adapters) is imported inside the handler so
+    ``--help`` stays stdlib-only."""
+
+    p_dep = sub.add_parser(
+        "deploy",
+        help="Deploy any open-weight model on your own GPU-cloud account as an "
+             "OpenAI-compatible endpoint (RunPod, HF Endpoints, Modal, DeepInfra, "
+             "Baseten, Vast.ai) and connect mantis to it.",
+    )
+    dsub = p_dep.add_subparsers(dest="deploy_cmd", required=True, metavar="ACTION")
+
+    def _json(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+
+    q = dsub.add_parser("providers", help="List deploy providers and whether each is configured.")
+    _json(q)
+
+    q = dsub.add_parser("creds", help="Show or save a provider's credentials (validated over the network).")
+    q.add_argument("provider")
+    q.add_argument("--set", dest="set_values", action="append", default=[], metavar="ENV=value",
+                   help="Save a credential, e.g. --set RUNPOD_API_KEY=... (repeatable).")
+    _json(q)
+
+    q = dsub.add_parser("gpus", help="A provider's GPU catalogue with prices, cheapest first.")
+    q.add_argument("provider")
+    q.add_argument("--min-vram", type=int, default=None, metavar="GB", help="Only GPUs with at least this much total VRAM.")
+    _json(q)
+
+    q = dsub.add_parser("models", help="Search the Hugging Face Hub (curated list when no query).")
+    q.add_argument("query", nargs="?", default="")
+    q.add_argument("--sort", choices=["trending", "downloads", "likes"], default="trending")
+    q.add_argument("--limit", type=int, default=25)
+    _json(q)
+
+    q = dsub.add_parser("inspect", help="Pre-flight one model: params, dtype, gated, vLLM support, VRAM estimate.")
+    q.add_argument("model", help="HF id (org/name) or ollama:<tag>.")
+    _json(q)
+
+    q = dsub.add_parser("up", help="Deploy a model on a provider.")
+    q.add_argument("provider")
+    q.add_argument("model")
+    q.add_argument("--gpu", required=True, help="Provider GPU id from `deploy gpus`.")
+    q.add_argument("--engine", choices=["vllm", "sglang", "tgi", "llamacpp"], default="vllm")
+    q.add_argument("--max-model-len", type=int, default=None)
+    q.add_argument("--tp", type=int, default=None, help="Tensor parallel size (defaults to GPU count).")
+    q.add_argument("--min", type=int, default=0, help="Min replicas (0 = scale to zero).")
+    q.add_argument("--max", type=int, default=1, help="Max replicas.")
+    q.add_argument("--idle", type=int, default=300, help="Idle seconds before scaling down.")
+    q.add_argument("--name", default=None)
+    q.add_argument("--served-name", default=None, help="Override what the endpoint answers to as `model=`.")
+    q.add_argument("--quantization", default=None)
+    q.add_argument("--trust-remote-code", action="store_true")
+    q.add_argument("--hf-token", default=None, help="For gated repos (else $HF_TOKEN).")
+    q.add_argument("--no-wait", action="store_true", help="Return as soon as the provider accepts the deployment.")
+    q.add_argument("--force", action="store_true", help="Deploy even if pre-flight says it won't fit.")
+    q.add_argument("--no-connect", action="store_true", help="Don't make it the current model once ready.")
+    _json(q)
+
+    q = dsub.add_parser("ls", help="Stored deployments.")
+    q.add_argument("--refresh", action="store_true", help="Re-query every provider (adopts endpoints made elsewhere).")
+    q.add_argument("--provider", default=None)
+    _json(q)
+
+    q = dsub.add_parser("status", help="One deployment, refreshed from the provider.")
+    q.add_argument("id")
+    q.add_argument("--no-refresh", action="store_true")
+    _json(q)
+
+    q = dsub.add_parser("logs", help="Recent log lines.")
+    q.add_argument("id")
+    q.add_argument("--tail", type=int, default=200)
+    _json(q)
+
+    q = dsub.add_parser("connect", help="Verify the endpoint answers and make it the current model.")
+    q.add_argument("id")
+    _json(q)
+
+    q = dsub.add_parser("down", help="Delete a deployment on the provider.")
+    q.add_argument("id")
+    q.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt.")
+    _json(q)
 
 
 def _add_agent_flags(p: argparse.ArgumentParser) -> None:
@@ -821,8 +908,269 @@ def _cmd_setup_local_llamacpp(args: argparse.Namespace) -> int:
     )
 
 
+# ---------------------------------------------------------------------------
+# deploy — bring-your-own GPU provider
+# ---------------------------------------------------------------------------
+
+
+def _deploy_json(obj: Any) -> Any:
+    """Dataclasses / datetimes / nested containers → JSON-ready."""
+
+    import dataclasses  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
+
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {f.name: _deploy_json(getattr(obj, f.name)) for f in dataclasses.fields(obj)}
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {str(k): _deploy_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_deploy_json(v) for v in obj]
+    return obj
+
+
+def _deploy_table(headers: list[str], rows: list[list[Any]]) -> str:
+    cells = [[("" if c is None else str(c)) for c in r] for r in rows]
+    widths = [len(h) for h in headers]
+    for r in cells:
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], len(c))
+    fmt = "  ".join("{:<%d}" % w for w in widths)
+    lines = [fmt.format(*headers).rstrip(), fmt.format(*("-" * w for w in widths)).rstrip()]
+    lines += [fmt.format(*r).rstrip() for r in cells]
+    return "\n".join(lines)
+
+
+def _deploy_launch_line(model: str, backend: str, api_key_env: str | None) -> str:
+    key = f" MANTIS_AGENT_API_KEY=${api_key_env}" if api_key_env else ""
+    return f"MANTIS_AGENT_MODEL={model} MANTIS_AGENT_BASE_URL={backend}{key} mantis"
+
+
+def _fmt_price(p: Any) -> str:
+    return f"${p:.2f}/h" if isinstance(p, (int, float)) else "-"
+
+
+def _cmd_deploy(args: argparse.Namespace) -> int:
+    import json as _json  # noqa: PLC0415
+
+    from .deploy import DeployError, NotSupported  # noqa: PLC0415
+
+    want_json = bool(getattr(args, "json", False))
+
+    def out_json(payload: Any) -> int:
+        print(_json.dumps(_deploy_json(payload), indent=2, default=str))
+        return 0
+
+    try:
+        return _deploy_dispatch(args, want_json, out_json)
+    except NotSupported as e:
+        if want_json:
+            out_json({"ok": False, "supported": False, "error": str(e), "hint": e.hint})
+        else:
+            print(f"not supported: {e}", file=sys.stderr)
+            if e.hint:
+                print(f"hint: {e.hint}", file=sys.stderr)
+        return 2
+    except DeployError as e:
+        if want_json:
+            out_json({"ok": False, "error": str(e), "hint": e.hint, "provider": e.provider})
+        else:
+            print(f"error: {e}", file=sys.stderr)
+            if e.hint:
+                print(f"hint: {e.hint}", file=sys.stderr)
+        return 1
+
+
+def _deploy_dispatch(args: argparse.Namespace, want_json: bool, out_json: Any) -> int:
+    from .deploy import DeployOpts, manager  # noqa: PLC0415
+
+    cmd = args.deploy_cmd
+
+    def progress(line: str) -> None:
+        if not want_json:
+            print(f"  · {line}", flush=True)
+
+    if cmd == "providers":
+        provs = anyio.run(manager.providers)
+        if want_json:
+            return out_json({"ok": True, "providers": provs})
+        rows = [[p["id"], p["display_name"], "yes" if p["configured"] else "no",
+                 ",".join(p["engines"]), "yes" if p["scale_to_zero"] else "no",
+                 " ".join(f.env for f in p["credential_fields"])] for p in provs]
+        print(_deploy_table(["id", "provider", "configured", "engines", "scale-to-0", "credentials"], rows))
+        print("\nSave a key:  mantis-agent deploy creds <id> --set ENV=value")
+        return 0
+
+    if cmd == "creds":
+        values: dict[str, str] = {}
+        for item in args.set_values:
+            k, sep, v = item.partition("=")
+            if not sep or not k.strip():
+                raise _deploy_usage("--set expects ENV=value")
+            values[k.strip()] = v
+        if values:
+            acct = anyio.run(manager.save_credentials, args.provider, values)
+        else:
+            acct = anyio.run(manager.validate, args.provider)
+        provs = {p["id"]: p for p in anyio.run(manager.providers)}
+        p = provs.get(args.provider) or {}
+        payload = {"ok": acct.ok, "account": acct, "configured": bool(p.get("configured")),
+                   "fields": p.get("credential_fields", [])}
+        if want_json:
+            return out_json(payload)
+        for f in p.get("credential_fields", []):
+            state = "set" if os.environ.get(f.env) else "missing"
+            print(f"  {f.env:<24} {state:<8} {f.help}")
+        print(("ok: " if acct.ok else "not ok: ") + (acct.message or "validated")
+              + (f" (user {acct.user})" if acct.user else ""))
+        return 0 if acct.ok else 1
+
+    if cmd == "gpus":
+        rows_g = anyio.run(lambda: manager.gpus(args.provider, min_vram_gb=args.min_vram))
+        if want_json:
+            return out_json({"ok": True, "provider": args.provider, "gpus": rows_g})
+        print(_deploy_table(
+            ["id", "family", "vram", "price", "avail", "label"],
+            [[g.provider_id, g.family, f"{g.total_vram_gb} GB" + (f" ({g.count}x)" if g.count > 1 else ""),
+              _fmt_price(g.price_per_hour), {True: "yes", False: "no"}.get(g.available, "?"), g.label]
+             for g in rows_g]))
+        return 0
+
+    if cmd == "models":
+        infos = anyio.run(lambda: manager.search_models(args.query, limit=args.limit, sort=args.sort))
+        if want_json:
+            return out_json({"ok": True, "models": infos})
+        print(_deploy_table(
+            ["model", "params", "dtype", "gated", "vllm", "~vram", "downloads"],
+            [[m.id, f"{m.params_b:g}B" if m.params_b else "?", m.dtype or "?", "yes" if m.gated else "",
+              {True: "yes", False: "no"}.get(m.vllm_ok, "?"),
+              f"{m.est_vram_gb:g} GB" if m.est_vram_gb else "?", m.downloads or ""] for m in infos]))
+        return 0
+
+    if cmd == "inspect":
+        info = anyio.run(lambda: manager.inspect_model(args.model))
+        if want_json:
+            return out_json({"ok": True, "model": info})
+        print(f"{info.id}")
+        print(f"  architectures : {', '.join(info.architectures) or '?'}")
+        print(f"  params        : {f'{info.params_b:g}B' if info.params_b else '?'}  dtype: {info.dtype or '?'}")
+        print(f"  context       : {info.context_len or '?'}   license: {info.license or '?'}   gated: {'yes' if info.gated else 'no'}")
+        vllm_txt = {True: "yes", False: "no"}.get(info.vllm_ok, "unknown")
+        print(f"  vLLM          : {vllm_txt}" + (f" — {info.reason}" if info.reason else ""))
+        print(f"  est. VRAM     : {f'{info.est_vram_gb:g} GB' if info.est_vram_gb else '?'} (weights + KV cache)")
+        return 0
+
+    if cmd == "up":
+        opts = DeployOpts(
+            name=args.name, hf_token=args.hf_token, served_model_name=args.served_name,
+            max_model_len=args.max_model_len, tensor_parallel=args.tp, quantization=args.quantization,
+            min_replicas=args.min, max_replicas=args.max, idle_timeout_s=args.idle,
+            trust_remote_code=args.trust_remote_code, extra={"force": bool(args.force)},
+        )
+        dep = anyio.run(lambda: manager.deploy(
+            args.provider, args.model, gpu=args.gpu, engine=args.engine, opts=opts,
+            wait=not args.no_wait, progress=progress))
+        connected = None
+        if not args.no_wait and not args.no_connect and dep.endpoint_url:
+            connected = anyio.run(lambda: manager.connect(dep.id))
+        if want_json:
+            return out_json({"ok": True, "deployment": dep, "connect": connected})
+        print(f"\n{dep.provider}:{dep.id}  {dep.status}  {dep.model}")
+        if dep.endpoint_url:
+            print(f"  endpoint : {dep.endpoint_url}")
+            print(f"  model=   : {dep.served_model_name}")
+        if connected:
+            print("\nConnected. Launch the terminal on it with:\n  "
+                  + _deploy_launch_line(connected["model"], connected["backend"], connected.get("api_key_env")))
+        elif args.no_wait:
+            print(f"\nWhen it is up:  mantis-agent deploy connect {dep.id}")
+        return 0
+
+    if cmd == "ls":
+        deps = anyio.run(lambda: manager.list_deployments(refresh=args.refresh, provider_id=args.provider))
+        if want_json:
+            return out_json({"ok": True, "deployments": deps})
+        if not deps:
+            print("no deployments (mantis-agent deploy up <provider> <model> --gpu <id>)")
+            return 0
+        print(_deploy_table(
+            ["id", "provider", "model", "status", "gpu", "endpoint"],
+            [[d.id, d.provider, d.model, d.status, d.gpu.display, d.endpoint_url or "-"] for d in deps]))
+        return 0
+
+    if cmd == "status":
+        dep = anyio.run(lambda: manager.status(args.id, refresh=not args.no_refresh))
+        cost = None
+        try:
+            cost = anyio.run(lambda: manager.cost(dep.id))
+        except Exception:  # noqa: BLE001 — cost is decoration
+            cost = None
+        if want_json:
+            return out_json({"ok": True, "deployment": dep, "cost": cost})
+        print(f"{dep.provider}:{dep.id}  {dep.status}")
+        print(f"  model    : {dep.model}  (model= {dep.served_model_name})")
+        print(f"  engine   : {dep.engine}   gpu: {dep.gpu.display} ({dep.gpu.total_vram_gb} GB)")
+        print(f"  endpoint : {dep.endpoint_url or '-'}")
+        print(f"  replicas : min {dep.opts.min_replicas} / max {dep.opts.max_replicas}, idle {dep.opts.idle_timeout_s}s")
+        if cost is not None:
+            print(f"  cost     : {_fmt_price(cost.per_hour_usd)} running, {_fmt_price(cost.idle_per_hour_usd)} idle — {cost.basis}")
+        if dep.message:
+            print(f"  note     : {dep.message}")
+        print(f"  created  : {dep.created_at.isoformat()}")
+        return 0
+
+    if cmd == "logs":
+        async def collect() -> list[str]:
+            out: list[str] = []
+            async for line in manager.logs(args.id, tail=args.tail):
+                out.append(line)
+                if len(out) >= args.tail:
+                    break
+            return out
+
+        lines = anyio.run(collect)
+        if want_json:
+            return out_json({"ok": True, "id": args.id, "lines": lines})
+        for line in lines:
+            print(line)
+        return 0
+
+    if cmd == "connect":
+        info_c = anyio.run(lambda: manager.connect(args.id))
+        if want_json:
+            return out_json({"ok": True, **info_c})
+        print(f"connected: model={info_c['model']} backend={info_c['backend']}")
+        print("Launch the terminal on it with:\n  "
+              + _deploy_launch_line(info_c["model"], info_c["backend"], info_c.get("api_key_env")))
+        return 0
+
+    if cmd == "down":
+        if not args.yes and not want_json:
+            try:
+                answer = input(f"Delete deployment {args.id} on its provider? [y/N] ")
+            except EOFError:
+                answer = ""
+            if answer.strip().lower() not in ("y", "yes"):
+                print("aborted")
+                return 1
+        anyio.run(lambda: manager.teardown(args.id, progress=progress))
+        if want_json:
+            return out_json({"ok": True, "id": args.id, "deleted": True})
+        return 0
+
+    raise _deploy_usage(f"unknown deploy action {cmd!r}")
+
+
+def _deploy_usage(msg: str) -> Exception:
+    from .deploy import DeployError  # noqa: PLC0415
+
+    return DeployError(msg, hint="see `mantis-agent deploy --help`")
+
+
 _HANDLERS: dict[str, Any] = {
     "version": _cmd_version,
+    "deploy": _cmd_deploy,
     "list-models": _cmd_list_models,
     "probe": _cmd_probe,
     "run": _cmd_run,

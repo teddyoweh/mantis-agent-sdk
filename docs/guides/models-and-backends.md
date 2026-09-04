@@ -288,6 +288,36 @@ Anthropic resolves separately, matching Claude Code: `$ANTHROPIC_API_KEY`
 becomes an `x-api-key` header; `$ANTHROPIC_AUTH_TOKEN` becomes
 `Authorization: Bearer` (that is what OAuth logins and gateways use).
 
+### Extra request headers
+
+Some endpoints authenticate with headers of their own rather than a key —
+a Modal deployment behind proxy auth wants `Modal-Key` / `Modal-Secret`, a
+gateway may want a tenant header. `extra_headers` (an option on `Agent`,
+`MantisAgentOptions`, and the dict form) is sent on every provider request,
+merged **after** the adapter's own auth header, so an explicit header wins:
+
+```python
+from mantis_agent import Agent
+
+agent = Agent(
+    model="Qwen/Qwen3-8B",
+    backend="https://alice--llm-serve.modal.run/v1",
+    extra_headers={"Modal-Key": "wk-…", "Modal-Secret": "ws-…"},
+)
+```
+
+When `extra_headers` is unset, the `MANTIS_AGENT_EXTRA_HEADERS` environment
+variable is read as a JSON object — `mantis deploy … connect` exports it so
+the terminal reaches a freshly deployed endpoint with no code change:
+
+```bash
+export MANTIS_AGENT_EXTRA_HEADERS='{"Modal-Key": "wk-…", "Modal-Secret": "ws-…"}'
+```
+
+Malformed JSON raises a `ValueError` naming the variable at `Agent(...)`
+time rather than surfacing later as an opaque `401`. Values are kept out of
+`repr` — they are usually secrets.
+
 !!! warning "Keys don't come from `settings.json`"
 
     There is deliberately no `api_key` key in the settings file: it is
@@ -378,7 +408,14 @@ HuggingFace text-generation-inference, default `http://localhost:3000/v1`.
 ### Modal
 
 Serverless GPUs, addressed as `modal:workspace/app` or a `modal.run` URL. The
-adapter handles cold starts and per-request keepalives.
+adapter handles cold starts and per-request keepalives. Proxy auth reads the
+**proxy auth token** pair first — `MODAL_PROXY_TOKEN_ID` /
+`MODAL_PROXY_TOKEN_SECRET` (`wk-…` / `ws-…`, what a web endpoint or Modal
+Server checks) — and falls back to the **API token** pair `MODAL_TOKEN_ID` /
+`MODAL_TOKEN_SECRET` (`ak-…` / `as-…`, what the `modal` CLI deploys with).
+Both are sent as `Modal-Key` / `Modal-Secret`. A single `api_key` of the
+joined form `wk-<id>.ws-<secret>` is sent as `Authorization: Bearer` instead,
+and [`extra_headers`](#extra-request-headers) can carry the pair directly.
 
 ### OpenAI
 

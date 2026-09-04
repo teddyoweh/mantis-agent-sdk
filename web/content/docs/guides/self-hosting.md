@@ -16,6 +16,14 @@ Prefer clicking? Run `mantis serve`, open the **Models** tab, and use the
 **Self-host / custom endpoint** form — paste the base URL, model id, and an
 optional key, then hit Connect. Same result as `/connect`, no terminal.
 
+**Or let mantis deploy it for you.** Save a GPU-cloud credential once and
+`mantis-agent deploy up runpod Qwen/Qwen3-32B --gpu <id>` (or the
+**Deploy** page of `mantis serve`, or `/deploy` in the terminal) stands the
+model up on RunPod, HF Inference Endpoints, Modal, DeepInfra, Baseten or
+Vast.ai, waits for it, and connects it — pre-flight VRAM fit, cost per hour
+and teardown included. See [Deploy — bring your own GPU](/docs/guides/deploy).
+The rest of this page is the manual route.
+
 ## Where you can self-host — the full map
 
 ### On your own hardware — automated, no guide needed

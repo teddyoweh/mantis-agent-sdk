@@ -828,6 +828,142 @@ INDEX_HTML = r"""<!doctype html>
     .orow .osz, .orow .opq { display: none; }
     #transcript { padding: 16px 12px; }
   }
+
+  /* ==========================================================================
+     DEPLOY — bring your own GPU provider. Same bench: provider cards in the
+     family-card shape, the Hub search in the model-table shape, fit tables in
+     the list shape, a job sheet that streams like the run log. Verdict chips
+     are the one new word: fits / tight / no.
+     ========================================================================== */
+  .dp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: 10px;
+    margin-bottom: 14px; }
+  .dpc { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 13px 14px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+    position: relative; }
+  .dpc.on { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--accent-soft); }
+  .dpc .fh { display: flex; align-items: center; gap: 8px; }
+  .dpc .mark2 { width: 26px; height: 26px; }
+  .dpc .mark2 svg { width: 16px; height: 16px; }
+  .dpc .fn { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: -.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpc .fa { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; }
+  .dpc .fa .mono { overflow: hidden; text-overflow: ellipsis; }
+  .dpc .dp-err { color: var(--err); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+  .dpc .chips { gap: 4px; }
+  .dpc .chip { font-size: 10px; padding: 2px 7px; }
+  .dpc .ff { display: flex; align-items: center; gap: 6px; margin-top: auto; flex-wrap: wrap; }
+  .dpc .ff .b { padding: 5px 10px; font-size: 11.5px; }
+  .dp-form { display: none; flex-direction: column; gap: 9px; margin-top: 4px; padding-top: 10px;
+    box-shadow: inset 0 1px 0 var(--line); }
+  .dp-form.on { display: flex; }
+  .dp-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .dp-field .kh-l { font-size: 10px; }
+  .dp-field input.in, .dp-field select.in { width: 100%; }
+  .dp-field .kh-n { line-height: 1.45; }
+  .dp-form .cta { margin-top: 4px; gap: 8px; }
+
+  /* the Hub search — model-table shape with the pre-flight columns */
+  .dp-mrow, .dp-mhead { grid-template-columns: minmax(0,1fr) 58px 64px 96px 118px 74px 72px; }
+  .dp-mhead span:nth-child(2), .dp-mhead span:nth-child(6) { text-align: right; }
+  .dp-mrow .mctx { text-align: right; }
+  .cap.ok { background: var(--accent-soft); color: var(--accent); }
+  .cap.bad { background: #fbe4df; color: var(--err); }
+  .cap.amb { background: #fbf0d9; color: #966a10; }
+  @media (prefers-color-scheme: dark) {
+    .cap.bad { background: #3a1f1a; color: #e8756a; }
+    .cap.amb { background: #382d13; color: #e0b957; }
+  }
+  .dp-models { max-height: 380px; }
+
+  /* fit & deploy — one table per configured provider */
+  .dp-mh { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 8px; }
+  .dp-mid { font-family: var(--mono); font-weight: 700; font-size: 14px; letter-spacing: -.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dp-eng { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ink-3);
+    font-family: var(--mono); }
+  .dp-eng select.in { padding: 5px 8px; }
+  .dp-fitbox { margin-top: 12px; }
+  .dp-loading { color: var(--ink-3); font-family: var(--mono); font-size: 12.5px; }
+  .dp-ftab { margin-top: 8px; }
+  .dp-frow { display: grid; grid-template-columns: minmax(0,1.3fr) 118px 84px 64px minmax(0,1fr) 92px;
+    gap: 12px; align-items: center; padding: 8px 10px; border-radius: 9px; font-family: var(--mono);
+    font-size: 12.5px; }
+  .dp-frow:hover { background: var(--panel-2); }
+  .dp-frow.head { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+    padding: 2px 10px 6px; }
+  .dp-frow.head:hover { background: none; }
+  .dp-frow.no { color: var(--ink-3); }
+  .dp-frow .dp-gn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
+  .dp-frow .dp-gn small { color: var(--ink-3); font-size: 10.5px; }
+  .dp-frow .dp-gv, .dp-frow .dp-gp { color: var(--ink-2); font-size: 11.5px; white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  .dp-frow .dp-gp { font-weight: 700; color: var(--ink); }
+  .dp-frow.no .dp-gp { color: var(--ink-3); font-weight: 400; }
+  .dp-frow .dp-gc { color: var(--ink-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .dp-frow .dp-ga { display: flex; justify-content: flex-end; }
+  .dp-frow .dp-ga .b { padding: 5px 11px; font-size: 11.5px; }
+  .dp-frow .dp-ga .mgo { font-size: 10.5px; text-align: right; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .vd { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 5px; background: var(--fill); color: var(--ink-3);
+    font-family: var(--sans); text-align: center; }
+  .vd.fits { background: var(--accent-soft); color: var(--accent); }
+  .vd.tight { background: #fbf0d9; color: #966a10; }
+  .vd.no { background: var(--fill); color: var(--ink-3); }
+  @media (prefers-color-scheme: dark) { .vd.tight { background: #382d13; color: #e0b957; } }
+  .dp-adv { margin: 6px 0 2px; }
+  .dp-adv summary { font-family: var(--mono); font-size: 11px; color: var(--ink-3); cursor: pointer;
+    padding: 3px 0; }
+  .dp-adv summary:hover { color: var(--ink); }
+  .dp-advgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px;
+    padding: 8px 0 4px; align-items: end; }
+  .dp-advgrid input.in, .dp-advgrid select.in { width: 100%; padding: 6px 9px; }
+  .dp-cost { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); background: var(--panel-2);
+    border-radius: 9px; padding: 10px 13px; margin: 14px 0 4px; }
+  .dp-cost b { color: var(--ink); }
+
+  /* the job sheet streams like the run log; the result reads like a kv card */
+  .dp-log { max-height: 260px; min-height: 80px; margin-top: 10px; }
+  .sheet .banner { margin: 12px 0 0; }
+
+  /* deployments — the list shape, nine columns */
+  .dp-drow { display: grid; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px;
+    font-family: var(--mono); font-size: 12px;
+    grid-template-columns: 22px minmax(0,.9fr) minmax(0,1.2fr) 118px 116px minmax(0,1fr) 96px 56px auto; }
+  .dp-drow:hover { background: var(--panel-2); }
+  .dp-drow.head { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+    padding: 4px 12px 6px; }
+  .dp-drow.head:hover { background: none; }
+  .dp-drow.off { color: var(--ink-3); }
+  .dp-drow .mark2 { width: 20px; height: 20px; border-radius: 5px; }
+  .dp-drow .mark2 svg { width: 12px; height: 12px; }
+  .dp-drow .dp-dn { font-weight: 700; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .dp-drow .dp-dm, .dp-drow .dp-dg { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-size: 11.5px; }
+  .dp-drow .dp-ds { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+    white-space: nowrap; }
+  .dp-drow .dp-de { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .dp-drow .dp-de .clk { cursor: pointer; }
+  .dp-drow .dp-de .clk:hover { color: var(--accent); }
+  .dp-drow .dp-dc { font-size: 11.5px; text-align: right; white-space: nowrap;
+    font-variant-numeric: tabular-nums; }
+  .dp-drow .dp-da { color: var(--ink-3); font-size: 11px; text-align: right; white-space: nowrap; }
+  .dp-drow .dp-dx { display: flex; gap: 4px; justify-content: flex-end; }
+  .dp-drow .dp-dx .b { padding: 4px 9px; font-size: 11px; }
+  .dp-steps { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 12px;
+    font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .dp-steps b { color: var(--accent); margin-right: 5px; }
+  @media (max-width: 1100px) {
+    .dp-drow { grid-template-columns: 22px minmax(0,1fr) 116px minmax(0,1fr) 56px auto; }
+    .dp-drow .dp-dm, .dp-drow .dp-dg, .dp-drow .dp-dc { display: none; }
+    .dp-mrow, .dp-mhead { grid-template-columns: minmax(0,1fr) 58px 118px 74px 72px; }
+    .dp-mrow .mp, .dp-mhead span:nth-child(3), .dp-mhead span:nth-child(4) { display: none; }
+    .dp-frow { grid-template-columns: minmax(0,1fr) 84px 64px 92px; }
+    .dp-frow .dp-gv, .dp-frow .dp-gc { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -837,9 +973,10 @@ INDEX_HTML = r"""<!doctype html>
     <button data-v="home" class="on">overview<span class="k">1</span></button>
     <button data-v="sessions">sessions<span class="k">2</span></button>
     <button data-v="models">models<span class="k">3</span></button>
-    <button data-v="mcp">mcp<span class="k">4</span></button>
-    <button data-v="skills">skills<span class="k">5</span></button>
-    <button data-v="config">config<span class="k">6</span></button>
+    <button data-v="deploy">deploy<span class="k">4</span></button>
+    <button data-v="mcp">mcp<span class="k">5</span></button>
+    <button data-v="skills">skills<span class="k">6</span></button>
+    <button data-v="config">config<span class="k">7</span></button>
   </nav>
   <div class="railfoot" id="railfoot"></div>
 </aside>
@@ -854,6 +991,7 @@ INDEX_HTML = r"""<!doctype html>
     <div class="col" id="convcol"><div id="transcript"><div class="empty">Pick a session.</div></div></div>
   </section>
   <section id="models" class="view"><div class="scroll"><div class="page" id="modelspad"></div></div></section>
+  <section id="deploy" class="view"><div class="scroll"><div class="page wide" id="deploypad"></div></div></section>
   <section id="config" class="view"><div class="scroll"><div class="page" id="configpad"></div></div></section>
 </main>
 <div id="modal"><div class="sheet"><button class="x" onclick="hideModal()">✕</button><div id="sheet"></div></div></div>
@@ -1384,11 +1522,12 @@ let homeReq = 0;
 async function loadHome() {
   const pad = document.getElementById("homepad");
   const my = ++homeReq;
-  const [a, g, sp, act] = await Promise.all([
+  const [a, g, sp, act, ov] = await Promise.all([
     api("/api/analytics"),
     api("/api/providers").catch(() => ({ families: [] })),
     api("/api/spend").catch(() => null),
     api("/api/activity").catch(() => ({ jobs: [], runs: [] })),
+    api("/api/overview").catch(() => ({})),
   ]);
   if (my !== homeReq) return;
   pad.innerHTML = "";
@@ -1408,6 +1547,9 @@ async function loadHome() {
     { value: active, label: "running", state: active ? "" : "dim",
       title: (act.active_jobs||0) + " jobs · " + (act.active_runs||0) + " workflow runs" },
     { value: t.sessions, label: "sessions", view: "sessions", state: "dim" },
+    // a live GPU deployment is part of the wiring — it only shows when there is one
+    ...(ov.deployments_live ? [{ value: ov.deployments_live, label: "deployed", view: "deploy",
+                                 title: "live GPU deployments" }] : []),
     s7.est_usd != null || s7.rec_usd
       ? { value: "≈" + fmtUsd((s7.est_usd || 0) + (s7.rec_usd || 0)), label: "7d", state: "dim",
           title: "estimated + recorded spend, last 7 days" }
@@ -1506,6 +1648,609 @@ async function loadHome() {
   }
 }
 
+
+// ==========================================================================
+// DEPLOY — bring your own GPU provider.
+// Add a provider key once, search any open model, see which GPUs fit and what
+// they cost, deploy with one click, watch it come up, then "Use this model" so
+// the SDK and the terminal point at it. Every number here is a reading off
+// the provider's own API (catalogue prices, account balance, deployment
+// status); the page never guesses a dollar figure it wasn't given.
+// ==========================================================================
+const DEPLOY = { providers: [], deployments: [], model: null, inspect: null, q: "", sort: "trending" };
+const DEP_STATE = { running: "ok", scaled_to_zero: "ok", starting: "run", pending: "run", building: "run",
+                    deleting: "run", paused: "pend", failed: "bad", deleted: "", unknown: "" };
+const fmtGb = g => g == null ? "—" : (Number.isInteger(g) ? g : Number(g).toFixed(1)) + " GB";
+const fmtRate = v => v == null ? "—" : "$" + (v < 1 ? v.toFixed(3) : v.toFixed(2)) + "/h";
+const fmtParams = b => b == null ? "—" : (b >= 1000 ? (b/1000).toFixed(1) + "T" : b >= 10 ? Math.round(b) + "B" : Number(b).toFixed(1) + "B");
+const depEnv = d => d.auth_env ? d.auth_env + " (bearer)" : Object.keys(d.auth_headers || {}).length ? Object.keys(d.auth_headers).join(", ") : "none";
+const shellLine = d => "MANTIS_AGENT_MODEL=" + (d.served_model_name || d.model) + " MANTIS_AGENT_BASE_URL=" + d.endpoint_url + " mantis";
+const pyLine = d => 'MantisAgentOptions(model="' + (d.served_model_name || d.model) + '", backend="' + d.endpoint_url + '")';
+const errText = r => (r.error || "failed") + (r.hint ? " — " + r.hint : "");
+async function copyText(s, label) {
+  try { await navigator.clipboard.writeText(s); toast("copied " + (label || "")); return; } catch (e) { /* fall through */ }
+  const ta = el("textarea"); ta.value = s; document.body.append(ta); ta.select();
+  try { document.execCommand("copy"); toast("copied " + (label || "")); } catch (e2) { toast("copy failed", true); }
+  ta.remove();
+}
+function tag2(text, cls, title) { const t = el("span","t2 " + (cls || ""), text); if (title) t.title = title; return t; }
+
+let deployReq = 0;
+async function loadDeploy() {
+  const pad = document.getElementById("deploypad");
+  const my = ++deployReq;
+  const [pv, ls] = await Promise.all([
+    api("/api/deploy/providers").catch(e => ({ ok: false, error: e.message, providers: [] })),
+    api("/api/deploy/list").catch(e => ({ ok: false, error: e.message, deployments: [] })),
+  ]);
+  if (my !== deployReq) return;
+  DEPLOY.providers = pv.providers || [];
+  DEPLOY.deployments = ls.deployments || [];
+  pad.innerHTML = "";
+  const live = DEPLOY.deployments.filter(d => d.is_live);
+  const configured = DEPLOY.providers.filter(p => p.configured);
+  const ref = el("span","refresh"); ref.append(el("span","live"), document.createTextNode("live · 15s"));
+  ref.title = "deployments refresh every 15s while this tab is visible";
+  pageHead(pad, "deploy", live.length || null,
+    "Bring your own GPU cloud. Add a provider key once, pick any open model, see which GPUs fit and " +
+    "what they cost, deploy with one click — then <b>use this model</b> and the SDK and terminal point at it.",
+    [ref]);
+  const cur = (OVERVIEW.current && OVERVIEW.current.model) || null;
+  signalPath(pad, [
+    { value: configured.length + "/" + DEPLOY.providers.length, label: "providers", state: configured.length ? "" : "warn",
+      title: "GPU clouds with a saved credential" },
+    { label: DEPLOY.model || "pick a model", state: DEPLOY.model ? "" : "dim" },
+    { value: live.length, label: "deployed", state: live.length ? "" : "dim" },
+    { label: cur || "no model set", state: cur ? "dim" : "warn", view: "models",
+      title: "the model the SDK and terminal use now" },
+  ]);
+  if (pv.ok === false) {
+    const b = el("div","banner"); const t = el("div","sp");
+    t.innerHTML = "<b>Deploy isn't available:</b> " + esc(errText(pv)); b.append(t); pad.append(b);
+  }
+
+  const pSec = section(pad, "gpu providers", "keys → user settings env");
+  const strip = el("div","dp-grid"); strip.id = "dp-grid"; renderDpProviders(strip); pSec.append(strip);
+
+  const mSec = section(pad, "pick a model", "huggingface.co");
+  if (!configured.length) {
+    mSec.append(zero("Add a GPU provider to deploy any model",
+      "Paste one provider key above. Then this turns into a search over every open model on the Hub — " +
+      "with size, dtype, license and whether vLLM can serve it — and each one shows the GPUs that fit."));
+  } else renderDpPicker(mSec);
+
+  const fSec = section(pad, "fit & deploy"); fSec.id = "dp-fit"; renderFit(fSec);
+
+  const dSec = section(pad, "deployments");
+  const tbl = el("div"); tbl.id = "dp-deps"; renderDeployments(tbl); dSec.append(tbl);
+}
+
+// ---- providers strip ----
+// One card per adapter: its mark, whether a key is saved and whether it
+// validated (with the balance when the provider says), what it can do
+// (scale to zero, public endpoint), and the inline key form generated from
+// the adapter's own credential_fields. Values go up; only names come back.
+function renderDpProviders(box) {
+  box.innerHTML = "";
+  if (!DEPLOY.providers.length) {
+    box.append(zero("No deploy providers registered", "This build has no GPU adapters — update mantis-agent-sdk."));
+    return;
+  }
+  DEPLOY.providers.forEach(p => {
+    const acct = p.account;
+    const ok = !!(acct && acct.ok);
+    const card = el("div","dpc" + (p.configured ? " on" : "")); card.id = "dpc-" + p.id;
+    const fh = el("div","fh");
+    fh.append(providerMark(p.logo || p.id, p.display_name));
+    fh.append(el("span","fn", p.display_name || p.id));
+    const sp = el("span"); sp.style.flex = "1"; fh.append(sp);
+    const d = el("span","dot2 " + (ok ? "ok" : p.configured ? "warn" : ""));
+    d.title = ok ? "validated" : p.configured ? "key saved, not yet validated" : "no key"; fh.append(d);
+    card.append(fh);
+    const fa = el("div","fa");
+    fa.append(tag2(ok ? "validated" : p.configured ? "key saved" : "no key", ok ? "acc" : p.configured ? "amb" : ""));
+    if (ok) {
+      const bits = [];
+      if (acct.user) bits.push(acct.user);
+      if (acct.balance_usd != null) bits.push(fmtUsd(acct.balance_usd) + " balance");
+      if (acct.credits_usd != null) bits.push(fmtUsd(acct.credits_usd) + " credits");
+      if (bits.length) { const m = el("span","mono", bits.join(" · ")); m.title = bits.join(" · "); fa.append(m); }
+    } else if (acct && acct.message) { const e = el("span","dp-err", acct.message); e.title = acct.message; fa.append(e); }
+    card.append(fa);
+    const badges = el("div","chips");
+    badges.append(tag2(p.scale_to_zero ? "scale to zero" : "always warm", p.scale_to_zero ? "acc" : "amb",
+      p.scale_to_zero ? "min_replicas=0 is honoured — idle costs nothing" : "a warm replica bills while idle"));
+    if (p.public_by_default) badges.append(tag2("public endpoint", "amb", "reachable by anyone with the URL — keep the auth env set"));
+    if (p.id === "vastai") badges.append(tag2("plain http", "amb", "traffic to this endpoint is not encrypted"));
+    (p.engines || []).forEach(e => badges.append(el("span","chip", e)));
+    card.append(badges);
+    const ff = el("div","ff");
+    const form = el("div","dp-form");
+    const addB = btn(p.configured ? "Replace key" : "Add key", p.configured ? "" : "pri", () => {
+      const on = form.classList.toggle("on");
+      if (on) { credForm(p, form); const i = form.querySelector("input"); if (i) i.focus(); }
+    });
+    ff.append(addB);
+    if (p.configured) {
+      const vb = btn("Validate", "", async () => {
+        vb.disabled = true; vb.textContent = "Checking…";
+        try {
+          const r = await post("/api/deploy/validate", { provider: p.id });
+          if (r.ok) toast("✓ " + (p.display_name || p.id) + (r.account && r.account.balance_usd != null ? " · " + fmtUsd(r.account.balance_usd) + " balance" : " validated"));
+          else toast(errText(r), true);
+          p.account = r.account || { ok: false, message: r.error };
+          renderDpProviders(box);
+        } catch (e) { toast(e.message, true); vb.disabled = false; vb.textContent = "Validate"; }
+      });
+      ff.append(vb);
+    }
+    if (p.console_url) ff.append(extLink("b gho", "console ↗", p.console_url));
+    card.append(ff, form);
+    box.append(card);
+  });
+}
+function credForm(p, form) {
+  form.innerHTML = "";
+  const inputs = {};
+  (p.credential_fields || []).forEach(f => {
+    const row = el("div","dp-field");
+    const lab = el("span","kh-l", f.env + (f.required === false ? " · optional" : ""));
+    const inp = input(f.label || f.env, f.secret !== false); inp.autocomplete = "off"; inputs[f.env] = inp;
+    row.append(lab, inp);
+    if (f.help) row.append(el("div","kh-n", f.help));
+    form.append(row);
+  });
+  const foot = el("div","cta");
+  const save = btn("Save & validate", "pri", async () => {
+    const values = {};
+    Object.entries(inputs).forEach(([k, i]) => { if (i.value.trim()) values[k] = i.value.trim(); });
+    const missing = (p.credential_fields || []).filter(f => f.required !== false && !values[f.env]);
+    if (missing.length) { toast("fill in " + missing[0].env, true); inputs[missing[0].env].focus(); return; }
+    save.disabled = true;
+    try {
+      const r = await post("/api/deploy/creds", { provider: p.id, values });
+      if (r.ok) {
+        const a = r.account || {};
+        toast(a.ok ? "✓ " + (p.display_name || p.id) + " validated" : "saved · " + (a.message || "validation failed"), !a.ok);
+        Object.values(inputs).forEach(i => (i.value = ""));
+        loadDeploy(); loadOverview();
+      } else toast(errText(r), true);
+    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
+  });
+  foot.append(save, btn("Cancel", "gho", () => form.classList.remove("on")));
+  if (p.console_url) foot.append(extLink("a-link", "get a key ↗", p.console_url));
+  form.append(foot);
+  form.querySelectorAll("input").forEach(i => (i.onkeydown = e => { if (e.key === "Enter") save.click(); }));
+}
+
+// ---- model picker: the Hub, in the model-table shape ----
+let modelSearchReq = 0;
+function renderDpPicker(sec) {
+  const bar = el("div","filters");
+  const find = findBox("Search the Hub — llama, qwen, gemma, deepseek…  ( / )");
+  find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = DEPLOY.q;
+  bar.append(find.wrap);
+  const chips = el("div","fchips");
+  [["trending","trending"], ["downloads","downloads"], ["likes","likes"]].forEach(([k, lab]) => {
+    const c = el("button","fchip" + (k === DEPLOY.sort ? " on" : ""), lab);
+    c.onclick = () => { DEPLOY.sort = k; chips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c)); runSearch(); };
+    chips.append(c);
+  });
+  bar.append(chips); sec.append(bar);
+  const list = el("div","mtable dp-models"); list.id = "dp-models"; sec.append(list);
+  let t = null;
+  const runSearch = async () => {
+    DEPLOY.q = find.input.value.trim();
+    list.innerHTML = ""; list.append(el("div","browse-empty", DEPLOY.q ? "searching the Hub…" : "loading curated models…"));
+    const my = ++modelSearchReq;
+    let r;
+    try { r = await api("/api/deploy/models?" + q({ q: DEPLOY.q, sort: DEPLOY.sort, limit: 30 })); }
+    catch (e) { r = { ok: false, error: e.message, models: [] }; }
+    if (my !== modelSearchReq) return;
+    renderModelRows(list, r);
+  };
+  find.input.oninput = () => { clearTimeout(t); t = setTimeout(runSearch, 320); };
+  find.input.onkeydown = e => {
+    if (e.key === "Enter") { clearTimeout(t); runSearch(); }
+    else if (e.key === "Escape") { find.input.value = ""; runSearch(); }
+  };
+  runSearch();
+}
+function renderModelRows(list, r) {
+  list.innerHTML = "";
+  const head = el("div","mhead dp-mhead");
+  ["model", "params", "dtype", "license", "serving", "est. vram", ""].forEach(x => head.append(el("span", null, x)));
+  list.append(head);
+  if (r.ok === false) { list.append(el("div","browse-empty", errText(r))); return; }
+  if (r.curated) { const fh = el("div","mfam"); fh.append(document.createTextNode("curated · good first deploys")); list.append(fh); }
+  if (!(r.models || []).length) {
+    list.append(el("div","browse-empty", r.curated ? "Nothing curated yet — type to search the Hub."
+                                                   : "No text-generation model matches “" + r.query + "”."));
+    return;
+  }
+  r.models.forEach(m => {
+    const row = el("div","mrow dp-mrow" + (m.id === DEPLOY.model ? " cur" : ""));
+    row.dataset.model = m.id;
+    const mn = el("span","mn", m.id); mn.title = m.id; row.append(mn);
+    row.append(el("span","mctx", fmtParams(m.params_b)));
+    row.append(el("span","mp", m.dtype || "—"));
+    const lic = el("span","mp", m.license || "—"); lic.title = m.license || ""; row.append(lic);
+    const caps = el("span","mcaps");
+    if (m.gated) { const c = el("span","cap amb","gated"); c.title = "needs an HF token with access"; caps.append(c); }
+    if (m.vllm_ok === true) { const c = el("span","cap ok","vllm ✓"); c.title = "architecture served by vLLM"; caps.append(c); }
+    else if (m.vllm_ok === false) { const c = el("span","cap bad","vllm ✗"); c.title = m.reason || "not servable by vLLM"; caps.append(c); }
+    else { const c = el("span","cap","vllm ?"); c.title = "architecture not in the table"; caps.append(c); }
+    row.append(caps);
+    row.append(el("span","mctx", m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : "—"));
+    row.append(el("span","mgo", m.id === DEPLOY.model ? "selected" : "inspect →"));
+    row.onclick = () => pickModel(m.id);
+    list.append(row);
+  });
+}
+async function pickModel(id) {
+  DEPLOY.model = id; DEPLOY.inspect = null;
+  document.querySelectorAll("#dp-models .dp-mrow").forEach(r => {
+    const on = r.dataset.model === id;
+    r.classList.toggle("cur", on);
+    const g = r.querySelector(".mgo"); if (g) g.textContent = on ? "selected" : "inspect →";
+  });
+  const sec = document.getElementById("dp-fit"); if (!sec) return;
+  renderFit(sec, true);
+  sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  let r;
+  try { r = await api("/api/deploy/inspect?" + q({ model: id })); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (DEPLOY.model !== id) return;
+  DEPLOY.inspect = r; renderFit(sec);
+}
+
+// ---- fit & deploy ----
+// For the selected model: what it is (from the Hub), then one table per
+// configured provider — GPU, VRAM, $/h, a fits/tight/no verdict, cold-start
+// behaviour — with a Deploy button per row that names the cost before it
+// commits anything.
+function renderFit(sec, loading) {
+  [...sec.children].forEach(x => { if (!x.classList.contains("sec-t")) x.remove(); });
+  if (!DEPLOY.model) {
+    sec.append(zero("Pick a model above",
+      "Its architecture, size and dtype come from the Hub; every configured provider's GPU catalogue " +
+      "is checked against it and priced per hour. Deploying is one click on a row."));
+    return;
+  }
+  if (loading || !DEPLOY.inspect) { sec.append(el("div","card2 dp-loading", "inspecting " + DEPLOY.model + "…")); return; }
+  const r = DEPLOY.inspect;
+  if (r.ok === false) {
+    const p = el("div","probe bad"); const h = el("div","ph2");
+    h.append(el("span","dot2 bad"), document.createTextNode("Couldn't inspect " + DEPLOY.model));
+    p.append(h, el("div","pe", errText(r))); sec.append(p); return;
+  }
+  const m = r.model || {};
+  const card = el("div","card2");
+  const h = el("div","dp-mh");
+  h.append(el("span","dp-mid", m.id));
+  if (m.gated) h.append(tag2("gated", "amb", "needs an HF token with access"));
+  h.append(tag2(m.vllm_ok ? "vllm ok" : m.vllm_ok === false ? "vllm: " + (m.reason || "unsupported") : "vllm unknown",
+                m.vllm_ok ? "acc" : m.vllm_ok === false ? "amb" : "", m.reason || ""));
+  card.append(h);
+  const lcd = el("div","lcd tight");
+  lcdCell(lcd, fmtParams(m.params_b), "params", "");
+  lcdCell(lcd, m.dtype || "—", "dtype", "dim");
+  lcdCell(lcd, m.context_len ? fmtCtx(m.context_len) : "—", "context", "dim");
+  lcdCell(lcd, m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : "—", "est. vram", "hot");
+  lcdCell(lcd, m.license || "—", "license", "dim");
+  if (m.downloads != null) lcdCell(lcd, fmtTok(m.downloads), "downloads", "dim");
+  card.append(lcd);
+  if ((m.architectures || []).length) card.append(el("div","note2", m.architectures.join(", ")));
+  sec.append(card);
+  if (!(r.fits || []).length) {
+    sec.append(zero("No configured provider",
+      "Add a key to a GPU provider above and this fills with every GPU that fits, priced per hour."));
+    return;
+  }
+  r.fits.forEach(f => sec.append(fitTable(f, m)));
+}
+function fitTable(f, m) {
+  const p = DEPLOY.providers.find(x => x.id === f.provider) || {};
+  const box = el("div","card2 dp-fitbox");
+  const head = el("div","dp-mh");
+  head.append(providerMark(p.logo || f.provider, f.display_name));
+  head.append(el("span","dp-mid", f.display_name || f.provider));
+  head.append(tag2(f.scale_to_zero ? "scale to zero" : "always warm", f.scale_to_zero ? "acc" : "amb"));
+  if (f.public_by_default) head.append(tag2("public endpoint", "amb", "reachable by anyone with the URL"));
+  const sp = el("span"); sp.style.flex = "1"; head.append(sp);
+  const eng = el("select","in");
+  (f.engines && f.engines.length ? f.engines : ["vllm"]).forEach(e => { const o = el("option", null, e); o.value = e; eng.append(o); });
+  const engL = el("label","dp-eng"); engL.append(document.createTextNode("engine"), eng); head.append(engL);
+  box.append(head);
+  if (f.error) { box.append(el("div","pe", f.error)); return box; }
+
+  // advanced — every knob DeployOpts has; blank means the adapter's default
+  const A = {};
+  const adv = el("details","dp-adv"); adv.append(el("summary", null, "advanced · context, parallelism, replicas, gated token"));
+  const grid = el("div","dp-advgrid");
+  const field = (k, node, label) => { A[k] = node; const w = el("label","dp-field"); w.append(el("span","kh-l", label || k), node); grid.append(w); };
+  const num = (k, ph, val, label) => { const i = input(ph); i.type = "number"; i.min = "0"; if (val != null) i.value = val; field(k, i, label); };
+  num("max_model_len", m.context_len ? "≤ " + m.context_len : "tokens");
+  num("tensor_parallel", "defaults to gpu count");
+  const quant = el("select","in");
+  ["", "fp8", "awq", "gptq", "int8", "bitsandbytes"].forEach(v => { const o = el("option", null, v || "none"); o.value = v; quant.append(o); });
+  field("quantization", quant);
+  num("min_replicas", "0 = scale to zero", f.scale_to_zero ? 0 : 1);
+  num("max_replicas", "", 1);
+  num("idle_timeout_s", "seconds", 300, "idle timeout (s)");
+  if (m.gated) { const hf = input("HF token with access to this repo", true); hf.autocomplete = "off"; field("hf_token", hf, "HF_TOKEN · gated repo"); }
+  const trc = document.createElement("input"); trc.type = "checkbox"; A.trust_remote_code = trc;
+  const tl = el("label","chk"); tl.append(trc, document.createTextNode("trust_remote_code")); grid.append(tl);
+  adv.append(grid); box.append(adv);
+
+  const gpus = f.gpus || [];
+  if (!gpus.length) { box.append(el("div","browse-empty", "No GPU in this catalogue is large enough for this model.")); return box; }
+  const tbl = el("div","dp-ftab");
+  const th = el("div","dp-frow head");
+  ["gpu", "vram", "$ / hour", "fit", "cold start", ""].forEach(x => th.append(el("span", null, x)));
+  tbl.append(th);
+  gpus.forEach(g => {
+    const row = el("div","dp-frow" + (g.verdict === "no" ? " no" : ""));
+    const nm = el("span","dp-gn", g.display || g.provider_id);
+    if (g.region) nm.append(el("small", null, " " + g.region));
+    row.append(nm);
+    row.append(el("span","dp-gv", fmtGb(g.total_vram_gb) + (g.count > 1 ? " · " + g.count + "×" + g.vram_gb : "")));
+    row.append(el("span","dp-gp", fmtRate(g.price_per_hour)));
+    const vd = el("span","vd " + g.verdict, g.verdict);
+    vd.title = g.reason || (g.verdict === "tight" ? "under 15% headroom" : g.verdict === "fits" ? "fits with headroom" : "");
+    row.append(vd);
+    row.append(el("span","dp-gc", f.scale_to_zero ? "from zero · first request waits" : "warm · billed while idle"));
+    const act = el("span","dp-ga");
+    if (g.verdict !== "no") {
+      const b = btn("Deploy", "pri", () => confirmDeploy(f, g, m, eng.value, A));
+      if (g.available === false) { b.disabled = true; b.title = "no capacity right now"; }
+      act.append(b);
+    } else act.append(el("span","mgo", g.reason || "too small"));
+    row.append(act);
+    if (g.reason) row.title = g.reason;
+    tbl.append(row);
+  });
+  box.append(tbl);
+  return box;
+}
+function collectOpts(A) {
+  const o = {};
+  Object.entries(A).forEach(([k, i]) => {
+    if (i.type === "checkbox") { if (i.checked) o[k] = true; }
+    else if (i.value !== "" && i.value != null) o[k] = i.value;
+  });
+  return o;
+}
+// The cost line, before anything is created: "$X/h while running · $Y/h idle".
+function confirmDeploy(f, g, m, engine, A) {
+  const opts = collectOpts(A);
+  const mx = Math.max(1, parseInt(opts.max_replicas || "1", 10) || 1);
+  const mn = Math.max(0, parseInt(opts.min_replicas || "0", 10) || 0);
+  const rate = g.price_per_hour;
+  const run = rate == null ? null : rate * mx;
+  const idle = f.scale_to_zero && mn === 0 ? 0 : (rate == null ? null : rate * Math.max(1, mn));
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, "Deploy " + m.id));
+  s.append(el("div","sub", (f.display_name || f.provider) + " · " + (g.display || g.provider_id) + " · " + engine));
+  const dl = el("dl","kvs");
+  kvRow(dl, "gpu", (g.display || g.provider_id) + " · " + fmtGb(g.total_vram_gb) + (g.region ? " · " + g.region : ""));
+  kvRow(dl, "engine", engine);
+  kvRow(dl, "replicas", mn + " – " + mx + (f.scale_to_zero && mn === 0 ? " (scales to zero)" : ""));
+  if (opts.max_model_len) kvRow(dl, "max len", String(opts.max_model_len));
+  if (opts.quantization) kvRow(dl, "quant", opts.quantization);
+  if (opts.tensor_parallel) kvRow(dl, "tensor par.", String(opts.tensor_parallel));
+  if (m.gated) kvRow(dl, "hf token", opts.hf_token ? "provided" : "none — a gated repo will fail to download");
+  s.append(dl);
+  const c = el("div","dp-cost");
+  c.innerHTML = "<b>" + esc(run == null ? "unknown" : fmtRate(run)) + "</b> while running · <b>" +
+    esc(idle == null ? "unknown" : fmtRate(idle)) + "</b> idle" +
+    (f.scale_to_zero && mn === 0 ? " — nothing while scaled to zero" : " — a warm pool keeps billing");
+  s.append(c);
+  if (f.public_by_default) {
+    const b = el("div","banner");
+    b.append(document.createTextNode("This provider's endpoint is reachable by anyone with the URL. Keep the auth env var set and tear down when you're done."));
+    s.append(b);
+  }
+  const foot = el("div","cta");
+  const go = btn("Deploy", "pri", async () => {
+    go.disabled = true; go.textContent = "Starting…";
+    try {
+      const r = await post("/api/deploy/up", { provider: f.provider, model: m.id, gpu: g.provider_id, engine, opts });
+      if (r.ok) openJobSheet(r.job, { kind: "deploy", model: m.id, provider: f.display_name || f.provider, gpu: g.display || g.provider_id });
+      else { toast(errText(r), true); go.disabled = false; go.textContent = "Deploy"; }
+    } catch (e) { toast(e.message, true); go.disabled = false; go.textContent = "Deploy"; }
+  });
+  foot.append(go, btn("Cancel", "gho", hideModal));
+  s.append(foot);
+  showModal();
+}
+
+// ---- the job sheet: progress lines streamed from a background job ----
+let jobPollT = null;
+function stopJobPoll() { if (jobPollT) { clearInterval(jobPollT); jobPollT = null; } }
+function openJobSheet(jobId, ctx) {
+  stopJobPoll();
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, (ctx.kind === "teardown" ? "Tearing down " : "Deploying ") + ctx.model));
+  s.append(el("div","sub", [ctx.provider, ctx.gpu].filter(Boolean).join(" · ") + " · job " + jobId));
+  const lcd = el("div","lcd tight");
+  const st = el("div","hot"); const stI = el("i", null, "running"); st.append(stI, document.createTextNode("status"));
+  const ep = el("div","dim"); const elI = el("i", null, "0s"); ep.append(elI, document.createTextNode("elapsed"));
+  lcd.append(st, ep); s.append(lcd);
+  const log = el("div","log dp-log", "starting…"); s.append(log);
+  const done = el("div"); s.append(done);
+  const tick = async () => {
+    let j;
+    try { j = await api("/api/deploy/job?" + q({ id: jobId })); } catch (e) { return; }
+    if (!j.ok) { stopJobPoll(); stI.textContent = "lost"; st.className = ""; log.textContent = j.error || "job not found"; return; }
+    elI.textContent = fmtDur(j.elapsed_s);
+    log.textContent = (j.lines || []).join("\n") || "waiting for the provider…";
+    log.scrollTop = log.scrollHeight;
+    if (j.status === "running") return;
+    stopJobPoll();
+    stI.textContent = j.status; st.className = j.status === "done" ? "hot" : "";
+    done.innerHTML = "";
+    if (j.status === "error") {
+      done.append(el("div","pe", (j.error || "failed") + (j.hint ? " — " + j.hint : "")));
+      const f = el("div","cta"); f.append(btn("Close", "gho", hideModal)); done.append(f);
+    } else if (ctx.kind === "teardown") {
+      done.append(el("div","note2", "Deleted on the provider and marked deleted here. Billing for it has stopped."));
+      const f = el("div","cta"); f.append(btn("Close", "pri", hideModal)); done.append(f);
+    } else renderDeployDone(done, j.result || {});
+    refreshDeployments(false); loadOverview();
+  };
+  tick(); jobPollT = setInterval(tick, 1500);
+  showModal(true);
+}
+function renderDeployDone(box, d) {
+  box.innerHTML = "";
+  const dl = el("dl","kvs");
+  kvRow(dl, "status", (d.status || "?").replace(/_/g, " "));
+  kvRow(dl, "endpoint", d.endpoint_url || "pending");
+  kvRow(dl, "model=", d.served_model_name || d.model || "—");
+  kvRow(dl, "auth", depEnv(d));
+  box.append(dl);
+  if (d.message) box.append(el("div","note2", d.message));
+  const f = el("div","cta");
+  f.append(btn("Use this model", "pri", () => useDeployment(d, box)));
+  if (d.endpoint_url) {
+    f.append(btn("Copy shell", "", () => copyText(shellLine(d), "shell line")));
+    f.append(btn("Copy Python", "", () => copyText(pyLine(d), "python snippet")));
+  }
+  f.append(btn("Close", "gho", hideModal));
+  box.append(f);
+}
+// Connect: the server re-checks /models (retrying a cold start), then makes
+// this endpoint the current model + backend for the SDK and the terminal.
+async function useDeployment(d, box) {
+  let r;
+  try { r = await post("/api/deploy/connect", { id: d.id }); }
+  catch (e) { toast(e.message, true); return; }
+  if (!r.ok) { toast(errText(r), true); return; }
+  toast("current model → " + r.model);
+  loadOverview();
+  if (!box) return;
+  box.innerHTML = "";
+  const dl = el("dl","kvs");
+  kvRow(dl, "model", r.model || "—"); kvRow(dl, "backend", r.backend || "—");
+  kvRow(dl, "auth env", r.api_key_env || "none");
+  box.append(dl);
+  box.append(el("div","note2", "The next mantis launch and any MantisAgentOptions() without a model use this."));
+  const jb = jsonBox("paste into a shell", {}, null); jb.pre.textContent = r.shell || shellLine({ ...d, ...r, endpoint_url: r.backend }); box.append(jb.box);
+  const jp = jsonBox("or in python", {}, null); jp.pre.textContent = r.python || pyLine({ ...d, endpoint_url: r.backend, served_model_name: r.model }); box.append(jp.box);
+  const f = el("div","cta");
+  f.append(btn("Copy shell", "", () => copyText(jb.pre.textContent, "shell line")));
+  f.append(btn("Copy Python", "", () => copyText(jp.pre.textContent, "python snippet")));
+  f.append(btn("Close", "gho", hideModal));
+  box.append(f);
+}
+
+// ---- deployments table ----
+async function refreshDeployments(refresh) {
+  const tbl = document.getElementById("dp-deps"); if (!tbl) return;
+  let r;
+  try { r = await api("/api/deploy/list" + (refresh ? "?refresh=1" : "")); } catch (e) { return; }
+  DEPLOY.deployments = r.deployments || [];
+  renderDeployments(tbl);
+}
+function renderDeployments(tbl) {
+  tbl.innerHTML = "";
+  const deps = DEPLOY.deployments;
+  if (!deps.length) {
+    const z = zero("Nothing deployed yet", "Three steps, all on this page:");
+    const steps = el("div","dp-steps");
+    [["1", "add a GPU provider key"], ["2", "pick a model and a GPU that fits"], ["3", "Deploy, then “Use this model”"]].forEach(([n, t]) => {
+      const s = el("span"); s.append(el("b", null, n), document.createTextNode(t)); steps.append(s);
+    });
+    z.append(steps); tbl.append(z);
+    return;
+  }
+  const list = el("div","list");
+  const head = el("div","dp-drow head");
+  ["", "name", "model", "gpu", "status", "endpoint", "$ / h", "age", ""].forEach(x => head.append(el("span", null, x)));
+  list.append(head);
+  deps.forEach(d => {
+    const p = DEPLOY.providers.find(x => x.id === d.provider) || {};
+    const row = el("div","dp-drow" + (d.is_live ? "" : " off"));
+    row.dataset.dep = d.id;
+    const mk = el("span"); mk.append(providerMark(p.logo || d.provider, p.display_name || d.provider)); row.append(mk);
+    const nm = el("span","dp-dn", d.name || d.id); nm.title = d.id + " · " + (p.display_name || d.provider); row.append(nm);
+    const md = el("span","dp-dm", d.model); md.title = "model= " + (d.served_model_name || d.model); row.append(md);
+    row.append(el("span","dp-dg", d.gpu ? (d.gpu.display || d.gpu.provider_id) + " · " + fmtGb(d.gpu.total_vram_gb) : "—"));
+    const stw = el("span","dp-ds");
+    stw.append(el("span","dot2 " + (DEP_STATE[d.status] || "")), document.createTextNode(String(d.status || "?").replace(/_/g, " ")));
+    stw.title = d.message || ""; row.append(stw);
+    const ep = el("span","dp-de");
+    if (d.endpoint_url) {
+      const a = el("span","mono clk", d.endpoint_url.replace(/^https?:\/\//, ""));
+      a.title = "copy " + d.endpoint_url; a.onclick = () => copyText(d.endpoint_url, "endpoint"); ep.append(a);
+    } else ep.append(el("span","mgo", "—"));
+    row.append(ep);
+    const c = d.cost || {};
+    const listRate = d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null;
+    const ce = el("span","dp-dc", c.per_hour_usd != null
+      ? fmtRate(c.per_hour_usd) + (c.accrued_usd != null ? " · " + fmtUsd(c.accrued_usd) : "")
+      : (listRate != null && d.is_live ? fmtRate(listRate) + "*" : "—"));
+    ce.title = c.basis || (listRate != null ? "* list price of the GPU" : "the provider didn't say");
+    row.append(ce);
+    row.append(el("span","dp-da", d.created_at ? ago(d.created_at) : ""));
+    const acts = el("span","dp-dx");
+    if (d.is_live) acts.append(btn("Use", "pri", () => useDeployment(d)));
+    acts.append(btn("Logs", "gho", () => openLogs(d)));
+    if (d.status !== "deleted" && d.status !== "deleting") acts.append(btn("Teardown", "gho dan", () => confirmTeardown(d)));
+    row.append(acts);
+    list.append(row);
+  });
+  tbl.append(list);
+}
+async function openLogs(d) {
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, "Logs · " + (d.name || d.id)));
+  s.append(el("div","sub", d.provider + " · " + d.model));
+  const bar = el("div"); bar.style = "display:flex;gap:8px;align-items:center;margin-bottom:8px";
+  const tail = el("select","in"); [100, 200, 500, 1000].forEach(n => { const o = el("option", null, "last " + n); o.value = n; tail.append(o); }); tail.value = "200";
+  const rb = btn("Refresh", "", () => load());
+  const st = el("span","refresh"); bar.append(tail, rb, st); s.append(bar);
+  const log = el("div","log dp-log", "loading…"); log.style.maxHeight = "60vh"; s.append(log);
+  const load = async () => {
+    rb.disabled = true; st.textContent = "fetching…";
+    try {
+      const r = await api("/api/deploy/logs?" + q({ id: d.id, tail: tail.value }));
+      if (r.ok) { log.textContent = (r.lines || []).join("\n") || "(no output yet)"; st.textContent = (r.lines || []).length + " lines"; log.scrollTop = log.scrollHeight; }
+      else { log.textContent = r.supported === false ? "This provider has no logs API. " + (r.hint || "") : errText(r); st.textContent = ""; }
+    } catch (e) { log.textContent = e.message; }
+    finally { rb.disabled = false; }
+  };
+  tail.onchange = load;
+  showModal(true); load();
+}
+function confirmTeardown(d) {
+  const c = d.cost || {};
+  const rate = c.per_hour_usd != null ? c.per_hour_usd : (d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null);
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  s.append(el("h3", null, "Tear down " + (d.name || d.id) + "?"));
+  s.append(el("div","sub", d.provider + " · " + d.model + (d.gpu ? " · " + (d.gpu.display || d.gpu.provider_id) : "")));
+  const cost = el("div","dp-cost");
+  cost.innerHTML = rate != null
+    ? "This stops <b>" + esc(fmtRate(rate)) + "</b>" + (c.accrued_usd != null ? " · " + esc(fmtUsd(c.accrued_usd)) + " accrued so far" : "") + "."
+    : "The provider didn't report a rate for this deployment; it stops whatever it was billing.";
+  s.append(cost);
+  s.append(el("div","note2", "Deletes the endpoint on the provider and marks it deleted here. The model weights are not affected."));
+  const foot = el("div","cta");
+  const go = btn("Tear down", "dan", async () => {
+    go.disabled = true;
+    try {
+      const r = await post("/api/deploy/down", { id: d.id });
+      if (r.ok) openJobSheet(r.job, { kind: "teardown", model: d.name || d.model, provider: d.provider });
+      else { toast(errText(r), true); go.disabled = false; }
+    } catch (e) { toast(e.message, true); go.disabled = false; }
+  });
+  go.classList.add("armed");
+  foot.append(go, btn("Cancel", "gho", hideModal));
+  s.append(foot);
+  showModal();
+}
+
 // ---- top bar + nav ----
 // The rail's foot is the one always-visible answer to "what is this agent
 // wired to right now" — the model it will use, how that model is reached, and
@@ -1536,12 +2281,13 @@ async function loadOverview() {
   stat("sessions", o.session_count, "sessions");
   if (o.family_ready_count != null) stat("families", o.family_ready_count + "/5", "home");
   if (o.active_jobs || o.active_runs) stat("running", (o.active_jobs || 0) + (o.active_runs || 0), "home");
+  if (o.deployments_live) stat("deployed", o.deployments_live, "deploy");
   f.append(c);
   const k = el("div","kbd");
-  k.innerHTML = "<b>g</b> <b>o</b> overview · <b>g</b> <b>s</b> sessions · <b>g</b> <b>m</b> models · <b>/</b> search";
+  k.innerHTML = "<b>g</b> <b>o</b> overview · <b>g</b> <b>s</b> sessions · <b>g</b> <b>m</b> models · <b>g</b> <b>d</b> deploy · <b>/</b> search";
   f.append(k);
 }
-const VIEWS = ["home","sessions","models","mcp","skills","config"];
+const VIEWS = ["home","sessions","models","deploy","mcp","skills","config"];
 let curView = "home";
 function showTab(name) {
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
@@ -1553,6 +2299,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) location.hash = name;  // fires hashchange; guarded below
   if (name === "home") loadHome();
   if (name === "models") loadModels();
+  if (name === "deploy") loadDeploy();
   if (name === "skills") loadSkills();
   if (name === "mcp") loadMcp();
   if (name === "config") loadConfig();
@@ -1561,11 +2308,11 @@ document.getElementById("nav").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   showTab(b.dataset.v);
 });
-// Keyboard: 1–6 jump between pages (the rail shows each key), `g` then a
-// letter does the same by name (g o · g s · g m · g p · g k · g c), and `/`
+// Keyboard: 1–7 jump between pages (the rail shows each key), `g` then a
+// letter does the same by name (g o · g s · g m · g d · g p · g k · g c), and `/`
 // drops into whatever search the current page has.
 let chord = null, chordT = null;
-const CHORDS = { o: "home", s: "sessions", m: "models", p: "mcp", k: "skills", c: "config" };
+const CHORDS = { o: "home", s: "sessions", m: "models", d: "deploy", p: "mcp", k: "skills", c: "config" };
 function focusSearch() {
   const v = document.querySelector(".view.on");
   const inp = curView === "sessions" ? document.getElementById("sessfind")
@@ -1586,7 +2333,7 @@ window.addEventListener("keydown", e => {
   }
   if (e.key === "g") { chord = "g"; chordT = setTimeout(() => (chord = null), 900); return; }
   if (e.key === "/") { if (focusSearch()) e.preventDefault(); return; }
-  const i = "123456".indexOf(e.key);
+  const i = "1234567".indexOf(e.key);
   if (i >= 0) { showTab(VIEWS[i]); e.preventDefault(); }
 });
 // Auto-refresh: the rail readout every 15s, plus the overview's live panels
@@ -1605,6 +2352,8 @@ async function refreshLive() {
       const live = document.getElementById("live-act");
       if (live) renderActivity(live, act);
     }
+    // the deployments table, unless a key form is open mid-typing
+    if (curView === "deploy" && !document.querySelector("#dp-grid .dp-form.on")) await refreshDeployments(false);
     await p;
   } catch (e) { /* transient — the next tick retries */ }
 }
@@ -2802,7 +3551,7 @@ loadProjects().catch(e => document.getElementById("projects").append(el("div","e
     showTab("sessions");
     loadConv(qs.get("cwd"), { session_id: qs.get("session"), title: qs.get("title") || "", modified_at: Date.now()/1000 });
   }
-  else if (["sessions","models","skills","mcp","config"].includes(t)) showTab(t);
+  else if (["sessions","models","deploy","skills","mcp","config"].includes(t)) showTab(t);
   else loadHome();   // default landing
 }
 </script>

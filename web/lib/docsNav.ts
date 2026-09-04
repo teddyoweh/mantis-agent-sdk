@@ -19,6 +19,7 @@ export const DOCS_NAV: NavSection[] = [
     label: "selfhost",
     items: [
       { title: "Overview — the full map", slug: "guides/self-hosting" },
+      { title: "Deploy — bring your own GPU", slug: "guides/deploy" },
       { title: "Modal", slug: "selfhost/modal" },
       { title: "RunPod", slug: "selfhost/runpod" },
       { title: "Lambda", slug: "selfhost/lambda" },
@@ -44,6 +45,7 @@ export const DOCS_NAV: NavSection[] = [
       { title: "OpenAI", slug: "providers/openai" },
       { title: "Claude (Anthropic)", slug: "providers/anthropic" },
       { title: "Gemini", slug: "providers/gemini" },
+      { title: "Grok (xAI)", slug: "providers/xai" },
     ],
   },
   {
@@ -56,6 +58,7 @@ export const DOCS_NAV: NavSection[] = [
       { title: "Models & backends", slug: "guides/models-and-backends" },
       { title: "Provider access", slug: "guides/providers" },
       { title: "The mantis terminal", slug: "guides/terminal" },
+      { title: "The dashboard (mantis serve)", slug: "guides/dashboard" },
       { title: "Headless & CI", slug: "guides/headless" },
       { title: "Tools", slug: "guides/tools" },
       { title: "Streaming", slug: "guides/streaming" },

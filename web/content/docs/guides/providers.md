@@ -1,9 +1,10 @@
 # Getting provider access
 
-Every hosted provider mantis ships in the catalog: where to get the key, the
-env var it reads, and the one-liner to turn it on. A provider is **enabled**
-the moment mantis can find its key — env var or saved via `/enable`
-(stored `chmod 600` in `~/.mantis-agent/models.json`).
+Every hosted provider mantis ships in the catalog — the four first-party
+vendor APIs (**Claude**, **OpenAI**, **Gemini**, **Grok**) and the open-model
+hosts: where to get the key, the env var it reads, and the one-liner to turn
+it on. A provider is **enabled** the moment mantis can find its key — env var
+or saved via `/enable` (stored `chmod 600` in `~/.mantis-agent/models.json`).
 
 Two ways to enable anything:
 
@@ -30,14 +31,18 @@ export DEEPSEEK_API_KEY=sk-...       # env — survives via your shell profile
 | **[Fireworks](/docs/providers/fireworks)** | [fireworks.ai](https://app.fireworks.ai/settings/users/api-keys) | `FIREWORKS_API_KEY` | fast OSS serving |
 | **[Cerebras](/docs/providers/cerebras)** | [cloud.cerebras.ai](https://cloud.cerebras.ai/platform/) | `CEREBRAS_API_KEY` | free tier; fastest tokens/s anywhere |
 
-## Closed models
+## First-party vendor APIs
+
+A bare model name is enough for each of these — `claude-opus-5`, `gpt-5.4`,
+`gemini-2.5-pro`, `grok-4` route to their vendor on their own.
 
 | provider | get a key | env var | notes |
 |---|---|---|---|
+| **[Claude (Anthropic)](/docs/providers/anthropic)** | [console.anthropic.com](https://console.anthropic.com/settings/keys) — **or your Claude subscription** | `ANTHROPIC_API_KEY` · `ANTHROPIC_AUTH_TOKEN` | first-class, native Messages API; paste an API key (`sk-ant-api…`) or a subscription OAuth token (`sk-ant-oat…`) and mantis tells them apart |
+| **Claude via a gateway** | Bedrock Access Gateway, Azure Foundry, LiteLLM | `ANTHROPIC_AUTH_TOKEN` + a `/anthropic/v1` backend URL | `Authorization: Bearer` instead of x-api-key |
 | **[OpenAI](/docs/providers/openai)** | [platform.openai.com](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` | gpt-5.x — mantis handles the `max_completion_tokens`/temperature quirks |
-| **[Anthropic](/docs/providers/anthropic)** | [console.anthropic.com](https://console.anthropic.com/settings/keys) | `ANTHROPIC_API_KEY` | Claude via the native Messages API |
-| **Anthropic (gateway/OAuth)** | your gateway | `ANTHROPIC_AUTH_TOKEN` | `Authorization: Bearer` instead of x-api-key — LiteLLM/proxy setups |
 | **[Google (Gemini)](/docs/providers/gemini)** | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | free tier via AI Studio |
+| **[Grok (xAI)](/docs/providers/xai)** | [console.x.ai](https://console.x.ai) | `XAI_API_KEY` (or `GROK_API_KEY`) | grok-4 / grok-4-fast / grok-3; `reasoning_effort` mapped where the model takes it |
 
 ## Free ways to start (no card)
 
@@ -49,13 +54,22 @@ export DEEPSEEK_API_KEY=sk-...       # env — survives via your shell profile
 ## How enablement actually works
 
 - Env vars win over saved keys; alias vars (`GOOGLE_API_KEY`,
-  `ZAI_API_KEY`, `QWEN_API_KEY`) are honored.
+  `GROK_API_KEY`, `ZAI_API_KEY`, `QWEN_API_KEY`) are honored, and the
+  vendor's own key wins by host — a stale `OPENAI_API_KEY` is never sent to
+  xAI or Google.
 - Keys/URLs are whitespace-stripped and validated on save — `/enable` does a
-  live `/models` probe and refuses to store a bad key.
-- `/models` groups by provider: enabled ones first, locked 🔒 ones below so
-  you can see the whole menu and enable inline.
+  live `/models` probe and refuses to store a bad key. A locked provider
+  prints the exact fix: `/enable xai · xai-… · get one at console.x.ai`.
+- `/models` groups by family — Local, OpenAI, Claude, Gemini, Grok, Hosted
+  OSS, Self-host — with each group's auth state on its header; locked 🔒
+  rows sit below the enabled ones so you can see the whole menu and enable
+  inline. Bare `/enable` or `/disable` print the same table as text.
 - `/disable <provider>` forgets a saved key.
-- Switching models mid-session (`/model kimi`) re-wires the backend + key
-  automatically; your session context carries over.
+- Switching models mid-session (`/model kimi`, `/model claude-opus-5`,
+  `/model grok-4`) re-wires the backend + key automatically and confirms the
+  route in one line; your session context carries over.
+- `mantis serve` shows the same five families as cards with a one-click
+  connection test — see [the dashboard](/docs/guides/dashboard).
 
-Self-hosting instead? See [Self-hosting models](/docs/guides/self-hosting).
+Self-hosting instead? See [Self-hosting models](/docs/guides/self-hosting) —
+or [let mantis deploy the model for you](/docs/guides/deploy).

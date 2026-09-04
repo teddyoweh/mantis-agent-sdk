@@ -86,6 +86,7 @@ SLASH_COMMANDS = {
     "/model": "switch model by id or alias — /model gpt-5 · claude · grok-4",
     "/dash": "mini dashboard — model · context · cost · jobs · mcp (/dash live)",
     "/thinking": "reasoning blocks: collapse (default) · show · hide",
+    "/deploy": "bring-your-own GPU: deploy an open model as an endpoint (/deploy up …)",
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
@@ -183,11 +184,14 @@ class BashTail:
     """
 
     def __init__(self, width: int = 80, max_lines: int = BASH_TAIL_LINES,
-                 paint: bool | None = None) -> None:
+                 paint: bool | None = None, header: Any = None) -> None:
         from . import term_caps  # noqa: PLC0415
 
         self.width = max(20, int(width or 80))
         self.max_lines = max(1, int(max_lines))
+        # Optional first row, recomputed on every repaint — a call line that
+        # carries its own elapsed clock (``⚒ Deploy … (42s)``).
+        self.header = header
         self._lines: list[str] = []
         self._partial = ""
         self.total = 0           # complete lines seen so far
@@ -222,6 +226,8 @@ class BashTail:
         rows = self.tail()
         hidden = max(0, self.total + (1 if self._partial.strip() else 0) - len(rows))
         out: list[str] = []
+        if self.header is not None:
+            out.append(_cut_cells(str(self.header()), self.width - 1))
         if hidden:
             out.append(f"    … +{hidden} earlier line{'s' if hidden != 1 else ''}")
         room = max(10, self.width - 6)
@@ -235,6 +241,8 @@ class BashTail:
         rows = self.rows()
         dim, reset = (_DIM_COL, _RESET) if self._paint else ("", "")
         body = "".join(f"{dim}{r}{reset}\n" for r in rows)
+        if self.header is not None and rows:
+            body = rows[0] + "\n" + body[len(f"{dim}{rows[0]}{reset}\n"):]  # header undimmed
         text = term_caps.repaint_above(self.painted) + body
         self.painted = len(rows)
         self.dirty = False
@@ -826,6 +834,9 @@ def dashboard_line(facts: dict[str, Any]) -> str:
     mcp = facts.get("mcp") or {}
     if mcp.get("servers"):
         bits.append(f"mcp {mcp.get('connected', 0)}/{mcp['servers']} · {mcp.get('tools', 0)} tools")
+    dep = facts.get("deploy") or {}
+    if dep.get("count"):
+        bits.append(f"{dep['count']} deploy · ${dep.get('per_hour', 0.0):.2f}/h")
     return " · ".join(b for b in bits if b)
 
 
@@ -941,6 +952,17 @@ def render_dashboard(facts: dict[str, Any], width: int = 80) -> Any:
         tools.append(f"   agent tools {n_tools}", style=dim)
     t.add_row("tools", tools)
 
+    dep = facts.get("deploy") or {}
+    if dep.get("count"):
+        dp = _T()
+        dp.append(str(dep["count"]), style="white")
+        dp.append(f" live · {dep.get('running', 0)} running · ${dep.get('per_hour', 0.0):.2f}/h",
+                  style=dim)
+        rows_ = dep.get("rows") or []
+        if rows_:
+            dp.append("   " + " · ".join(rows_[:2]), style=dim)
+        t.add_row("deploy", dp)
+
     edits = list(facts.get("edits") or [])
     ed = _T()
     if edits:
@@ -961,9 +983,234 @@ def render_dashboard(facts: dict[str, Any], width: int = 80) -> Any:
                  border_style="bright_black", width=w, padding=(0, 1))
 
 
+# -- /deploy: bring-your-own GPU --------------------------------------------------
+#
+# The command is one handler shared by both UIs; what differs — how to print,
+# how to ask for a secret, how to confirm, how to run a job — is a small UI
+# adapter (``_ClassicDeployUI`` here, a closure-backed twin in the full-screen
+# app). ``mantis_agent.deploy`` is imported lazily inside the handler.
+
+DEPLOY_USAGE: tuple[tuple[str, str], ...] = (
+    ("/deploy", "status panel — providers, live deployments, cost"),
+    ("/deploy providers", "every GPU cloud adapter and whether it is configured"),
+    ("/deploy creds <provider>", "save + validate credentials (masked input)"),
+    ("/deploy gpus <provider> [--min-vram N]", "GPU catalogue, cheapest first"),
+    ("/deploy models [query]", "search open models (HF Hub)"),
+    ("/deploy inspect <model>", "pre-flight: params · dtype · VRAM · vLLM ok?"),
+    ("/deploy up <provider> <model> --gpu <id> [--engine vllm] [--max-model-len N] "
+     "[--tp N] [--min 0] [--max 1] [--idle 300] [--name X]", "deploy as a background job"),
+    ("/deploy ls", "stored deployments"),
+    ("/deploy status <id>", "refresh one deployment"),
+    ("/deploy logs <id> [--tail N]", "provider logs"),
+    ("/deploy connect <id>", "make it this session's model/backend"),
+    ("/deploy down <id>", "tear it down (confirms, names the $/h)"),
+)
+
+_DEPLOY_UP_INT = {"--max-model-len": "max_model_len", "--tp": "tensor_parallel",
+                  "--min": "min_replicas", "--max": "max_replicas", "--idle": "idle_timeout_s"}
+_DEPLOY_UP_STR = {"--gpu": "gpu", "--engine": "engine", "--name": "name",
+                  "--quant": "quantization", "--region": "region"}
+
+
+def parse_deploy_up(args: list[str]) -> dict[str, Any] | str:
+    """``/deploy up <provider> <model> --gpu <id> [flags]`` → a dict, or a
+    usage string when it cannot be one. Positional provider and model first;
+    ``--gpu`` is required; ``--flag=value`` and ``--flag value`` both work."""
+    pos: list[str] = []
+    out: dict[str, Any] = {"engine": "vllm", "min_replicas": 0, "max_replicas": 1,
+                           "idle_timeout_s": 300, "trust_remote_code": False}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--trust-remote-code":
+            out["trust_remote_code"] = True
+            i += 1
+            continue
+        if a.startswith("--"):
+            flag, eq, val = a.partition("=")
+            if not eq:
+                if i + 1 >= len(args):
+                    return f"{flag} needs a value"
+                val = args[i + 1]
+                i += 1
+            i += 1
+            if flag in _DEPLOY_UP_INT:
+                if not val.lstrip("-").isdigit():
+                    return f"{flag} takes a number, got {val!r}"
+                out[_DEPLOY_UP_INT[flag]] = int(val)
+            elif flag in _DEPLOY_UP_STR:
+                out[_DEPLOY_UP_STR[flag]] = val
+            else:
+                return f"unknown flag {flag}"
+            continue
+        pos.append(a)
+        i += 1
+    if len(pos) < 2:
+        return "usage: /deploy up <provider> <model> --gpu <id> [--engine vllm] [--max-model-len N] [--tp N] [--min 0] [--max 1] [--idle 300] [--name X]"
+    if len(pos) > 2:
+        return f"unexpected argument {pos[2]!r}"
+    if not out.get("gpu"):
+        return "--gpu <id> is required — see /deploy gpus <provider>"
+    if out["engine"] not in ("vllm", "sglang", "tgi", "llamacpp"):
+        return f"--engine must be vllm · sglang · tgi · llamacpp, got {out['engine']!r}"
+    out["provider"], out["model"] = pos[0], pos[1]
+    return out
+
+
+def deploy_cost_per_hour(dep: Any) -> float | None:
+    """$/h a deployment accrues right now: the GPU spec's list price while it
+    is running, 0 while scaled to zero / stopped, None when the provider
+    does not publish a price."""
+    st = str(getattr(dep, "status", "") or "")
+    if st != "running":
+        return 0.0 if st in ("scaled_to_zero", "paused", "deleted", "failed") else None
+    gpu = getattr(dep, "gpu", None)
+    price = getattr(gpu, "price_per_hour", None)
+    if price is None:
+        return None
+    reps = max(1, int(getattr(getattr(dep, "opts", None), "max_replicas", 1) or 1))
+    return float(price) * (1 if reps == 1 else 1)  # list price is per spec; replicas scale on demand
+
+
+def _fmt_usd_h(v: float | None) -> str:
+    return "—" if v is None else f"${v:.2f}/h"
+
+
+_DEPLOY_STATUS_STYLE = {"running": "green", "scaled_to_zero": "cyan", "starting": "yellow",
+                        "building": "yellow", "pending": "yellow", "failed": "red",
+                        "deleting": "bright_black", "deleted": "bright_black",
+                        "paused": "bright_black", "unknown": "bright_black"}
+
+
+def deployment_row(dep: Any, width: int = 80) -> Any:
+    """``runpod · meta-llama/Llama-3.1-8B · H100 · running · $2.49/h · https://…``"""
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    t = _T()
+    t.append(f"{dep.id}", style="white")
+    t.append(f"  {dep.provider} · ", style="bright_black")
+    t.append(str(dep.model), style="white")
+    gpu = getattr(dep, "gpu", None)
+    if gpu is not None:
+        t.append(f" · {gpu.display}", style="bright_black")
+    st = str(dep.status)
+    t.append(" · ", style="bright_black")
+    t.append(st, style=_DEPLOY_STATUS_STYLE.get(st, "bright_black"))
+    t.append(f" · {_fmt_usd_h(deploy_cost_per_hour(dep))}", style="bright_black")
+    if getattr(dep, "endpoint_url", None):
+        t.append(f" · {dep.endpoint_url}", style="bright_black")
+    t.truncate(max(20, width - 4), overflow="ellipsis")
+    return t
+
+
+def render_deploy_panel(providers: list[dict[str, Any]], deployments: list[Any],
+                        width: int = 80) -> Any:
+    """The ``/deploy`` status panel, in the ``/dash`` style: configured
+    providers (with the exact ``/deploy creds`` line for the rest), the live
+    deployments, and the three-step hint when there is nothing yet."""
+    from rich.panel import Panel  # noqa: PLC0415
+    from rich.table import Table  # noqa: PLC0415
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    w = max(60, min(int(width or 80), 120))
+    inner = w - 4
+    dim = "bright_black"
+    t = Table.grid(padding=(0, 1), expand=False)
+    t.add_column(style=dim, no_wrap=True, width=8)
+    t.add_column(no_wrap=True, overflow="ellipsis", max_width=inner - 9)
+
+    on = [p for p in providers if p.get("configured")]
+    off = [p for p in providers if not p.get("configured")]
+    prov = _T()
+    if on:
+        for i, p in enumerate(on):
+            if i:
+                prov.append(" · ", style=dim)
+            prov.append("● ", style="green")
+            prov.append(str(p.get("display_name") or p["id"]), style="white")
+    else:
+        prov.append("none configured", style=dim)
+    t.add_row("providers", prov)
+    for p in off[:6]:
+        hint = _T()
+        hint.append("○ ", style=dim)
+        hint.append(str(p.get("display_name") or p["id"]), style=dim)
+        hint.append("  run ", style=dim)
+        hint.append(f"/deploy creds {p['id']}", style="white")
+        t.add_row("", hint)
+    if len(off) > 6:
+        t.add_row("", _T(f"… +{len(off) - 6} more — /deploy providers", style=dim))
+
+    live = [d for d in deployments if str(d.status) not in ("deleted",)]
+    total = sum(c for c in (deploy_cost_per_hour(d) for d in live) if c)
+    head = _T()
+    head.append(str(len(live)), style="white" if live else dim)
+    head.append(f" deployment{'s' if len(live) != 1 else ''}", style=dim)
+    if live:
+        head.append(f" · {sum(1 for d in live if d.status == 'running')} running · "
+                    f"${total:.2f}/h", style=dim)
+    t.add_row("deploys", head)
+    for d in live[:8]:
+        t.add_row("", deployment_row(d, inner - 9))
+    if not live:
+        steps = ("1  /deploy creds <provider>     save the cloud's API key",
+                 "2  /deploy gpus <provider>      pick a GPU that fits (/deploy inspect <model>)",
+                 "3  /deploy up <provider> <model> --gpu <id>   then /deploy connect <id>")
+        for s_ in steps:
+            t.add_row("", _T(s_, style=dim))
+    title = "[bold]mantis[/] [bright_black]· deploy[/]"
+    sub = "[bright_black]/deploy up · ls · connect · down[/]"
+    return Panel(t, title=title, title_align="left", subtitle=sub, subtitle_align="right",
+                 border_style="bright_black", width=w, padding=(0, 1))
+
+
+class _ClassicDeployUI:
+    """How ``/deploy`` talks to the classic REPL: print straight to the
+    console, masked input through ``prompt_async(is_password=True)``, a
+    ``[y/N]`` line for confirmations, jobs through the shared JobManager.
+    The full-screen app supplies the same five methods with its overlays."""
+
+    can_prompt_after_job = False   # the REPL blocks on its prompt while a job runs
+
+    def __init__(self, tui: MantisTUI) -> None:
+        self.tui = tui
+
+    async def emit(self, fn: Any) -> None:
+        fn()
+
+    async def secret(self, prompt: str) -> str:
+        return await self.tui._prompt_secret(prompt, "› ")
+
+    async def confirm(self, question: str) -> bool:
+        ans = await self.tui._prompt_text(f"{question} [y/N]", "› ")
+        return ans.strip().lower().startswith("y")
+
+    def spawn(self, coro: Any, desc: str) -> Any:
+        return self.tui._jobs.spawn(coro, desc=desc, kind="deploy", max_runtime_s=None)
+
+    async def switch(self, model: str, backend: str, api_key: str | None) -> None:
+        await self.tui._apply(model, backend, api_key, "")
+
+    def progress(self, label: str) -> Any:
+        """Plain lines as they arrive (the REPL has no in-place repaint while
+        its prompt is up); ``finish`` prints the outcome."""
+        tui = self.tui
+        tui.console.print(f"[{LEG}]⚒[/] [bold white]Deploy[/] [bright_black]{label}[/]")
+        started = time.monotonic()
+
+        class _P:
+            def line(self, text: str) -> None:
+                tui.console.print(f"    [bright_black]{_cut_cells(text, tui.console.width - 6)}[/]",
+                                  highlight=False)
+
+            async def finish(self, dep: Any, err: BaseException | None) -> None:
+                tui._deploy_print_outcome(dep, err, time.monotonic() - started)
+        return _P()
+
+
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
     ("model", ["/models", "/model", "/advisor", "/effort", "/thinking", "/enable", "/disable",
-               "/connect", "/pull"]),
+               "/connect", "/pull", "/deploy"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
     ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
@@ -2476,6 +2723,8 @@ class MantisTUI:
         self._bash_tail: Any = None
         self._bash_painter: Any = None
         self._spinner_label: str | None = None
+        # Stored GPU deployments (refreshed by /deploy and /dash) for the dashboard.
+        self._deploy_snapshot: list[Any] = []
         # Built-in + custom slash commands, discovered once per session.
         self._all_commands: dict[str, str] | None = None
         # MCP: manager owns the live server connections; tools are the adapted
@@ -3874,6 +4123,341 @@ class MantisTUI:
             await thinking.stop()
             self._thinking = None
             notify_turn_done(time.monotonic() - _turn_started)
+
+    # -- /deploy ------------------------------------------------------------------
+
+    async def _refresh_deploy_snapshot(self) -> list[Any]:
+        """Stored deployments, cached on the session for the (sync) /dash facts."""
+        try:
+            from .deploy import manager as dm  # noqa: PLC0415
+            deps = await dm.list_deployments(refresh=False)
+        except Exception:  # noqa: BLE001 — not installed / not implemented yet
+            deps = []
+        self._deploy_snapshot = [d for d in deps if str(getattr(d, "status", "")) != "deleted"]
+        return self._deploy_snapshot
+
+    def _deploy_print_outcome(self, dep: Any, err: BaseException | None, elapsed: float) -> None:
+        """The block under a finished ``⚒ Deploy`` call: what came up (or
+        why it did not) and the exact ``/deploy connect`` line."""
+        from rich.text import Text as _T  # noqa: PLC0415
+        c = self.console
+        if err is not None:
+            head = _T("  └ ", style="red")
+            head.append(f"deploy failed after {_fmt_elapsed(elapsed)}: {err}", style="red")
+            c.print(head)
+            hint = getattr(err, "hint", None)
+            if hint:
+                c.print(f"    [bright_black]→ {hint}[/]", highlight=False)
+            return
+        head = _T("  └ ", style=LEG)
+        head.append(f"{dep.id}", style="white")
+        head.append(f" · {dep.status} · {_fmt_elapsed(elapsed)} · "
+                    f"{_fmt_usd_h(deploy_cost_per_hour(dep))}", style="bright_black")
+        if dep.endpoint_url:
+            head.append(f" · {dep.endpoint_url}", style="bright_black")
+        c.print(head)
+        c.print(f"    [bright_black]use it:[/] [white]/deploy connect {dep.id}[/]  "
+                f"[bright_black]· logs: /deploy logs {dep.id} · stop: /deploy down {dep.id}[/]",
+                highlight=False)
+
+    async def _deploy_connect(self, dep_id: str, ui: Any) -> bool:
+        """``/deploy connect <id>``: the manager verifies the endpoint and marks
+        it current; the session then switches exactly as ``/model`` would."""
+        from .deploy import manager as dm  # noqa: PLC0415
+
+        info = await dm.connect(dep_id)
+        model, backend = info["model"], info["backend"]
+        env = info.get("api_key_env")
+        api_key = (os.environ.get(env) or "").strip() if env else None
+        await ui.switch(model, backend, api_key or None)
+        if info.get("headers"):
+            hdrs = ", ".join(info["headers"])
+            await ui.emit(lambda: self.console.print(
+                f"[ansiyellow]![/] [bright_black]this endpoint also wants headers "
+                f"({hdrs}) — set them on the provider if requests 401[/]", highlight=False))
+        return True
+
+    async def _cmd_deploy(self, arg: str = "", ui: Any = None) -> None:
+        """``/deploy …`` — see :data:`DEPLOY_USAGE`. Shared by both UIs."""
+        import shlex  # noqa: PLC0415
+
+        from rich.markup import escape as _e  # noqa: PLC0415
+        from rich.text import Text as _T  # noqa: PLC0415
+
+        ui = ui or _ClassicDeployUI(self)
+        c = self.console
+        width = getattr(c, "width", 80) or 80
+        try:
+            from .deploy import DeployError, DeployOpts, NotSupported  # noqa: PLC0415
+            from .deploy import manager as dm  # noqa: PLC0415
+        except ImportError:
+            await ui.emit(lambda: c.print("[ansiyellow]![/] deploy support isn't in this build"))
+            return
+        try:
+            parts = shlex.split(arg or "")
+        except ValueError as e:
+            await ui.emit(lambda e=e: c.print(f"[ansired]bad quoting:[/] {e}"))
+            return
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1:]
+
+        def _usage() -> None:
+            c.print("\n[bold]/deploy[/] [bright_black]— bring-your-own GPU[/]")
+            for cmd, what in DEPLOY_USAGE:
+                c.print(f"  [white]{_e(cmd)}[/]", highlight=False)
+                c.print(f"      [bright_black]{_e(what)}[/]", highlight=False)
+
+        def _flag(name: str, default: Any = None) -> Any:
+            for i, a in enumerate(rest):
+                if a == name and i + 1 < len(rest):
+                    return rest[i + 1]
+                if a.startswith(name + "="):
+                    return a.split("=", 1)[1]
+            return default
+
+        try:
+            if not sub or (sub == "status" and not rest):
+                provs = await dm.providers()
+                deps = await self._refresh_deploy_snapshot()
+                await ui.emit(lambda: (c.print(), c.print(render_deploy_panel(provs, deps, width))))
+                return
+            if sub in ("help", "--help", "-h"):
+                await ui.emit(_usage)
+                return
+            if sub == "providers":
+                provs = await dm.providers()
+
+                def _show() -> None:
+                    c.print("\n[bold]Deploy providers[/]")
+                    for p in provs:
+                        dot = "[green]●[/]" if p.get("configured") else "[bright_black]○[/]"
+                        eng = ", ".join(p.get("engines") or ())
+                        s2z = "scale-to-zero" if p.get("scale_to_zero") else "always-on"
+                        tail = ("configured" if p.get("configured")
+                                else f"/deploy creds {p['id']}")
+                        c.print(f"  {dot} [white]{p['id']:<10}[/] [bright_black]{_e(str(p.get('display_name', '')))}"
+                                f" · {eng} · {s2z} · {_e(tail)}[/]", highlight=False)
+                        for f in p.get("credential_fields") or ():
+                            env = getattr(f, "env", None) or (f.get("env") if isinstance(f, dict) else "")
+                            hlp = getattr(f, "help", None) or (f.get("help") if isinstance(f, dict) else "")
+                            c.print(f"        [bright_black]${env}" + (f" — {_e(hlp)}" if hlp else "") + "[/]",
+                                    highlight=False)
+                await ui.emit(_show)
+                return
+            if sub == "creds":
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy creds <provider>[/]"))
+                    return
+                pid = rest[0]
+                provs = {p["id"]: p for p in await dm.providers()}
+                p = provs.get(pid)
+                if p is None:
+                    known = ", ".join(sorted(provs)) or "none"
+                    await ui.emit(lambda: c.print(f"[ansired]unknown provider[/] {_e(pid)} "
+                                                  f"[bright_black](known: {known})[/]"))
+                    return
+                values: dict[str, str] = {}
+                for f in p.get("credential_fields") or ():
+                    env = getattr(f, "env", None) or f.get("env")
+                    label = getattr(f, "label", None) or f.get("label") or env
+                    hlp = getattr(f, "help", None) or (f.get("help") if isinstance(f, dict) else "")
+                    req = getattr(f, "required", True) if not isinstance(f, dict) else f.get("required", True)
+                    prompt = f"{label} (${env})" + (f" · {hlp}" if hlp else "") + \
+                        ("" if req else " · optional, enter to skip")
+                    val = await ui.secret(prompt)
+                    if not val and req:
+                        await ui.emit(lambda: c.print("[bright_black](cancelled — nothing saved)[/]"))
+                        return
+                    if val:
+                        values[env] = val
+                await ui.emit(lambda: c.print(f"[bright_black]validating {_e(pid)}…[/]"))
+                acct = await dm.save_credentials(pid, values)
+
+                def _acct() -> None:
+                    mark = "[green]✓[/]" if acct.ok else "[ansired]✗[/]"
+                    bits = [b for b in (
+                        f"user {acct.user}" if acct.user else "",
+                        f"balance ${acct.balance_usd:.2f}" if acct.balance_usd is not None else "",
+                        f"credits ${acct.credits_usd:.2f}" if acct.credits_usd is not None else "",
+                        acct.message) if b]
+                    c.print(f"{mark} [white]{_e(acct.provider)}[/] [bright_black]{_e(' · '.join(bits))}[/]",
+                            highlight=False)
+                    if acct.ok:
+                        c.print(f"    [bright_black]next: /deploy gpus {_e(pid)}[/]")
+                await ui.emit(_acct)
+                return
+            if sub == "gpus":
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy gpus <provider> [--min-vram N][/]"))
+                    return
+                mv = _flag("--min-vram")
+                specs = await dm.gpus(rest[0], min_vram_gb=int(mv) if mv else None)
+
+                def _gpus() -> None:
+                    c.print(f"\n[bold]GPUs[/] [bright_black]· {_e(rest[0])} · cheapest first[/]")
+                    if not specs:
+                        c.print("  [bright_black]none listed[/]")
+                    for g in specs:
+                        av = "" if g.available is None else (" · available" if g.available else " · [ansiyellow]sold out[/]")
+                        reg = f" · {g.region}" if g.region else ""
+                        c.print(f"  [white]{_e(g.provider_id):<24}[/] [bright_black]{g.family} · "
+                                f"{g.total_vram_gb} GB · {_fmt_usd_h(g.price_per_hour)}{reg}{av}[/]",
+                                highlight=False)
+                    c.print("  [bright_black]deploy with /deploy up <provider> <model> --gpu <id>[/]")
+                await ui.emit(_gpus)
+                return
+            if sub == "models":
+                infos = await dm.search_models(" ".join(rest))
+                await ui.emit(lambda: self._deploy_print_models(infos))
+                return
+            if sub == "inspect":
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy inspect <model>[/]"))
+                    return
+                info = await dm.inspect_model(rest[0])
+                await ui.emit(lambda: self._deploy_print_models([info], detail=True))
+                return
+            if sub == "up":
+                parsed = parse_deploy_up(rest)
+                if isinstance(parsed, str):
+                    await ui.emit(lambda: c.print(f"[ansiyellow]![/] [bright_black]{_e(parsed)}[/]"))
+                    return
+                opts = DeployOpts(
+                    name=parsed.get("name"), max_model_len=parsed.get("max_model_len"),
+                    tensor_parallel=parsed.get("tensor_parallel"),
+                    quantization=parsed.get("quantization"),
+                    min_replicas=parsed["min_replicas"], max_replicas=parsed["max_replicas"],
+                    idle_timeout_s=parsed["idle_timeout_s"], region=parsed.get("region"),
+                    trust_remote_code=parsed["trust_remote_code"],
+                )
+                label = f"{parsed['provider']} · {parsed['model']} · {parsed['gpu']}"
+                prog = ui.progress(label)
+
+                async def _run() -> str:
+                    try:
+                        dep = await dm.deploy(parsed["provider"], parsed["model"], gpu=parsed["gpu"],
+                                              engine=parsed["engine"], opts=opts, wait=True,
+                                              progress=prog.line)
+                    except Exception as e:  # noqa: BLE001
+                        await prog.finish(None, e)
+                        raise
+                    await self._refresh_deploy_snapshot()
+                    await prog.finish(dep, None)
+                    if ui.can_prompt_after_job and dep.is_live:
+                        if await ui.confirm(f"Use {dep.model} on {dep.provider} now?"):
+                            await self._deploy_connect(dep.id, ui)
+                    return f"deployed {dep.id} · {dep.status} · {dep.endpoint_url or ''}"
+
+                job = ui.spawn(_run(), f"deploy {parsed['model']} on {parsed['provider']}")
+                await ui.emit(lambda: c.print(
+                    f"[bright_black](job #{job.id} · /jobs to watch · the input stays live)[/]"))
+                return
+            if sub in ("ls", "list"):
+                deps = await dm.list_deployments(refresh="--refresh" in rest)
+                self._deploy_snapshot = [d for d in deps if str(d.status) != "deleted"]
+
+                def _ls() -> None:
+                    c.print("\n[bold]Deployments[/]")
+                    if not deps:
+                        c.print("  [bright_black]none — /deploy up <provider> <model> --gpu <id>[/]")
+                    for d in deps:
+                        row = _T("  ")
+                        row.append_text(deployment_row(d, width - 2))
+                        c.print(row)
+                await ui.emit(_ls)
+                return
+            if sub == "status":
+                dep = await dm.status(rest[0], refresh=True)
+                await self._refresh_deploy_snapshot()
+
+                def _st() -> None:
+                    row = _T("  ")
+                    row.append_text(deployment_row(dep, width - 2))
+                    c.print(row)
+                    if dep.message:
+                        c.print(f"    [bright_black]{_e(dep.message)}[/]", highlight=False)
+                    if dep.is_live:
+                        c.print(f"    [bright_black]use it: [white]/deploy connect {_e(dep.id)}[/][/]")
+                await ui.emit(_st)
+                return
+            if sub == "logs":
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy logs <id> [--tail N][/]"))
+                    return
+                tail = int(_flag("--tail", 200) or 200)
+                lines: list[str] = []
+                try:
+                    async for ln in dm.logs(rest[0], tail=tail):
+                        lines.append(ln)
+                except NotSupported as e:
+                    await ui.emit(lambda e=e: c.print(f"[bright_black]({_e(str(e))})[/]"))
+                    return
+
+                def _logs() -> None:
+                    c.print(f"\n[bold]Logs[/] [bright_black]· {_e(rest[0])} · last {len(lines)}[/]")
+                    for ln in lines:
+                        c.print(_T("  " + _cut_cells(ln, width - 3), style="bright_black"))
+                await ui.emit(_logs)
+                return
+            if sub == "connect":
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy connect <id>[/]"))
+                    return
+                await self._deploy_connect(rest[0], ui)
+                return
+            if sub in ("down", "rm", "delete", "teardown"):
+                if not rest:
+                    await ui.emit(lambda: c.print("[bright_black]usage: /deploy down <id>[/]"))
+                    return
+                dep = await dm.status(rest[0], refresh=False)
+                cost = deploy_cost_per_hour(dep)
+                what = f"{dep.model} on {dep.provider} ({dep.gpu.display if dep.gpu else '?'})"
+                money = f" — stops {_fmt_usd_h(cost)} from accruing" if cost else ""
+                if not await ui.confirm(f"Tear down {dep.id}: {what}{money}?"):
+                    await ui.emit(lambda: c.print("[bright_black](kept)[/]"))
+                    return
+                notes: list[str] = []
+                await dm.teardown(dep.id, progress=notes.append)
+                await self._refresh_deploy_snapshot()
+                await ui.emit(lambda: c.print(
+                    f"[green]✓[/] [bright_black]{_e(dep.id)} torn down"
+                    + (f" · {_e(notes[-1])}" if notes else "") + "[/]", highlight=False))
+                return
+            await ui.emit(_usage)
+        except NotImplementedError:
+            await ui.emit(lambda: c.print(
+                "[ansiyellow]![/] [bright_black]the deploy backend isn't wired in this build yet[/]"))
+        except DeployError as e:
+            def _derr(e: Any = e) -> None:
+                c.print(f"[ansired]✗ deploy:[/] {_e(str(e))}", highlight=False)
+                if getattr(e, "hint", None):
+                    c.print(f"  [bright_black]→ {_e(e.hint)}[/]", highlight=False)
+            await ui.emit(_derr)
+
+    def _deploy_print_models(self, infos: list[Any], detail: bool = False) -> None:
+        from rich.markup import escape as _e  # noqa: PLC0415
+        c = self.console
+        if not infos:
+            c.print("  [bright_black]no models found[/]")
+            return
+        if not detail:
+            c.print("\n[bold]Models[/] [bright_black]· HF Hub · /deploy inspect <id> for detail[/]")
+        for m in infos:
+            ok = {True: "[green]vllm ✓[/]", False: "[ansired]vllm ✗[/]", None: "[bright_black]vllm ?[/]"}[m.vllm_ok]
+            bits = [b for b in (
+                f"{m.params_b:g}B" if m.params_b else "", m.dtype or "",
+                f"~{m.est_vram_gb:.0f} GB" if m.est_vram_gb else "",
+                f"ctx {m.context_len // 1024}k" if m.context_len else "",
+                "gated" if m.gated else "", m.license or "") if b]
+            c.print(f"  [white]{_e(m.id)}[/]  {ok}  [bright_black]{_e(' · '.join(bits))}[/]",
+                    highlight=False)
+            if detail:
+                if m.architectures:
+                    c.print(f"    [bright_black]arch: {_e(', '.join(m.architectures))}[/]", highlight=False)
+                if m.reason:
+                    c.print(f"    [bright_black]{_e(m.reason)}[/]", highlight=False)
+                c.print("    [bright_black]next: /deploy gpus <provider> --min-vram "
+                        f"{int(m.est_vram_gb) if m.est_vram_gb else 24}[/]")
 
     # -- live bash output (classic REPL) ----------------------------------------
 
@@ -5592,7 +6176,11 @@ class MantisTUI:
             if arg.strip().lower() == "live":
                 self.console.print("[ansibrightblack]/dash live runs in the full-screen UI "
                                    "(the default) — restart without MANTIS_CLASSIC=1[/]")
+            await self._refresh_deploy_snapshot()
             self._show_dash(self._ctx_tokens, self._session_cost)
+            return True
+        if cmd == "/deploy":
+            await self._cmd_deploy(arg)
             return True
         if cmd == "/thinking":
             self._cmd_thinking(arg)
@@ -6379,8 +6967,16 @@ class MantisTUI:
             if rel not in edits:
                 edits.append(rel)
         n_tools = len(self.agent.tools) if self.agent is not None and self.agent.tools else 0
+        deps = list(getattr(self, "_deploy_snapshot", []) or [])
+        deploy = {
+            "count": len(deps),
+            "running": sum(1 for d in deps if str(getattr(d, "status", "")) == "running"),
+            "per_hour": sum(x for x in (deploy_cost_per_hour(d) for d in deps) if x),
+            "rows": [f"{d.id} · {d.model} · {d.status}" for d in deps[:3]],
+        }
         return {
             "version": ver,
+            "deploy": deploy,
             "model": self.model,
             "backend": self.backend,
             "family": model_family(self.model, self.backend),
@@ -7064,7 +7660,8 @@ class MantisTUI:
         catalog.push_recent_model(model)  # float to the top of /models next time
         from rich.markup import escape as _e  # noqa: PLC0415
         note = switch_note(model, self.backend, self._auth_kind())
-        self.console.print(f"[ansibrightblack]{_e(note)}[/]", highlight=False)
+        self.console.print(f"[ansibrightblack]{_e(note)}[/]", highlight=False,
+                           no_wrap=True, overflow="ellipsis")
 
     async def _prompt_secret(self, msg: str, prompt: str) -> str:
         self.console.print(f"[ansibrightblack]{msg} — input hidden, Enter to cancel[/]")

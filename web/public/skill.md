@@ -1,12 +1,15 @@
 ---
 name: mantis-agent-sdk
 description: >
-  Build tool-calling AI agents in Python on any model — local Ollama, vLLM,
-  llama.cpp, hosted providers (Together, Fireworks, Groq, OpenRouter,
-  Cerebras), or closed APIs (OpenAI, Gemini) — using Anthropic's
-  claude-agent-sdk surface. Use this skill when the user wants an agent,
-  tool use, MCP, sessions, or sub-agents on a model they choose, or wants
-  to migrate Claude Agent SDK code off the Anthropic API.
+  Build tool-calling AI agents in Python on any model — five first-class
+  provider families: Claude (Anthropic, API key or subscription login),
+  OpenAI, Gemini, Grok (xAI), and open-source models on local Ollama, vLLM,
+  llama.cpp, or hosted providers (Together, Fireworks, Groq, OpenRouter,
+  Cerebras) — using Anthropic's claude-agent-sdk surface. Also deploys any
+  open-weight model on your own GPU cloud (RunPod, HF Endpoints, Modal,
+  DeepInfra, Baseten, Vast.ai). Use this skill when the user wants an
+  agent, tool use, MCP, sessions, or sub-agents on a model they choose, or
+  wants to run Claude Agent SDK code on a different model.
 license: Apache-2.0
 ---
 
@@ -32,7 +35,11 @@ Needs Python ≥ 3.11 and one place to run a model:
   CPU-friendly model, smoke-tests it). Or `ollama pull qwen2.5:7b`.
 - **Hosted:** set `MANTIS_AGENT_BASE_URL` + `MANTIS_AGENT_API_KEY`
   (any OpenAI-compatible endpoint).
-- **Closed models:** set `OPENAI_API_KEY` or `GEMINI_API_KEY`.
+- **Vendor APIs:** set `ANTHROPIC_API_KEY` (or a Claude subscription token in
+  `ANTHROPIC_AUTH_TOKEN`), `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
+  `XAI_API_KEY` — a bare model name then routes to the vendor.
+- **Your own GPU cloud:** `mantis-agent deploy creds runpod --set RUNPOD_API_KEY=...`
+  then `mantis-agent deploy up runpod Qwen/Qwen3-32B --gpu <id>` (see below).
 
 ## The core pattern
 
@@ -72,14 +79,22 @@ and `subtype` (e.g. `error_budget_exceeded`).
 | Model name shape | Backend |
 |---|---|
 | `qwen2.5:7b`, `llama3.2:3b` (name:tag) | Local Ollama (`localhost:11434`) |
-| `gpt-4o-mini`, `o3-mini` | OpenAI |
-| `gemini-2.0-flash` | Google Gemini |
-| `Qwen/Qwen2.5-72B-Instruct` (org/model) | OpenAI-compat via `MANTIS_AGENT_BASE_URL` |
-| `claude-*` | Anthropic Messages API, native (`ANTHROPIC_API_KEY` / subscription OAuth) |
-| `grok-*` | xAI (`XAI_API_KEY`) |
+| `claude-opus-5`, `claude-sonnet-5` (`claude-*`) | Anthropic Messages API, native — `ANTHROPIC_API_KEY` or a subscription OAuth token in `ANTHROPIC_AUTH_TOKEN`; thinking mapped per generation |
+| `gpt-5.4`, `o3`, `o4-mini` | OpenAI (`OPENAI_API_KEY`; reasoning models get `reasoning_effort` / `max_completion_tokens`) |
+| `gemini-2.5-pro` (`gemini-*`) | Google Gemini (`GEMINI_API_KEY` / `GOOGLE_API_KEY`) |
+| `grok-4`, `grok-3-mini` (`grok-*`) | xAI at `api.x.ai` (`XAI_API_KEY` / `GROK_API_KEY`; `reasoning_effort` only where the model takes it) |
+| `Qwen/Qwen2.5-72B-Instruct` (org/model) | Together, or any OpenAI-compat URL via `MANTIS_AGENT_BASE_URL` |
+| `accounts/fireworks/models/…` | Fireworks |
+| `gpt-oss:20b` | Local Ollama — open weights, not served by OpenAI |
 
-Overrides: `backend="https://..."` in options (or `MANTIS_AGENT_BACKEND`)
-always wins. `MANTIS_AGENT_MOCK=1` forces the mock provider (CI, no keys).
+Overrides: `backend="https://..."` in options (or `MANTIS_AGENT_BASE_URL`)
+always wins; `backend="anthropic"` is the explicit Claude form, and any
+`/anthropic/v1` gateway URL selects the same native adapter. Each vendor's
+own key wins by host, so several keys in one shell don't collide.
+`extra_headers={...}` (or `MANTIS_AGENT_EXTRA_HEADERS` as JSON) adds
+per-request headers for endpoints that authenticate that way (Modal
+proxy tokens, gateway tenant headers). `MANTIS_AGENT_MOCK=1` forces the
+mock provider (CI, no keys).
 
 Hosted provider recipes (all the same two env vars):
 
@@ -158,18 +173,55 @@ commands are refused unless you add `--dangerously-skip-permissions`/
 
 The interactive terminal: `mantis` (resume last conversation with
 `mantis --continue`; autonomy via `/goal`, `/watch`, `/loop`; `/init`
-writes a MANTIS.md project brief).
+writes a MANTIS.md project brief). `/model claude-opus-5` / `/model grok-4`
+/ `/model gpt-5` / `/model qwen3:8b` switch across all five families with a
+one-line routing confirmation; `/enable <provider>` adds a key inline;
+`/dash` (or `/dash live`) is an in-terminal dashboard — model, family and
+auth source, context bar, session cost, jobs, MCP, edits; `/thinking
+show|hide|collapse` controls reasoning rendering; `/deploy …` deploys a
+model on your GPU cloud from inside the session.
+
+## Dashboard and deploy
+
+`mantis serve` opens a local instrument panel (`http://127.0.0.1:8787`,
+`--lan` to share on the wifi with a token): five provider-family cards with
+auth state and a connection test, sessions with a per-turn context-fill
+chart, models grouped by family with price and context window, spend, and
+a **Deploy** page. Keys `1…7` and `g o / g s / g m / g d` navigate.
+
+Bring your own GPU provider — RunPod, HF Inference Endpoints, Modal,
+DeepInfra, Baseten, Vast.ai — and deploy any open-weight model as an
+OpenAI-compatible endpoint:
+
+```bash
+mantis-agent deploy creds runpod --set RUNPOD_API_KEY=...   # once, validated
+mantis-agent deploy models qwen3                           # HF Hub search: params · VRAM · vLLM-ok
+mantis-agent deploy gpus runpod --min-vram 48              # catalogue, cheapest first
+mantis-agent deploy up runpod Qwen/Qwen3-32B --gpu <id>    # pre-flight, deploy, wait, connect
+mantis-agent deploy ls | logs <id> | down <id>             # every action takes --json
+```
+
+Pre-flight estimates VRAM (weights + KV cache) and grades GPUs fits / tight
+/ no. A deployment records `endpoint_url`, `served_model_name` (what goes in
+`model=`) and the auth env var *name* — never a secret — so the SDK side is
+`MantisAgentOptions(model=dep.served_model_name, backend=dep.endpoint_url)`.
+Python: `from mantis_agent.deploy import deploy, connect, teardown`.
+Vast.ai endpoints are plain HTTP on a public IP; everything bills by the
+hour until `down`.
 
 ## Verify and debug
 
 - Run any bundled example: `python -m mantis_agent.examples.quickstart`
   (add `MANTIS_AGENT_MOCK=1` to run with no model/keys).
-- Check routing: `from mantis_agent.routing import resolve_backend;
-  resolve_backend("qwen2.5:7b")  # 'ollama'`.
+- Check routing: `from mantis_agent.routing import infer_backend;
+  infer_backend("qwen2.5:7b")  # 'http://localhost:11434'`,
+  `infer_backend("grok-4")  # 'https://api.x.ai/v1'`,
+  `infer_backend("claude-opus-5")  # 'anthropic'` (the sentinel, not a URL).
 - Tool-use strategy per model: `from mantis_agent import lookup_model;
-  lookup_model("deepseek-r1:1.5b").tool_use_path` — native, prompted XML,
-  or grammar-constrained JSON is chosen automatically; override with
-  `tool_use_path="xml_prompt_engineered"` if a model misbehaves.
+  lookup_model("deepseek-r1:1.5b")` — native, prompted XML, or
+  grammar-constrained JSON is chosen automatically from the model and the
+  backend together. There is no `tool_use_path` option; to force a path,
+  pass `model_capability=replace(cap, supports_native_tools=False)`.
 - Tracing: `Agent(model=..., tracer=InMemoryTracer())` → `tracer.summary()`
   gives turns/tokens/cost; `OTelTracer()` ships the same spans to any
   OpenTelemetry pipeline.

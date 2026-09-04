@@ -349,6 +349,7 @@ def _agent_from_options(opts: dict[str, Any]) -> Agent:
         "backend": opts.get("backend"),
         "base_url": opts.get("base_url"),
         "api_key": opts.get("api_key"),
+        "extra_headers": opts.get("extra_headers"),
         # Scopes the built-in file/shell tools. Previously this key only
         # reached the settings loader and the env text shown to the model.
         "cwd": opts.get("cwd"),
