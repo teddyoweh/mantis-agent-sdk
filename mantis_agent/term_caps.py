@@ -56,6 +56,7 @@ __all__ = [
     "COLOR_LEVELS",
     "TerminalCaps",
     "detect",
+    "repaint_above",
     "strip_ansi",
     "supports_color",
     "terminal_size",
@@ -324,6 +325,17 @@ def supports_color() -> bool:
     """True when it is safe to emit SGR escapes. The one-liner every call site
     that currently open-codes ``isatty()`` should be asking instead."""
     return detect().color != "none"
+
+
+def repaint_above(lines: int) -> str:
+    """The cursor-control prefix that repaints a block IN PLACE: move up over
+    the ``lines`` rows printed last time and erase from there to the end of the
+    screen. Not colour — it is emitted on every terminal (an in-place refresh
+    is the point of a live panel) — but it lives here so the render modules
+    carry no escape literals of their own. Empty for ``lines <= 0``."""
+    if lines <= 0:
+        return ""
+    return "\x1b[" + str(int(lines)) + "A" + "\x1b[J"
 
 
 def strip_ansi(s: str) -> str:

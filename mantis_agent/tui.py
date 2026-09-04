@@ -83,6 +83,9 @@ SLASH_COMMANDS = {
     "/resume": "resume a past conversation",
     "/branch": "fork this conversation into a new session",
     "/rewind": "rewind the conversation to an earlier message",
+    "/model": "switch model by id or alias — /model gpt-5 · claude · grok-4",
+    "/dash": "mini dashboard — model · context · cost · jobs · mcp (/dash live)",
+    "/thinking": "reasoning blocks: collapse (default) · show · hide",
     "/enable": "turn on a hosted provider (saves its API key)",
     "/disable": "forget a provider's saved key",
     "/connect": "point at your own self-hosted server",
@@ -144,6 +147,110 @@ def _lang_from_path(path: str | None) -> str | None:
 
 
 _THINK_CAP = 12  # max thinking lines rendered before eliding the rest
+_RESULT_CAP = 12  # max tool-result lines previewed inline (ctrl+o shows all)
+
+
+def _cut_cells(text: str, width: int) -> str:
+    """``text`` cut to ``width`` terminal columns with a trailing ``…`` — measured
+    in cells (CJK/emoji are two), never mid-escape."""
+    from . import term_measure  # noqa: PLC0415
+
+    text = text.rstrip("\n")
+    if term_measure.display_width(text) <= width:
+        return text
+    return term_measure.truncate(text, max(width - 1, 1), ellipsis="").rstrip() + "…"
+
+
+BASH_TAIL_LINES = 8  # live rows shown under a running ``⚒ Run …`` call
+
+
+class BashTail:
+    """The live tail of a running foreground ``bash`` call.
+
+    Chunks from :func:`mantis_agent.builtin_tools.set_bash_output_sink` are
+    fed in as they arrive; :meth:`paint` writes the last ``max_lines`` rows —
+    dim, indented under the call line, cut to the width — and repaints them
+    IN PLACE on every call (cursor up over what it drew last time, erase to
+    the end of the screen, redraw), so a long build reads as a scrolling
+    window, not as a page of spill. :meth:`erase` removes the window so the
+    normal result preview can print exactly where it would have gone, leaving
+    the transcript looking as it always did.
+
+    Rendering is plain writes to a stream so both UIs can drive it: the
+    classic REPL straight onto stdout around its spinner, the full-screen app
+    from inside ``run_in_terminal``. Pure otherwise — testable with a
+    ``StringIO``.
+    """
+
+    def __init__(self, width: int = 80, max_lines: int = BASH_TAIL_LINES,
+                 paint: bool | None = None) -> None:
+        from . import term_caps  # noqa: PLC0415
+
+        self.width = max(20, int(width or 80))
+        self.max_lines = max(1, int(max_lines))
+        self._lines: list[str] = []
+        self._partial = ""
+        self.total = 0           # complete lines seen so far
+        self.painted = 0         # rows currently on screen
+        self.dirty = False
+        self._paint = term_caps.detect().color != "none" if paint is None else bool(paint)
+
+    def feed(self, chunk: str) -> None:
+        """Accept a decoded chunk; a chunk need not end on a line boundary."""
+        if not chunk:
+            return
+        text = (self._partial + chunk).replace("\r\n", "\n").replace("\r", "\n")
+        parts = text.split("\n")
+        self._partial = parts[-1]
+        done = [ln.rstrip() for ln in parts[:-1]]
+        if done:
+            self.total += len(done)
+            self._lines.extend(done)
+            del self._lines[: max(0, len(self._lines) - self.max_lines)]
+        self.dirty = True
+
+    def tail(self) -> list[str]:
+        """The rows the window shows right now (the partial last line included)."""
+        rows = list(self._lines)
+        if self._partial.strip():
+            rows.append(self._partial.rstrip())
+        return rows[-self.max_lines:]
+
+    def rows(self) -> list[str]:
+        """Plain display rows: an ``… +K earlier lines`` note when the window
+        has scrolled, then the tail, each cut to the width."""
+        rows = self.tail()
+        hidden = max(0, self.total + (1 if self._partial.strip() else 0) - len(rows))
+        out: list[str] = []
+        if hidden:
+            out.append(f"    … +{hidden} earlier line{'s' if hidden != 1 else ''}")
+        room = max(10, self.width - 6)
+        out.extend("    " + _cut_cells(ln or " ", room) for ln in rows)
+        return out
+
+    def render(self) -> str:
+        """The bytes one repaint writes: erase the previous window, draw this one."""
+        from . import term_caps  # noqa: PLC0415
+
+        rows = self.rows()
+        dim, reset = (_DIM_COL, _RESET) if self._paint else ("", "")
+        body = "".join(f"{dim}{r}{reset}\n" for r in rows)
+        text = term_caps.repaint_above(self.painted) + body
+        self.painted = len(rows)
+        self.dirty = False
+        return text
+
+    def paint(self, write: Any) -> None:
+        write(self.render())
+
+    def erase(self, write: Any) -> None:
+        """Take the window off the screen (the final result prints in its place)."""
+        from . import term_caps  # noqa: PLC0415
+
+        if self.painted:
+            write(term_caps.repaint_above(self.painted))
+        self.painted = 0
+        self.dirty = False
 
 
 def _thinking_body(thinking: str) -> list[str]:
@@ -337,7 +444,7 @@ def esc_action(
 
 def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
     """The footer usage indicator: ``12k/32k 38% · $0.03``. Tokens colour by fill
-    (grey → yellow ≥75% → red ≥90%); the cost tail is shown only when > 0 (so
+    (green → yellow ≥60% → red ≥85%); the cost tail is shown only when > 0 (so
     local/free models don't clutter it with ``$0.00``). Empty until first usage."""
     if not used:
         return ""
@@ -347,7 +454,7 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
 
     if win > 0:
         pct = min(100, round(used / win * 100))
-        col = "31" if pct >= 90 else ("33" if pct >= 75 else "90")
+        col = _CTX_SGR[ctx_fill_color(pct)]
         base = f"\033[{col}m{_k(used)}/{_k(win)} {pct}%\033[0m"
     else:
         base = f"\033[90m{_k(used)} tok\033[0m"
@@ -357,13 +464,510 @@ def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
     return base
 
 
+# -- context fill colour ramp --------------------------------------------------
+#
+# One ramp for every place that paints a context percentage (footer, /context,
+# /dash): green while there is plenty of room, yellow once compaction is near,
+# red when the next big tool result may overflow.
+
+CTX_YELLOW_AT = 60
+CTX_RED_AT = 85
+_CTX_SGR = {"green": "38;5;113", "yellow": "33", "red": "31"}
+
+
+def ctx_fill_color(pct: int | float) -> str:
+    """``green`` below 60 %, ``yellow`` below 85 %, ``red`` from there on."""
+    if pct >= CTX_RED_AT:
+        return "red"
+    if pct >= CTX_YELLOW_AT:
+        return "yellow"
+    return "green"
+
+
+def ctx_bar(pct: int | float, width: int = 20) -> str:
+    """A proportional ``████░░░░`` bar ``width`` cells wide."""
+    width = max(4, int(width))
+    filled = max(0, min(width, round(min(100, max(0, pct)) / 100 * width)))
+    return "█" * filled + "░" * (width - filled)
+
+
+# -- provider families ---------------------------------------------------------
+#
+# The terminal treats five provider families as first-class — OpenAI, Claude,
+# Gemini, Grok and open-source models — plus the two ways to run open weights
+# yourself (a local Ollama, or your own OpenAI-compatible server). Everything is
+# keyed by the catalog's provider id; a hosted provider that is not one of the
+# four proprietary labs is a "Hosted OSS" endpoint (Groq, Together, DeepSeek…).
+
+FAMILIES: dict[str, tuple[str, str]] = {
+    "local": ("⌂", "Local"),
+    "openai": ("◯", "OpenAI"),
+    "anthropic": ("✦", "Claude"),
+    "gemini": ("◆", "Gemini"),
+    "xai": ("✕", "Grok"),
+    "oss": ("◈", "Hosted OSS"),
+    "selfhost": ("⚙", "Self-host"),
+}
+FAMILY_ORDER: tuple[str, ...] = ("local", "openai", "anthropic", "gemini", "xai", "oss", "selfhost")
+_LAB_FAMILIES = frozenset({"openai", "anthropic", "gemini", "xai"})
+
+
+def family_of_provider(provider_id: str | None) -> str:
+    """Catalog provider id → family id (``oss`` for every hosted open-source API)."""
+    if provider_id in _LAB_FAMILIES:
+        return str(provider_id)
+    return "oss"
+
+
+def _is_local_backend(backend: str | None) -> bool:
+    b = (backend or "").lower()
+    return "localhost" in b or "127.0.0.1" in b or "0.0.0.0" in b  # noqa: S104
+
+
+def model_family(model: str | None, backend: str | None = None) -> dict[str, Any]:
+    """Where a model actually runs, as ``{id, glyph, name, provider_id,
+    provider_label}``.
+
+    The backend URL wins over the model name: a Claude id sent through your own
+    proxy is *self-hosted* for every purpose the footer cares about (auth, cost,
+    who to blame for a 401). With no backend, the name's prefix decides.
+    """
+    from . import catalog  # noqa: PLC0415
+
+    back = (backend or "").rstrip("/")
+    prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == back), None) \
+        if back else None
+    if prov is None and back and _is_local_backend(back):
+        fid = "local"
+        label = "Ollama"
+    elif prov is None and back:
+        fid = "selfhost"
+        label = back.replace("https://", "").replace("http://", "")
+    else:
+        if prov is None:
+            prov = catalog.provider_for_model(model or "")
+        if prov is None:
+            fid, label = "local", "Ollama"
+        else:
+            fid, label = family_of_provider(prov.id), prov.label
+    glyph, name = FAMILIES[fid]
+    return {"id": fid, "glyph": glyph, "name": name,
+            "provider_id": prov.id if prov else None, "provider_label": label}
+
+
+def family_tag(model: str | None, backend: str | None = None) -> str:
+    """``✦ Claude`` — the glyph + family name the footer puts next to the model."""
+    fam = model_family(model, backend)
+    return f"{fam['glyph']} {fam['name']}"
+
+
+def provider_auth(prov: Any) -> str:
+    """How a catalog provider is authenticated right now — ``$OPENAI_API_KEY
+    (env)``, ``saved key``, ``OAuth token`` — or "" when it is not enabled."""
+    from . import catalog  # noqa: PLC0415
+
+    for var in (prov.api_key_env, *getattr(prov, "key_env_aliases", ())):
+        v = (os.environ.get(var) or "").strip() if var else ""
+        if v:
+            if v.startswith("sk-ant-oat"):
+                return "OAuth token"
+            return f"${var} (env)"
+    if prov.id == "anthropic" and (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+        return "OAuth token"
+    saved = catalog.saved_key(prov.id)
+    if saved:
+        return "OAuth token" if saved.startswith("sk-ant-oat") else "saved key"
+    return ""
+
+
+def enable_hint(prov: Any) -> str:
+    """The exact command (and where the key comes from) for a locked provider:
+    ``/enable xai · xai-… · get one at console.x.ai``."""
+    from . import catalog  # noqa: PLC0415
+
+    hint = catalog.key_hint(prov.id) or (prov.note.split("·")[0].strip() if prov.note else "")
+    return f"/enable {prov.id}" + (f" · {hint}" if hint else "")
+
+
+def missing_key_markup(model: str, prov: Any) -> str:
+    """One rich-markup line for ``/model <x>`` when x's provider has no key."""
+    from rich.markup import escape as _e  # noqa: PLC0415
+
+    return (f"[ansiyellow]○[/] [white]{_e(model)}[/] [ansibrightblack]needs "
+            f"{_e(prov.label)} — run[/] [white]{_e(enable_hint(prov))}[/]")
+
+
+def switch_note(model: str, backend: str | None, auth: str = "") -> str:
+    """The one-line confirmation after a switch: ``model → gpt-5 · ◯ OpenAI via
+    api.openai.com · $OPENAI_API_KEY (env)``."""
+    fam = model_family(model, backend)
+    where = (backend or "").replace("https://", "").replace("http://", "").rstrip("/")
+    if where.endswith("/v1"):
+        where = where[:-3]
+    parts = [f"{fam['glyph']} {fam['name']}"]
+    if fam["provider_label"] and fam["provider_label"] != fam["name"] and fam["id"] != "selfhost":
+        parts[0] += f" ({fam['provider_label']})"
+    if where:
+        parts.append(f"via {where}")
+    if auth:
+        parts.append(auth)
+    return f"model → {model} · {' · '.join(parts)}"
+
+
+def prefix_flagship(query: str, candidates: tuple[str, ...] | list[str]) -> str | None:
+    """``/model gpt-5`` against ``gpt-5.6-sol · gpt-5.6 · gpt-5.4 …``: when every
+    candidate merely extends the query, the user named a family, not a fragment
+    — take the first (the catalog lists each provider's flagship first) instead
+    of making them pick among versions they did not ask about."""
+    q = (query or "").strip().lower()
+    if not q or not candidates:
+        return None
+    if all(c.lower().startswith(q) for c in candidates):
+        return candidates[0]
+    return None
+
+
+def provider_rows(only_enabled: bool = False) -> list[dict[str, Any]]:
+    """Every catalog provider in family order, with its live auth state — the
+    data behind ``/enable``, ``/disable`` and the ``/models`` family listing.
+    Generic over the catalog: a provider added there shows up here untouched."""
+    from . import catalog  # noqa: PLC0415
+
+    rows: list[dict[str, Any]] = []
+    for p in catalog.CATALOG:
+        on = catalog.is_enabled(p)
+        if only_enabled and not on:
+            continue
+        fid = family_of_provider(p.id)
+        rows.append({
+            "id": p.id, "label": p.label, "family": fid,
+            "glyph": FAMILIES[fid][0], "family_name": FAMILIES[fid][1],
+            "enabled": on, "auth": provider_auth(p) if on else "",
+            "env": p.api_key_env, "hint": enable_hint(p),
+            "models": list(p.models),
+        })
+    order = {f: i for i, f in enumerate(FAMILY_ORDER)}
+    rows.sort(key=lambda r: order.get(r["family"], 99))
+    return rows
+
+
+# -- collapsed reasoning -------------------------------------------------------
+
+THINKING_MODES = ("collapsed", "show", "hide")
+
+
+def thinking_tokens(thinking: str) -> int:
+    """Coarse token count for a reasoning block (the compaction estimator's 4
+    chars/token) — a size, not a bill."""
+    return max(1, len((thinking or "").strip()) // 4) if (thinking or "").strip() else 0
+
+
+def thinking_summary(thinking: str, width: int = 80) -> Any:
+    """The collapsed form of a ThinkingBlock: one dim ``✻ thinking (n tokens)``
+    line with the opening words, cut to ``width``. ``None`` when empty."""
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    body = " ".join((thinking or "").split())
+    if not body:
+        return None
+    n = thinking_tokens(thinking)
+    head = f"✻ thinking ({n} token{'s' if n != 1 else ''})"
+    tail = " · /thinking show"
+    room = max(8, width - len(head) - len(tail) - 4)
+    preview = body if len(body) <= room else body[: room - 1].rstrip() + "…"
+    t = _T(head, style="italic bright_black")
+    t.append(f"  {preview}", style="bright_black")
+    t.append(tail, style="bright_black")
+    return t
+
+
+# -- provider errors as a boxed hint -------------------------------------------
+
+_HTTP_STATUS_RE = re.compile(r"\b(401|403|404|429|5\d\d)\b")
+
+
+def classify_error(err: BaseException, backend: str | None = None,
+                   model: str | None = None) -> tuple[str, str]:
+    """``(title, message)`` for an error box. The title names the failure class
+    (auth · not found · rate limited · context overflow · unreachable) so the
+    box reads at a glance; the message is the exception's own text, one line."""
+    from .errors import AuthError, RateLimitError  # noqa: PLC0415
+
+    text = " ".join(str(err).split()) or type(err).__name__
+    low = text.lower()
+    status = None
+    m = _HTTP_STATUS_RE.search(text)
+    if m:
+        status = m.group(1)
+    for attr in ("status_code", "status"):
+        v = getattr(err, attr, None)
+        if isinstance(v, int) and 100 <= v < 600:
+            status = str(v)
+            break
+    if isinstance(err, AuthError) or status in ("401", "403") or "api key" in low \
+            or "authentication" in low:
+        title = f"auth failed ({status})" if status else "auth failed"
+    elif isinstance(err, RateLimitError) or status == "429" or "rate limit" in low \
+            or "too many requests" in low:
+        title = "rate limited (429)"
+    elif any(p in low for p in ("context length", "context window", "maximum context",
+                                "too many tokens", "context_length_exceeded",
+                                "prompt is too long", "input is too long",
+                                "input tokens exceed")):
+        title = "context overflow"
+    elif status == "404" or "does not exist" in low or "not found" in low \
+            or "unknown model" in low:
+        title = "not found (404)" if status == "404" else "not found"
+    elif any(p in low for p in ("connect", "refused", "timed out", "timeout",
+                                "unreachable", "getaddrinfo", "nodename")):
+        title = "backend unreachable"
+    elif status and status.startswith("5"):
+        title = f"server error ({status})"
+    else:
+        title = type(err).__name__ if type(err).__name__ != "Exception" else "error"
+    return title, text
+
+
+def error_box(err: BaseException, backend: str | None = None,
+              model: str | None = None, width: int = 80) -> Any:
+    """A provider/runtime error as ONE boxed hint — what failed, and the exact
+    command that fixes it. Never a traceback: only ``str(err)`` is shown, cut
+    to two lines of the box, with the ``error_hint`` recovery line under it."""
+    from rich.console import Group  # noqa: PLC0415
+    from rich.panel import Panel  # noqa: PLC0415
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    w = max(40, min(int(width or 80), 120))
+    inner = w - 4
+    title, text = classify_error(err, backend, model)
+    limit = inner * 2 - 1
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    body: list[Any] = [_T(text, style="red")]
+    hint = error_hint(err, backend, model)
+    if hint:
+        line = _T("→ ", style="bright_black")
+        pos = 0
+        for m in re.finditer(r"`([^`]+)`", hint):
+            line.append(hint[pos:m.start()], style="bright_black")
+            line.append(m.group(1), style="white")
+            pos = m.end()
+        line.append(hint[pos:], style="bright_black")
+        body.append(line)
+    return Panel(Group(*body), title=f"[red]✗ {title}[/]", title_align="left",
+                 border_style="red", width=w, padding=(0, 1))
+
+
+# -- the mini dashboard ---------------------------------------------------------
+
+
+def _fmt_k(n: int | float) -> str:
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 10_000:
+        return f"{n / 1000:.0f}k"
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def family_display(fam: dict[str, Any]) -> str:
+    """``Claude (Anthropic)`` · ``Hosted OSS · Groq`` · ``Local · Ollama`` — the
+    family, and the provider when that adds something."""
+    fid, name, label = fam.get("id"), fam.get("name", ""), fam.get("provider_label") or ""
+    if fid in _LAB_FAMILIES:
+        return label or name
+    if label and label != name:
+        return f"{name} · {label}"
+    return name
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    s = int(max(0, seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
+def _count_states(items: list, running: tuple[str, ...], failed: tuple[str, ...]) -> dict[str, int]:
+    out = {"total": len(items), "running": 0, "failed": 0}
+    for it in items:
+        st = str(getattr(it, "status", "") or "").lower()
+        if st in running:
+            out["running"] += 1
+        elif st in failed:
+            out["failed"] += 1
+    return out
+
+
+def dashboard_line(facts: dict[str, Any]) -> str:
+    """The compact one-line dashboard (``/status`` opens with it): family glyph,
+    model, auth, context %, cost, mode, and whatever is running. Plain text."""
+    fam = facts.get("family") or {}
+    bits = [f"{fam.get('glyph', '')} {facts.get('model', '')}".strip(),
+            family_display(fam) if fam else "", facts.get("auth") or "no key"]
+    used, win = facts.get("ctx_used", 0), facts.get("ctx_window", 0)
+    if win and used:
+        bits.append(f"ctx {min(100, round(used / win * 100))}%")
+    elif used:
+        bits.append(f"ctx {_fmt_k(used)}")
+    cost = facts.get("cost", 0.0)
+    if cost:
+        bits.append(f"${cost:.2f}" if cost >= 0.01 else f"${cost:.4f}")
+    bits.append(facts.get("mode") or "default")
+    jobs = facts.get("jobs") or {}
+    if jobs.get("total"):
+        bits.append(f"{jobs['total']} job{'s' if jobs['total'] != 1 else ''}"
+                    + (f" ({jobs['running']} running)" if jobs.get("running") else ""))
+    wfs = facts.get("workflows") or {}
+    if wfs.get("total"):
+        bits.append(f"{wfs['total']} workflow{'s' if wfs['total'] != 1 else ''}")
+    mcp = facts.get("mcp") or {}
+    if mcp.get("servers"):
+        bits.append(f"mcp {mcp.get('connected', 0)}/{mcp['servers']} · {mcp.get('tools', 0)} tools")
+    return " · ".join(b for b in bits if b)
+
+
+def render_dashboard(facts: dict[str, Any], width: int = 80) -> Any:
+    """The ``/dash`` panel: one rich ``Panel`` that fits an 80×24 terminal (nine
+    rows) and widens its context bar on bigger ones. Pure — renders from the
+    ``facts`` dict ``MantisTUI._dash_facts`` builds, so it is testable with a
+    recording console."""
+    from rich.panel import Panel  # noqa: PLC0415
+    from rich.table import Table  # noqa: PLC0415
+    from rich.text import Text as _T  # noqa: PLC0415
+
+    w = max(60, min(int(width or 80), 120))
+    inner = w - 4
+    dim = "bright_black"
+    fam = facts.get("family") or {"glyph": "", "name": ""}
+
+    t = Table.grid(padding=(0, 1), expand=False)
+    t.add_column(style=dim, no_wrap=True, width=8)
+    t.add_column(no_wrap=True, overflow="ellipsis", max_width=inner - 9)
+
+    head = _T()
+    head.append(f"{fam['glyph']} ", style=BODY)
+    head.append(str(facts.get("model") or "—"), style="bold white")
+    head.append(f"  {family_display(fam)}", style=dim)
+    head.append(f" · {facts.get('auth') or 'no key'}", style=dim)
+    t.add_row("model", head)
+
+    used, win = int(facts.get("ctx_used") or 0), int(facts.get("ctx_window") or 0)
+    ctx = _T()
+    if win:
+        pct = min(100, round(used / win * 100)) if used else 0
+        colr = ctx_fill_color(pct)
+        bar_w = max(10, min(40, inner - 50))
+        ctx.append(ctx_bar(pct, bar_w), style=colr)
+        ctx.append(f" {pct:>3}%", style=colr)
+        ctx.append(f"  {_fmt_k(used)} / {_fmt_k(win)}", style="white")
+        ctx.append(f"  {_fmt_k(max(0, win - used))} free", style=dim)
+    elif used:
+        ctx.append(f"{_fmt_k(used)} tokens", style="white")
+        ctx.append("  (window unknown)", style=dim)
+    else:
+        ctx.append("no turn yet — send a message first", style=dim)
+    t.add_row("context", ctx)
+    bd = facts.get("breakdown") or {}
+    if bd.get("total"):
+        t.add_row("", _T(f"system {_fmt_k(bd.get('system', 0))} · context/memory "
+                         f"{_fmt_k(bd.get('context', 0))} · conversation "
+                         f"{_fmt_k(bd.get('conversation', 0))}", style=dim))
+
+    cost = facts.get("cost") or 0.0
+    sess = _T()
+    sess.append(format_cost(cost) if cost else "$0.00 (local / no API cost)",
+                style="white" if cost else dim)
+    sess.append(f" · {_fmt_k(facts.get('tokens_in', 0))} in · "
+                f"{_fmt_k(facts.get('tokens_out', 0))} out", style=dim)
+    n_msgs = facts.get("messages", 0)
+    sess.append(f" · {n_msgs} message{'s' if n_msgs != 1 else ''}", style=dim)
+    if facts.get("elapsed_s") is not None:
+        sess.append(f" · {_fmt_elapsed(facts['elapsed_s'])}", style=dim)
+    t.add_row("session", sess)
+
+    mode = _T()
+    mode.append(str(facts.get("mode") or "default"), style="white")
+    if facts.get("effort"):
+        mode.append(f" · effort={facts['effort']}", style=dim)
+    sb = facts.get("sandbox") or "off"
+    mode.append(" · sandbox ", style=dim)
+    mode.append(sb, style={"on": "green", "unavailable": "yellow"}.get(sb, dim))
+    t.add_row("mode", mode)
+
+    jobs = facts.get("jobs") or {"total": 0, "running": 0, "failed": 0}
+    wfs = facts.get("workflows") or {"total": 0, "running": 0, "failed": 0}
+
+    def _work(label: str, c: dict[str, int]) -> _T:
+        x = _T()
+        x.append(f"{label} ", style=dim)
+        x.append(str(c.get("total", 0)), style="white" if c.get("total") else dim)
+        detail = []
+        if c.get("running"):
+            detail.append(("%d running" % c["running"], "yellow"))
+        if c.get("failed"):
+            detail.append(("%d failed" % c["failed"], "red"))
+        if detail:
+            x.append(" (", style=dim)
+            for i, (txt, st) in enumerate(detail):
+                if i:
+                    x.append(" · ", style=dim)
+                x.append(txt, style=st)
+            x.append(")", style=dim)
+        return x
+
+    work = _work("jobs", jobs)
+    work.append("   ")
+    work.append_text(_work("workflows", wfs))
+    t.add_row("work", work)
+
+    mcp = facts.get("mcp") or {"servers": 0, "connected": 0, "tools": 0}
+    tools = _T()
+    tools.append("mcp ", style=dim)
+    if mcp.get("servers"):
+        st = "green" if mcp.get("connected") == mcp["servers"] else "yellow"
+        tools.append(f"{mcp.get('connected', 0)}/{mcp['servers']}", style=st)
+        tools.append(f" server{'s' if mcp['servers'] != 1 else ''} · "
+                     f"{mcp.get('tools', 0)} tool{'s' if mcp.get('tools', 0) != 1 else ''}",
+                     style=dim)
+    else:
+        tools.append("none", style=dim)
+    n_sk = facts.get("skills", 0)
+    tools.append(f"   skills {n_sk}", style=dim)
+    n_tools = facts.get("tools")
+    if n_tools:
+        tools.append(f"   agent tools {n_tools}", style=dim)
+    t.add_row("tools", tools)
+
+    edits = list(facts.get("edits") or [])
+    ed = _T()
+    if edits:
+        shown = edits[:5]
+        for i, p in enumerate(shown):
+            if i:
+                ed.append(" · ", style=dim)
+            ed.append(p, style="white")
+        if len(edits) > 5:
+            ed.append(f" (+{len(edits) - 5})", style=dim)
+    else:
+        ed.append("none yet", style=dim)
+    t.add_row("edits", ed)
+
+    title = "[bold]mantis[/] [bright_black]· dashboard[/]"
+    sub = "[bright_black]/dash live · /context · /jobs · /diff[/]"
+    return Panel(t, title=title, title_align="left", subtitle=sub, subtitle_align="right",
+                 border_style="bright_black", width=w, padding=(0, 1))
+
+
 _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
-    ("model", ["/models", "/advisor", "/effort", "/enable", "/disable",
+    ("model", ["/models", "/model", "/advisor", "/effort", "/thinking", "/enable", "/disable",
                "/connect", "/pull"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
     ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
-    ("info", ["/status", "/cost", "/doctor", "/permissions", "/sandbox", "/update", "/release-notes"]),
+    ("info", ["/dash", "/status", "/cost", "/doctor", "/permissions", "/sandbox", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/paste", "/export", "/cwd"]),
     ("editor", ["/vim"]),
 ]
@@ -1530,8 +2134,12 @@ class _Thinking:
     def __init__(self) -> None:
         self._task: Any = None
         self._started_at: float | None = None
+        self._label_at: float | None = None
 
-    def start(self) -> None:
+    def start(self, label: str | None = None) -> None:
+        """Spin. With ``label`` (an in-flight tool call, e.g. ``⚒ Run pytest``)
+        the line shows that label and a timer that starts NOW — the tool's own
+        elapsed time — instead of a gerund and the turn clock."""
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
 
@@ -1539,7 +2147,8 @@ class _Thinking:
             return
         if self._started_at is None:
             self._started_at = time.monotonic()
-        word = random.choice(THINKING_WORDS)
+        self._label_at = time.monotonic() if label else None
+        word = label or random.choice(THINKING_WORDS)
         self._task = asyncio.ensure_future(self._run(word))
 
     async def _run(self, word: str) -> None:
@@ -1550,7 +2159,8 @@ class _Thinking:
         try:
             while True:
                 frame = SPINNER_FRAMES[i % len(SPINNER_FRAMES)]
-                elapsed = int(time.monotonic() - (self._started_at or 0))
+                since = self._label_at if self._label_at is not None else self._started_at
+                elapsed = int(time.monotonic() - (since or 0))
                 sys.stdout.write(
                     f"{_CLEAR_LINE}{_SPIN_COL}{frame} {word}…{_RESET} {_DIM_COL}({elapsed}s){_RESET}"
                 )
@@ -1853,9 +2463,19 @@ class MantisTUI:
         self.pending_attachments: list[tuple[str, Any]] = []
         # True while the current assistant turn's text is being streamed live.
         self._turn_streamed = False
-        # Session usage accumulators (feed /status, /cost, the footer).
+        # Session usage accumulators (feed /status, /cost, /dash, the footer).
         self._ctx_tokens = 0
         self._session_cost = 0.0
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self._session_started = time.monotonic()
+        # How reasoning blocks render: collapsed to one dim line (default),
+        # shown in full, or hidden. Toggled with /thinking.
+        self.show_thinking = "collapsed"
+        # Live tail of the foreground bash call in flight (classic REPL).
+        self._bash_tail: Any = None
+        self._bash_painter: Any = None
+        self._spinner_label: str | None = None
         # Built-in + custom slash commands, discovered once per session.
         self._all_commands: dict[str, str] | None = None
         # MCP: manager owns the live server connections; tools are the adapted
@@ -3184,6 +3804,10 @@ class MantisTUI:
 
         self.agent.on_event = _sink
         self._turn_active = True
+        # Foreground bash streams its output here while it runs; the painter
+        # task draws the tail under the call line between spinner frames.
+        from .builtin_tools import reset_bash_output_sink, set_bash_output_sink  # noqa: PLC0415
+        _bash_token = set_bash_output_sink(self._bash_stream_sink(thinking))
         # Open a node for this turn and parent everything spawned during it.
         # Without this every job is a ROOT and the "tree" is a flat list — the
         # parent links are the whole reason the activity graph exists, since
@@ -3199,20 +3823,33 @@ class MantisTUI:
                     # Same accounting the fullscreen UI keeps: context fill ≈
                     # latest turn's in+out; cost accumulates per call.
                     self._ctx_tokens = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
+                    self._tokens_in += msg.usage.input_tokens or 0
+                    self._tokens_out += msg.usage.output_tokens or 0
                     from .budget import estimate_cost  # noqa: PLC0415
                     c = estimate_cost(msg.usage, self.model,
                                       getattr(self.agent, "_provider_hint", None))
                     if c:
                         self._session_cost += c
+                label = None
                 if isinstance(msg, AssistantMessage):
                     # A tool call is immediately followed by its result; keep
                     # them hugged (no blank/spinner gap between call and result).
                     hugging = self._render_assistant(msg, ToolUseBlock)
+                    if hugging:
+                        # While the tool runs, the spinner names it and counts
+                        # its own seconds — a 40s pytest reads as "Run pytest
+                        # (40s)", not as the model thinking for 40s.
+                        calls = [b for b in msg.content if isinstance(b, ToolUseBlock)]
+                        if calls:
+                            verb, target = self._tool_label(calls[-1].name, calls[-1].input or {})
+                            label = f"⚒ {verb} {target}".rstrip()
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
+                    self._bash_stream_finish()   # the live tail gives way to the preview
                     self._render_tool_results(msg, ToolResultBlock)
                 if not hugging:
                     self.console.print()  # space above the next thinking spinner
-                thinking.start()
+                self._spinner_label = label
+                thinking.start(label=label)
             self._persist_messages(base)  # append this turn to the on-disk transcript
             await self._maybe_autotitle()  # name the session after turn one
         except KeyboardInterrupt:
@@ -3229,12 +3866,71 @@ class MantisTUI:
             # finalize it later raises "exit cancel scope in a different task".
             from .agent import aclose_stream  # noqa: PLC0415
             await aclose_stream(_stream)
+            reset_bash_output_sink(_bash_token)
+            self._bash_stream_finish()
             self._turn_active = False
             self._end_activity_turn()
             self.agent.on_event = None
             await thinking.stop()
             self._thinking = None
             notify_turn_done(time.monotonic() - _turn_started)
+
+    # -- live bash output (classic REPL) ----------------------------------------
+
+    def _bash_stream_sink(self, thinking: Any = None) -> Any:
+        """The ``on_output`` callback installed for a turn: buffer the chunk
+        into a :class:`BashTail` and make sure a painter task is running."""
+        def on_output(chunk: str) -> None:
+            tail = self._bash_tail
+            if tail is None:
+                tail = self._bash_tail = BashTail(getattr(self.console, "width", 80) or 80)
+            tail.feed(chunk)
+            if self._bash_painter is None or self._bash_painter.done():
+                import asyncio  # noqa: PLC0415
+                try:
+                    self._bash_painter = asyncio.ensure_future(self._bash_stream_painter(thinking))
+                except RuntimeError:
+                    self._bash_painter = None  # no loop (sync test) — paint on finish
+        return on_output
+
+    def _bash_stream_paint_once(self, thinking: Any = None) -> bool:
+        """Draw the current tail if it changed. The spinner owns the row
+        below the call line, so it is cleared first and restarted after."""
+        tail = self._bash_tail
+        if tail is None or not tail.dirty:
+            return False
+        if thinking is not None:
+            thinking.stop_sync()
+        out = self.console.file
+        tail.paint(out.write)
+        out.flush()
+        if thinking is not None:
+            thinking.start(label=self._spinner_label)
+        return True
+
+    async def _bash_stream_painter(self, thinking: Any = None) -> None:
+        """Throttled repaint loop — a few times a second, until the tail is
+        taken down by :meth:`_bash_stream_finish`."""
+        import asyncio  # noqa: PLC0415
+
+        try:
+            while self._bash_tail is not None:
+                self._bash_stream_paint_once(thinking)
+                await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            pass
+
+    def _bash_stream_finish(self) -> None:
+        """Erase the live window so the final result preview prints in its
+        place — the transcript ends up exactly as it did before streaming."""
+        tail, self._bash_tail = self._bash_tail, None
+        painter, self._bash_painter = self._bash_painter, None
+        if painter is not None and not painter.done():
+            painter.cancel()
+        if tail is not None and tail.painted:
+            out = self.console.file
+            tail.erase(out.write)
+            out.flush()
 
     def _persist_messages(self, base: int) -> None:
         """Append every message added this turn to the session transcript (the
@@ -4503,10 +5199,10 @@ class MantisTUI:
         for block in msg.content:
             if isinstance(block, ThinkingBlock):
                 # Reasoning models (DeepSeek-R1, QwQ, API extended-thinking) emit
-                # a thinking block — show it dimmed above the answer, capped so a
-                # long chain-of-thought doesn't bury the reply.
-                for line in _thinking_lines(getattr(block, "thinking", "")):
-                    self.console.print(line)
+                # a thinking block. Default: ONE dim line — size + opening words
+                # — so reasoning never buries the reply; /thinking show expands
+                # it (capped), /thinking hide drops it. ctrl+o always has it all.
+                self._render_thinking(getattr(block, "thinking", ""))
             elif isinstance(block, TextBlock):
                 if streamed:
                     continue  # already shown live via the streaming sink
@@ -4587,12 +5283,18 @@ class MantisTUI:
                 self._render_diff(rest, path=str(path))
                 continue
 
-            head.append(lines[0][:200], style=colour)
+            # Cut every preview line to the terminal width: a 200-char line
+            # wraps into three ragged rows at 80 columns and the "… +K" count
+            # under it stops meaning anything. ctrl+o has the full text.
+            room = max(20, (getattr(self.console, "width", 80) or 80) - 6)
+            head.append(_cut_cells(lines[0], room), style=colour)
             self.console.print(head)
-            for ln in rest[:12]:
-                self.console.print(_T("    " + ln[:200], style=colour))
-            if len(rest) > 12:
-                hint = _T(f"    … +{len(rest) - 12} more lines ", style="bright_black")
+            for ln in rest[:_RESULT_CAP]:
+                self.console.print(_T("    " + _cut_cells(ln, room), style=colour))
+            if len(rest) > _RESULT_CAP:
+                extra = len(rest) - _RESULT_CAP
+                hint = _T(f"    … +{extra} more line{'s' if extra != 1 else ''} ",
+                          style="bright_black")
                 hint.append("(ctrl+o to expand)", style="bright_black")
                 self.console.print(hint)
         # A todo_write in this round changed the plan → redraw the checklist.
@@ -4875,7 +5577,25 @@ class MantisTUI:
             self._cmd_rewind(arg)
             return True
         if cmd == "/models":
-            await self._select_model()
+            if arg.strip().lower() in {"list", "ls", "all"}:
+                await _aio_to_thread(self._show_models)
+            else:
+                await self._select_model()
+            return True
+        if cmd == "/model":
+            if not arg:
+                await self._select_model()
+            else:
+                await self._switch_model(arg)
+            return True
+        if cmd == "/dash":
+            if arg.strip().lower() == "live":
+                self.console.print("[ansibrightblack]/dash live runs in the full-screen UI "
+                                   "(the default) — restart without MANTIS_CLASSIC=1[/]")
+            self._show_dash(self._ctx_tokens, self._session_cost)
+            return True
+        if cmd == "/thinking":
+            self._cmd_thinking(arg)
             return True
         if cmd == "/effort":
             self._cmd_knobs(arg)
@@ -4949,6 +5669,10 @@ class MantisTUI:
             self.console.print(f"[ansibrightblack]{msg}[/]")
             return True
         if cmd in ("/enable", "/disable"):
+            if not arg.strip():
+                self._show_providers(only_enabled=(cmd == "/disable"),
+                                     usage=f"{cmd} <provider>")
+                return True
             await self._cmd_enable(cmd, arg)
             return True
         if cmd == "/connect":
@@ -5491,14 +6215,24 @@ class MantisTUI:
             return "--api-key / $MANTIS_AGENT_API_KEY"
         return "none (local/self-host)"
 
-    def _show_status(self, ctx_tokens: int = 0, session_cost: float = 0.0) -> None:
-        """/status — one screen of session facts (Claude Code's /status)."""
+    def _show_status(self, ctx_tokens: int = 0, session_cost: float = 0.0,
+                     ctx_window: int = 0, tokens_in: int | None = None,
+                     tokens_out: int | None = None) -> None:
+        """/status — one screen of session facts (Claude Code's /status), opened
+        by the one-line dashboard so the essentials read before the table."""
         from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
         try:
             ver = version("mantis-agent-sdk")
         except PackageNotFoundError:
             ver = "dev"
         c = self.console
+        try:
+            facts = self._dash_facts(ctx_tokens, session_cost, ctx_window,
+                                     tokens_in, tokens_out, light=True)
+            c.print(f"\n[{BODY}]▎[/][ansibrightblack]{dashboard_line(facts)}[/]",
+                    highlight=False)
+        except Exception:  # noqa: BLE001 — the summary line is a nicety
+            pass
         n_tools = len(self.agent.tools) if self.agent is not None and self.agent.tools else 0
         sid = getattr(self.transcript, "session_id", None) or "—"
         mode = MODES[self.mode_idx][0]
@@ -5527,9 +6261,201 @@ class MantisTUI:
         if ctx_tokens or session_cost:
             rows.append(("context", f"~{ctx_tokens:,} tokens"))
             rows.append(("cost", f"${session_cost:.4f}" if session_cost else "—"))
-        c.print("\n[bold]Status[/]")
+        c.print("[bold]Status[/]")
         for k, v in rows:
             c.print(f"  [ansibrightblack]{k:>9}[/]  {v}")
+
+    def _render_thinking(self, thinking: str) -> None:
+        """One ThinkingBlock, per ``show_thinking``: ``hide`` prints nothing,
+        ``show`` the capped dim block, anything else the one-line summary."""
+        mode = getattr(self, "show_thinking", "collapsed")
+        if mode == "hide":
+            return
+        if mode == "show":
+            for line in _thinking_lines(thinking):
+                self.console.print(line)
+            return
+        line = thinking_summary(thinking, getattr(self.console, "width", 80) or 80)
+        if line is not None:
+            self.console.print(line)
+
+    def _cmd_thinking(self, arg: str = "") -> None:
+        """/thinking [show|hide|collapse] — how reasoning blocks render."""
+        want = (arg or "").strip().lower()
+        aliases = {"collapse": "collapsed", "collapsed": "collapsed", "on": "show",
+                   "show": "show", "full": "show", "off": "hide", "hide": "hide"}
+        if want and want not in aliases:
+            self.console.print("[ansibrightblack]usage: [white]/thinking show|hide|collapse[/][/]")
+            return
+        if want:
+            self.show_thinking = aliases[want]
+        cur = getattr(self, "show_thinking", "collapsed")
+        what = {"collapsed": "collapsed to one line", "show": "shown in full (capped)",
+                "hide": "hidden"}[cur]
+        self.console.print(f"[ansibrightblack](thinking blocks {what} · "
+                           "[white]/thinking show|hide|collapse[/] · ctrl+o has everything)[/]")
+
+    def _auth_kind(self) -> str:
+        """Short auth source for the dashboard: ``$VAR (env)``, ``saved key``,
+        ``OAuth token``, ``--api-key``, or ``local`` for keyless backends."""
+        from . import catalog  # noqa: PLC0415
+        back = (self.backend or "").rstrip("/")
+        prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == back), None)
+        if prov is not None:
+            got = provider_auth(prov)
+            if got:
+                return got
+        if (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip():
+            return "OAuth token"
+        if self.api_key and self.api_key != "sk-noauth":
+            return "--api-key"
+        return "local" if (_is_local_backend(back) or not back or prov is None) else "no key"
+
+    def _dash_facts(self, ctx_tokens: int = 0, session_cost: float = 0.0,
+                    ctx_window: int = 0, tokens_in: int | None = None,
+                    tokens_out: int | None = None, *, light: bool = False) -> dict[str, Any]:
+        """Everything ``/dash`` shows, gathered from the same places the
+        dedicated commands read: the agent (context window, tools), the job
+        manager (/jobs), the workflow registry (/workflows), the MCP manager
+        (/mcp), the skill scan (/skills) and the file checkpoints (/diff).
+        ``light`` skips the filesystem scans (for the one-line /status form)."""
+        from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+
+        try:
+            ver = version("mantis-agent-sdk")
+        except PackageNotFoundError:
+            ver = "dev"
+        win = int(ctx_window or 0)
+        if not win and self.agent is not None:
+            eff = getattr(self.agent, "_effective_context_window", None)
+            try:
+                win = int(eff() or 0) if callable(eff) else 0
+            except Exception:  # noqa: BLE001
+                win = 0
+            if not win:
+                cap = getattr(self.agent, "model_capability", None)
+                win = int(getattr(cap, "context_window", 0) or 0)
+        try:
+            from .tui_fullscreen import context_breakdown  # noqa: PLC0415
+            bd = context_breakdown(self.messages, (self.agent.system if self.agent else "") or "")
+        except Exception:  # noqa: BLE001
+            bd = {}
+        jobs = _count_states(list(self._jobs.all()) if self._jobs else [],
+                             ("running",), ("error", "timeout", "failed"))
+        wfs = _count_states(list(getattr(self, "_workflows", []) or []),
+                            ("running", "paused"), ("error", "failed"))
+        mcp = {"servers": 0, "connected": 0, "tools": 0}
+        mgr = self._mcp_manager
+        if mgr is not None:
+            try:
+                rows = mgr.status_rows()
+                mcp["servers"] = len(rows)
+                mcp["connected"] = sum(1 for r in rows if r.get("state") == "connected")
+                mcp["tools"] = sum(len(v or []) for v in (mgr.tools or {}).values())
+            except Exception:  # noqa: BLE001
+                pass
+        skills = 0
+        if not light:
+            try:
+                from .skills import discover_skills  # noqa: PLC0415
+                skills = len(discover_skills())
+            except Exception:  # noqa: BLE001
+                skills = 0
+        sandbox = "off"
+        if not light:
+            try:
+                from .sandbox import load_policy, sandbox_status  # noqa: PLC0415
+                st = sandbox_status(load_policy(), cwd=str(Path.cwd()))
+                sandbox = "on" if st["active"] else ("unavailable" if st["enabled"] else "off")
+            except Exception:  # noqa: BLE001
+                sandbox = "off"
+        edits: list[str] = []
+        cwd = str(Path.cwd())
+        for ck in reversed(self._file_checkpoints):
+            path = str(ck.get("path") or "")
+            if not path:
+                continue
+            rel = os.path.relpath(path, cwd) if path.startswith(cwd) else path
+            if rel not in edits:
+                edits.append(rel)
+        n_tools = len(self.agent.tools) if self.agent is not None and self.agent.tools else 0
+        return {
+            "version": ver,
+            "model": self.model,
+            "backend": self.backend,
+            "family": model_family(self.model, self.backend),
+            "auth": self._auth_kind(),
+            "ctx_used": int(ctx_tokens or 0),
+            "ctx_window": win,
+            "breakdown": bd,
+            "cost": float(session_cost or 0.0),
+            "tokens_in": int(self._tokens_in if tokens_in is None else tokens_in),
+            "tokens_out": int(self._tokens_out if tokens_out is None else tokens_out),
+            "messages": len(self.messages),
+            "elapsed_s": time.monotonic() - self._session_started,
+            "mode": MODES[self.mode_idx][0],
+            "effort": self.effort or "",
+            "sandbox": sandbox,
+            "jobs": jobs,
+            "workflows": wfs,
+            "mcp": mcp,
+            "skills": skills,
+            "tools": n_tools,
+            "edits": edits,
+            "cwd": cwd,
+        }
+
+    def _dash_renderable(self, ctx_tokens: int = 0, session_cost: float = 0.0,
+                         ctx_window: int = 0, tokens_in: int | None = None,
+                         tokens_out: int | None = None) -> Any:
+        facts = self._dash_facts(ctx_tokens, session_cost, ctx_window, tokens_in, tokens_out)
+        return render_dashboard(facts, getattr(self.console, "width", 80) or 80)
+
+    def _show_dash(self, ctx_tokens: int = 0, session_cost: float = 0.0,
+                   ctx_window: int = 0, tokens_in: int | None = None,
+                   tokens_out: int | None = None) -> None:
+        """/dash — the mini dashboard panel."""
+        self.console.print()
+        self.console.print(self._dash_renderable(ctx_tokens, session_cost, ctx_window,
+                                                 tokens_in, tokens_out))
+
+    def _show_providers(self, only_enabled: bool = False, usage: str = "") -> None:
+        """The provider table behind bare ``/enable`` and ``/disable``: every
+        catalog provider, family-grouped, with its auth state or the exact
+        command that turns it on."""
+        from rich.text import Text as _T  # noqa: PLC0415
+        c = self.console
+        rows = provider_rows(only_enabled=only_enabled)
+        if usage:
+            c.print(f"\n[ansibrightblack]usage: [white]{usage}[/][/]")
+        if not rows:
+            c.print("  [ansibrightblack]no providers enabled — /enable <provider>[/]")
+            return
+        last = None
+        for r in rows:
+            if r["family"] != last:
+                c.print(f"  [{BODY}]{r['glyph']}[/] [bold]{r['family_name']}[/]")
+                last = r["family"]
+            line = _T("      ")
+            line.append(f"{r['id']:<11}", style="white")
+            line.append(f"{r['label']:<18} ", style="bright_black")
+            if r["enabled"]:
+                line.append("● ", style="green")
+                line.append(r["auth"], style="bright_black")
+            else:
+                line.append("○ ", style="bright_black")
+                line.append(f"/enable {r['id']}", style="white")
+                hint = r["hint"].partition(" · ")[2].replace("get one at ", "")
+                if hint:
+                    line.append(f" · {hint}", style="bright_black")
+            # One row per provider, always — cut, never wrapped.
+            c.print(line, overflow="ellipsis", no_wrap=True, highlight=False)
+
+    def _print_error(self, err: BaseException) -> None:
+        """Every runtime/provider error lands here: one boxed hint with the
+        fix, never a traceback."""
+        self.console.print(error_box(err, self.backend, self.model,
+                                     getattr(self.console, "width", 80) or 80))
 
     def _show_cost(self, ctx_tokens: int = 0, session_cost: float = 0.0) -> None:
         """/cost — token + dollar spend for this session."""
@@ -5708,70 +6634,72 @@ class MantisTUI:
     # -- model catalog -------------------------------------------------------
 
     def _show_models(self) -> None:
-        """Render the catalog: local (Ollama), self-host, hosted providers."""
+        """``/models list`` — the catalog as the five families the terminal
+        treats as first-class (Local · OpenAI · Claude · Gemini · Grok) plus
+        Hosted OSS and Self-host, each with its auth state and, when locked,
+        the exact ``/enable`` line that unlocks it. Generic over the catalog: a
+        family whose provider has not landed says so instead of vanishing."""
         from . import catalog  # noqa: PLC0415
 
         installed, reachable = self._available_models()
         installed_set = set(installed)
         c = self.console
+        d = "ansibrightblack"
+        rows = provider_rows()
+        by_family: dict[str, list[dict]] = {}
+        for r in rows:
+            by_family.setdefault(r["family"], []).append(r)
 
-        # 1. Local (Ollama)
-        c.print()
-        status = "[ansigreen]●[/]" if reachable else "[ansibrightblack]○ not running[/]"
-        c.print(f"{status} [bold]Ollama[/] [ansibrightblack]— local, free, no key[/]")
-        for m in installed:
-            mark = "[ansigreen]›[/]" if m == self.model else " "
-            c.print(f"  {mark} [white]{m}[/] [ansibrightblack][installed][/]")
-        for p in catalog.SUGGESTED_PULLS:
-            if p.tag in installed_set:
+        cur = model_family(self.model, self.backend)
+        c.print(f"\n[bold]Models[/]  [{BODY}]{cur['glyph']}[/] [white]{self.model}[/] "
+                f"[{d}]· {cur['name']} · {self._auth_kind()}[/]")
+
+        def _mark(m: str) -> str:
+            return "[ansigreen]›[/]" if m == self.model else " "
+
+        for fid in FAMILY_ORDER:
+            glyph, name = FAMILIES[fid]
+            if fid == "local":
+                status = "[ansigreen]● running[/]" if reachable else f"[{d}]○ not running · ollama serve[/]"
+                c.print(f"\n[{BODY}]{glyph}[/] [bold]{name}[/] [{d}]— Ollama · free, no key[/]  {status}")
+                for m in installed:
+                    c.print(f"  {_mark(m)} [white]{m}[/] [{d}](installed)[/]")
+                shown = 0
+                for pull in catalog.SUGGESTED_PULLS:
+                    if pull.tag in installed_set or shown >= 4:
+                        continue
+                    shown += 1
+                    c.print(f"    [{d}]{pull.tag:<22} {pull.note}[/]")
+                c.print(f"  [{d}]pull any with [white]/pull <tag>[/][/]")
                 continue
-            c.print(
-                f"    [ansibrightblack]{p.tag:<22}[/] [ansibrightblack]{p.note}[/]"
-            )
-        if not installed and not reachable:
-            c.print("    [ansibrightblack](start it with [white]ollama serve[/])[/]")
-        c.print("  [ansibrightblack]pull any with [white]ollama pull <name>[/][/]")
-
-        # 2. Open-weight / self-host
-        open_models: list[str] = []
-        seen_open: set[str] = set()
-        for prov in catalog.CATALOG:
-            for m in list(catalog.cached_live_models(prov.id) or prov.models):
-                if not _is_open_weight(m):
-                    continue
-                canon = m.rsplit("/", 1)[-1].lower()
-                if canon in seen_open:
-                    continue
-                seen_open.add(canon)
-                open_models.append(m)
-        c.print("\n[bold]Open-weight[/] [ansibrightblack]— self-hostable models[/]")
-        for m in open_models:
-            mark = "[ansigreen]›[/]" if m == self.model else " "
-            c.print(f"  {mark} [white]{m}[/] [ansibrightblack]self-host or hosted[/]")
-        c.print("\n[bold]Self-host[/] [ansibrightblack]— your own GPU[/]")
-        c.print(f"  [ansibrightblack]{catalog.SELF_HOST_NOTE}[/]")
-
-        # 3. Hosted APIs
-        c.print("\n[bold]Hosted APIs[/] [ansibrightblack]— full models, need a key[/]")
-        for prov in catalog.CATALOG:
-            on = catalog.is_enabled(prov)
-            dot = "[ansigreen]●[/]" if on else "[ansibrightblack]○[/]"
-            head = f"{dot} [bold]{prov.label}[/]"
-            if on:
-                head += "  [ansigreen]enabled[/]"
-            else:
-                head += f"  [ansibrightblack]/enable {prov.id}[/]"
-            if prov.note:
-                head += f"  [ansibrightblack]— {prov.note}[/]"
-            c.print(head)
-            for m in prov.models:
-                mark = "[ansigreen]›[/]" if m == self.model else " "
-                color = "white" if on else "ansibrightblack"
-                c.print(f"  {mark} [{color}]{m}[/]")
-        c.print(
-            "\n[ansibrightblack]switch with [white]/model <id>[/] · "
-            "enable with [white]/enable <provider>[/][/]\n"
-        )
+            if fid == "selfhost":
+                c.print(f"\n[{BODY}]{glyph}[/] [bold]{name}[/] [{d}]— your own GPU / proxy[/]")
+                c.print(f"  [{d}]{catalog.SELF_HOST_NOTE}[/]")
+                continue
+            provs = by_family.get(fid, [])
+            if not provs:
+                c.print(f"\n[{BODY}]{glyph}[/] [bold]{name}[/]  [{d}]○ no provider in this catalog yet[/]")
+                continue
+            if fid == "oss":
+                c.print(f"\n[{BODY}]{glyph}[/] [bold]{name}[/] [{d}]— open-weight models, hosted APIs[/]")
+            for r in provs:
+                if r["enabled"]:
+                    state = f"[ansigreen]●[/] [{d}]{r['auth']}[/]"
+                else:
+                    state = f"[{d}]○ {r['hint']}[/]"
+                if fid == "oss":
+                    c.print(f"  [bold]{r['label']}[/]  {state}")
+                    indent = "    "
+                    models = r["models"][:3]
+                else:
+                    c.print(f"\n[{BODY}]{glyph}[/] [bold]{name}[/] [{d}]— {r['label']}[/]  {state}")
+                    indent = "  "
+                    models = r["models"][:6]
+                color = "white" if r["enabled"] else d
+                for m in models:
+                    c.print(f"{indent}{_mark(m)} [{color}]{m}[/]")
+        c.print(f"\n[{d}]switch with [white]/model <id>[/] · browse with [white]/models[/] · "
+                f"enable with [white]/enable <provider>[/][/]\n")
 
     # -- interactive model selector -----------------------------------------
 
@@ -6058,6 +6986,7 @@ class MantisTUI:
                               f" [ansibrightblack]via {prov.label}[/]")
             return
 
+        self.console.print(missing_key_markup(model, prov), highlight=False)
         open_weight = _is_open_weight(model)
         tag = "open-weight" if open_weight else "proprietary"
         selfhost_hint = (
@@ -6133,7 +7062,9 @@ class MantisTUI:
         self.agent = self._build_agent()
         catalog.set_last_model(model, backend)  # reopen here next launch
         catalog.push_recent_model(model)  # float to the top of /models next time
-        self.console.print(f"[ansibrightblack]model →[/] [white]{model}[/]{where}")
+        from rich.markup import escape as _e  # noqa: PLC0415
+        note = switch_note(model, self.backend, self._auth_kind())
+        self.console.print(f"[ansibrightblack]{_e(note)}[/]", highlight=False)
 
     async def _prompt_secret(self, msg: str, prompt: str) -> str:
         self.console.print(f"[ansibrightblack]{msg} — input hidden, Enter to cancel[/]")
@@ -6181,10 +7112,10 @@ class MantisTUI:
             return
         catalog.set_key(prov.id, key)
         self._kick_prewarm()
+        fam = FAMILIES[family_of_provider(prov.id)]
         self.console.print(
-            f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] "
-            f"[ansibrightblack](saved, chmod 600)[/]  "
-            f"[ansibrightblack]try [white]/model {prov.models[0]}[/][/]")
+            f"[ansigreen]✓[/] enabled [bold]{prov.label}[/] [ansibrightblack]· {fam[0]} {fam[1]} "
+            f"· saved, chmod 600 · try [white]/model {prov.models[0]}[/][/]")
         await self._validate_and_report(prov)
 
     async def _cmd_connect(self, arg: str) -> None:
@@ -6211,6 +7142,19 @@ class MantisTUI:
         # Blocking httpx probe — run off-thread so the loop keeps ticking.
         avail, _ = await anyio.to_thread.run_sync(self._available_models)
         res = catalog.resolve_model_query(model_id, avail)
+        if res.model is None and res.candidates:
+            pick = prefix_flagship(model_id, res.candidates)
+            if pick:
+                prov = catalog.provider_for_model(pick)
+                await self._activate(pick, prov)
+                return
+        if res.model is None and not res.candidates:
+            # A full id the catalog has not cached yet (a brand-new release)
+            # still routes by its family prefix — send it there as typed.
+            prov = catalog.provider_for_model(model_id)
+            if prov is not None:
+                await self._activate(model_id, prov)
+                return
         if res.model is None:
             if res.candidates:
                 self.console.print(
@@ -6337,13 +7281,8 @@ class MantisTUI:
                         handled = await self._handle_slash(line)
                     except (EOFError, KeyboardInterrupt):
                         raise
-                    except Exception as e:  # noqa: BLE001 — one clean line, no traceback
-                        self.console.print(f"[ansired]error:[/] {e}")
-                        hint = error_hint(e, self.backend, self.model)
-                        if hint:
-                            import re as _re  # noqa: PLC0415
-                            styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
-                            self.console.print(f"[ansibrightblack]→ {styled}[/]")
+                    except Exception as e:  # noqa: BLE001 — one boxed hint, no traceback
+                        self._print_error(e)
                         handled = True
                     if handled:
                         continue
@@ -6360,17 +7299,8 @@ class MantisTUI:
                 except KeyboardInterrupt:
                     continue
                 except Exception as e:  # noqa: BLE001
-                    self.console.print(f"\n[ansired]error:[/] {e}")
-                    hint = error_hint(e, self.backend, self.model)
-                    if hint:
-                        import re as _re  # noqa: PLC0415
-                        styled = _re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
-                        self.console.print(f"[ansibrightblack]→ {styled}[/]")
-                    elif "not found" in str(e).lower() or "pull" in str(e).lower():
-                        self.console.print(
-                            f"[ansibrightblack]→ install it:[/] [white]ollama pull "
-                            f"{self.model}[/]  [ansibrightblack]or pick another with[/] "
-                            f"[white]/model <name>[/]")
+                    self.console.print()
+                    self._print_error(e)
         finally:
             try:
                 await self._close_mcp()
@@ -6384,6 +7314,12 @@ class MantisTUI:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+
+async def _aio_to_thread(fn: Any, *args: Any) -> Any:
+    import asyncio  # noqa: PLC0415
+
+    return await asyncio.to_thread(fn, *args)
 
 
 def _run_cron_cli(argv: list[str]) -> int:

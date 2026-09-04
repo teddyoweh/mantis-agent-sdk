@@ -70,6 +70,9 @@ def test_live_cache_roundtrip_and_ttl(tmp_home: Path) -> None:
 
 
 def test_provider_for_model() -> None:
+    assert catalog.provider_for_model("claude-opus-5").id == "anthropic"
+    assert catalog.provider_for_model("grok-4").id == "xai"
+    assert catalog.provider_for_model("gemini-2.5-pro").id == "gemini"
     assert catalog.provider_for_model("deepseek-chat").id == "deepseek"
     assert catalog.provider_for_model("accounts/fireworks/models/x").id == "fireworks"
     assert catalog.provider_for_model("z-ai/glm-4.7").id == "openrouter"
@@ -118,3 +121,25 @@ def test_validate_provider(
     ok, detail = catalog.validate_provider(catalog.BY_ID["deepseek"])
     assert ok is expect_ok
     assert needle in detail
+
+
+def test_five_families_are_in_the_catalog() -> None:
+    """OpenAI, Claude, Gemini, Grok and the open-source hosts all appear, each
+    with the env var the vendor documents."""
+    expect = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "xai": "XAI_API_KEY",
+        "together": "TOGETHER_API_KEY",
+    }
+    for pid, env in expect.items():
+        assert catalog.BY_ID[pid].api_key_env == env, pid
+    assert catalog.BY_ID["xai"].key_env_aliases == ("GROK_API_KEY",)
+    assert catalog.BY_ID["anthropic"].models[0] == "claude-opus-5"
+
+
+def test_xai_alias_words_resolve_to_the_flagship(tmp_home: Path) -> None:
+    for word in ("xai", "grok", "x.ai"):
+        r = catalog.resolve_model_query(word, [])
+        assert r.provider_id == "xai" and r.model == "grok-4", word

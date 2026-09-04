@@ -13,6 +13,7 @@ from __future__ import annotations
 from .fs import (
     CODING_TOOLS,
     bash,
+    bash_output_sink,
     edit_file,
     glob,
     grep,
@@ -20,6 +21,8 @@ from .fs import (
     monitor,
     multi_edit,
     read_file,
+    reset_bash_output_sink,
+    set_bash_output_sink,
     write_file,
 )
 from .tool_search import (
@@ -35,6 +38,7 @@ __all__ = [
     "WebSearch",
     "aclose_builtin_clients",
     "bash",
+    "bash_output_sink",
     "deferred_prompt_section",
     "edit_file",
     "glob",
@@ -44,7 +48,9 @@ __all__ = [
     "monitor",
     "multi_edit",
     "read_file",
+    "reset_bash_output_sink",
     "search_deferred",
+    "set_bash_output_sink",
     "web_fetch",
     "web_search",
     "write_file",

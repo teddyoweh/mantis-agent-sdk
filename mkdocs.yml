@@ -93,6 +93,7 @@ nav:
       - Recipes: guides/recipes.md
       - How configuration works: guides/how-it-works.md
       - Models and backends: guides/models-and-backends.md
+      - The mantis terminal: guides/terminal.md
       - Tools: guides/tools.md
       - Streaming: guides/streaming.md
       - Permissions: guides/permissions.md
@@ -105,6 +106,7 @@ nav:
       - Workflows: guides/workflows.md
       - Plugins: guides/plugins.md
       - Memory: guides/memory.md
+      - Dashboard (mantis serve): guides/dashboard.md
   - API reference:
       - api/index.md
       - query / ClaudeSDKClient: api/client.md

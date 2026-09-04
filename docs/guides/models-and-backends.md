@@ -8,6 +8,14 @@ Two values decide where a request goes:
   (`"anthropic"`, `"mock"`). `base_url` is an accepted alias for the same
   field.
 
+Five provider families are first-class — **OpenAI**, **Anthropic Claude**,
+**Google Gemini**, **xAI Grok**, and **open-source** models (Ollama, vLLM,
+llama.cpp, TGI, Together, Fireworks, Groq, OpenRouter, …). For the four
+vendor APIs a bare model name is enough: `Agent(model="claude-opus-5")`,
+`Agent(model="gpt-5.4")`, `Agent(model="gemini-2.5-pro")`,
+`Agent(model="grok-4")` each pick their vendor's endpoint and read the
+vendor's own key from the environment.
+
 Credentials are separate, and resolved last: see [Authentication](#authentication).
 
 ## The three ways to run a model
@@ -57,21 +65,35 @@ system prompt, turn limits — is identical.
     )
     ```
 
-=== "Anthropic"
+=== "Anthropic (Claude)"
 
-    Claude speaks `/v1/messages`, not `/chat/completions`. The literal
-    sentinel `"anthropic"` selects that wire format.
+    Claude speaks `/v1/messages`, not `/chat/completions`. A bare `claude-*`
+    name selects that adapter on its own; `ANTHROPIC_API_KEY` (or a
+    subscription OAuth token in `ANTHROPIC_AUTH_TOKEN`) is all it needs.
 
     ```python
-    import os
-
     from mantis_agent import Agent
 
-    agent = Agent(
-        model="claude-opus-5",
-        backend="anthropic",
-        api_key=os.environ["ANTHROPIC_API_KEY"],
-    )
+    agent = Agent(model="claude-opus-5")
+    ```
+
+    The literal sentinel `backend="anthropic"` says the same thing
+    explicitly, and an `api.anthropic.com` URL or a `/anthropic/v1` gateway
+    path (Bedrock Access Gateway, Azure Foundry, LiteLLM) points the same
+    adapter elsewhere.
+
+=== "OpenAI / Gemini / Grok"
+
+    The three OpenAI-compatible vendor APIs. A bare first-party name implies
+    the vendor endpoint, and each reads its own key: `OPENAI_API_KEY`,
+    `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `XAI_API_KEY` (or `GROK_API_KEY`).
+
+    ```python
+    from mantis_agent import Agent
+
+    openai = Agent(model="gpt-5.4")
+    gemini = Agent(model="gemini-2.5-pro")
+    grok = Agent(model="grok-4")
     ```
 
 ## The two option shapes
@@ -154,27 +176,29 @@ this order. There are exactly seven adapters.
 | Adapter | Selected by | Default URL when `backend` is unset |
 |---|---|---|
 | `mock` | the literal `"mock"`, or `MANTIS_AGENT_MOCK=1` | — |
-| `anthropic_passthrough` | `"anthropic"`, `api.anthropic.com`, or a `/anthropic/` gateway path | `https://api.anthropic.com/v1` |
+| `anthropic_passthrough` | `"anthropic"`, `api.anthropic.com`, a `/anthropic/` gateway path, **or a bare `claude-*` model name** | `https://api.anthropic.com/v1` |
 | `modal` | `modal:workspace/app`, or a `modal.run` host | — |
 | `ollama` | `:11434` or `ollama` in the URL | `http://localhost:11434` |
 | `llamacpp` | `llamacpp` or `llama.cpp` in the URL | `http://localhost:8080` |
 | `tgi` | `tgi` or `text-generation-inference` in the URL | `http://localhost:3000/v1` |
-| `openai_compat` | any other `http(s)://` URL — **and every bare model name** | `$MANTIS_AGENT_BASE_URL`, else `http://localhost:8000/v1` |
+| `openai_compat` | any other `http(s)://` URL (`api.openai.com`, `generativelanguage.googleapis.com`, `api.x.ai`, Together, …) — **and every other bare model name** | `$MANTIS_AGENT_BASE_URL`; else the vendor endpoint for a bare `gpt-*` / o-series / `gemini-*` / `grok-*` name; else `http://localhost:8000/v1` |
 
-That last row is the one that bites. Detection is *not* model-aware:
+That last row is the one to know. Detection is model-aware only for the
+first-party vendor names:
 
 ```python
 from mantis_agent.providers.base import detect_provider
 
 detect_provider("http://localhost:11434")   # 'ollama'
 detect_provider("anthropic")                # 'anthropic_passthrough'
+detect_provider("claude-opus-5")            # 'anthropic_passthrough'  ← Claude is first-class
 detect_provider("qwen2.5:7b")               # 'openai_compat'  ← a model name, not a URL
-detect_provider("claude-opus-5")            # 'openai_compat'  ← ditto
 ```
 
 So `Agent(model="qwen2.5:7b")` with no `backend` points at
 `http://localhost:8000/v1` (vLLM's default), not at your Ollama. Pass a
-`backend` — or use `MantisAgentOptions`, which infers one.
+`backend` — or use `MantisAgentOptions`, which infers one. A bare `gpt-5.4`,
+`gemini-2.5-pro` or `grok-4` does go to its vendor.
 
 To override detection entirely, pass a ready-made provider:
 
@@ -199,10 +223,11 @@ model name → Ollama.
 | tag form (`:`, no `/`) | `qwen2.5:7b` | `http://localhost:11434` |
 | `accounts/fireworks/models/…` | `accounts/fireworks/models/deepseek-v3` | `https://api.fireworks.ai/inference/v1` |
 | `org/repo` (`/`, no `:`) | `Qwen/Qwen2.5-72B-Instruct` | `https://api.together.xyz/v1` |
-| `gpt-*`, `o1*`, `o3*`, `o4*` | `gpt-4o-mini` | `https://api.openai.com/v1` |
-| `gemini-*` | `gemini-2.5-pro` | Google's OpenAI-compat endpoint |
+| `gpt-*`, `o1*`, `o3*`, `o4*` | `gpt-5.4` | `https://api.openai.com/v1` (`OPENAI_API_KEY`) |
+| `gemini-*` | `gemini-2.5-pro` | `https://generativelanguage.googleapis.com/v1beta/openai` (`GEMINI_API_KEY`) |
+| `grok-*` | `grok-4` | `https://api.x.ai/v1` (`XAI_API_KEY`) |
+| `claude-*` | `claude-opus-5` | the `"anthropic"` sentinel → native Anthropic adapter (`ANTHROPIC_API_KEY`) |
 | `gpt-oss*` | `gpt-oss:20b` | `http://localhost:11434` (open weights — not served by OpenAI) |
-| `claude-*` | `claude-opus-5` | **raises `BackendRoutingError`** |
 | anything else | `mistral` | `http://localhost:11434` |
 
 Check any name without running it:
@@ -212,17 +237,21 @@ from mantis_agent.routing import infer_backend, resolve_backend
 
 infer_backend("qwen2.5:7b")                  # 'http://localhost:11434'
 infer_backend("Qwen/Qwen2.5-72B-Instruct")   # 'https://api.together.xyz/v1'
+infer_backend("grok-4")                      # 'https://api.x.ai/v1'
+infer_backend("claude-opus-5")               # 'anthropic'
 resolve_backend("qwen2.5:7b", "http://gpu-box:11434")   # explicit wins
 ```
 
-Both return **URLs**, not adapter names.
+Both return the **backend value** — a URL for every family except Claude,
+which returns the `"anthropic"` sentinel (there is no OpenAI-compat URL to
+point at; Claude speaks `/v1/messages`). Neither returns an adapter name.
 
-!!! note "Why `claude-*` raises"
+!!! note "Claude behind a gateway"
 
-    Inference refuses to guess Anthropic, because a bare `claude-*` name is
-    ambiguous between the real API, a gateway, and Bedrock/Vertex. Name the
-    destination and it works: `backend="anthropic"`, a gateway URL, or any
-    `/anthropic/v1` proxy path.
+    The sentinel means api.anthropic.com. To reach Claude through Bedrock
+    Access Gateway, Azure Foundry, Vertex or LiteLLM, name the destination:
+    `backend="https://gateway.example/anthropic/v1"` — any `/anthropic/v1`
+    path selects the same native adapter.
 
 ## Authentication
 
@@ -239,15 +268,21 @@ Discovery order for OpenAI-compatible backends, first hit wins:
 
 1. `api_key=` on the options or the `Agent`
 2. `$MANTIS_AGENT_API_KEY`
-3. `$OPENAI_API_KEY`, `$TOGETHER_API_KEY`, `$FIREWORKS_API_KEY`,
-   `$GROQ_API_KEY`, `$OPENROUTER_API_KEY`, `$DEEPSEEK_API_KEY`,
-   `$DEEPINFRA_API_KEY`, `$CEREBRAS_API_KEY`, `$ANYSCALE_API_KEY`,
-   `$MOONSHOT_API_KEY` — in that order
+3. the vendor's own variable when the URL names the vendor —
+   `$OPENAI_API_KEY` for `api.openai.com`, `$XAI_API_KEY` then
+   `$GROK_API_KEY` for `api.x.ai`, `$GEMINI_API_KEY` then `$GOOGLE_API_KEY`
+   for Google, `$GROQ_API_KEY` for Groq, and so on
+4. the generic chain: `$OPENAI_API_KEY`, `$XAI_API_KEY`, `$GROK_API_KEY`,
+   `$GEMINI_API_KEY`, `$GOOGLE_API_KEY`, `$TOGETHER_API_KEY`,
+   `$FIREWORKS_API_KEY`, `$GROQ_API_KEY`, `$OPENROUTER_API_KEY`,
+   `$DEEPSEEK_API_KEY`, `$DEEPINFRA_API_KEY`, `$CEREBRAS_API_KEY`,
+   `$ANYSCALE_API_KEY`, `$MOONSHOT_API_KEY` — in that order
 
-That third tier is why exporting the provider's own variable usually just
-works, with no `MANTIS_`-prefixed setup at all. It is also why a stale
-`OPENAI_API_KEY` in your shell can send the wrong Bearer to a different
-provider — pass `api_key=` explicitly when several are floating around.
+The third tier is why exporting the provider's own variable just works, with
+no `MANTIS_`-prefixed setup at all, even with several keys in the shell. The
+fourth is for self-hosted or unrecognised URLs, and is why a stale
+`OPENAI_API_KEY` can reach a proxy you meant to leave unauthenticated — pass
+`api_key=` (or `api_key=""`) explicitly there.
 
 Anthropic resolves separately, matching Claude Code: `$ANTHROPIC_API_KEY`
 becomes an `x-api-key` header; `$ANTHROPIC_AUTH_TOKEN` becomes
@@ -345,12 +380,42 @@ HuggingFace text-generation-inference, default `http://localhost:3000/v1`.
 Serverless GPUs, addressed as `modal:workspace/app` or a `modal.run` URL. The
 adapter handles cold starts and per-request keepalives.
 
-### Anthropic passthrough
+### OpenAI
 
-Real Claude over `/v1/messages`. Selected by `backend="anthropic"`, an
-`api.anthropic.com` URL, or a gateway path ending in `/anthropic` — which is
-how Bedrock Access Gateway, Azure Foundry, and LiteLLM's Anthropic passthrough
-are reached.
+`gpt-*` and the o-series, over `api.openai.com`. Reasoning models (gpt-5.x,
+o1/o3/o4) get `max_completion_tokens` instead of `max_tokens`, no
+`temperature` (they reject one), and the universal thinking config as
+`reasoning_effort`; `effort="xhigh"` passes through, `"max"`/`"ultra"` clamp
+to `high`. Streamed `reasoning` deltas surface as thinking blocks.
+
+### Gemini
+
+`gemini-*` over Google's OpenAI-compatible endpoint
+(`generativelanguage.googleapis.com/v1beta/openai`). Effort words become
+`reasoning_effort` (`low`/`medium`/`high`/`none`, which Google maps to
+1k/8k/24k thinking tokens); an explicit `budget_tokens` is sent exactly as
+`extra_body.google.thinking_config.thinking_budget`; `adaptive` with no
+budget is Gemini's own dynamic default, so nothing is sent. Thought summaries
+are opt-in — `extra={"extra_body": {"google": {"thinking_config":
+{"include_thoughts": True}}}}` — and stream as thinking blocks.
+
+### xAI Grok
+
+`grok-*` over `api.x.ai/v1`, key in `XAI_API_KEY` (`GROK_API_KEY` is an
+accepted alias). Only `grok-3-mini` takes `reasoning_effort` (`low`/`high`);
+`grok-4`, `grok-3` and `grok-code-fast` reason at a fixed level and are never
+sent the field. `reasoning_content` deltas surface as thinking blocks.
+
+### Anthropic (Claude)
+
+Real Claude over `/v1/messages`. Selected by a bare `claude-*` model name,
+`backend="anthropic"`, an `api.anthropic.com` URL, or a gateway path ending
+in `/anthropic` — which is how Bedrock Access Gateway, Azure Foundry, and
+LiteLLM's Anthropic passthrough are reached. The thinking config follows the
+model generation: Haiku 4.5 and ≤4.5 get `{"type": "enabled", "budget_tokens":
+N}`; Opus 4.7/4.8/5 and Sonnet 5 get `{"type": "adaptive"}` plus
+`output_config.effort` derived from the budget (they reject `budget_tokens`);
+Fable/Mythos get effort only. Prompt caching is on by default.
 
 ### Mock
 
@@ -364,7 +429,8 @@ agent loop, no network — the way to test tool dispatch in CI.
 | `Connection refused` on `localhost:8000` | a bare model name with no `backend` — detection defaulted to vLLM's port | pass `backend=`, or use `MantisAgentOptions` |
 | `401` / `invalid api key` from the wrong provider | an unrelated `*_API_KEY` in the environment was picked up by the discovery chain | pass `api_key=` explicitly |
 | `404 model not found` | the id isn't spelled the way that backend spells it | check the provider's model list; ids are not portable |
-| `BackendRoutingError` on a `claude-*` model | name-based inference refuses to guess Anthropic | `backend="anthropic"` |
+| `AuthError: ... needs credentials` on a `claude-*` model | no `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` in the environment | export one, or pass `api_key=` |
+| `401` from `api.x.ai` | `XAI_API_KEY` (or `GROK_API_KEY`) not set, so the generic chain sent another vendor's key | export `XAI_API_KEY` |
 | `AttributeError: 'SDKAssistantMessage' object has no attribute 'content'` | option shape and message shape mixed | dict → `msg.message.content`; typed → `msg.content` |
 | an option seems to do nothing | unknown dict keys fall through to `Agent.extra` silently | check the key name against [MantisAgentOptions](../api/options.md) |
 | `temperature` rejected as deprecated | some newer models refuse an explicit temperature | leave it unset; the default is suppressed per-provider |

@@ -1,13 +1,28 @@
 """OpenAI-compatible adapter — the workhorse.
 
-One adapter, every provider that speaks ``POST /v1/chat/completions``: vLLM,
-Together, Fireworks, Groq, OpenRouter, Cerebras, DeepInfra, Anyscale, DeepSeek,
-Mistral's own API.
+One adapter, every provider that speaks ``POST /v1/chat/completions``: OpenAI
+itself, Google Gemini's OpenAI-compat endpoint, xAI Grok, vLLM, Together,
+Fireworks, Groq, OpenRouter, Cerebras, DeepInfra, Anyscale, DeepSeek, Mistral's
+own API.
 
 Responsibilities
 ----------------
-1. Auth + base-URL resolution (env-key fallback chain, vLLM localhost default).
+1. Auth + base-URL resolution (host-aware env-key chain, vLLM localhost default).
 2. Backend capability detection (hosted profile match or generic vLLM-style).
+   The profile also picks the *reasoning style* — how the universal
+   ``thinking`` config becomes each vendor's native knob (see
+   ``_reasoning_style`` / ``_apply_thinking``):
+
+   * OpenAI reasoning models (gpt-5.x / o-series): ``reasoning_effort``,
+     ``max_completion_tokens`` instead of ``max_tokens``, no ``temperature``.
+   * Gemini: ``reasoning_effort`` (low/medium/high/none) for effort words; an
+     explicit token budget becomes
+     ``extra_body.google.thinking_config.thinking_budget``.
+   * xAI Grok: ``reasoning_effort`` low/high on grok-3-mini only (grok-4 and
+     grok-3 reason at a fixed level and reject the field); ``reasoning_content``
+     deltas surface as thinking blocks.
+   * everything else: ``reasoning_effort`` only where the model is known to
+     accept it.
 3. Translates universal ``Message`` / ``ContentBlock`` to the OpenAI chat shape
    for both Path A (native ``tools`` + emitted ``tool_calls``) and Paths B/C
    (prompt-engineered ``<tool_call>`` XML in the system prompt).
@@ -86,7 +101,7 @@ from ..streaming.text_tool_parser import (
     ToolCallTextParser,
 )
 
-__all__ = ["OpenAICompatProvider"]
+__all__ = ["OpenAICompatProvider", "env_key_candidates"]
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +114,10 @@ DEFAULT_BASE_URL = "http://localhost:8000/v1"  # vLLM's default OpenAI-compat UR
 # it's the de-facto standard and many users export it once for everything.
 _ENV_KEY_CHAIN: tuple[str, ...] = (
     "OPENAI_API_KEY",
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
     "TOGETHER_API_KEY",
     "FIREWORKS_API_KEY",
     "GROQ_API_KEY",
@@ -109,6 +128,44 @@ _ENV_KEY_CHAIN: tuple[str, ...] = (
     "ANYSCALE_API_KEY",
     "MOONSHOT_API_KEY",
 )
+
+# The vendor's OWN key variables, consulted before the generic chain when the
+# base URL names the vendor. Without this a stale OPENAI_API_KEY in the shell
+# outranked XAI_API_KEY on a request bound for api.x.ai and produced a 401
+# that read like the Grok key was bad. Order within a tuple: canonical name
+# first, then the alias people actually export.
+_HOST_ENV_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("api.openai.com", ("OPENAI_API_KEY",)),
+    ("api.x.ai", ("XAI_API_KEY", "GROK_API_KEY")),
+    ("generativelanguage.googleapis", ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+    ("api.together.", ("TOGETHER_API_KEY",)),
+    ("fireworks", ("FIREWORKS_API_KEY",)),
+    ("groq", ("GROQ_API_KEY",)),
+    ("openrouter", ("OPENROUTER_API_KEY",)),
+    ("api.deepseek.com", ("DEEPSEEK_API_KEY",)),
+    ("deepinfra", ("DEEPINFRA_API_KEY",)),
+    ("cerebras", ("CEREBRAS_API_KEY",)),
+    ("anyscale", ("ANYSCALE_API_KEY",)),
+    ("moonshot", ("MOONSHOT_API_KEY",)),
+)
+
+
+def env_key_candidates(base_url: str | None) -> tuple[str, ...]:
+    """Env var names to try for ``base_url``, most specific first.
+
+    The vendor's own variables (``XAI_API_KEY``/``GROK_API_KEY`` for
+    ``api.x.ai``, ``GEMINI_API_KEY``/``GOOGLE_API_KEY`` for Google, …) lead;
+    the generic chain follows so a self-hosted or unrecognised URL still
+    picks up whichever key is exported.
+    """
+
+    lower = (base_url or "").lower()
+    preferred: tuple[str, ...] = ()
+    for needle, names in _HOST_ENV_KEYS:
+        if needle in lower:
+            preferred = names
+            break
+    return preferred + tuple(v for v in _ENV_KEY_CHAIN if v not in preferred)
 
 # Fallback when we can't match a hosted provider — model the most common self-
 # hosted case (vLLM-style) and let actual feature detection happen lazily via
@@ -208,7 +265,7 @@ class OpenAICompatProvider(HTTPProviderMixin):
         # Modal that authenticate with their own headers).
         key = api_key
         if key is None:
-            for var in _ENV_KEY_CHAIN:
+            for var in env_key_candidates(url):
                 v = os.environ.get(var)
                 if v and v.strip():
                     key = v
@@ -264,10 +321,13 @@ class OpenAICompatProvider(HTTPProviderMixin):
 
         ``thinking`` is the universal reasoning config —
         ``{"type": "adaptive"|"enabled"|"disabled", "budget_tokens": int|None}``.
-        It is translated to ``reasoning_effort`` / ``max_thinking_tokens`` (only
-        for models that accept a request-side knob) and never overrides an
-        explicit reasoning field the caller already put in ``extra``. When
-        ``thinking`` is ``None`` the built payload is byte-for-byte unchanged.
+        It is translated to the backend's native knob — ``reasoning_effort``
+        for OpenAI / generic backends, ``reasoning_effort`` or a
+        ``thinking_config`` budget for Gemini, ``reasoning_effort`` low/high
+        for Grok's grok-3-mini — only for models that accept a request-side
+        knob, and never overrides an explicit reasoning field the caller
+        already put in ``extra``. When ``thinking`` is ``None`` the built
+        payload is byte-for-byte unchanged.
         """
 
         cap = model_capability or self._default_model_capability
@@ -356,11 +416,14 @@ class OpenAICompatProvider(HTTPProviderMixin):
                         continue
                     raise_for_status(response)
 
+                emits_thinking = bool(cap and cap.emits_inline_thinking)
                 if path == "A":
-                    async for ev in _translate_native(response, model):
+                    async for ev in _translate_native(
+                        response, model, emits_thinking=emits_thinking,
+                        thinking_tags=(cap.inline_thinking_tags if cap else None),
+                    ):
                         yield ev
                 else:
-                    emits_thinking = bool(cap and cap.emits_inline_thinking)
                     async for ev in _translate_prompt_engineered(
                         response, model, emits_thinking=emits_thinking
                     ):
@@ -416,7 +479,8 @@ class OpenAICompatProvider(HTTPProviderMixin):
         # Other OpenAI-compat backends (vLLM, Groq, Together, …) never serve
         # these ids, so keying off the model name is safe and self-contained.
         _bare = model.lower().rsplit("/", 1)[-1]
-        _new_openai = _bare.startswith(("gpt-5", "o1", "o3", "o4"))
+        _new_openai = _is_openai_reasoning_model(_bare)
+        style = _reasoning_style(model, self.backend_capability)
         token_field = "max_completion_tokens" if _new_openai else "max_tokens"
 
         payload: dict[str, Any] = {
@@ -433,52 +497,30 @@ class OpenAICompatProvider(HTTPProviderMixin):
 
         if extra:
             effort = extra.get("reasoning_effort", extra.get("effort"))
-            if effort == "minimal":
-                effort = "low"
-            if effort in ("ultra", "max"):
-                # Ultra is a multi-agent orchestration mode; 'max' requires the
-                # Responses API. Neither is a valid Chat Completions
-                # reasoning_effort value (400 with no recovery), so clamp to the
-                # highest value the endpoint accepts.
-                effort = "high"
-            if effort is not None:
-                payload["reasoning_effort"] = effort
             # NB: a local name, NOT the ``thinking`` parameter. Rebinding it
             # here meant any non-empty ``extra`` without a "thinking" key
             # silently erased the universal thinking config below — so
             # extra={"verbosity": …} quietly turned reasoning off.
             extra_thinking = extra.get("thinking")
-            if isinstance(extra_thinking, dict):
-                thinking_effort = extra_thinking.get("effort")
-                if thinking_effort == "minimal":
-                    thinking_effort = "low"
-                if thinking_effort is not None:
-                    payload["reasoning_effort"] = thinking_effort
+            if isinstance(extra_thinking, dict) and extra_thinking.get("effort") is not None:
+                effort = extra_thinking["effort"]
+            if effort is not None:
+                normalized = _normalize_effort(str(effort), style, _bare)
+                if normalized is not None:
+                    payload["reasoning_effort"] = normalized
             # ``verbosity`` is a real GPT-5 Chat Completions field, but only
             # there — gpt-4o and every OSS server 400 on it.
             if extra.get("verbosity") is not None and _new_openai:
                 payload["verbosity"] = extra["verbosity"]
 
-        # Universal thinking config -> OpenAI reasoning knobs. Only applied when
-        # the caller didn't already set a reasoning field (extra wins), and only
-        # for models that accept a request-side knob — sending reasoning_effort to
-        # a plain chat model (gpt-4o, most local checkpoints) is a hard 400.
-        #
-        # ``budget_tokens`` is deliberately dropped: Chat Completions has no
-        # per-request thinking budget. ``reasoning_effort`` is the only knob, and
-        # reasoning tokens are already billed against max_completion_tokens.
-        if (thinking
-                and "reasoning_effort" not in payload
-                and _supports_request_reasoning(model, model_capability)):
-            ttype = thinking.get("type")
-            if ttype == "disabled":
-                payload["reasoning_effort"] = "none"
-            else:
-                # "enabled" is an explicit ask for deeper reasoning; "adaptive"
-                # lets the model self-pace — map to a middle setting. There's no
-                # OpenAI reasoning_effort value for "adaptive", so pick sane
-                # defaults the Chat Completions endpoint accepts.
-                payload["reasoning_effort"] = "high" if ttype == "enabled" else "medium"
+        # Universal thinking config -> the backend's native reasoning knob. Only
+        # applied when the caller didn't already set a reasoning field (extra
+        # wins), and only for models that accept a request-side knob — sending
+        # reasoning_effort to a plain chat model (gpt-4o, most local
+        # checkpoints) is a hard 400.
+        if thinking and "reasoning_effort" not in payload:
+            _apply_thinking(payload, thinking, style=style, bare=_bare,
+                            model=model, model_capability=model_capability)
 
         if path == "A" and tools:
             payload["tools"] = _normalize_tool_defs(tools)
@@ -504,8 +546,171 @@ class OpenAICompatProvider(HTTPProviderMixin):
                     "model", "messages", "stream", "stream_options", "tools",
                 }
             }
+            # ``extra_body`` is where Gemini's vendor namespace lives; a caller
+            # adding e.g. ``include_thoughts`` must not wipe the thinking budget
+            # the translator just wrote (or vice versa). Deep-merge that one key.
+            user_extra_body = passthrough.pop("extra_body", None)
+            if isinstance(user_extra_body, dict):
+                payload["extra_body"] = _deep_merge(
+                    payload.get("extra_body") or {}, user_extra_body
+                )
+            elif user_extra_body is not None:
+                payload["extra_body"] = user_extra_body
             payload.update(passthrough)
         return payload
+
+
+# ---------------------------------------------------------------------------
+# Reasoning knobs — per-vendor translation of the universal thinking config
+# ---------------------------------------------------------------------------
+
+#: Reasoning styles the payload builder knows how to speak.
+_HOSTED_REASONING_STYLES: frozenset[str] = frozenset({"openai", "gemini", "xai"})
+
+
+def _is_openai_reasoning_model(bare: str) -> bool:
+    """gpt-5.x and the o-series: ``max_completion_tokens``, no temperature,
+    request-side ``reasoning_effort``."""
+    return bare.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _reasoning_style(model: str, backend: BackendCapability | None) -> str:
+    """Which vendor's reasoning dialect to speak for this request.
+
+    The backend profile decides when it names a first-party API (``openai``,
+    ``gemini``, ``xai``) — a Gemini id sent through an OpenAI-compat proxy
+    that reports itself as OpenAI gets OpenAI's knob. Only when the backend is
+    the generic (self-hosted / unknown URL) profile does the model name break
+    the tie, so ``Agent(model="grok-4", backend="https://my-proxy/v1")``
+    still speaks Grok. Everything else is ``"generic"``.
+    """
+
+    hint = (backend.provider_hint if backend is not None else "") or ""
+    if hint in _HOSTED_REASONING_STYLES:
+        return hint
+    if hint and hint != "vllm":
+        # Together / Groq / OpenRouter / … re-serve open weights (and, on
+        # OpenRouter, other vendors' models) with their own parameter
+        # validation — the generic path is the safe one there.
+        return "generic"
+    bare = model.lower().rsplit("/", 1)[-1]
+    if bare.startswith(("grok-", "grok/")):
+        return "xai"
+    if bare.startswith("gemini-"):
+        return "gemini"
+    if _is_openai_reasoning_model(bare):
+        return "openai"
+    return "generic"
+
+
+def _normalize_effort(effort: str, style: str, bare: str) -> str | None:
+    """Map an SDK effort word to what ``style`` accepts, or ``None`` to omit.
+
+    * ``minimal`` → ``low`` everywhere (only gpt-5 knows ``minimal`` and it is
+      a near-no-op; ``low`` is the portable floor).
+    * ``ultra`` / ``max`` → ``high``: ultra is a multi-agent orchestration
+      mode and ``max`` needs the Responses API — neither is a valid Chat
+      Completions value (400 with no recovery), so clamp to the ceiling.
+    * ``xhigh`` is a real gpt-5.x value and is kept for OpenAI; Gemini and
+      Grok don't know it, so it clamps to ``high``.
+    * Grok: only grok-3-mini takes the field, and only ``low``/``high``;
+      every other Grok model reasons at a fixed level and 400s on it.
+    """
+
+    e = effort.strip().lower()
+    if e == "minimal":
+        e = "low"
+    if e in ("ultra", "max"):
+        e = "high"
+    if style == "xai":
+        if not _grok_accepts_effort(bare):
+            return None
+        return "low" if e in ("low", "none") else "high"
+    if style == "gemini" and e == "xhigh":
+        return "high"
+    return e
+
+
+def _grok_accepts_effort(bare: str) -> bool:
+    """xAI documents ``reasoning_effort`` for grok-3-mini only; grok-4 /
+    grok-3 / grok-code-fast reject the parameter."""
+    return bare.startswith("grok-3-mini")
+
+
+def _apply_thinking(
+    payload: dict[str, Any],
+    thinking: dict[str, Any],
+    *,
+    style: str,
+    bare: str,
+    model: str,
+    model_capability: ModelCapability | None,
+) -> None:
+    """Write the universal ``thinking`` config onto ``payload`` in the
+    vendor's dialect. Mutates ``payload``; never sets a field the vendor
+    would reject."""
+
+    ttype = thinking.get("type")
+    budget = thinking.get("budget_tokens")
+
+    if style == "gemini":
+        # Google's OpenAI-compat endpoint accepts BOTH ``reasoning_effort``
+        # (low=1024 / medium=8192 / high=24576 thinking tokens, ``none`` to
+        # switch off on Flash-class models) and a precise budget under its
+        # vendor namespace, ``extra_body.google.thinking_config``. An explicit
+        # token budget from the SDK is honoured exactly through the latter;
+        # effort words go through the former. ``adaptive`` with no budget is
+        # Gemini's own default (dynamic thinking) so nothing is sent. Thought
+        # summaries are opt-in — pass
+        # ``extra={"extra_body": {"google": {"thinking_config":
+        # {"include_thoughts": True}}}}`` and they stream as thinking blocks.
+        if ttype == "disabled":
+            payload["reasoning_effort"] = "none"
+        elif budget is not None:
+            google = payload.setdefault("extra_body", {}).setdefault("google", {})
+            cfg = google.setdefault("thinking_config", {})
+            cfg["thinking_budget"] = int(budget)
+        elif ttype == "enabled":
+            payload["reasoning_effort"] = "high"
+        return
+
+    if style == "xai":
+        # grok-3-mini: ``low`` / ``high`` only. Every other Grok model reasons
+        # at a fixed level, can't be switched off, and 400s on the field.
+        if not _grok_accepts_effort(bare) or ttype == "disabled":
+            return
+        if ttype == "enabled":
+            payload["reasoning_effort"] = (
+                "low" if (budget is not None and int(budget) <= 4096) else "high"
+            )
+        # ``adaptive``: leave the model's default alone.
+        return
+
+    # OpenAI proper and the generic path share ``reasoning_effort``. Only for
+    # models that take a request-side knob — a plain chat model 400s.
+    if not _supports_request_reasoning(model, model_capability):
+        return
+    if ttype == "disabled":
+        # ``none`` is a gpt-5.x value; the o-series can't switch reasoning off
+        # and rejects it, so leave the field out there.
+        if not bare.startswith(("o1", "o3", "o4")):
+            payload["reasoning_effort"] = "none"
+        return
+    # ``budget_tokens`` is deliberately dropped: Chat Completions has no
+    # per-request thinking budget. "enabled" is an explicit ask for deeper
+    # reasoning; "adaptive" lets the model self-pace — map to a middle
+    # setting, since there's no reasoning_effort value for "adaptive".
+    payload["reasoning_effort"] = "high" if ttype == "enabled" else "medium"
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -765,17 +970,36 @@ async def _iter_openai_sse(response: httpx.Response) -> AsyncIterator[dict[str, 
 async def _translate_native(
     response: httpx.Response,
     requested_model: str,
+    *,
+    emits_thinking: bool = False,
+    thinking_tags: tuple[tuple[str, str], ...] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Walk the OpenAI SSE stream and emit normalized events for the native
     tool-call path. Events are emitted as soon as they materialize so the
-    streaming tool executor (plan §5) can dispatch tools mid-stream."""
+    streaming tool executor (plan §5) can dispatch tools mid-stream.
+
+    When the model is known to emit inline ``<think>…</think>`` (Qwen3,
+    DeepSeek-R1 on a server that doesn't split it out, …) the text deltas run
+    through ``ThinkingParser`` so consumers get thinking events *as they
+    stream* instead of raw tags mid-answer. The engine's post-hoc split stays
+    as a net; text that reaches it here is already tag-free, so it is a no-op.
+    """
 
     started = False
-    text_open = False
-    text_index = 0
-    thinking_open = False
-    thinking_index = 0
-    next_index = 0
+    # Text / thinking block bookkeeping shared with the helpers below.
+    cursor: dict[str, Any] = {
+        "next_index": 0,
+        "text_open": False,
+        "text_index": 0,
+        "thinking_open": False,
+        "thinking_index": 0,
+        "tool_indices": {},
+    }
+    think_parser = (
+        ThinkingParser(tags=thinking_tags) if (emits_thinking and ThinkingParser and thinking_tags)
+        else ThinkingParser() if (emits_thinking and ThinkingParser)
+        else None
+    )
     # Tool calls keyed by a canonical key. OpenAI always sends ``index``, but
     # many OpenAI-*compatible* backends stream deltas with only ``id`` (no
     # index) — keying purely on ``index`` (default 0) merged distinct calls.
@@ -788,6 +1012,11 @@ async def _translate_native(
     last_key: Any = None
     stop_reason: str | None = None
     usage: Usage | None = None
+
+    def _text_segments(piece: str) -> list[tuple[str, str]]:
+        if think_parser is None:
+            return [("text", piece)]
+        return _tag_segments(think_parser.feed(piece))  # type: ignore[attr-defined]
 
     async for data in _iter_openai_sse(response):
         # Mid-stream provider error (rare but real — e.g. Together kills a
@@ -815,39 +1044,28 @@ async def _translate_native(
         choice = choices[0]
         delta = choice.get("delta") or {}
 
-        # Reasoning_content arrives out-of-band from some R1-style providers
-        # (Fireworks, DeepSeek). Surface as ThinkingBlock — same channel as
-        # Anthropic's thinking_delta so the agent UI doesn't care.
-        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        # Reasoning arrives out-of-band as ``reasoning_content`` (DeepSeek,
+        # Fireworks, xAI Grok) or ``reasoning`` (OpenAI-style gateways), or as
+        # a Gemini content part flagged ``extra_content.google.thought``.
+        # Surface all of them as a ThinkingBlock — same channel as Anthropic's
+        # thinking_delta so the agent UI doesn't care.
+        reasoning, content_piece = _split_reasoning(delta)
         if reasoning:
-            if text_open:
-                yield ContentBlockStop(index=text_index)
-                text_open = False
-            if not thinking_open:
-                thinking_index = next_index
-                next_index += 1
-                thinking_open = True
-                yield ContentBlockStart(
-                    index=thinking_index, block=ThinkingBlock(thinking="")
-                )
-            yield ContentBlockDelta(
-                index=thinking_index, delta=ThinkingDelta(thinking=reasoning)
-            )
+            for ev in _open_thinking_and_emit(cursor, reasoning):
+                yield ev
 
-        # Plain text content.
-        content_piece = delta.get("content")
+        # Plain text content — split inline <think> tags out when the model
+        # is known to emit them.
         if content_piece:
-            if thinking_open:
-                yield ContentBlockStop(index=thinking_index)
-                thinking_open = False
-            if not text_open:
-                text_index = next_index
-                next_index += 1
-                text_open = True
-                yield ContentBlockStart(index=text_index, block=TextBlock(text=""))
-            yield ContentBlockDelta(
-                index=text_index, delta=TextDelta(text=content_piece)
-            )
+            for kind, chunk in _text_segments(content_piece):
+                if not chunk:
+                    continue
+                if kind == "thinking":
+                    for ev in _open_thinking_and_emit(cursor, chunk):
+                        yield ev
+                else:
+                    for ev in _open_text_and_emit(cursor, chunk):
+                        yield ev
 
         # Tool call deltas — the meat of Path A.
         for tc in delta.get("tool_calls") or ():
@@ -904,14 +1122,10 @@ async def _translate_native(
             # Open the block as soon as we have a name. Providers vary in when
             # they send name vs args; we open lazily for max compatibility.
             if not st["opened"] and st["name_buf"]:
-                if text_open:
-                    yield ContentBlockStop(index=text_index)
-                    text_open = False
-                if thinking_open:
-                    yield ContentBlockStop(index=thinking_index)
-                    thinking_open = False
-                st["sdk_index"] = next_index
-                next_index += 1
+                for ev in _close_text_and_thinking(cursor):
+                    yield ev
+                st["sdk_index"] = cursor["next_index"]
+                cursor["next_index"] += 1
                 st["opened"] = True
                 # Persist the exact id we put on the wire (real or synthetic)
                 # so state stays in sync with the emitted block and a later
@@ -947,11 +1161,16 @@ async def _translate_native(
         if fr:
             stop_reason = _map_finish_reason(fr)
 
-    # End of stream — close anything still open.
-    if text_open:
-        yield ContentBlockStop(index=text_index)
-    if thinking_open:
-        yield ContentBlockStop(index=thinking_index)
+    # End of stream — flush the tag parser's tail, then close anything open.
+    if think_parser is not None:
+        for kind, chunk in _tag_segments(think_parser.finalize()):  # type: ignore[attr-defined]
+            if not chunk:
+                continue
+            emit = _open_thinking_and_emit if kind == "thinking" else _open_text_and_emit
+            for ev in emit(cursor, chunk):
+                yield ev
+    for ev in _close_text_and_thinking(cursor):
+        yield ev
     for st in tool_state.values():
         if not st.get("opened"):
             # A call that streamed id/args but never a name would otherwise be
@@ -961,8 +1180,8 @@ async def _translate_native(
             # the turn ending with no tool_use at all.
             if not (st["args_pending"] or st["id"]):
                 continue
-            st["sdk_index"] = next_index
-            next_index += 1
+            st["sdk_index"] = cursor["next_index"]
+            cursor["next_index"] += 1
             st["opened"] = True
             yield ContentBlockStart(
                 index=st["sdk_index"],
@@ -1043,17 +1262,16 @@ async def _translate_prompt_engineered(
 
         # Out-of-band reasoning (some R1 backends use this even when the model
         # also emits inline <think> tags — surface as ThinkingBlock either way).
-        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        reasoning, content_piece = _split_reasoning(delta)
         if reasoning:
             for ev in _open_thinking_and_emit(cursor, reasoning):
                 yield ev
 
-        content_piece = delta.get("content")
         if content_piece:
             # First peel off inline <think>...</think> if the model emits it,
             # then feed the rest through the tool-call parser.
             if think_parser is not None:
-                segments = list(think_parser.feed(content_piece))  # type: ignore[attr-defined]
+                segments = _tag_segments(think_parser.feed(content_piece))  # type: ignore[attr-defined]
             else:
                 segments = [("text", content_piece)]
 
@@ -1074,7 +1292,7 @@ async def _translate_prompt_engineered(
 
     # End-of-stream: flush parser tails.
     if think_parser is not None:
-        for kind, chunk in think_parser.finalize():  # type: ignore[attr-defined]
+        for kind, chunk in _tag_segments(think_parser.finalize()):  # type: ignore[attr-defined]
             if not chunk:
                 continue
             if kind == "thinking":
@@ -1119,6 +1337,47 @@ def _open_thinking_and_emit(cursor: dict[str, Any], chunk: str) -> Iterable[Stre
     )
 
 
+def _tag_segments(events: Iterable[Any]) -> list[tuple[str, str]]:
+    """Normalize ``ThinkingParser`` output (``ThinkingChunk`` / ``TextChunk``
+    structs) to ``("thinking"|"text", text)`` pairs."""
+
+    out: list[tuple[str, str]] = []
+    for ev in events:
+        if isinstance(ev, tuple) and len(ev) == 2:
+            out.append((str(ev[0]), str(ev[1])))
+            continue
+        kind = "thinking" if type(ev).__name__ == "ThinkingChunk" else "text"
+        out.append((kind, getattr(ev, "text", "") or ""))
+    return out
+
+
+def _open_text_and_emit(cursor: dict[str, Any], chunk: str) -> Iterable[StreamEvent]:
+    """Open a text block (closing any open thinking block first) and emit one
+    delta. Mutates ``cursor`` in place."""
+
+    if cursor["thinking_open"]:
+        yield ContentBlockStop(index=cursor["thinking_index"])
+        cursor["thinking_open"] = False
+    if not cursor["text_open"]:
+        idx = cursor["next_index"]
+        cursor["next_index"] = idx + 1
+        cursor["text_index"] = idx
+        cursor["text_open"] = True
+        yield ContentBlockStart(index=idx, block=TextBlock(text=""))
+    yield ContentBlockDelta(index=cursor["text_index"], delta=TextDelta(text=chunk))
+
+
+def _close_text_and_thinking(cursor: dict[str, Any]) -> Iterable[StreamEvent]:
+    """Close whichever of the text / thinking blocks is open."""
+
+    if cursor["text_open"]:
+        yield ContentBlockStop(index=cursor["text_index"])
+        cursor["text_open"] = False
+    if cursor["thinking_open"]:
+        yield ContentBlockStop(index=cursor["thinking_index"])
+        cursor["thinking_open"] = False
+
+
 def _emit_parser_event(pe: Any, cursor: dict[str, Any]) -> Iterable[StreamEvent]:
     """Translate one ToolCallTextParser event into zero-or-more SDK events.
     Mutates ``cursor`` in place."""
@@ -1161,6 +1420,61 @@ def _emit_parser_event(pe: Any, cursor: dict[str, Any]) -> Iterable[StreamEvent]
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+
+def _reasoning_to_text(value: Any) -> str:
+    """Flatten the shapes vendors use for streamed reasoning to plain text.
+
+    ``reasoning_content`` / ``reasoning`` are strings almost everywhere, but a
+    few gateways wrap them (``{"text": …}``) or ship a list of parts; a
+    non-string must never reach ``ThinkingDelta`` (msgspec would reject it)
+    nor be dropped on the floor.
+    """
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        inner = value.get("text") or value.get("content") or value.get("summary")
+        return _reasoning_to_text(inner) if inner is not None else ""
+    if isinstance(value, list):
+        return "".join(_reasoning_to_text(v) for v in value)
+    return ""
+
+
+def _split_reasoning(delta: dict[str, Any]) -> tuple[str, Any]:
+    """``(reasoning_text, content)`` for one streamed delta.
+
+    Gemini's OpenAI-compat endpoint (with ``include_thoughts``) streams thought
+    summaries as ordinary ``content`` deltas carrying
+    ``extra_content.google.thought: true`` — those move to the reasoning side
+    so they render as thinking rather than as the answer.
+    """
+
+    reasoning = _reasoning_to_text(
+        delta.get("reasoning_content") or delta.get("reasoning") or ""
+    )
+    if not reasoning:
+        # OpenRouter-style ``reasoning_details: [{"type": "reasoning.text",
+        # "text": …}]``.
+        details = delta.get("reasoning_details")
+        if isinstance(details, list):
+            reasoning = "".join(
+                _reasoning_to_text(d.get("text") or d.get("summary") or "")
+                for d in details if isinstance(d, dict)
+            )
+    content = delta.get("content")
+    if isinstance(content, str) and content and _is_thought_part(delta):
+        reasoning = reasoning + content
+        content = None
+    return reasoning, content
+
+
+def _is_thought_part(delta: dict[str, Any]) -> bool:
+    extra = delta.get("extra_content")
+    if not isinstance(extra, dict):
+        return False
+    google = extra.get("google")
+    return isinstance(google, dict) and bool(google.get("thought"))
 
 
 def _decode_usage(raw: dict[str, Any]) -> Usage:

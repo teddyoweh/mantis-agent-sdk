@@ -752,6 +752,15 @@ async def query(
             agent.model, agg_usage, backend_hint=backend_hint
         )
 
+    # A run the step cap cut off mid-task (the model still wanted tools on its
+    # last allowed turn) is ``error_max_turns``, exactly as when a
+    # ``Budget.max_turns`` raises — the subtype must not depend on whether a
+    # USD ceiling happened to be configured alongside ``max_turns``.
+    if not is_error and getattr(agent, "_stop_cause", None) == "max_steps":
+        is_error = True
+        error_subtype = "error_max_turns"
+        error_strings.append(f"max_turns reached ({agent.max_steps}) before the task completed")
+
     from .compat_query import _decode_response_model  # local: avoid a cycle
 
     parsed, parse_error = _decode_response_model(opts, final_text, is_error)

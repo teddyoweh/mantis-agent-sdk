@@ -222,6 +222,13 @@ async def query(
         if pricing is not None:
             total_cost_usd = pricing.cost(agg_usage)
 
+    # A step-cap cutoff is ``error_max_turns`` whether or not a USD budget was
+    # also set — see the same mapping in ``query.py``.
+    if not is_error and getattr(agent, "_stop_cause", None) == "max_steps":
+        is_error = True
+        error_subtype = "error_max_turns"
+        error_strings.append(f"max_turns reached ({agent.max_steps}) before the task completed")
+
     # Snapshot permission denials before _build_result so a closure-
     # mutated list doesn't surprise us. Each entry is a plain dict so
     # it serializes through msgspec cleanly.

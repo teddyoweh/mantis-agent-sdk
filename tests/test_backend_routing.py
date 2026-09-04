@@ -12,12 +12,15 @@ from __future__ import annotations
 import pytest
 
 from mantis_agent.routing import (
+    ANTHROPIC_SENTINEL,
     BackendRoutingError,
     FIREWORKS_DEFAULT,
     GEMINI_DEFAULT,
     OLLAMA_DEFAULT,
     OPENAI_DEFAULT,
     TOGETHER_DEFAULT,
+    XAI_DEFAULT,
+    hosted_default_url,
     infer_backend,
     resolve_backend,
 )
@@ -94,14 +97,52 @@ def test_gemini_routes_to_google(model: str) -> None:
     assert infer_backend(model) == GEMINI_DEFAULT
 
 
-def test_anthropic_model_raises_with_helpful_message() -> None:
-    """We don't proxy Claude — refuse loudly."""
+@pytest.mark.parametrize(
+    "model",
+    ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "Claude-Opus-4-8",
+     "claude/claude-sonnet-5"],
+)
+def test_claude_routes_to_the_anthropic_sentinel(model: str) -> None:
+    """Claude is a first-class provider: a ``claude-*`` name resolves to the
+    literal ``"anthropic"`` sentinel — not a URL, because Claude speaks
+    ``/v1/messages`` — which ``detect_provider`` maps to the native adapter."""
 
-    with pytest.raises(BackendRoutingError) as exc_info:
-        infer_backend("claude-sonnet-4-5")
+    assert infer_backend(model) == ANTHROPIC_SENTINEL == "anthropic"
+    from mantis_agent.providers.base import detect_provider
 
-    msg = str(exc_info.value)
-    assert "Anthropic" in msg or "claude-agent-sdk" in msg
+    assert detect_provider(infer_backend(model)) == "anthropic_passthrough"
+
+
+def test_backend_routing_error_is_still_importable_but_unused() -> None:
+    """Kept for API compatibility — nothing refuses a model family any more."""
+
+    assert issubclass(BackendRoutingError, ValueError)
+    for model in ("claude-opus-5", "grok-4", "gpt-5", "gemini-2.5-pro", "qwen2.5:7b"):
+        infer_backend(model)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["grok-4", "grok-4-fast", "grok-3", "grok-3-mini", "Grok-Code-Fast-1", "grok/grok-4"],
+)
+def test_grok_routes_to_xai(model: str) -> None:
+    assert infer_backend(model) == XAI_DEFAULT == "https://api.x.ai/v1"
+
+
+def test_hosted_default_url_only_for_first_party_shapes() -> None:
+    """``Agent`` uses this for a bare model name with no backend: first-party
+    hosted families get their vendor endpoint, everything else keeps the
+    caller's own default (so self-hosted setups are unchanged)."""
+
+    assert hosted_default_url("gpt-5.4") == OPENAI_DEFAULT
+    assert hosted_default_url("o4-mini") == OPENAI_DEFAULT
+    assert hosted_default_url("gemini-2.5-flash") == GEMINI_DEFAULT
+    assert hosted_default_url("grok-4") == XAI_DEFAULT
+    assert hosted_default_url("gpt-oss:20b") is None  # open weights, not on OpenAI
+    assert hosted_default_url("claude-opus-5") is None  # not a URL family
+    assert hosted_default_url("qwen2.5:7b") is None
+    assert hosted_default_url("Qwen/Qwen2.5-72B-Instruct") is None
+    assert hosted_default_url("") is None
 
 
 def test_bare_name_falls_back_to_ollama() -> None:
@@ -173,6 +214,28 @@ def test_compat_query_routes_ollama_tag_to_localhost(monkeypatch) -> None:
 
     agent = _build_agent({"model": "qwen2.5:7b"})
     assert agent.backend == OLLAMA_DEFAULT
+
+
+def test_compat_query_routes_claude_to_anthropic_adapter(monkeypatch) -> None:
+    """``MantisAgentOptions(model="claude-opus-5")`` needs nothing but a key."""
+
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    from mantis_agent.compat_query import _build_agent
+
+    agent = _build_agent({"model": "claude-opus-5"})
+    assert agent.backend == ANTHROPIC_SENTINEL
+    assert type(agent.provider).__name__ == "AnthropicPassthroughProvider"
+
+
+def test_compat_query_routes_grok_to_xai(monkeypatch) -> None:
+    monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    from mantis_agent.compat_query import _build_agent
+
+    agent = _build_agent({"model": "grok-4"})
+    assert agent.backend == XAI_DEFAULT
+    assert str(agent.provider.client.base_url).rstrip("/") == XAI_DEFAULT
 
 
 def test_compat_query_explicit_backend_wins(monkeypatch) -> None:

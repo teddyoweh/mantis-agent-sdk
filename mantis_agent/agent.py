@@ -48,7 +48,7 @@ from .capabilities import (
     hosted_profile_from_url,
     lookup_model,
 )
-from .errors import StreamProtocolError
+from .errors import AgentError, StreamProtocolError
 from .events import (
     ContentBlockDelta,
     ContentBlockStart,
@@ -303,34 +303,80 @@ def _missing_tool_result(call: ToolUseBlock) -> ToolResultBlock:
     )
 
 
+def _unique_tool_use_ids(
+    msg: AssistantMessage,
+) -> tuple[AssistantMessage, dict[str, list[str]]]:
+    """Give every ``tool_use`` in ``msg`` a distinct, non-empty id.
+
+    Gemini's OpenAI-compat endpoint omits ids and some servers reuse
+    ``call_0`` for every call; a history saved from such a turn carries
+    collisions that Anthropic rejects outright and that pair results to the
+    wrong call everywhere else. Returns the (possibly rewritten) message and a
+    ``{old_id: [new ids, in order]}`` map so the following result message can
+    be re-keyed to match.
+    """
+    seen: set[str] = set()
+    remap: dict[str, list[str]] = {}
+    blocks: list[ContentBlock] = []
+    changed = False
+    for b in msg.content:
+        if isinstance(b, ToolUseBlock):
+            if not b.id or b.id in seen:
+                new_id = f"{b.id or 'call'}_{len(seen)}_{_uuid.uuid4().hex[:6]}"
+                remap.setdefault(b.id, []).append(new_id)
+                b = ToolUseBlock(id=new_id, name=b.name, input=b.input)
+                changed = True
+            seen.add(b.id)
+        blocks.append(b)
+    if not changed:
+        return msg, remap
+    return msgspec.structs.replace(msg, content=blocks), remap
+
+
 def _repair_tool_call_history(messages: list[Message]) -> list[Message]:
+    """Return a copy of ``messages`` that satisfies the tool-pairing contract
+    every provider enforces (see :func:`_assert_message_invariants`): each
+    ``tool_use`` answered by exactly one ``tool_result`` in the immediately
+    following user message, no orphan or stale results, unique ids."""
     repaired: list[Message] = []
     pending: list[ToolUseBlock] = []
+    remap: dict[str, list[str]] = {}
     for msg in messages:
         if pending:
             if isinstance(msg, UserMessage) and isinstance(msg.content, list):
-                result_ids = {
-                    b.tool_use_id for b in msg.content if isinstance(b, ToolResultBlock)
-                }
+                pending_ids = {call.id for call in pending}
+                content: list[ContentBlock] = []
+                result_ids: set[str] = set()
+                for b in msg.content:
+                    if not isinstance(b, ToolResultBlock):
+                        content.append(b)
+                        continue
+                    tid = b.tool_use_id
+                    # A result keyed to an id that was just made unique above
+                    # follows its call to the new id (in emission order).
+                    if tid not in pending_ids and remap.get(tid):
+                        tid = remap[tid].pop(0)
+                        b = msgspec.structs.replace(b, tool_use_id=tid)
+                    # Drop a result that answers nothing (a leftover from a
+                    # rewound / hand-edited transcript) or a second answer to
+                    # the same call — either is a hard 400 at the provider.
+                    if tid not in pending_ids or tid in result_ids:
+                        continue
+                    result_ids.add(tid)
+                    content.append(b)
                 missing = [call for call in pending if call.id not in result_ids]
                 pending = []
-                if missing:
-                    # Keep EVERY real block in this message (text + valid
-                    # tool_results) and synthesize an error result ONLY for the
-                    # genuinely orphaned tool_uses — appended into the SAME
-                    # message so all results directly follow the assistant's
-                    # tool_use call. Emitting the synthetic results as a separate
-                    # preceding message (the old behavior) stranded the real
-                    # results in a message that no longer immediately followed the
-                    # call, which providers reject — losing valid results and
-                    # fabricating failures.
-                    repaired.append(msgspec.structs.replace(
-                        msg,
-                        content=[
-                            *msg.content,
-                            *(_missing_tool_result(call) for call in missing),
-                        ],
-                    ))
+                remap = {}
+                # Keep EVERY real block in this message (text + valid
+                # tool_results) and synthesize an error result ONLY for the
+                # genuinely orphaned tool_uses — into the SAME message so all
+                # results directly follow the assistant's tool_use call.
+                # Emitting the synthetic results as a separate preceding message
+                # stranded the real results in a message that no longer
+                # immediately followed the call, which providers reject.
+                content.extend(_missing_tool_result(call) for call in missing)
+                if content != list(msg.content):
+                    repaired.append(msgspec.structs.replace(msg, content=content))
                 else:
                     repaired.append(msg)
                 continue
@@ -339,21 +385,86 @@ def _repair_tool_call_history(messages: list[Message]) -> list[Message]:
                 isMeta=True,
             ))
             pending = []
+            remap = {}
         if isinstance(msg, UserMessage) and isinstance(msg.content, list):
             cleaned = [b for b in msg.content if not isinstance(b, ToolResultBlock)]
             if len(cleaned) != len(msg.content):
                 if cleaned:
                     repaired.append(UserMessage(content=cleaned, isMeta=msg.isMeta))
                 continue
-        repaired.append(msg)
         if isinstance(msg, AssistantMessage):
+            msg, remap = _unique_tool_use_ids(msg)
             pending = [b for b in msg.content if isinstance(b, ToolUseBlock)]
+        repaired.append(msg)
     if pending:
         repaired.append(UserMessage(
             content=[_missing_tool_result(call) for call in pending],
             isMeta=True,
         ))
     return repaired
+
+
+class MessageInvariantError(AgentError):
+    """The message list violates the tool-pairing contract every provider
+    enforces (Anthropic and OpenAI both answer with a 400): a ``tool_use``
+    must be answered by exactly one ``tool_result`` in the IMMEDIATELY
+    following user message, results must answer a real call, and ids must be
+    unique within a turn. Raised by :func:`_assert_message_invariants` so the
+    failure names the offending message instead of surfacing as an opaque
+    provider error."""
+
+
+def _assert_message_invariants(messages: list[Message]) -> None:
+    """Cheap O(n) structural check, run on every list handed to a provider.
+
+    The engine's own repair (:func:`_repair_tool_call_history`) and heal
+    (:func:`close_open_tool_calls`) paths make this pass by construction; it
+    exists so a regression in either — or a hand-built history that escaped
+    them — fails HERE, with a message naming the position, rather than as a
+    provider 400 several layers down.
+    """
+    pending: set[str] = set()
+    pending_at = -1
+    for i, m in enumerate(messages):
+        content = getattr(m, "content", None)
+        role = getattr(m, "role", None)
+        results = (
+            [b for b in content if isinstance(b, ToolResultBlock)]
+            if isinstance(content, list) else []
+        )
+        if pending:
+            if role != "user" or not results:
+                raise MessageInvariantError(
+                    f"message {pending_at}: tool_use {sorted(pending)} is not answered "
+                    f"by a tool_result in the following message ({i}, role={role!r})"
+                )
+            got = [b.tool_use_id for b in results]
+            if len(set(got)) != len(got):
+                raise MessageInvariantError(
+                    f"message {i}: duplicate tool_result ids {got}"
+                )
+            if set(got) != pending:
+                raise MessageInvariantError(
+                    f"message {i}: tool_result ids {sorted(got)} do not match the "
+                    f"tool_use ids {sorted(pending)} of message {pending_at}"
+                )
+            pending = set()
+        elif results:
+            raise MessageInvariantError(
+                f"message {i}: tool_result {[b.tool_use_id for b in results]} answers "
+                f"no tool_use in the preceding assistant message"
+            )
+        if role == "assistant" and isinstance(content, list):
+            ids = [b.id for b in content if isinstance(b, ToolUseBlock)]
+            if len(set(ids)) != len(ids):
+                raise MessageInvariantError(f"message {i}: duplicate tool_use ids {ids}")
+            pending = set(ids)
+            pending_at = i
+    if pending:
+        raise MessageInvariantError(
+            f"message {pending_at}: tool_use {sorted(pending)} at the end of the "
+            f"history has no tool_result"
+        )
 
 
 def _is_transient(err: BaseException) -> bool:
@@ -629,6 +740,79 @@ def _salvage_text_tool_calls(text: str, registry: ToolRegistry) -> list[ToolUseB
     return calls
 
 
+def _split_inline_thinking(msg: AssistantMessage) -> AssistantMessage:
+    """Move any inline reasoning span (``<think>…</think>`` and the other
+    conventions in ``DEFAULT_THINKING_TAGS``) out of ``TextBlock``s into
+    ``ThinkingBlock``s, preserving order.
+
+    Providers peel these tags only when the capability table says the model
+    emits them. A model missing from the table, or a hosted endpoint that
+    emits out-of-band ``reasoning_content`` AND inline tags in one reply, leaks
+    its reasoning into the answer — which the UI then shows, ``query()``
+    returns as the result, and the text-channel tool salvage reads as if it
+    were a request. This is the engine's model-agnostic last line; a message
+    with no opening tag is returned untouched (one substring scan).
+    """
+    from .streaming.thinking_parser import (  # noqa: PLC0415
+        DEFAULT_THINKING_TAGS,
+        ThinkingChunk,
+        ThinkingParser,
+    )
+
+    opens = tuple(o for o, _ in DEFAULT_THINKING_TAGS)
+
+    def _has_tag(b: ContentBlock) -> bool:
+        if not isinstance(b, TextBlock) or "<" not in b.text:
+            return False
+        low = b.text.lower()
+        return any(o in low for o in opens)
+
+    if not any(_has_tag(b) for b in msg.content):
+        return msg
+    out: list[ContentBlock] = []
+    for b in msg.content:
+        if not _has_tag(b):
+            out.append(b)
+            continue
+        parser = ThinkingParser()
+        chunks = [*parser.feed(b.text), *parser.finalize()]  # type: ignore[misc]
+        # Coalesce adjacent chunks of one kind; drop whitespace-only remnants.
+        runs: list[tuple[bool, list[str]]] = []
+        for ch in chunks:
+            is_think = isinstance(ch, ThinkingChunk)
+            if runs and runs[-1][0] == is_think:
+                runs[-1][1].append(ch.text)
+            else:
+                runs.append((is_think, [ch.text]))
+        for is_think, parts in runs:
+            text = "".join(parts)
+            if not text.strip():
+                continue
+            out.append(ThinkingBlock(thinking=text.strip()) if is_think else TextBlock(text=text))
+    return msgspec.structs.replace(msg, content=out or list(msg.content))
+
+
+def _structured_output_instruction(kind: str, payload: dict[str, Any] | None) -> str:
+    """The prompt-side contract used where a backend can't enforce a JSON
+    schema itself (see ``Agent._structured_output_mode``). ``parse_response``
+    already tolerates a fenced reply, so the instruction only has to make the
+    SHAPE unambiguous."""
+    import json as _json  # noqa: PLC0415
+
+    if kind == "json_schema" and payload is not None:
+        name = payload.get("name") or "response"
+        schema = _json.dumps(payload["schema"], separators=(",", ":"))
+        return (
+            "Respond with ONLY a single JSON object — no prose before or after it "
+            f"and no markdown fences — that conforms to this JSON Schema ({name}):\n"
+            f"{schema}"
+        )
+    return (
+        "Respond with ONLY a single valid JSON object — no prose before or after "
+        "it and no markdown fences."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -854,6 +1038,18 @@ class Agent:
     _repeat_tripped: bool = field(default=False, init=False)
     # How many times the step budget was extended in persist mode this run.
     _step_extensions: int = field(default=0, init=False)
+    # Set once a "wrap up NOW" reminder (turn limit or budget) has been issued
+    # for the current step window. The persist gate honours it: a natural stop
+    # after the model was told to summarize is final, never re-driven with a
+    # contradictory "keep working — do not summarize". Cleared when a step
+    # extension grants a fresh window.
+    _wrapup_requested: bool = field(default=False, init=False)
+    # Why the last run ended: "natural" (model stopped), "max_steps" (the
+    # step cap cut it off with work still open), "cancelled", or None while
+    # running / after an exception. ``query()`` reads it to report a turn-cap
+    # cutoff as ``error_max_turns`` — the same subtype whether or not a USD
+    # budget was also configured.
+    _stop_cause: str | None = field(default=None, init=False)
     # Unique per-agent key for isolating process-global tool state (bash cwd,
     # background shells, read-before-write guard) so a subagent's ``cd`` /
     # shells / reads never bleed into a concurrently-running parent or sibling.
@@ -916,12 +1112,18 @@ class Agent:
         if self.backend_capability is None and self.backend:
             self.backend_capability = hosted_profile_from_url(self.backend)
 
-        # Build the provider if not given.
+        # Build the provider if not given. ``detect_provider`` reads the URL
+        # when there is one, else the model name — so a bare ``claude-*`` picks
+        # the native Anthropic adapter with no other config.
         if self.provider is None:
             backend_str = self.backend or self.model
             backend_kind = detect_provider(backend_str)
             ProviderCls = resolve(backend_kind)
             self.provider = self._build_provider(ProviderCls, backend_kind)
+        # With no backend URL to match, take the profile the adapter resolved
+        # for itself (its ``provider_hint`` keys pricing and cost display).
+        if self.backend_capability is None:
+            self.backend_capability = getattr(self.provider, "backend_capability", None)
 
         # Propagate temperature from capability if user didn't set one. When
         # tools are registered, clamp the default down for tool-call reliability
@@ -957,8 +1159,14 @@ class Agent:
         )
 
         # Resolve budget — accept either an explicit Budget or shortcut kwargs.
+        # The shortcut carries ONLY the dollar ceiling: the turn cap is already
+        # ``max_steps``, which the loop enforces as a clean stop (final-turn
+        # wrap-up, then break). Mirroring it into ``Budget.max_turns`` made the
+        # tracker's post-turn ``>=`` check raise BudgetExceededError on the very
+        # wrap-up turn the loop had scheduled — before that turn was yielded —
+        # so adding a USD limit silently turned a turn-limited run into an error.
         if self.budget is None and self.max_usd is not None:
-            self.budget = Budget(max_usd=self.max_usd, max_turns=self.max_steps)
+            self.budget = Budget(max_usd=self.max_usd)
         if self.budget is not None:
             self._budget_tracker = BudgetTracker(budget=self.budget)
 
@@ -1093,6 +1301,11 @@ class Agent:
         if self._continuation_count >= _MAX_CONTINUATIONS:
             return False
         if not self._has_runway():
+            return False
+        # The loop already told the model to wrap up (turn limit / budget); the
+        # summary it just gave IS the wrap-up. Re-driving it with "keep working
+        # — do not summarize" would contradict our own instruction.
+        if self._wrapup_requested:
             return False
         # Diminishing returns: did completed-todo count advance since the last
         # natural stop? Two consecutive near-zero-progress stalls => give up.
@@ -1273,8 +1486,15 @@ class Agent:
 
         kw: dict[str, Any] = {}
         if backend_kind == "openai_compat":
-            kw["base_url"] = self.backend or os.environ.get(
-                "MANTIS_AGENT_BASE_URL", "http://localhost:8000/v1"
+            # A bare first-party model name (gpt-*, o-series, gemini-*, grok-*)
+            # implies its vendor's endpoint; every other bare name keeps the
+            # vLLM localhost default so self-hosted setups are unchanged.
+            from .routing import hosted_default_url  # noqa: PLC0415
+            kw["base_url"] = (
+                self.backend
+                or os.environ.get("MANTIS_AGENT_BASE_URL")
+                or hosted_default_url(self.model)
+                or "http://localhost:8000/v1"
             )
             # Explicit api_key wins over the environment; ``None`` leaves the
             # adapter's own env chain (MANTIS_AGENT_API_KEY, then
@@ -1580,6 +1800,9 @@ class Agent:
             "turns": 0,
         }
         self._run_call_sigs = {}  # reset anti-runaway counters for this run
+        # Denials are reported per run (``ResultMessage.permission_denials``);
+        # an Agent reused across runs must not re-report last run's entries.
+        self._permission_denials = []
 
         def _close_run_span(error: BaseException | None = None) -> None:
             # Idempotent: end_ns is set once ended, so a belated call from the
@@ -1634,6 +1857,8 @@ class Agent:
         self._tool_error_streak = 0
         self._repeat_tripped = False
         self._step_extensions = 0
+        self._wrapup_requested = False
+        self._stop_cause = None
         # Fallback is per-run: if a prior run fell back to the fallback model,
         # restore the primary here so a recovered backend is used again (and a
         # fresh fallback is available), instead of staying permanently downgraded.
@@ -1673,6 +1898,7 @@ class Agent:
                     ):
                         self._step_extensions += 1
                         effective_max += max(2, self.max_steps // 2)
+                        self._wrapup_requested = False  # a fresh window: the reminder re-fires at its end
                         _log.info(
                             "persist: extending step budget to %d (extension %d/%d)",
                             effective_max, self._step_extensions, _MAX_STEP_EXTENSIONS,
@@ -1685,6 +1911,7 @@ class Agent:
                 # the prior turn's tool cancellation cascade. Either way the
                 # contract is: don't ask the model again after cancel.
                 if self.cancellation_signal.is_set():
+                    self._stop_cause = "cancelled"
                     await self._dispatcher.dispatch(
                         "Stop",
                         HookContext(event="Stop", messages_snapshot=messages),
@@ -1697,6 +1924,7 @@ class Agent:
                 # hits the turn limit ends with a coherent answer, not a dangling
                 # tool result. Soft nudge (isMeta), injected once.
                 if effective_max > 1 and step == effective_max - 1:
+                    self._wrapup_requested = True
                     final_msg = _final_turn_reminder()
                     messages.append(final_msg)
                     yield final_msg
@@ -1710,6 +1938,7 @@ class Agent:
                     and self._budget_tracker.should_use_fallback(0.75)  # leave runway to summarize
                 ):
                     self._budget_wrapup_done = True
+                    self._wrapup_requested = True
                     budget_msg = _final_turn_reminder("budget limit")
                     messages.append(budget_msg)
                     yield budget_msg
@@ -1836,8 +2065,10 @@ class Agent:
                                 executor,
                             )
 
-                    # Stream consumed. Finalize the assistant message.
-                    assistant = assembler.finalize()
+                    # Stream consumed. Finalize the assistant message. Any
+                    # inline reasoning the provider didn't peel is split out
+                    # here so it never reaches the answer text or the salvage.
+                    assistant = _split_inline_thinking(assembler.finalize())
 
                     # Salvage tool calls the model emitted as TEXT (JSON object or a
                     # shell code fence) instead of via the structured channel — the
@@ -2006,6 +2237,7 @@ class Agent:
                         # the executor's ``__aexit__`` releases its task group
                         # (no tasks were ever started because no tool_use blocks
                         # arrived).
+                        self._stop_cause = "natural"
                         await self._dispatcher.dispatch(
                             "Stop",
                             HookContext(event="Stop", messages_snapshot=messages),
@@ -2112,6 +2344,7 @@ class Agent:
             # emit a structured "remaining work" handoff so the run ends with a
             # clear pick-up point instead of a silent cutoff.
             _log.warning("agent hit max_steps=%d without natural stop", effective_max)
+            self._stop_cause = "max_steps"
             if self.persist and self._has_unfinished_work():
                 remaining = _remaining_work_summary(self.todos)
                 messages.append(remaining)
@@ -2125,6 +2358,22 @@ class Agent:
             _close_span(llm_span, error=_run_exc)
             _close_span(turn_span, error=_run_exc)
             _close_run_span(error=_run_exc)
+            # The executor has been torn down by now (its ``async with`` is
+            # inside this try), so any tool_use whose result was never
+            # appended — a budget cap raised between the assistant turn and
+            # its results, a cancelled consumer, a crashing hook — would leave
+            # the caller's list ending on an unanswered call. Heal it in place
+            # so the list is valid the moment control returns. Same note the
+            # TUI uses for an Esc, so its own later heal is a no-op.
+            try:
+                note = (
+                    "[interrupted by user]"
+                    if isinstance(_run_exc, (GeneratorExit, anyio.get_cancelled_exc_class()))
+                    else f"[interrupted: {type(_run_exc).__name__}]"
+                )
+                close_open_tool_calls(messages, note=note)
+            except Exception:  # noqa: BLE001 — never mask the real error
+                pass
             raise
         finally:
             # Restore the enclosing scope (parent agent, or global). Best-effort:
@@ -2296,9 +2545,21 @@ class Agent:
         if payload is not call.input:
             call = ToolUseBlock(id=call.id, name=call.name, input=payload)
 
-        # Permission check.
+        # Permission check. A crashing policy (``can_use_tool`` raising, a
+        # broken rule set) is a DENIAL, not a run-killing exception and never
+        # an allow: "the guard did not answer" must fail closed, and the
+        # denial must be recorded like any other so it reaches
+        # ``ResultMessage.permission_denials``.
         if self.permissions is not None:
-            decision = await check_permission(tool, call.input, self.permissions)
+            try:
+                decision = await check_permission(tool, call.input, self.permissions)
+            except anyio.get_cancelled_exc_class():
+                raise
+            except Exception as exc:  # noqa: BLE001 — user policy code
+                _log.exception("permission check for %r raised; denying", call.name)
+                decision = Deny(
+                    reason=f"permission check failed ({type(exc).__name__}: {exc})"
+                )
             decision = _normalize_permission_decision(decision)
 
             if isinstance(decision, Allow) and decision.updated_input is not None:
@@ -2652,8 +2913,62 @@ class Agent:
         self.model_capability = lookup_model(self.model)
         self._env_context = None  # env block referenced the old model; let it rebuild
 
+    def _structured_output_mode(self) -> str:
+        """How this backend gets ``response_format``: ``"native"`` (send the
+        json_schema envelope), ``"json_object"`` (the backend only enforces
+        JSON-ness — send that and put the schema in the prompt) or
+        ``"instruct"`` (no request-side support — prompt only).
+
+        Reads ``structured_output`` off the backend capability when present
+        (``"json_schema"`` | ``"json_object"`` | ``"none"``). Until the
+        capability table carries that flag, falls back to the provider-name
+        rule: only Anthropic passthrough has no ``response_format`` at all.
+        Wrong-way default is deliberate — sending an envelope a backend
+        rejects is a 400; instructing one that would have accepted it just
+        costs a few prompt tokens.
+        """
+        cap = self.backend_capability or getattr(self.provider, "backend_capability", None)
+        flag = getattr(cap, "structured_output", None) if cap is not None else None
+        if flag == "json_schema":
+            return "native"
+        if flag in ("json_object", "none"):
+            return "instruct" if flag == "none" else "json_object"
+        if (getattr(self.provider, "name", "") or "") == "anthropic_passthrough":
+            return "instruct"
+        return "native"
+
+    def _structured_output_request(self) -> tuple[dict[str, Any], str | None]:
+        """``(extra fragment, prompt instruction | None)`` for this turn's
+        ``response_format``, per :meth:`_structured_output_mode`. A backend the
+        translator doesn't know degrades to the prompt instruction rather than
+        failing the turn."""
+        from .response_format import (  # noqa: PLC0415
+            ResponseFormatError,
+            normalize_response_format,
+            translate_response_format,
+        )
+
+        provider_name = getattr(self.provider, "name", "") or ""
+        kind, payload = normalize_response_format(self.response_format)
+        mode = self._structured_output_mode()
+        rf_extra: dict[str, Any] = {}
+        if mode == "native":
+            try:
+                return dict(translate_response_format(self.response_format, provider_name)), None
+            except ResponseFormatError:
+                mode = "instruct"
+        if mode == "json_object":
+            try:
+                rf_extra = dict(translate_response_format({"type": "json_object"}, provider_name))
+            except ResponseFormatError:
+                rf_extra = {}
+        return rf_extra, _structured_output_instruction(kind, payload)
+
     def _provider_stream(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
         provider_messages = _repair_tool_call_history(messages)
+        # The repair makes this hold by construction; a violation here is an
+        # engine bug and must read as one, not as a provider 400.
+        _assert_message_invariants(provider_messages)
         # Hoist the system prompt: prefer explicit Agent.system, else look at
         # messages[0] if it's a SystemMessage. Provider adapters expect system
         # as a top-level field (Anthropic, OpenAI, Ollama all do).
@@ -2682,11 +2997,9 @@ class Agent:
         # ``parameters.grammar``.
         provider_extra: dict[str, Any] | None
         if self.response_format is not None:
-            from .response_format import translate_response_format
-            provider_name = getattr(self.provider, "name", "") or ""
-            rf_extra = translate_response_format(
-                self.response_format, provider_name
-            )
+            rf_extra, instruction = self._structured_output_request()
+            if instruction:
+                system = f"{system}\n\n{instruction}" if system else instruction
             if self.extra:
                 merged = dict(rf_extra)
                 for k, v in self.extra.items():
@@ -2833,7 +3146,7 @@ class Agent:
                     raise
                 await anyio.sleep(_retry_delay(err, attempt))
                 attempt += 1
-        msg = asm.finalize()
+        msg = _split_inline_thinking(asm.finalize())
         if msg.usage is not None and self._budget_tracker is not None:
             self._budget_tracker.add_usage(
                 msg.usage, self.model, backend_hint=self._provider_hint
@@ -2910,7 +3223,7 @@ class _AssistantAssembler:
     Holds builders by block index, plus message-level metadata.
     """
 
-    __slots__ = ("blocks", "stop_reason", "usage", "_seen_start", "_closed")
+    __slots__ = ("blocks", "stop_reason", "usage", "_seen_start", "_closed", "_tool_ids")
 
     def __init__(self) -> None:
         self.blocks: dict[int, _BlockBuilder] = {}
@@ -2920,6 +3233,8 @@ class _AssistantAssembler:
         # Indices whose ContentBlockStop we've seen — so finalize() can tell a
         # cleanly-closed block from one the stream was cut off mid-way through.
         self._closed: set[int] = set()
+        # tool_use ids already handed out this message — see _on_block_start.
+        self._tool_ids: set[str] = set()
 
     def feed(self, ev: StreamEvent) -> None:
         if isinstance(ev, MessageStart):
@@ -2993,9 +3308,19 @@ class _AssistantAssembler:
             )
             return
         if isinstance(block, ToolUseBlock):
+            # Every tool_use in a turn needs a distinct, non-empty id: results
+            # are paired by id, so two calls sharing one (Gemini's OpenAI-compat
+            # endpoint sends none; some servers reuse ``call_0``) would collapse
+            # into a single result slot, hand both calls the same answer, and
+            # be rejected outright by Anthropic. Mint one where the provider
+            # didn't; the result we send back carries the same minted id.
+            tool_id = block.id or ""
+            if not tool_id or tool_id in self._tool_ids:
+                tool_id = f"call_{_uuid.uuid4().hex[:12]}"
+            self._tool_ids.add(tool_id)
             self.blocks[ev.index] = _BlockBuilder(
                 kind="tool_use",
-                tool_id=block.id,
+                tool_id=tool_id,
                 tool_name=block.name,
                 tool_initial_input=dict(block.input) if block.input else None,
             )

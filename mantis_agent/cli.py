@@ -331,7 +331,11 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
 
     Routes by ``detect_provider``:
       * ``ollama``        → ``GET {base}/api/tags``
-      * ``openai_compat`` → ``GET {base}/v1/models`` (with optional auth)
+      * ``openai_compat`` → ``GET {base}/v1/models`` (with optional auth) —
+        OpenAI, Gemini (generativelanguage.googleapis.com), xAI (api.x.ai),
+        Together, Fireworks, Groq, … all speak this
+      * ``anthropic_passthrough`` → ``GET {base}/v1/models`` with
+        ``x-api-key`` + ``anthropic-version`` (``--backend anthropic`` works)
       * ``llamacpp``      → ``GET {base}/v1/models``
       * ``tgi``           → ``GET {base}/info`` (single-model server)
 
@@ -345,7 +349,7 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
 
     kind = detect_provider(backend)
     base = backend.rstrip("/")
-    api_key = args.api_key or _resolve_api_key()
+    api_key = args.api_key or _resolve_api_key(backend)
 
     # Build the live-models call per backend kind.
     models: list[dict[str, Any]] = []
@@ -363,6 +367,17 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
                         "quant": (m.get("details") or {}).get("quantization_level", ""),
                     }
                     for m in r.json().get("models", [])
+                ]
+            elif kind == "anthropic_passthrough":
+                # Anthropic: x-api-key + anthropic-version (or a Bearer OAuth
+                # token). ``--backend anthropic`` (the sentinel) is accepted.
+                r = c.get(_anthropic_models_url(backend),
+                          headers=_anthropic_probe_headers(api_key))
+                r.raise_for_status()
+                models = [
+                    {"name": m.get("id", ""),
+                     "owned_by": m.get("display_name", "anthropic")}
+                    for m in r.json().get("data", [])
                 ]
             elif kind == "tgi":
                 r = c.get(f"{base}/info")
@@ -430,28 +445,60 @@ def _list_backend_models(backend: str, args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_api_key() -> str | None:
-    """Best-effort: return whichever provider key is set in env."""
+def _resolve_api_key(backend: str | None = None) -> str | None:
+    """Best-effort: the provider key for ``backend`` from the environment.
+
+    Host-aware — an ``api.anthropic.com`` (or ``anthropic`` sentinel) backend
+    reads ``ANTHROPIC_API_KEY``, ``api.x.ai`` reads ``XAI_API_KEY`` /
+    ``GROK_API_KEY``, Google reads ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY`` —
+    before the generic chain, so a stale ``OPENAI_API_KEY`` in the shell can't
+    outrank the vendor's own key. ``MANTIS_AGENT_API_KEY`` always wins.
+    """
 
     import os  # noqa: PLC0415
 
-    for var in (
-        "MANTIS_AGENT_API_KEY",
-        "OPENAI_API_KEY",
-        "TOGETHER_API_KEY",
-        "FIREWORKS_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "DEEPINFRA_API_KEY",
-        "CEREBRAS_API_KEY",
-        "ANYSCALE_API_KEY",
-        "MOONSHOT_API_KEY",
-    ):
+    explicit = os.environ.get("MANTIS_AGENT_API_KEY")
+    if explicit:
+        return explicit
+    if backend and detect_provider(backend) == "anthropic_passthrough":
+        return os.environ.get("ANTHROPIC_API_KEY") or None
+    from .providers.openai_compat import env_key_candidates  # noqa: PLC0415
+
+    for var in env_key_candidates(backend):
         v = os.environ.get(var)
         if v:
             return v
     return None
+
+
+def _anthropic_probe_headers(api_key: str | None) -> dict[str, str]:
+    """Anthropic's ``/v1/models`` wants ``x-api-key`` + ``anthropic-version``
+    (an OAuth/gateway token goes in ``Authorization: Bearer`` with the oauth
+    beta instead)."""
+
+    import os  # noqa: PLC0415
+
+    token = (os.environ.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+    if token and not api_key:
+        return {
+            "authorization": f"Bearer {token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+        }
+    headers = {"anthropic-version": "2023-06-01"}
+    if api_key:
+        headers["x-api-key"] = api_key
+    return headers
+
+
+def _anthropic_models_url(backend: str) -> str:
+    from .providers.anthropic_passthrough import (  # noqa: PLC0415
+        ANTHROPIC_DEFAULT_BASE_URL,
+        _normalize_base_url,
+    )
+
+    base = backend if backend.lower().startswith(("http://", "https://")) else ANTHROPIC_DEFAULT_BASE_URL
+    return f"{_normalize_base_url(base)}/models"
 
 
 def _cmd_probe(args: argparse.Namespace) -> int:
@@ -461,25 +508,63 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     name = detect_provider(url)
     print(f"detected provider: {name}")
 
-    profile = hosted_profile_from_url(url)
-    if profile is not None:
-        _print_profile("matched hosted profile", profile)
+    if name == "anthropic_passthrough":
+        # Not a URL-matched profile when the sentinel was given, but the
+        # adapter's profile is fixed — report it rather than "<none>".
+        from .capabilities import HOSTED_PROFILES  # noqa: PLC0415
+        _print_profile("matched hosted profile", HOSTED_PROFILES["anthropic"])
     else:
-        print("matched hosted profile: <none — using adapter default>")
+        profile = hosted_profile_from_url(url)
+        if profile is not None:
+            _print_profile("matched hosted profile", profile)
+        else:
+            print("matched hosted profile: <none — using adapter default>")
 
     # Live probe — only if the backend looks reachable. We don't want to hang
     # on unreachable URLs; httpx.get with a short timeout suffices.
     try:
         import httpx  # noqa: PLC0415
 
-        # Most servers expose /v1/models or /api/tags.
-        candidate_paths = ("/v1/models", "/api/tags", "/api/version")
-        for path in candidate_paths:
+        api_key = getattr(args, "api_key", None) or _resolve_api_key(url)
+        if name == "anthropic_passthrough":
+            # Anthropic needs its own headers even to answer /v1/models; the
+            # generic sweep below would only ever see a 401.
+            try:
+                with httpx.Client(timeout=4.0) as c:
+                    r = c.get(_anthropic_models_url(url),
+                              headers=_anthropic_probe_headers(api_key))
+                if r.status_code < 500:
+                    print(f"reachable: /v1/models -> HTTP {r.status_code}"
+                          + ("" if api_key or r.status_code < 400
+                             else "  (set ANTHROPIC_API_KEY to authenticate)"))
+                else:
+                    print(f"reachable: /v1/models -> HTTP {r.status_code}")
+            except httpx.HTTPError:
+                print("reachable: <api.anthropic.com did not respond under 4s>")
+            return 0
+
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        # Most servers expose /v1/models or /api/tags. Hosted OpenAI-compat
+        # endpoints (OpenAI, Gemini, xAI) publish their base WITH the /v1
+        # suffix, so probe ``/models`` relative to it too.
+        base = url.rstrip("/")
+        candidate_urls = (
+            f"{base}/models",
+            f"{base.removesuffix('/v1')}/v1/models",
+            f"{base}/api/tags",
+            f"{base}/api/version",
+        )
+        seen: set[str] = set()
+        for candidate in candidate_urls:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
             try:
                 with httpx.Client(timeout=2.0) as c:
-                    r = c.get(url.rstrip("/") + path)
+                    r = c.get(candidate, headers=headers)
                 if r.status_code < 500:
-                    print(f"reachable: {path} -> HTTP {r.status_code}")
+                    path = candidate[len(base):] if candidate.startswith(base) else candidate
+                    print(f"reachable: {path or candidate} -> HTTP {r.status_code}")
                     break
             except httpx.HTTPError:
                 continue

@@ -5,8 +5,8 @@
 `mantis-agent-sdk` is the [Claude Agent SDK](https://docs.anthropic.com/) API
 surface, reimplemented on top of any model you can call from Python: Ollama,
 vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras, llama.cpp, TGI,
-OpenAI, Gemini — and the Anthropic API too (via the `anthropic_passthrough`
-provider, for parity testing).
+OpenAI, Gemini, xAI Grok — and Claude itself, natively over the Anthropic
+Messages API (`claude-*` model names route there automatically).
 
 If you have working Claude SDK code, you almost always change two lines:
 

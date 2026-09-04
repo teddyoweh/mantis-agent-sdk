@@ -3,10 +3,16 @@
 One command spins up a tiny stdlib HTTP server (no extra deps) that serves a
 single self-contained page showing:
 
+* **Overview** — the five provider families (OpenAI, Claude, Gemini, Grok,
+  open source) with auth state and a one-click reachability test; spend and
+  usage per day and per provider (session tokens *estimated* from transcript
+  size, workflow runs *recorded*); live background jobs and workflow runs.
 * **Sessions** — every conversation across every project on this machine,
-  grouped by project, drilling into the full transcript.
-* **Models & hosting** — which providers are enabled, the current model /
-  backend, recent models, and each provider's model list.
+  grouped by project, drilling into a timeline with context fill and cost
+  per turn. Secrets are masked before anything leaves the process.
+* **Models & hosting** — the model list grouped by family with context
+  window and price per 1M tokens, local Ollama models with size and loaded
+  state, and each provider's setup.
 * **Config** — the merged effective settings plus the user/project/local layers.
 
 Everything is read straight from ``~/.mantis-agent`` — nothing is mutated. By
@@ -147,29 +153,223 @@ def sessions_for(cwd: str) -> list[dict[str, Any]]:
     } for s in infos]
 
 
+def _content_chars(content: Any) -> int:
+    """How many characters a message's content occupies — the basis of the
+    token *estimate* (≈ 4 chars/token) the dashboard uses, because transcripts
+    persist ``{role, content}`` only and never the provider's usage record."""
+    if content is None:
+        return 0
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, dict):
+        return len(json.dumps(content, default=str))
+    n = 0
+    for b in content:
+        if not isinstance(b, dict):
+            n += len(str(b))
+            continue
+        t = b.get("type")
+        if t == "text":
+            n += len(b.get("text") or "")
+        elif t == "thinking":
+            n += len(b.get("thinking") or "")
+        elif t == "tool_use":
+            n += len(b.get("name") or "") + len(json.dumps(b.get("input") or {}, default=str))
+        elif t == "tool_result":
+            n += _content_chars(b.get("content"))
+        elif t == "image":
+            n += 1600  # a rough image-token charge; the base64 itself isn't billed as text
+        else:
+            n += len(json.dumps(b, default=str))
+    return n
+
+
+def _est_tokens(chars: int) -> int:
+    return int(round(chars / 4.0))
+
+
+def _ts_epoch(ts: Any) -> float | None:
+    """ISO-8601 (as the transcript writes it) → epoch seconds, or None."""
+    from datetime import datetime  # noqa: PLC0415
+
+    if not ts:
+        return None
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+# Secret-shaped substrings inside free text: vendor key prefixes, bearer
+# tokens, and `NAME=value` / `"name": "value"` pairs whose NAME looks like a
+# credential. Transcripts routinely contain `cat .env` output and curl
+# commands, so the page masks these before they leave the process.
+_SECRET_TOKEN_RE = re.compile(
+    r"\b(?:sk|xai|gsk|rk|pk|ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AIza|AKIA|ASIA|hf|r8|pplx|csk|fw|tgp|ya29)"
+    r"[-_]?[A-Za-z0-9_\-]{16,}")
+_BEARER_RE = re.compile(r"(?i)\b(bearer|x-api-key:?|api[-_]?key:?)\s+([A-Za-z0-9._\-]{16,})")
+_KV_SECRET_RE = re.compile(
+    r"(?i)\b([A-Za-z0-9_\-]*(?:key|token|secret|password|passwd|credential|cookie)[A-Za-z0-9_\-]*)"
+    r"([\"']?\s*[=:]\s*[\"']?)([^\s\"'&,;]{8,})")
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _redact_text(s: str) -> str:
+    """Mask credential-shaped values in one string; see :func:`_redact_content`."""
+    if not s or len(s) < 12:
+        return s
+    s = _KV_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + (_mask_key(m.group(3)) or ""), s)
+    s = _BEARER_RE.sub(lambda m: m.group(1) + " " + (_mask_key(m.group(2)) or ""), s)
+    s = _SECRET_TOKEN_RE.sub(lambda m: _mask_key(m.group(0)) or "", s)
+
+    def _url(m: re.Match[str]) -> str:
+        try:
+            return redact_url_value(m.group(0))
+        except Exception:  # noqa: BLE001
+            return m.group(0)
+    return _URL_RE.sub(_url, s)
+
+
+def _redact_content(obj: Any) -> Any:
+    """Recursively redact every string inside message content. Dict values
+    under a credential-looking key are masked whole (``_redact_settings``
+    semantics); every other string is scanned for key-shaped substrings."""
+    if isinstance(obj, str):
+        return _redact_text(obj)
+    if isinstance(obj, list):
+        return [_redact_content(x) for x in obj]
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if isinstance(v, str) and _SECRET_KEY_RE.search(str(k)) and str(k) not in ("tool_use_id", "id"):
+                out[k] = _mask_key(v)
+            else:
+                out[k] = _redact_content(v)
+        return out
+    return obj
+
+
+def _session_pricing(model: str | None, backend: str | None) -> dict[str, Any]:
+    """Pricing the dashboard bills *estimated* session tokens at: the current
+    model's rate from ``budget.lookup_pricing`` (provider-hinted), free for
+    local/self-hosted, unknown otherwise."""
+    from .budget import lookup_pricing  # noqa: PLC0415
+
+    model = model or ""
+    hint = _provider_id_for_model(model) or _provider_id_for_backend(backend)
+    b = (backend or "").lower()
+    if not hint and ("localhost" in b or "127.0.0.1" in b or ":11434" in b):
+        hint = "ollama"
+    pr = lookup_pricing(model, hint) if model else None
+    return {
+        "model": model or None,
+        "provider": hint,
+        "known": pr is not None,
+        "prompt_per_million": pr.prompt_per_million if pr else None,
+        "completion_per_million": pr.completion_per_million if pr else None,
+    }
+
+
+def _usd(pricing: dict[str, Any], tokens_in: int, tokens_out: int) -> float | None:
+    if not pricing.get("known"):
+        return None
+    return (tokens_in / 1e6) * float(pricing["prompt_per_million"] or 0) + \
+        (tokens_out / 1e6) * float(pricing["completion_per_million"] or 0)
+
+
 def session_detail(cwd: str, session_id: str) -> dict[str, Any]:
-    """The full reconstructed transcript as plain JSON-able dicts.
+    """The full reconstructed transcript as plain JSON-able dicts, plus the
+    per-turn ledger the timeline draws: estimated context fill, output tokens
+    and cost for every assistant turn.
 
     ``role`` is read off each typed ``Message`` object explicitly — the structs
     use ``omit_defaults=True`` so msgspec drops ``role`` (it equals its only
     value), which would leave the UI unable to tell user from assistant. The
     content blocks are msgspec-encoded so each keeps its ``type`` discriminator.
+    Timestamps come from the underlying transcript chain; secrets are masked.
     """
     import msgspec  # noqa: PLC0415
 
-    from . import session_tree  # noqa: PLC0415
+    from . import catalog, session_tree  # noqa: PLC0415
 
-    messages = session_tree.load_for_resume(session_id, cwd=cwd)
+    entries = session_tree.load_entries(session_tree._session_path(session_id, cwd))
+    leaf = session_tree.latest_leaf([e for e in entries if not e.is_sidechain])
+    chain = session_tree.build_chain(entries, leaf.uuid) if leaf else []
+    messages = session_tree.entries_to_messages(chain) if chain else []
+    # Timestamps ride on the chain, not on the Message objects. Align them by
+    # walking the same slice entries_to_messages replays (after the last
+    # compaction boundary); if the counts disagree (a dropped dangling
+    # tool_use) timestamps are omitted rather than misattributed.
+    start = 0
+    for i, e in enumerate(chain):
+        c = e.message.get("content")
+        if e.message.get("role") == "system" and isinstance(c, dict) and c.get("__compact_boundary__"):
+            start = i
+    stamps = [e.timestamp for e in chain[start:] if e.message.get("role") in ("user", "assistant")]
+    n_msgs = sum(1 for m in messages if getattr(m, "role", None) in ("user", "assistant"))
+    stamps_ok = len(stamps) == n_msgs
+
+    try:
+        last = catalog.get_last_model() or {}
+    except Exception:  # noqa: BLE001
+        last = {}
+    pricing = _session_pricing(last.get("model"), last.get("backend"))
+    info = _model_info(last.get("model") or "") if last.get("model") else {}
+    ctx_window = info.get("ctx")
+
     out: list[dict[str, Any]] = []
+    turns: list[dict[str, Any]] = []
+    ctx_chars = 0
+    tot_in = tot_out = 0
+    cum_usd = 0.0
+    si = 0
     for m in messages:
+        role = getattr(m, "role", None)
         content = m.content
         enc = content if isinstance(content, str) else \
             msgspec.json.decode(msgspec.json.encode(content))
-        item: dict[str, Any] = {"role": getattr(m, "role", "assistant"), "content": enc}
+        if role not in ("user", "assistant"):
+            # compaction boundary: context restarts from the summary
+            summary = getattr(m, "summary", "") or ""
+            ctx_chars = len(summary)
+            out.append({"role": "system", "content": _redact_text(summary), "compact": True,
+                        "compacted_count": getattr(m, "compacted_count", 0)})
+            continue
+        item: dict[str, Any] = {"role": role, "content": _redact_content(enc)}
         if getattr(m, "isMeta", False):
             item["isMeta"] = True
+        if stamps_ok:
+            item["ts"] = _ts_epoch(stamps[si])
+        si += 1
+        chars = _content_chars(enc)
+        if role == "assistant":
+            t_in, t_out = _est_tokens(ctx_chars), _est_tokens(chars)
+            tot_in += t_in
+            tot_out += t_out
+            usd = _usd(pricing, t_in, t_out)
+            if usd is not None:
+                cum_usd += usd
+            tools = [b.get("name") for b in enc if isinstance(b, dict) and b.get("type") == "tool_use"] \
+                if isinstance(enc, list) else []
+            turns.append({"i": len(out), "ts": item.get("ts"), "ctx_est": t_in + t_out,
+                          "in_est": t_in, "out_est": t_out, "usd_est": usd,
+                          "cum_usd_est": cum_usd if pricing.get("known") else None,
+                          "tools": tools})
+            item["turn"] = len(turns) - 1
+        ctx_chars += chars
         out.append(item)
-    return {"session_id": session_id, "cwd": cwd, "messages": out}
+    return {
+        "session_id": session_id, "cwd": cwd, "messages": out, "turns": turns,
+        "stats": {"in_est": tot_in, "out_est": tot_out, "tokens_est": tot_in + tot_out,
+                  "usd_est": cum_usd if pricing.get("known") else None,
+                  "turns": len(turns), "ctx_window": ctx_window,
+                  "peak_ctx_est": max((t["ctx_est"] for t in turns), default=0),
+                  "pricing": pricing,
+                  "note": "tokens are estimated from transcript size (≈4 chars/token); "
+                          "transcripts do not record provider usage"},
+    }
 
 
 def _mask_key(v: str | None) -> str | None:
@@ -257,11 +457,12 @@ def models_state() -> dict[str, Any]:
             live = catalog.cached_live_models(pid) if pid else None
         except Exception:  # noqa: BLE001
             live = None
-        host = _provider_hosting(prov) if prov else {}
+        host = _auth_state(prov) if prov else {}
         provs.append({
             "id": pid,
             "label": g.get("label"),
-            "enabled": bool(g.get("enabled")),
+            "family": family_of(pid),
+            "enabled": bool(g.get("enabled")) or host.get("auth") == "oauth",
             "note": g.get("note") or "",
             "models": list(g.get("models") or ()),
             "model_count": len(g.get("models") or ()),
@@ -270,30 +471,46 @@ def models_state() -> dict[str, Any]:
             "api_key_env": host.get("api_key_env"),
             "key_masked": host.get("key_masked"),
             "key_source": host.get("key_source"),
+            "auth": host.get("auth") or "none",
             "is_current": bool(prov and prov.base_url.rstrip("/") == backend_now),
             "guide": provider_guides.GUIDES.get(pid),
             "docs_url": f"{_DOCS_BASE}/providers/{pid}" if pid else None,
         })
     # What each model can actually do, straight from the SDK's own capability
     # table — a model list is just strings until you can compare context
-    # windows and tool support side by side.
+    # windows and tool support side by side. Price per 1M tokens comes from
+    # budget.py's table (provider-hinted); a learned, endpoint-enforced context
+    # ceiling from context_limits.py overrides the declared window.
     info: dict[str, Any] = {}
     seen: set[str] = set()
     for p in provs:
+        # The same open-weight id is served by several hosts at different
+        # prices, so price is per (provider, model) — never just per model.
+        p["prices"] = {}
         for mid in p["models"]:
+            price = _model_price(mid, p["id"])
+            if price is not None:
+                p["prices"][mid] = price
             if mid in seen:
                 continue
             seen.add(mid)
-            info[mid] = _model_info(mid)
+            info[mid] = _model_info(mid, p["id"], p.get("base_url"))
     cur_model = last.get("model")
     if cur_model and cur_model not in info:
-        info[cur_model] = _model_info(cur_model)
+        info[cur_model] = _model_info(cur_model, _provider_id_for_model(cur_model), backend_now)
+
+    oll = ollama_state()
+    for m in oll.get("models") or []:
+        if m["name"] not in info:
+            info[m["name"]] = _model_info(m["name"], "ollama", oll.get("base_url"))
 
     return {
         "current": last,
         "recent": recent,
         "providers": provs,
+        "families": [{"id": f[0], "label": f[1], "logo": f[2]} for f in FAMILIES],
         "model_info": info,
+        "ollama": oll,
         "enabled_count": sum(1 for p in provs if p["enabled"]),
         "hosting": _hosting_summary(last, backend_now),
         "selfhost_guide": provider_guides.SELFHOST,
@@ -301,13 +518,31 @@ def models_state() -> dict[str, Any]:
     }
 
 
-def _model_info(model_id: str) -> dict[str, Any]:
-    """Context window + tool/reasoning support for one model id."""
+def _model_price(model_id: str, provider_id: str | None) -> dict[str, Any] | None:
+    """USD per 1M tokens for a model on a provider, from ``budget.lookup_pricing``.
+    ``None`` when the table has no row (the page shows a dash, never a guess)."""
+    try:
+        from .budget import lookup_pricing  # noqa: PLC0415
+
+        pr = lookup_pricing(model_id, provider_id)
+    except Exception:  # noqa: BLE001
+        pr = None
+    if pr is None:
+        return None
+    return {"in": pr.prompt_per_million, "out": pr.completion_per_million,
+            "cache_read": pr.cache_read_per_million, "free": pr.prompt_per_million == 0 and pr.completion_per_million == 0}
+
+
+def _model_info(model_id: str, provider_id: str | None = None,
+                backend: str | None = None) -> dict[str, Any]:
+    """Context window + tool/reasoning support for one model id, plus price per
+    1M tokens and any endpoint-enforced context ceiling mantis has learned."""
+    out: dict[str, Any] = {}
     try:
         from .capabilities import lookup_model  # noqa: PLC0415
 
         cap = lookup_model(model_id)
-        return {
+        out = {
             "ctx": cap.context_window,
             "tools": bool(cap.supports_native_tools),
             "effort": bool(cap.supports_reasoning_effort),
@@ -315,7 +550,21 @@ def _model_info(model_id: str) -> dict[str, Any]:
             "family": cap.family,
         }
     except Exception:  # noqa: BLE001 — an unknown model just shows no badges
-        return {}
+        out = {}
+    try:
+        from . import context_limits  # noqa: PLC0415
+
+        learned = context_limits.learned_limit(model_id, backend)
+        if learned:
+            out["ctx_learned"] = learned
+            if out.get("ctx"):
+                out["ctx"] = context_limits.effective_window(model_id, out["ctx"], backend)
+    except Exception:  # noqa: BLE001
+        pass
+    price = _model_price(model_id, provider_id)
+    if price is not None:
+        out["price"] = price
+    return out
 
 
 def test_provider(provider_id: str | None, backend: str | None = None,
@@ -893,6 +1142,7 @@ def _analytics_compute() -> dict[str, Any]:
     projects: dict[str, dict[str, Any]] = {}
     total = user_m = asst_m = tool_calls = 0
     sessions = 0
+    in_est_total = out_est_total = 0
     first_ts: float | None = None
     last_ts: float | None = None
 
@@ -903,9 +1153,11 @@ def _analytics_compute() -> dict[str, Any]:
             cwd = _project_cwd(d)
             pname = Path(cwd).name if cwd else d.name
             proj = projects.setdefault(d.name, {"name": pname, "cwd": cwd,
-                                                "sessions": 0, "msgs": 0, "tools": 0})
+                                                "sessions": 0, "msgs": 0, "tools": 0,
+                                                "in_est": 0, "out_est": 0})
             for f in d.glob("*.jsonl"):
                 had_msg = False
+                ctx_chars = 0   # what the model re-reads on every assistant turn
                 try:
                     with f.open("r", encoding="utf-8") as fh:
                         for line in fh:
@@ -917,6 +1169,11 @@ def _analytics_compute() -> dict[str, Any]:
                             except json.JSONDecodeError:
                                 continue
                             typ = obj.get("type")
+                            content = (obj.get("message") or {}).get("content")
+                            if typ == "system" and isinstance(content, dict) \
+                                    and content.get("__compact_boundary__"):
+                                ctx_chars = len(str(content.get("summary") or ""))
+                                continue
                             if typ not in ("user", "assistant"):
                                 continue
                             had_msg = True
@@ -926,7 +1183,6 @@ def _analytics_compute() -> dict[str, Any]:
                                 user_m += 1
                             else:
                                 asst_m += 1
-                            content = (obj.get("message") or {}).get("content")
                             n_tools = 0
                             if isinstance(content, list):
                                 for b in content:
@@ -936,6 +1192,15 @@ def _analytics_compute() -> dict[str, Any]:
                                         n_tools += 1
                             tool_calls += n_tools
                             proj["tools"] += n_tools
+                            chars = _content_chars(content)
+                            t_in = t_out = 0
+                            if typ == "assistant":
+                                t_in, t_out = _est_tokens(ctx_chars), _est_tokens(chars)
+                                in_est_total += t_in
+                                out_est_total += t_out
+                                proj["in_est"] += t_in
+                                proj["out_est"] += t_out
+                            ctx_chars += chars
                             ts = obj.get("timestamp")
                             if ts:
                                 try:
@@ -944,9 +1209,12 @@ def _analytics_compute() -> dict[str, Any]:
                                 except ValueError:
                                     continue
                                 key = dt.strftime("%Y-%m-%d")
-                                slot = daily.setdefault(key, {"msgs": 0, "tools": 0})
+                                slot = daily.setdefault(key, {"msgs": 0, "tools": 0,
+                                                              "in_est": 0, "out_est": 0})
                                 slot["msgs"] += 1
                                 slot["tools"] += n_tools
+                                slot["in_est"] += t_in
+                                slot["out_est"] += t_out
                                 by_hour[dt.hour] += 1
                                 by_weekday[dt.weekday()] += 1
                                 punchcard[dt.weekday()][dt.hour] += 1
@@ -983,6 +1251,8 @@ def _analytics_compute() -> dict[str, Any]:
             "avg_msgs_per_session": round(total / sessions, 1) if sessions else 0,
             "busiest_day": busiest[0],
             "busiest_day_msgs": busiest[1]["msgs"],
+            "in_est": in_est_total,
+            "out_est": out_est_total,
         },
         "daily": daily,
         "by_hour": by_hour,
@@ -1007,6 +1277,21 @@ def overview() -> dict[str, Any]:
         mcp_count = len(mcp_state()["servers"])
     except Exception:  # noqa: BLE001
         mcp_count = 0
+    try:
+        grid = provider_grid()
+        fam_ready = {f["id"]: bool(f["ready"]) for f in grid["families"]}
+    except Exception:  # noqa: BLE001
+        fam_ready = {}
+    try:
+        act = activity(limit=20)
+        active_jobs, active_runs = act["active_jobs"], act["active_runs"]
+    except Exception:  # noqa: BLE001
+        active_jobs = active_runs = 0
+    try:
+        sp = spend()
+        spend_7 = sp["totals"]["7"]
+    except Exception:  # noqa: BLE001
+        spend_7 = {}
     return {
         "version": _version(),
         "home": str(_base_dir()),
@@ -1019,7 +1304,489 @@ def overview() -> dict[str, Any]:
         "provider_count": len(m["providers"]),
         "skill_count": skill_count,
         "mcp_count": mcp_count,
+        "families_ready": fam_ready,
+        "family_ready_count": sum(1 for v in fam_ready.values() if v),
+        "active_jobs": active_jobs,
+        "active_runs": active_runs,
+        "spend_7d": spend_7,
     }
+
+
+# ---------------------------------------------------------------------------
+# Provider families — the five kinds of thing mantis can talk to. Everything
+# below iterates over whatever the catalog actually contains, so a family with
+# no catalogued provider yet (or a provider added later) degrades to an empty
+# or extra card rather than a crash.
+# ---------------------------------------------------------------------------
+
+FAMILIES: tuple[tuple[str, str, str], ...] = (
+    # id, label, logo id (falls back to a letter tile when the mark is missing)
+    ("openai", "OpenAI", "openai"),
+    ("anthropic", "Claude", "anthropic"),
+    ("google", "Gemini", "gemini"),
+    ("xai", "Grok", "xai"),
+    ("oss", "Open source", "ollama"),
+)
+_FAMILY_BY_PROVIDER = {"openai": "openai", "anthropic": "anthropic",
+                       "gemini": "google", "google": "google", "xai": "xai", "grok": "xai"}
+
+
+def family_of(provider_id: str | None) -> str:
+    return _FAMILY_BY_PROVIDER.get((provider_id or "").lower(), "oss")
+
+
+def _provider_id_for_model(model: str | None) -> str | None:
+    """Which catalogued provider a model id belongs to. Uses the catalog's own
+    heuristic first; ``grok-*`` maps to xAI once (and only once) the catalog
+    knows that provider."""
+    from . import catalog  # noqa: PLC0415
+
+    if not model:
+        return None
+    try:
+        p = catalog.provider_for_model(model)
+    except Exception:  # noqa: BLE001
+        p = None
+    if p is not None:
+        return p.id
+    low = model.lower()
+    if low.startswith(("grok-", "grok/", "x-ai/")) and "xai" in catalog.BY_ID:
+        return "xai"
+    return None
+
+
+def _provider_id_for_backend(backend: str | None) -> str | None:
+    """The catalogued provider whose base URL is ``backend`` — how a model the
+    flagship lists don't mention (a live-listed id, a fine-tune) still gets
+    attributed to the provider that served it."""
+    from . import catalog  # noqa: PLC0415
+
+    b = (backend or "").rstrip("/").lower()
+    if not b:
+        return None
+    for p in catalog.CATALOG:
+        if p.base_url.rstrip("/").lower() == b:
+            return p.id
+    return None
+
+
+def _auth_state(prov: Any) -> dict[str, Any]:
+    """saved / env / oauth / none — plus the masked hint. OAuth is the Anthropic
+    ``ANTHROPIC_AUTH_TOKEN`` path (a Claude subscription or gateway bearer),
+    which ``catalog.is_enabled`` honours but ``api_key_for`` never returns."""
+    import os  # noqa: PLC0415
+
+    host = _provider_hosting(prov)
+    state = host.get("key_source") or "none"
+    if state == "none" and prov.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        state = "oauth"
+        host["key_masked"] = _mask_key(os.environ["ANTHROPIC_AUTH_TOKEN"])
+    host["auth"] = state
+    return host
+
+
+_ollama_cache: dict[str, Any] = {}
+_ollama_lock = threading.Lock()
+OLLAMA_TTL_S = 10.0
+
+
+def ollama_state(*, ttl_s: float = OLLAMA_TTL_S) -> dict[str, Any]:
+    """Local Ollama: every pulled model with its size and whether it's loaded
+    in memory right now (``/api/tags`` + ``/api/ps``). Short timeout, cached
+    for a few seconds so an auto-refreshing page doesn't hammer the daemon."""
+    import time  # noqa: PLC0415
+
+    now = time.monotonic()
+    with _ollama_lock:
+        if _ollama_cache.get("at", -1e9) + ttl_s > now and "data" in _ollama_cache:
+            return _ollama_cache["data"]
+    data = _ollama_probe()
+    with _ollama_lock:
+        _ollama_cache["at"] = now
+        _ollama_cache["data"] = data
+    return data
+
+
+def _ollama_probe() -> dict[str, Any]:
+    from . import paths  # noqa: PLC0415
+
+    base = paths.ollama_base_url()
+    out: dict[str, Any] = {"base_url": base, "reachable": False, "models": [], "loaded_count": 0}
+    try:
+        import httpx  # noqa: PLC0415
+
+        with httpx.Client(timeout=httpx.Timeout(1.5)) as c:
+            tags = c.get(f"{base}/api/tags")
+            if tags.status_code >= 400:
+                out["error"] = f"HTTP {tags.status_code}"
+                return out
+            listed = (tags.json() or {}).get("models") or []
+            loaded: dict[str, dict[str, Any]] = {}
+            try:
+                ps = c.get(f"{base}/api/ps")
+                if ps.status_code < 400:
+                    for m in (ps.json() or {}).get("models") or []:
+                        loaded[str(m.get("name") or m.get("model"))] = m
+            except Exception:  # noqa: BLE001 — /api/ps is newer than /api/tags
+                pass
+    except Exception as e:  # noqa: BLE001 — not running is the common case
+        out["error"] = f"{type(e).__name__}"
+        return out
+    out["reachable"] = True
+    models = []
+    for m in listed:
+        name = str(m.get("name") or m.get("model") or "")
+        det = m.get("details") or {}
+        lm = loaded.get(name)
+        models.append({
+            "name": name,
+            "size": int(m.get("size") or 0),
+            "param": det.get("parameter_size"),
+            "quant": det.get("quantization_level"),
+            "family": det.get("family"),
+            "modified_at": m.get("modified_at"),
+            "loaded": lm is not None,
+            "vram": int(lm.get("size_vram") or 0) if lm else 0,
+            "expires_at": lm.get("expires_at") if lm else None,
+        })
+    models.sort(key=lambda x: (not x["loaded"], x["name"]))
+    out["models"] = models
+    out["loaded_count"] = sum(1 for x in models if x["loaded"])
+    return out
+
+
+def provider_grid() -> dict[str, Any]:
+    """The five families with their providers' auth state, the last model used
+    per family, and whether the family is ready to run right now."""
+    from . import catalog  # noqa: PLC0415
+
+    try:
+        recent = catalog.get_recent_models()
+    except Exception:  # noqa: BLE001
+        recent = []
+    try:
+        last = catalog.get_last_model() or {}
+    except Exception:  # noqa: BLE001
+        last = {}
+    cur_model = last.get("model")
+    backend_now = (last.get("backend") or "").rstrip("/")
+    cur_pid = _provider_id_for_backend(backend_now) or _provider_id_for_model(cur_model)
+    local_now = bool(backend_now) and ("localhost" in backend_now or "127.0.0.1" in backend_now)
+
+    fams: dict[str, dict[str, Any]] = {}
+    for fid, label, logo in FAMILIES:
+        fams[fid] = {"id": fid, "label": label, "logo": logo, "providers": [],
+                     "ready": False, "last_model": None, "is_current": False}
+    for prov in catalog.CATALOG:
+        fid = family_of(prov.id)
+        fam = fams.setdefault(fid, {"id": fid, "label": fid, "logo": prov.id, "providers": [],
+                                    "ready": False, "last_model": None, "is_current": False})
+        host = _auth_state(prov)
+        enabled = host["auth"] != "none"
+        fam["providers"].append({
+            "id": prov.id, "label": prov.label, "base_url": prov.base_url,
+            "api_key_env": prov.api_key_env, "auth": host["auth"],
+            "key_masked": host.get("key_masked"), "enabled": enabled,
+            "is_current": prov.id == cur_pid and not local_now,
+            "models": list(prov.models)[:4],
+        })
+        fam["ready"] = fam["ready"] or enabled
+        fam["is_current"] = fam["is_current"] or (prov.id == cur_pid and not local_now)
+    # Last-used model per family, from the recents list (newest first).
+    for m in [cur_model, *recent]:
+        if not m:
+            continue
+        fid = family_of(_provider_id_for_model(m))
+        if fid in fams and fams[fid]["last_model"] is None:
+            fams[fid]["last_model"] = m
+    # The open-source family is also "ready" when a local runtime answers.
+    oll = ollama_state()
+    oss = fams.get("oss")
+    if oss is not None:
+        oss["local"] = {"reachable": oll.get("reachable"), "base_url": oll.get("base_url"),
+                        "model_count": len(oll.get("models") or []),
+                        "loaded_count": oll.get("loaded_count", 0)}
+        oss["ready"] = oss["ready"] or bool(oll.get("reachable"))
+        if local_now:
+            oss["is_current"] = True
+            oss["last_model"] = cur_model or oss["last_model"]
+    ordered = [fams[f[0]] for f in FAMILIES if f[0] in fams] + \
+              [v for k, v in fams.items() if k not in {f[0] for f in FAMILIES}]
+    return {"families": ordered, "current": last,
+            "ready_count": sum(1 for f in ordered if f["ready"])}
+
+
+# ---------------------------------------------------------------------------
+# Spend & usage — sessions (estimated from transcript size) plus workflow runs
+# (recorded per agent), per day and per provider.
+# ---------------------------------------------------------------------------
+
+
+def _runs_signature() -> tuple[int, float]:
+    from . import workflow_store  # noqa: PLC0415
+
+    d = workflow_store.runs_dir()
+    count, latest = 0, 0.0
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                mt = f.stat().st_mtime
+            except OSError:
+                continue
+            count += 1
+            latest = max(latest, mt)
+    return (count, latest)
+
+
+_spend_cache: dict[str, Any] = {}
+_spend_lock = threading.Lock()
+
+
+def _workflow_usage_rows() -> list[dict[str, Any]]:
+    """One row per agent run across every persisted workflow record:
+    ``{ts, model, provider, in, out, usd, run_id}``. Runs record real usage, so
+    these are the only *measured* numbers on the spend panel."""
+    from . import workflow_store  # noqa: PLC0415
+
+    rows: list[dict[str, Any]] = []
+    try:
+        runs = workflow_store.list_runs(limit=400)
+    except Exception:  # noqa: BLE001
+        return rows
+    for r in runs:
+        rec = workflow_store.load_record(r["run_id"]) if r.get("run_id") else None
+        if not rec:
+            continue
+        run = rec.get("run") or {}
+        saved = float(rec.get("saved_at") or 0.0)
+        for ph in run.get("phases") or []:
+            for a in ph.get("agents") or []:
+                u = a.get("usage") or {}
+                usd = a.get("cost_usd")
+                if usd is None:
+                    usd = u.get("costUSD")
+                started = a.get("started") or run.get("started") or saved
+                ts = float(started) if isinstance(started, (int, float)) and started > 1e9 else saved
+                model = a.get("model") or ""
+                rows.append({"ts": ts, "model": model, "provider": _provider_id_for_model(model),
+                             "in": int(u.get("inputTokens") or 0), "out": int(u.get("outputTokens") or 0),
+                             "usd": float(usd or 0.0), "run_id": rec.get("run_id"),
+                             "status": a.get("status")})
+    return rows
+
+
+def spend() -> dict[str, Any]:
+    sig = (_projects_signature(), _runs_signature())
+    with _spend_lock:
+        if _spend_cache.get("sig") == sig and "data" in _spend_cache:
+            return _spend_cache["data"]
+    data = _spend_compute()
+    with _spend_lock:
+        _spend_cache["sig"] = sig
+        _spend_cache["data"] = data
+    return data
+
+
+def _spend_compute() -> dict[str, Any]:
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    from . import catalog  # noqa: PLC0415
+
+    a = analytics()
+    try:
+        last = catalog.get_last_model() or {}
+    except Exception:  # noqa: BLE001
+        last = {}
+    pricing = _session_pricing(last.get("model"), last.get("backend"))
+    est_pid = pricing.get("provider")
+    est_fid = family_of(est_pid) if est_pid else "oss"
+
+    today = datetime.now().date()
+    days: list[dict[str, Any]] = []
+    by_day: dict[str, dict[str, Any]] = {}
+    for i in range(29, -1, -1):
+        d = today - timedelta(days=i)
+        key = d.strftime("%Y-%m-%d")
+        slot = a["daily"].get(key) or {}
+        row = {"date": key, "est_in": int(slot.get("in_est") or 0), "est_out": int(slot.get("out_est") or 0),
+               "est_usd": None, "rec_in": 0, "rec_out": 0, "rec_usd": 0.0, "msgs": int(slot.get("msgs") or 0)}
+        row["est_usd"] = _usd(pricing, row["est_in"], row["est_out"])
+        days.append(row)
+        by_day[key] = row
+    wf_rows = _workflow_usage_rows()
+    by_prov: dict[str, dict[str, Any]] = {}
+    cutoff30 = (today - timedelta(days=29))
+    for r in wf_rows:
+        d = datetime.fromtimestamp(r["ts"]).date()
+        key = d.strftime("%Y-%m-%d")
+        if key in by_day:
+            by_day[key]["rec_in"] += r["in"]
+            by_day[key]["rec_out"] += r["out"]
+            by_day[key]["rec_usd"] += r["usd"]
+        if d >= cutoff30:
+            pid = r["provider"] or "other"
+            p = by_prov.setdefault(pid, {"id": pid, "family": family_of(r["provider"]),
+                                         "label": (catalog.BY_ID[pid].label if pid in catalog.BY_ID
+                                                   else ("self-hosted / other" if pid == "other" else pid)),
+                                         "in": 0, "out": 0, "usd": 0.0, "runs": set(), "source": "recorded"})
+            p["in"] += r["in"]
+            p["out"] += r["out"]
+            p["usd"] += r["usd"]
+            p["runs"].add(r["run_id"])
+
+    def window(n: int) -> dict[str, Any]:
+        rows = days[-n:]
+        est_in = sum(x["est_in"] for x in rows)
+        est_out = sum(x["est_out"] for x in rows)
+        return {"days": n, "est_in": est_in, "est_out": est_out, "est_tokens": est_in + est_out,
+                "est_usd": _usd(pricing, est_in, est_out),
+                "rec_in": sum(x["rec_in"] for x in rows), "rec_out": sum(x["rec_out"] for x in rows),
+                "rec_usd": sum(x["rec_usd"] for x in rows),
+                "msgs": sum(x["msgs"] for x in rows)}
+
+    w30 = window(30)
+    providers = []
+    if w30["est_tokens"]:
+        pid = est_pid or "local"
+        providers.append({"id": pid, "family": est_fid,
+                          "label": (catalog.BY_ID[pid].label if pid in catalog.BY_ID else
+                                    ("Local / self-hosted" if pid in ("local", "ollama") else pid)),
+                          "in": w30["est_in"], "out": w30["est_out"], "usd": w30["est_usd"],
+                          "sessions": True, "source": "estimated"})
+    for p in by_prov.values():
+        p["runs"] = len(p["runs"])
+        providers.append(p)
+    providers.sort(key=lambda p: ((p["usd"] or 0), p["in"] + p["out"]), reverse=True)
+    fam_tot: dict[str, dict[str, Any]] = {}
+    for p in providers:
+        f = fam_tot.setdefault(p["family"], {"id": p["family"], "in": 0, "out": 0, "usd": 0.0, "priced": True})
+        f["in"] += p["in"]
+        f["out"] += p["out"]
+        if p["usd"] is None:
+            f["priced"] = False
+        else:
+            f["usd"] += p["usd"]
+    fam_order = [f[0] for f in FAMILIES]
+    return {
+        "pricing": pricing,
+        "days": days,
+        "totals": {"7": window(7), "30": window(30)},
+        "by_provider": providers,
+        "by_family": sorted(fam_tot.values(), key=lambda f: fam_order.index(f["id"]) if f["id"] in fam_order else 99),
+        "all_time": {"est_in": a["totals"].get("in_est", 0), "est_out": a["totals"].get("out_est", 0)},
+        "note": "session tokens are estimated from transcript size (≈4 chars/token) and priced at "
+                "the current model's rate; workflow runs are recorded by the provider.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Live activity — background jobs and workflow runs.
+# ---------------------------------------------------------------------------
+
+
+def _job_dict(rec: Any) -> dict[str, Any]:
+    import msgspec  # noqa: PLC0415
+
+    d = msgspec.to_builtins(rec)
+    d.pop("spawn_spec", None)              # redacted on disk already; not needed by the page
+    d["elapsed_s"] = round(float(rec.elapsed_s), 1)
+    d["terminal"] = bool(rec.is_terminal)
+    d["desc"] = _redact_text(str(d.get("desc") or ""))[:240]
+    d["error"] = _redact_text(str(d.get("error") or ""))[:600]
+    d["cwd"] = short_path(d.get("cwd") or "") if d.get("cwd") else ""
+    return d
+
+
+def _run_usage(rec: dict[str, Any]) -> dict[str, Any]:
+    run = rec.get("run") or {}
+    t_in = t_out = 0
+    usd = 0.0
+    agents = done = 0
+    models: dict[str, int] = {}
+    for ph in run.get("phases") or []:
+        for a in ph.get("agents") or []:
+            agents += 1
+            if a.get("status") in ("done", "completed", "ok"):
+                done += 1
+            u = a.get("usage") or {}
+            t_in += int(u.get("inputTokens") or 0)
+            t_out += int(u.get("outputTokens") or 0)
+            c = a.get("cost_usd")
+            usd += float(c if c is not None else (u.get("costUSD") or 0.0))
+            m = a.get("model") or ""
+            if m:
+                models[m] = models.get(m, 0) + 1
+    started, ended = run.get("started"), run.get("ended")
+    elapsed = None
+    if isinstance(started, (int, float)):
+        import time  # noqa: PLC0415
+
+        end = ended if isinstance(ended, (int, float)) else time.time()
+        elapsed = max(0.0, float(end) - float(started))
+    return {"in": t_in, "out": t_out, "tokens": t_in + t_out, "usd": usd, "agents": agents,
+            "agents_done": done, "elapsed_s": round(elapsed, 1) if elapsed is not None else None,
+            "models": sorted(models, key=models.get, reverse=True)[:3], "started": started, "ended": ended}
+
+
+def activity(limit: int = 40) -> dict[str, Any]:
+    from . import job_records, workflow_store  # noqa: PLC0415
+
+    jobs: list[dict[str, Any]] = []
+    try:
+        for rec in job_records.list_job_records(limit=limit):
+            try:
+                jobs.append(_job_dict(rec))
+            except Exception:  # noqa: BLE001 — one odd record must not blank the panel
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    runs: list[dict[str, Any]] = []
+    try:
+        for r in workflow_store.list_runs(limit=limit):
+            rec = workflow_store.load_record(r["run_id"]) if r.get("run_id") else None
+            usage = _run_usage(rec) if rec else {}
+            runs.append({**{k: v for k, v in r.items() if k != "path"},
+                         "name": _redact_text(str(r.get("name") or "")),
+                         "usage": usage,
+                         "active": str(r.get("status") or "") in ("running", "queued", "paused")})
+    except Exception:  # noqa: BLE001
+        pass
+    active_jobs = sum(1 for j in jobs if not j["terminal"])
+    return {"jobs": jobs, "runs": runs, "active_jobs": active_jobs,
+            "active_runs": sum(1 for r in runs if r["active"]),
+            "jobs_dir": short_path(job_records.jobs_dir()),
+            "runs_dir": short_path(workflow_store.runs_dir())}
+
+
+def workflow_detail(run_id: str | None) -> dict[str, Any]:
+    """One persisted run, phases and agents included. Inputs were redacted on
+    write; free text (results, errors, log lines) is masked here and bounded so
+    a chatty run can't ship megabytes to the page."""
+    from . import workflow_store  # noqa: PLC0415
+
+    rec = workflow_store.load_record(run_id or "") if run_id else None
+    if not rec:
+        return {"ok": False, "error": f"run {run_id!r} not found"}
+    run = dict(rec.get("run") or {})
+    phases = []
+    for ph in run.get("phases") or []:
+        agents = []
+        for a in ph.get("agents") or []:
+            a = dict(a)
+            for k in ("summary", "result", "error", "label"):
+                if a.get(k):
+                    a[k] = _redact_text(str(a[k]))[:4000]
+            a["recent_activities"] = [_redact_text(str(x))[:200] for x in (a.get("recent_activities") or [])[-8:]]
+            agents.append(a)
+        phases.append({**ph, "agents": agents})
+    run["phases"] = phases
+    run["log_lines"] = [_redact_text(str(x))[:400] for x in (run.get("log_lines") or [])[-300:]]
+    return {"ok": True, "run_id": rec.get("run_id"), "definition": rec.get("definition"),
+            "status": rec.get("status") or run.get("status"), "saved_at": rec.get("saved_at"),
+            "job_id": rec.get("job_id"), "inputs": rec.get("inputs") or {},
+            "summary": rec.get("summary") or {}, "version": rec.get("version"),
+            "usage": _run_usage(rec), "run": run,
+            "path": short_path(workflow_store.run_path(str(rec.get("run_id") or run_id)))}
 
 
 # ---------------------------------------------------------------------------
@@ -1180,6 +1947,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/analytics":
             self._json(analytics())
+            return
+        if path == "/api/providers":
+            self._json(provider_grid())
+            return
+        if path == "/api/spend":
+            self._json(spend())
+            return
+        if path == "/api/activity":
+            try:
+                limit = int((q.get("limit") or ["40"])[0])
+            except ValueError:
+                limit = 40
+            self._json(activity(limit=max(1, min(limit, 200))))
+            return
+        if path == "/api/workflow":
+            self._json(workflow_detail((q.get("id") or [None])[0]))
+            return
+        if path == "/api/ollama":
+            self._json(ollama_state())
             return
         if path == "/api/skills":
             self._json(skills_state())

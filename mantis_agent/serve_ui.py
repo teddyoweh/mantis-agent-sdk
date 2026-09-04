@@ -92,15 +92,6 @@ INDEX_HTML = r"""<!doctype html>
   .view { display: none; height: 100%; }
   .view.on { display: block; }
 
-  @media (max-width: 860px) {
-    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-    #rail { flex-direction: row; align-items: center; gap: 10px; overflow-x: auto;
-      padding: 8px 10px; }
-    .mark { padding: 0 6px 0 2px; }
-    #nav { flex-direction: row; }
-    #nav button .k { display: none; }
-    .railfoot { display: none; }
-  }
   @media (prefers-reduced-motion: reduce) {
     * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
   }
@@ -241,7 +232,7 @@ INDEX_HTML = r"""<!doctype html>
   .selfhost-card { gap: 10px; margin-bottom: 24px; }
   .selfhost-card .fields { display: flex; flex-direction: column; gap: 8px; }
   .selfhost-card .fields .r { display: flex; gap: 8px; }
-  .card.flash, .lrow.flash { box-shadow: 0 0 0 2px var(--accent); transition: box-shadow .3s;
+  .card.flash, .lrow.flash, .msg.flash { box-shadow: 0 0 0 2px var(--accent); transition: box-shadow .3s;
     border-radius: 9px; }
 
   /* key status (enabled provider) */
@@ -660,9 +651,182 @@ INDEX_HTML = r"""<!doctype html>
   .col::-webkit-scrollbar-thumb, .pad::-webkit-scrollbar-thumb {
     background: var(--line); border-radius: 6px; }
 
-  @media (max-width: 860px) {
+  /* ==========================================================================
+     OVERVIEW additions — the five provider families, the spend ledger, and
+     the live activity channel. Same bench: mono display face, olive ink, and
+     every number a real reading off a file on this machine.
+     ========================================================================== */
+  .fam-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;
+    margin-bottom: 14px; }
+  @media (max-width: 1100px) { .fam-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 720px) { .fam-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .fam { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 13px 14px 12px; display: flex; flex-direction: column; gap: 7px; min-width: 0;
+    position: relative; cursor: pointer; transition: box-shadow .12s; }
+  .fam:hover { box-shadow: var(--shadow), inset 0 0 0 1px var(--line); }
+  .fam.cur { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--accent); }
+  .fam .fh { display: flex; align-items: center; gap: 8px; }
+  .fam .mark2 { width: 26px; height: 26px; }
+  .fam .mark2 svg { width: 16px; height: 16px; }
+  .fam .fn { font-family: var(--mono); font-weight: 700; font-size: 13px; letter-spacing: -.02em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fam .fa { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; }
+  .fam .fa .t2 { flex: none; }
+  .fam .fm { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .fam .fm.none { color: var(--ink-3); font-style: italic; font-family: var(--sans); }
+  .fam .ff { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+  .fam .ff .b { padding: 5px 10px; font-size: 11.5px; }
+  .fam .ff .pr { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    display: inline-flex; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap;
+    text-overflow: ellipsis; }
+  .fam .ff .pr.ok { color: var(--accent); } .fam .ff .pr.bad { color: var(--err); }
+  .fam .sub2 { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+
+  /* spend ledger — estimated bars are hatched, recorded bars are solid: the
+     eye should never mistake a guess for a reading */
+  .spend-h { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+  .spend-h h3 { margin: 0; }
+  .spend-h .fchips { margin-left: auto; }
+  .bars { width: 100%; height: auto; display: block; margin: 6px 0 4px; }
+  .bars .est { fill: url(#hatch); }
+  .bars .rec { fill: var(--accent); }
+  .bars .hl { fill: var(--accent); opacity: .18; }
+  .bars text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .bars .base { stroke: var(--fill); stroke-width: 1; }
+  .bars .today { fill: var(--accent); }
+  .leg { display: flex; gap: 14px; font-size: 11px; color: var(--ink-3); font-family: var(--mono);
+    margin-bottom: 8px; flex-wrap: wrap; }
+  .leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px;
+    margin-right: 5px; background: var(--accent); }
+  .leg i.est { background: repeating-linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 4px); }
+  .lcd.tight { margin: 4px 0 12px; gap: 0 20px; }
+  .lcd .dim i { color: var(--ink-2); }
+  .prow .pf { position: relative; }
+  .prow .pf .mark2 { width: 18px; height: 18px; border-radius: 5px; }
+  .prow .pf .mark2 svg { width: 11px; height: 11px; }
+  .prow .t2 { position: relative; }
+
+  /* live activity — a channel list. Running rows breathe; finished ones sit. */
+  .act { display: flex; flex-direction: column; gap: 2px; }
+  .arow { display: grid; grid-template-columns: 14px 64px minmax(0,1fr) 78px 84px 64px; gap: 10px;
+    align-items: center; padding: 9px 12px; border-radius: 9px; font-family: var(--mono);
+    font-size: 12px; cursor: pointer; }
+  .arow:hover { background: var(--fill); }
+  .arow .ad { font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; letter-spacing: -.01em; }
+  .arow .ad small { color: var(--ink-3); font-size: 11px; margin-left: 6px; }
+  .arow .ak { color: var(--ink-2); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+    font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .arow .ae, .arow .at { color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums;
+    white-space: nowrap; font-size: 11.5px; }
+  .arow .ag { color: var(--ink-3); text-align: right; font-size: 11px; white-space: nowrap; }
+  .arow:hover .ag { color: var(--accent); }
+  .dot2.run { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .dot2.pend { background: var(--caution); }
+  @media (max-width: 900px) {
+    .arow { grid-template-columns: 14px minmax(0,1fr) 78px 64px; }
+    .arow .ak, .arow .at { display: none; }
+  }
+  .run-ph { margin: 14px 0 6px; font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 10px;
+    align-items: center; }
+  .run-ag { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; margin: 6px 0;
+    font-size: 12.5px; }
+  .run-ag .rh { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .run-ag .rh b { font-weight: 700; }
+  .run-ag .rh .sp { flex: 1; }
+  .run-ag .rs { color: var(--ink-2); margin-top: 5px; white-space: pre-wrap; word-break: break-word;
+    max-height: 160px; overflow: auto; font-size: 12px; }
+  .run-ag .re { color: var(--err); font-family: var(--mono); font-size: 11.5px; margin-top: 5px; }
+  .log { background: var(--panel-2); border-radius: 10px; padding: 10px 12px; font-family: var(--mono);
+    font-size: 11px; line-height: 1.55; max-height: 220px; overflow: auto; white-space: pre-wrap;
+    word-break: break-word; color: var(--ink-2); }
+
+  /* session timeline — context fill per turn and cost per turn beside it */
+  .conv-stats { margin: 0 0 14px; }
+  .ctxbox { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 12px 14px 8px; margin-bottom: 20px; }
+  .ctxbox .ch { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono);
+    font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-3);
+    font-weight: 700; }
+  .ctxbox .ch span:last-child { margin-left: auto; text-transform: none; letter-spacing: 0;
+    font-weight: 400; }
+  .ctxsvg { width: 100%; height: auto; display: block; margin-top: 6px; }
+  .ctxsvg .bar { fill: var(--accent); opacity: .55; }
+  .ctxsvg .bar:hover, .ctxsvg .bar.on { opacity: 1; }
+  .ctxsvg .cap { stroke: var(--err); stroke-width: 1; stroke-dasharray: 3 3; }
+  .ctxsvg .cost { fill: none; stroke: var(--user); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .ctxsvg text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .who .ts { margin-left: 8px; color: var(--ink-3); font-weight: 400; letter-spacing: 0;
+    text-transform: none; }
+  .who .tc { margin-left: 8px; color: var(--ink-3); font-weight: 400; letter-spacing: 0;
+    text-transform: none; font-family: var(--mono); }
+  .block .bh .sz { margin-left: auto; color: var(--ink-3); font-size: 11px; }
+  .block .bh .tg { color: var(--ink-3); font-size: 10px; }
+  .block.result .bh { cursor: pointer; user-select: none; }
+  .block.result.closed pre { display: none; }
+  .block.result .bh:hover { background: var(--fill); }
+  .msg.system .who { color: var(--caution); }
+  .compact { border-radius: 9px; background: var(--caution-soft); color: var(--caution);
+    padding: 8px 12px; font-size: 12px; font-family: var(--mono); }
+  .colfind { padding: 0 8px 6px; position: sticky; top: 38px; background: inherit; z-index: 1; }
+  .colfind input { width: 100%; font: inherit; font-size: 12px; padding: 7px 10px; border: 0;
+    border-radius: 8px; background: var(--fill); color: var(--ink); }
+  .colfind input:focus { outline: none; box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent); }
+
+  /* models — grouped by family; price per 1M beside the window */
+  .mrow { grid-template-columns: minmax(0,1fr) 104px 52px 104px 118px 62px; }
+  .mrow .mprice { color: var(--ink-2); font-size: 11px; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mrow .mprice.free { color: var(--accent); }
+  .mrow .mprice.na { color: var(--ink-3); }
+  .mfam { display: flex; align-items: center; gap: 9px; padding: 10px 12px 6px; font-family: var(--mono);
+    font-size: 10.5px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-3); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  .mfam .mark2 { width: 18px; height: 18px; border-radius: 5px; }
+  .mfam .mark2 svg { width: 11px; height: 11px; }
+  .mfam .cnt3 { font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .mhead { display: grid; grid-template-columns: minmax(0,1fr) 104px 52px 104px 118px 62px; gap: 12px;
+    padding: 4px 12px 6px; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); }
+  .mhead span:nth-child(3), .mhead span:nth-child(4) { text-align: right; }
+  .orow { display: grid; grid-template-columns: minmax(0,1fr) 90px 72px 92px 62px; gap: 12px;
+    align-items: center; padding: 9px 12px; border-radius: 9px; font-family: var(--mono);
+    font-size: 12.5px; cursor: pointer; }
+  .orow:hover { background: var(--fill); }
+  .orow.cur { background: var(--accent-soft); }
+  .orow .on2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
+  .orow .osz, .orow .opq { color: var(--ink-2); font-size: 11.5px; text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .orow .ost { font-size: 10px; }
+  .orow .ogo { font-size: 11px; color: var(--ink-3); text-align: right; }
+  .orow:hover .ogo { color: var(--accent); }
+  .kbd { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); margin-top: 12px;
+    line-height: 1.7; }
+  .kbd b { font-weight: 700; color: var(--ink-2); background: var(--fill); padding: 0 5px;
+    border-radius: 4px; }
+  .refresh { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono);
+    font-size: 10.5px; color: var(--ink-3); }
+
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    #rail { flex-direction: row; align-items: center; gap: 10px; overflow-x: auto;
+      padding: 8px 10px; }
+    .mark { padding: 0 6px 0 2px; }
+    #nav { flex-direction: row; }
+    #nav button .k { display: none; }
+    .railfoot { display: none; }
     #sessions.on { grid-template-columns: 1fr; }
     .col { display: none; } .col.mobile-on { display: block; }
+    .page { padding: 20px 14px 60px; }
+    .mrow, .mhead { grid-template-columns: minmax(0,1fr) 52px 96px 62px; }
+    .mrow .mp, .mrow .mcaps, .mhead span:nth-child(2), .mhead span:nth-child(5) { display: none; }
+    .orow { grid-template-columns: minmax(0,1fr) 72px 62px; }
+    .orow .osz, .orow .opq { display: none; }
+    #transcript { padding: 16px 12px; }
   }
 </style>
 </head>
@@ -670,7 +834,7 @@ INDEX_HTML = r"""<!doctype html>
 <aside id="rail">
   <div class="mark"><img src="/mantis.svg" alt=""> <span>mantis</span></div>
   <nav id="nav">
-    <button data-v="home" class="on">activity<span class="k">1</span></button>
+    <button data-v="home" class="on">overview<span class="k">1</span></button>
     <button data-v="sessions">sessions<span class="k">2</span></button>
     <button data-v="models">models<span class="k">3</span></button>
     <button data-v="mcp">mcp<span class="k">4</span></button>
@@ -685,7 +849,8 @@ INDEX_HTML = r"""<!doctype html>
   <section id="mcp" class="view"><div class="scroll"><div class="page" id="mcppad"></div></div></section>
   <section id="sessions" class="view">
     <div class="col" id="projects"><div class="col-head">Projects</div></div>
-    <div class="col" id="sessionlist"><div class="col-head">Sessions</div></div>
+    <div class="col" id="sessionlist"><div class="col-head">Sessions</div>
+      <div class="colfind"><input id="sessfind" type="search" placeholder="filter sessions  ( / )"></div></div>
     <div class="col" id="convcol"><div id="transcript"><div class="empty">Pick a session.</div></div></div>
   </section>
   <section id="models" class="view"><div class="scroll"><div class="page" id="modelspad"></div></div></section>
@@ -946,28 +1111,327 @@ function loadHomeSpectrum(card, top, total) {
   });
   card.append(list);
 }
+// ---- formatting for readings: tokens, dollars, durations, bytes ----
+const fmtTok = n => { n = n || 0; return n >= 1e6 ? (n/1e6).toFixed(n % 1e6 ? 1 : 0) + "m"
+                    : n >= 1e3 ? (n/1e3).toFixed(n >= 1e5 ? 0 : 1) + "k" : String(n); };
+const fmtUsd = v => v == null ? "—" : (v > 0 && v < 0.01 ? "$" + v.toFixed(4)
+                    : v < 1 ? "$" + v.toFixed(3) : "$" + v.toFixed(2));
+const fmtDur = s => { if (s == null) return "—"; s = Math.max(0, Math.round(s));
+  if (s < 60) return s + "s"; if (s < 3600) return Math.floor(s/60) + "m " + (s%60) + "s";
+  return Math.floor(s/3600) + "h " + Math.floor(s%3600/60) + "m"; };
+const fmtBytes = b => { if (!b) return "—"; const u = ["B","KB","MB","GB","TB"]; let i = 0;
+  while (b >= 1024 && i < u.length-1) { b /= 1024; i++; } return b.toFixed(b >= 10 || i === 0 ? 0 : 1) + " " + u[i]; };
+const AUTH_LABEL = { saved: "key saved", env: "key from env", oauth: "oauth token", none: "no key" };
+const AUTH_CLS = { saved: "acc", env: "blu", oauth: "vio", none: "" };
+function statusClass(status, active) {
+  if (active || status === "running" || status === "starting") return "run";
+  if (["done","completed","ok","succeeded"].includes(status)) return "ok";
+  if (["error","failed","timeout","cancelled","canceled"].includes(status)) return "bad";
+  if (["pending","queued","blocked","orphaned","adopted","paused"].includes(status)) return "pend";
+  return "";
+}
+function lcdCell(lcd, v, label, cls) {
+  const d = el("div", cls || null); d.append(el("i", null, v)); d.append(document.createTextNode(label)); lcd.append(d);
+}
+
+// ---- PROVIDERS — the five families ----
+// One card per family: its mark, how it's authed (saved key / env / OAuth
+// token / nothing), the last model you used from it, and a one-click probe
+// that hits the same /models endpoint the TUI would. Clicking the card lands
+// in that family's setup on the models page.
+function renderFamilies(box, g) {
+  box.innerHTML = "";
+  (g.families || []).forEach(f => {
+    const provs = f.providers || [];
+    const target = provs.find(x => x.enabled) || provs[0];
+    const card = el("div", "fam" + (f.is_current ? " cur" : ""));
+    const fh = el("div","fh");
+    fh.append(providerMark(f.logo, f.label));
+    fh.append(el("span","fn", f.label));
+    const sp = el("span"); sp.style.flex = "1"; fh.append(sp);
+    const d = el("span","dot2 " + (f.ready ? "ok" : "")); d.title = f.ready ? "ready to run" : "not set up"; fh.append(d);
+    card.append(fh);
+    const fa = el("div","fa");
+    if (f.id === "oss") {
+      const loc = f.local || {};
+      fa.append(el("span","t2 " + (loc.reachable ? "acc" : ""), loc.reachable ? "ollama up" : "ollama off"));
+      fa.append(document.createTextNode(provs.filter(p => p.enabled).length + "/" + provs.length + " hosted keys"));
+    } else if (!provs.length) {
+      fa.append(el("span","t2 amb","not in catalog"));
+    } else {
+      fa.append(el("span","t2 " + (AUTH_CLS[target.auth] || ""), AUTH_LABEL[target.auth] || target.auth));
+      if (target.key_masked) fa.append(el("span","mono", target.key_masked));
+    }
+    card.append(fa);
+    card.append(el("div","fm" + (f.last_model ? "" : " none"), f.last_model || "no model used yet"));
+    if (f.id === "oss" && f.local && f.local.reachable)
+      card.append(el("div","sub2", f.local.model_count + " local model" + (f.local.model_count===1?"":"s") + " · " + f.local.loaded_count + " loaded"));
+    else if (f.id === "oss") card.append(el("div","sub2", provs.slice(0, 3).map(p => p.label).join(" · ")));
+    else if (provs.length) card.append(el("div","sub2", (target.base_url || "").replace(/^https?:\/\//, "")));
+    const ff = el("div","ff");
+    const pr = el("span","pr");
+    const tb = btn("test", "", async (e) => {
+      e.stopPropagation();
+      let body;
+      if (f.id === "oss" && f.local && f.local.reachable) body = { backend: f.local.base_url + "/v1" };
+      else if (target) body = { provider: target.id };
+      else { toast("nothing to test in this family yet", true); return; }
+      tb.disabled = true; pr.className = "pr"; pr.textContent = "reaching…";
+      try {
+        const r = await post("/api/model/test", body);
+        pr.className = "pr " + (r.ok ? "ok" : "bad");
+        pr.textContent = r.ok
+          ? "ok · " + r.ms + "ms" + (r.count != null ? " · " + r.count + " models" : "")
+          : (r.status ? "HTTP " + r.status : "unreachable") + (r.ms != null ? " · " + r.ms + "ms" : "");
+        pr.title = r.error || r.label || "";
+      } catch (e2) { pr.className = "pr bad"; pr.textContent = e2.message; }
+      finally { tb.disabled = false; }
+    });
+    tb.title = "GET /models with the key mantis would use";
+    ff.append(tb, pr); card.append(ff);
+    card.onclick = () => { showTab("models"); if (target) setTimeout(() => focusProvider(target.id), 260); };
+    box.append(card);
+  });
+}
+
+// ---- SPEND — estimated (sessions) vs recorded (workflow runs) ----
+// Transcripts store messages, not the provider's usage record, so session
+// tokens are an estimate from size (≈4 chars/token, context re-billed each
+// turn) priced at the current model. Workflow runs record real usage. The
+// two are drawn differently on purpose: hatched is a guess, solid is a reading.
+let SPEND_WIN = 7;
+function spendBars(days) {
+  const W = 1000, H = 150, PL = 6, PR = 6, PT = 12, PB = 18, n = days.length;
+  const iw = W-PL-PR, ih = H-PT-PB, bw = iw/Math.max(1, n);
+  const tot = d => d.est_in + d.est_out + d.rec_in + d.rec_out;
+  const max = Math.max(1, ...days.map(tot));
+  let bars = "", ticks = "";
+  days.forEach((d, i) => {
+    const x = PL + i*bw + bw*0.15, w = bw*0.7, y0 = PT + ih;
+    const hr = (d.rec_in + d.rec_out)/max*ih, he = (d.est_in + d.est_out)/max*ih;
+    const title = `<title>${d.date} · est ${fmtTok(d.est_in+d.est_out)} tok${d.est_usd != null ? " ≈ " + fmtUsd(d.est_usd) : ""}` +
+      `${(d.rec_in+d.rec_out) ? " · recorded " + fmtTok(d.rec_in+d.rec_out) + " tok " + fmtUsd(d.rec_usd) : ""}</title>`;
+    if (hr) bars += `<rect class="rec" x="${x.toFixed(1)}" y="${(y0-hr).toFixed(1)}" width="${w.toFixed(1)}" height="${hr.toFixed(1)}" rx="1">${title}</rect>`;
+    if (he) bars += `<rect class="est" x="${x.toFixed(1)}" y="${(y0-hr-he).toFixed(1)}" width="${w.toFixed(1)}" height="${he.toFixed(1)}" rx="1">${title}</rect>`;
+    if (!hr && !he) bars += `<rect class="hl" x="${x.toFixed(1)}" y="${(y0-1.5).toFixed(1)}" width="${w.toFixed(1)}" height="1.5"/>`;
+    const dt = new Date(d.date + "T00:00:00");
+    if (n <= 7 || dt.getDay() === 1 || i === n-1)
+      ticks += `<text x="${(x+w/2).toFixed(1)}" y="${H-5}" text-anchor="middle">${n <= 7 ? WD[(dt.getDay()+6)%7] : (dt.getMonth()+1) + "/" + dt.getDate()}</text>`;
+  });
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="tokens per day">` +
+    `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">` +
+    `<rect width="2.5" height="6" style="fill:var(--accent)"/></pattern></defs>` +
+    `<line class="base" x1="${PL}" y1="${PT+ih}" x2="${PL+iw}" y2="${PT+ih}"/>${bars}${ticks}</svg>`;
+}
+function renderSpend(box, sp, win) {
+  box.innerHTML = "";
+  win = win || SPEND_WIN;
+  const t = (sp.totals || {})[String(win)] || {};
+  const h = el("div","spend-h");
+  h.append(el("h3", null, "spend · last " + win + " days"));
+  const chips = el("div","fchips");
+  [7, 30].forEach(n => {
+    const c = el("button","fchip" + (n === win ? " on" : ""), n + "d");
+    c.onclick = () => { SPEND_WIN = n; renderSpend(box, sp, n); };
+    chips.append(c);
+  });
+  h.append(chips); box.append(h);
+  const pr = sp.pricing || {};
+  const n2 = el("div","note2");
+  n2.innerHTML = pr.known
+    ? "Session tokens are <b>estimated</b> from transcript size and priced at <b>" + esc(pr.model) + "</b> (" +
+      esc(fmtUsd(pr.prompt_per_million)) + " / " + esc(fmtUsd(pr.completion_per_million)) + " per 1M in / out). " +
+      "Workflow runs are recorded by the provider."
+    : "Session tokens are <b>estimated</b> from transcript size; " + (pr.model
+      ? "no price-table row for <b>" + esc(pr.model) + "</b>, so dollars are shown for recorded workflow runs only."
+      : "pick a model to price them.");
+  box.append(n2);
+  const lcd = el("div","lcd tight");
+  lcdCell(lcd, fmtTok(t.est_tokens), "est. tokens", "");
+  lcdCell(lcd, fmtTok(t.est_in) + "↑ " + fmtTok(t.est_out) + "↓", "in / out", "dim");
+  if (t.est_usd != null) lcdCell(lcd, "≈" + fmtUsd(t.est_usd), "est. spend", "hot");
+  if ((t.rec_in || 0) + (t.rec_out || 0)) {
+    lcdCell(lcd, fmtTok(t.rec_in + t.rec_out), "recorded tokens", "");
+    lcdCell(lcd, fmtUsd(t.rec_usd), "recorded spend", "hot");
+  }
+  lcdCell(lcd, fmt(t.msgs), "messages", "dim");
+  box.append(lcd);
+  const leg = el("div","leg");
+  leg.innerHTML = '<span><i class="est"></i>estimated · sessions</span><span><i></i>recorded · workflow runs</span>';
+  box.append(leg);
+  const sv = el("div"); sv.innerHTML = spendBars((sp.days || []).slice(-win)); box.append(sv);
+  const provs = sp.by_provider || [];
+  if (provs.length) {
+    const pt = el("div","note2"); pt.style.margin = "10px 0 6px"; pt.textContent = "by provider · last 30 days";
+    box.append(pt);
+    const list = el("div","plist");
+    const maxT = Math.max(1, ...provs.map(p => p.in + p.out));
+    provs.forEach(p => {
+      const row = el("div","prow");
+      const f = el("div","fillbar"); f.style.width = ((p.in+p.out)/maxT*100).toFixed(1) + "%"; row.append(f);
+      const pf = el("span","pf"); pf.append(providerMark(p.id === "local" ? "ollama" : p.id, p.label)); row.append(pf);
+      row.append(el("span","pn", p.label));
+      row.append(el("span","t2 " + (p.source === "recorded" ? "acc" : ""), p.source));
+      row.append(el("span","pv", fmtTok(p.in) + "↑ " + fmtTok(p.out) + "↓ · " +
+        (p.usd == null ? "unpriced" : (p.source === "estimated" ? "≈" : "") + fmtUsd(p.usd)) +
+        (p.runs ? " · " + p.runs + " run" + (p.runs===1?"":"s") : "")));
+      list.append(row);
+    });
+    box.append(list);
+  }
+}
+
+// ---- LIVE — background jobs and workflow runs ----
+function renderActivity(box, act) {
+  box.innerHTML = "";
+  const rows = [];
+  (act.runs || []).forEach(r => { const u = r.usage || {}; rows.push({
+    kind: "workflow", ts: r.saved_at, status: r.status, active: !!r.active,
+    desc: r.name || r.definition || r.run_id, extra: (u.agents_done||0) + "/" + (u.agents||0) + " agents",
+    elapsed: u.elapsed_s, tokens: u.tokens, usd: u.usd, open: () => openRun(r.run_id) }); });
+  (act.jobs || []).forEach(j => rows.push({
+    kind: j.kind || "job", ts: j.ended_at || j.started_at || j.created_at, status: j.status, active: !j.terminal,
+    desc: j.desc || j.job_id, extra: (j.turn_count||0) + " turns · " + (j.tool_count||0) + " tools" + (j.last_tool ? " · " + j.last_tool : ""),
+    elapsed: j.elapsed_s, tokens: null, err: j.error,
+    open: () => j.workflow_id ? openRun(j.workflow_id) : jumpToSession(j.cwd, j.session_id) }));
+  rows.sort((a, b) => (b.active - a.active) || ((b.ts||0) - (a.ts||0)));
+  if (!rows.length) {
+    box.append(zero("Nothing running, nothing recorded",
+      "Background jobs (sub-agents, workers, shells) and workflow runs land here with status, " +
+      "elapsed time and token use — and each opens into its run or session."));
+    return;
+  }
+  const list = el("div","act");
+  rows.slice(0, 14).forEach(r => {
+    const row = el("div","arow");
+    row.append(el("span","dot2 " + statusClass(r.status, r.active)));
+    row.append(el("span","ak", r.kind));
+    const d = el("span","ad", r.desc); d.title = r.err || r.desc;
+    if (r.extra) d.append(el("small", null, r.extra));
+    row.append(d);
+    row.append(el("span","ae", (r.active ? "▶ " : "") + fmtDur(r.elapsed)));
+    row.append(el("span","at", r.tokens != null ? fmtTok(r.tokens) + " tok" + (r.usd ? " · " + fmtUsd(r.usd) : "") : ""));
+    row.append(el("span","ag", r.status + (r.ts ? " · " + ago(r.ts) : "")));
+    row.onclick = r.open;
+    list.append(row);
+  });
+  box.append(list);
+}
+async function openRun(runId) {
+  let r;
+  try { r = await api("/api/workflow?" + q({ id: runId })); } catch (e) { toast(e.message, true); return; }
+  if (!r.ok) { toast(r.error || "run not found", true); return; }
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  const run = r.run || {}, u = r.usage || {};
+  s.append(el("h3", null, run.name || r.definition || r.run_id));
+  s.append(el("div","sub", (r.definition ? r.definition + " · " : "") + r.run_id + " · " + (r.path || "")));
+  const lcd = el("div","lcd tight");
+  lcdCell(lcd, r.status || "?", "status", statusClass(r.status) === "bad" ? "" : "hot");
+  lcdCell(lcd, fmtDur(u.elapsed_s), "elapsed", "dim");
+  lcdCell(lcd, fmtTok(u.tokens), "tokens", "");
+  lcdCell(lcd, fmtUsd(u.usd), "recorded spend", "hot");
+  lcdCell(lcd, (u.agents_done||0) + "/" + (u.agents||0), "agents done", "dim");
+  s.append(lcd);
+  const inputs = Object.entries(r.inputs || {});
+  if (inputs.length) { const dl = el("dl","kvs"); inputs.forEach(([k, v]) => kvRow(dl, k, String(v))); s.append(dl); }
+  (run.phases || []).forEach((ph, i) => {
+    const h = el("div","run-ph");
+    h.append(document.createTextNode("phase " + (i+1) + " · " + (ph.title || "")));
+    const sc = statusClass(ph.status);
+    h.append(el("span","t2 " + (sc === "ok" ? "acc" : sc === "bad" ? "amb" : ""), ph.status || ""));
+    s.append(h);
+    if (ph.detail) s.append(el("div","note2", ph.detail));
+    (ph.agents || []).forEach(a => {
+      const box = el("div","run-ag");
+      const rh = el("div","rh");
+      rh.append(el("span","dot2 " + statusClass(a.status)));
+      rh.append(el("b", null, a.label || a.id || "agent"));
+      if (a.model) rh.append(el("span","chip", a.model));
+      rh.append(el("span","sp"));
+      const au = a.usage || {};
+      rh.append(el("span", null, fmtTok((au.inputTokens||0) + (au.outputTokens||0)) + " tok · " +
+        fmtUsd(a.cost_usd != null ? a.cost_usd : au.costUSD) + (a.turns ? " · " + a.turns + " turns" : "") +
+        (a.tool_count ? " · " + a.tool_count + " tools" : "")));
+      box.append(rh);
+      if (a.summary || a.result) box.append(el("div","rs", a.summary || a.result));
+      if (a.error) box.append(el("div","re", a.error));
+      s.append(box);
+    });
+  });
+  if ((run.log_lines || []).length) {
+    s.append(el("h4", null, "log · last " + run.log_lines.length + " lines"));
+    s.append(el("div","log", run.log_lines.join("\n")));
+  }
+  showModal(true);
+}
+async function jumpToSession(cwd, sid) {
+  showTab("sessions");
+  if (!cwd) return;
+  await loadProjects();
+  const tail = String(cwd).replace(/^~/, "");
+  const hit = [...document.querySelectorAll("#projects .row")].find(r => {
+    const p = r.querySelector(".s"); return p && (p.textContent === cwd || p.textContent.endsWith(tail));
+  });
+  if (!hit) { toast("that job's project isn't in the sessions list", true); return; }
+  hit.click();
+  if (sid) setTimeout(() => {
+    const s = [...document.querySelectorAll("#sessionlist .row")].find(r => r.dataset.sid === sid);
+    if (s) s.click(); else toast("session " + sid.slice(0, 8) + " has no transcript here");
+  }, 450);
+}
+
 let homeReq = 0;
 async function loadHome() {
   const pad = document.getElementById("homepad");
   const my = ++homeReq;
-  const a = await api("/api/analytics");
+  const [a, g, sp, act] = await Promise.all([
+    api("/api/analytics"),
+    api("/api/providers").catch(() => ({ families: [] })),
+    api("/api/spend").catch(() => null),
+    api("/api/activity").catch(() => ({ jobs: [], runs: [] })),
+  ]);
   if (my !== homeReq) return;
   pad.innerHTML = "";
   const t = a.totals;
-  pageHead(pad, "activity", null, null);
+  const ref = el("span","refresh"); ref.id = "refresh-ind";
+  ref.append(el("span","live"), document.createTextNode("live · 15s"));
+  ref.title = "providers and activity refresh every 15s while this tab is visible";
+  pageHead(pad, "overview", null, null, [ref]);
+  const fams = g.families || [];
+  const readyN = fams.filter(f => f.ready).length;
+  const active = (act.active_jobs || 0) + (act.active_runs || 0);
+  const s7 = (sp && sp.totals && sp.totals["7"]) || {};
+  const curModel = g.current && g.current.model;
+  signalPath(pad, [
+    { value: readyN + "/" + fams.length, label: "families ready", state: readyN ? "" : "warn", view: "models" },
+    { label: curModel || "no model set", state: curModel ? "" : "warn", view: "models" },
+    { value: active, label: "running", state: active ? "" : "dim",
+      title: (act.active_jobs||0) + " jobs · " + (act.active_runs||0) + " workflow runs" },
+    { value: t.sessions, label: "sessions", view: "sessions", state: "dim" },
+    s7.est_usd != null || s7.rec_usd
+      ? { value: "≈" + fmtUsd((s7.est_usd || 0) + (s7.rec_usd || 0)), label: "7d", state: "dim",
+          title: "estimated + recorded spend, last 7 days" }
+      : { value: fmtTok((s7.est_tokens || 0) + (s7.rec_in || 0) + (s7.rec_out || 0)), label: "tok · 7d", state: "dim" },
+  ]);
+
+  const famSec = section(pad, "providers · five families", "~/.mantis-agent/models.json");
+  const grid = el("div","fam-grid"); grid.id = "fam-grid"; renderFamilies(grid, g); famSec.append(grid);
+
+  const liveSec = section(pad, "live · jobs & workflow runs", act.runs_dir || "");
+  const live = el("div","card2"); live.id = "live-act"; renderActivity(live, act); liveSec.append(live);
+
+  if (sp) {
+    const spSec = section(pad, "spend & usage");
+    const card = el("div","card2"); card.id = "spend-card"; renderSpend(card, sp); spSec.append(card);
+  }
+
+  const actSec = section(pad, "activity · last 26 weeks");
   if (!t.messages) {
-    pad.append(zero("Nothing recorded yet",
-      "Run mantis in a project and come back — every session is logged locally, and this page " +
+    actSec.append(zero("Nothing recorded yet",
+      "Run mantis in a project and come back — every session is logged locally, and this section " +
       "turns into your trace, your working hours, and the tools the agent actually reaches for."));
     return;
   }
-  signalPath(pad, [
-    { value: t.projects, label: "project" + (t.projects===1?"":"s"), view: "sessions" },
-    { value: t.sessions, label: "sessions", view: "sessions" },
-    { value: t.messages, label: "messages", state: "dim" },
-    { value: t.tool_calls, label: "tool calls", state: "dim",
-      title: t.unique_tools + " distinct tools" },
-  ]);
 
   // the trace
   const streak = calcStreak(a.daily);
@@ -1033,7 +1497,8 @@ async function loadHome() {
       const f = el("div","fillbar"); f.style.width = (p.msgs/maxM*100).toFixed(1) + "%"; row.append(f);
       row.append(el("span","pn", p.name));
       row.append(el("span","pp", p.cwd || ""));
-      row.append(el("span","pv", fmt(p.msgs) + " msgs · " + p.sessions + " sessions"));
+      row.append(el("span","pv", fmt(p.msgs) + " msgs · " + p.sessions + " sessions" +
+        ((p.in_est || p.out_est) ? " · ≈" + fmtTok((p.in_est||0) + (p.out_est||0)) + " tok" : "")));
       list.append(row);
     });
     card.append(list);
@@ -1069,7 +1534,12 @@ async function loadOverview() {
   stat("servers", o.mcp_count == null ? "—" : o.mcp_count, "mcp");
   stat("skills", o.skill_count == null ? "—" : o.skill_count, "skills");
   stat("sessions", o.session_count, "sessions");
+  if (o.family_ready_count != null) stat("families", o.family_ready_count + "/5", "home");
+  if (o.active_jobs || o.active_runs) stat("running", (o.active_jobs || 0) + (o.active_runs || 0), "home");
   f.append(c);
+  const k = el("div","kbd");
+  k.innerHTML = "<b>g</b> <b>o</b> overview · <b>g</b> <b>s</b> sessions · <b>g</b> <b>m</b> models · <b>/</b> search";
+  f.append(k);
 }
 const VIEWS = ["home","sessions","models","mcp","skills","config"];
 let curView = "home";
@@ -1091,15 +1561,59 @@ document.getElementById("nav").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   showTab(b.dataset.v);
 });
-// 1–6 jump between pages. The rail shows each key, so the shortcut is
-// discoverable rather than folklore.
+// Keyboard: 1–6 jump between pages (the rail shows each key), `g` then a
+// letter does the same by name (g o · g s · g m · g p · g k · g c), and `/`
+// drops into whatever search the current page has.
+let chord = null, chordT = null;
+const CHORDS = { o: "home", s: "sessions", m: "models", p: "mcp", k: "skills", c: "config" };
+function focusSearch() {
+  const v = document.querySelector(".view.on");
+  const inp = curView === "sessions" ? document.getElementById("sessfind")
+            : (v && v.querySelector(".find input, input[type=search]"));
+  if (!inp) return false;
+  inp.focus(); if (inp.select) inp.select();
+  return true;
+}
 window.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+  if (document.getElementById("modal").className) return;
+  if (chord === "g") {
+    chord = null; clearTimeout(chordT);
+    if (CHORDS[e.key]) { showTab(CHORDS[e.key]); e.preventDefault(); }
+    return;
+  }
+  if (e.key === "g") { chord = "g"; chordT = setTimeout(() => (chord = null), 900); return; }
+  if (e.key === "/") { if (focusSearch()) e.preventDefault(); return; }
   const i = "123456".indexOf(e.key);
   if (i >= 0) { showTab(VIEWS[i]); e.preventDefault(); }
 });
+// Auto-refresh: the rail readout every 15s, plus the overview's live panels
+// (providers, jobs, runs) re-rendered in place. Paused while the tab is
+// hidden — a dashboard nobody is looking at shouldn't poll — and caught up
+// the moment it's visible again. An in-flight provider test is never wiped.
+let refreshT = null;
+async function refreshLive() {
+  if (document.hidden) return;
+  try {
+    const p = loadOverview();
+    if (curView === "home") {
+      const [g, act] = await Promise.all([api("/api/providers"), api("/api/activity")]);
+      const grid = document.getElementById("fam-grid");
+      if (grid && !grid.querySelector("button:disabled")) renderFamilies(grid, g);
+      const live = document.getElementById("live-act");
+      if (live) renderActivity(live, act);
+    }
+    await p;
+  } catch (e) { /* transient — the next tick retries */ }
+}
+function startRefresh() { if (refreshT) clearInterval(refreshT); refreshT = setInterval(refreshLive, 15000); }
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { clearInterval(refreshT); refreshT = null; }
+  else { refreshLive(); startRefresh(); }
+});
+startRefresh();
 window.addEventListener("hashchange", () => {
   const t = location.hash.slice(1);
   // Only react to a REAL change (back/forward, manual edit) — showTab already
@@ -1149,6 +1663,8 @@ async function loadSessions(pr) {
   if (!sessions.length) { c.append(el("div","empty","No sessions.")); return; }
   sessions.forEach(s => {
     const row = el("div","row");
+    row.dataset.sid = s.session_id;
+    row.dataset.q = ((s.title || "") + " " + (s.first_prompt || "") + " " + (s.last_prompt || "") + " " + s.session_id).toLowerCase();
     row.append(el("div","t", s.title || s.first_prompt || "(untitled)"));
     row.append(el("div","s", s.last_prompt || ""));
     const m = el("div","m");
@@ -1161,6 +1677,52 @@ async function loadSessions(pr) {
     };
     c.append(row);
   });
+  applySessionFilter();
+}
+function applySessionFilter() {
+  const q = (document.getElementById("sessfind").value || "").trim().toLowerCase();
+  document.querySelectorAll("#sessionlist .row").forEach(r => {
+    r.style.display = !q || q.split(/\s+/).every(t => (r.dataset.q || "").includes(t)) ? "" : "none";
+  });
+}
+document.getElementById("sessfind").addEventListener("input", applySessionFilter);
+// ---- the conversation as a timeline ----
+// Header readings (turns, est. tokens, est. cost, peak context), a bar per
+// assistant turn showing how full the window was — the compaction cliff is
+// visible as a drop — with cumulative cost drawn over it, then the messages.
+// Tool results start collapsed: the call is the story, the payload is
+// evidence you open when you need it.
+function ctxChart(turns, st) {
+  const box = el("div","ctxbox");
+  const h = el("div","ch");
+  h.append(el("span", null, "context fill per turn"));
+  h.append(el("span", null, (st.ctx_window ? "window " + fmtCtx(st.ctx_window) + " · " : "") +
+    (st.pricing && st.pricing.known ? "line = cumulative est. cost" : "unpriced model")));
+  box.append(h);
+  const W = 1000, H = 120, PL = 6, PR = 6, PT = 10, PB = 16, n = turns.length;
+  const iw = W-PL-PR, ih = H-PT-PB, bw = iw/Math.max(1, n);
+  const maxCtx = Math.max(1, st.ctx_window || 0, ...turns.map(t => t.ctx_est));
+  const maxUsd = Math.max(1e-9, ...turns.map(t => t.cum_usd_est || 0));
+  let bars = "", line = "";
+  turns.forEach((t, i) => {
+    const x = PL + i*bw + bw*0.12, w = Math.max(1, bw*0.76), hh = t.ctx_est/maxCtx*ih;
+    bars += `<rect class="bar" data-i="${t.i}" x="${x.toFixed(1)}" y="${(PT+ih-hh).toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, hh).toFixed(1)}" rx="1">` +
+      `<title>turn ${i+1} · ${fmtTok(t.ctx_est)} tok in context${t.usd_est != null ? " · " + fmtUsd(t.usd_est) + " this turn" : ""}` +
+      `${(t.tools||[]).length ? " · " + esc(t.tools.join(", ")) : ""}</title></rect>`;
+    if (t.cum_usd_est != null) line += (i ? " L" : "M") + (x + w/2).toFixed(1) + "," + (PT + ih - (t.cum_usd_est/maxUsd)*ih).toFixed(1);
+  });
+  const capY = st.ctx_window ? (PT + ih - st.ctx_window/maxCtx*ih).toFixed(1) : null;
+  const cap = capY != null ? `<line class="cap" x1="${PL}" x2="${PL+iw}" y1="${capY}" y2="${capY}"/>` : "";
+  const svg = el("div");
+  svg.innerHTML = `<svg class="ctxsvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="context per turn">${bars}${cap}` +
+    `${line ? `<path class="cost" d="${line}"/>` : ""}<text x="${PL}" y="${H-4}">turn 1</text>` +
+    `<text x="${PL+iw}" y="${H-4}" text-anchor="end">turn ${n}</text></svg>`;
+  svg.querySelectorAll(".bar").forEach(r => r.onclick = () => {
+    const m = document.querySelector('.msg[data-i="' + r.dataset.i + '"]');
+    if (m) { m.scrollIntoView({ behavior: "smooth", block: "center" }); m.classList.add("flash"); setTimeout(() => m.classList.remove("flash"), 1200); }
+  });
+  box.append(svg);
+  return box;
 }
 let convReq = 0;
 async function loadConv(cwd, s) {
@@ -1176,13 +1738,40 @@ async function loadConv(cwd, s) {
   head.append(el("div","sub", (s.message_count||0) + " messages · " + ago(s.modified_at) + " · " + s.session_id.slice(0,8)));
   box.append(head);
   if (!data.messages || !data.messages.length) { box.append(el("div","empty","(empty)")); return; }
-  data.messages.forEach(m => box.append(renderMsg(m)));
+  const st = data.stats || {};
+  const turns = data.turns || [];
+  const lcd = el("div","lcd tight conv-stats");
+  lcdCell(lcd, st.turns || 0, "turns", "");
+  lcdCell(lcd, fmtTok(st.tokens_est), "est. tokens", "");
+  lcdCell(lcd, fmtTok(st.in_est) + "↑ " + fmtTok(st.out_est) + "↓", "in / out", "dim");
+  if (st.usd_est != null) lcdCell(lcd, "≈" + fmtUsd(st.usd_est), "est. cost", "hot");
+  else lcdCell(lcd, "—", "unpriced", "dim");
+  if (st.ctx_window && st.peak_ctx_est) {
+    const pct = st.peak_ctx_est / st.ctx_window;
+    lcdCell(lcd, Math.round(pct * 100) + "%", "peak of " + fmtCtx(st.ctx_window), pct > 0.8 ? "hot" : "dim");
+  }
+  box.append(lcd);
+  if (turns.length > 1) box.append(ctxChart(turns, st));
+  data.messages.forEach((m, i) => box.append(renderMsg(m, i, turns)));
+  if (st.note) { const n = el("div","note2", st.note); n.style.marginTop = "8px"; box.append(n); }
 }
-function renderMsg(m) {
+function renderMsg(m, i, turns) {
   const role = m.role || "assistant";
+  if (role === "system" && m.compact) {
+    const w = el("div","msg system"); w.dataset.i = i;
+    w.append(el("div","who","compaction"));
+    w.append(el("div","compact", "context compacted · " + (m.compacted_count || 0) + " earlier messages folded into a summary"));
+    if (m.content) w.append(el("div","thinking", m.content));
+    return w;
+  }
   if (role === "user" && m.isMeta) return renderMeta(m);
   const wrap = el("div", "msg " + role);
-  wrap.append(el("div","who", role));
+  wrap.dataset.i = i;
+  const who = el("div","who", role);
+  if (m.ts) who.append(el("span","ts", new Date(m.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+  const t = m.turn != null && turns ? turns[m.turn] : null;
+  if (t) who.append(el("span","tc", fmtTok(t.ctx_est) + " ctx" + (t.usd_est != null ? " · " + fmtUsd(t.usd_est) : "")));
+  wrap.append(who);
   const content = m.content;
   if (typeof content === "string") { wrap.append(el("div","text", content)); return wrap; }
   (content || []).forEach(b => { const n = renderBlock(b); if (n) wrap.append(n); });
@@ -1205,12 +1794,21 @@ function renderBlock(b) {
     return blk;
   }
   if (t === "tool_result") {
-    const blk = el("div","block result" + (b.is_error ? " err" : ""));
-    const bh = el("div","bh"); bh.append(el("span",null, b.is_error ? "⎿ error" : "⎿ result"));
-    bh.append(el("span","badge", (b.tool_use_id||"").slice(0,8))); blk.append(bh);
     let c = b.content;
     if (Array.isArray(c)) c = c.map(x => x.type === "text" ? x.text : JSON.stringify(x)).join("\n");
-    blk.append(el("pre", null, typeof c === "string" ? c : JSON.stringify(c, null, 2)));
+    const text = typeof c === "string" ? c : JSON.stringify(c, null, 2);
+    const lines = (text || "").split("\n");
+    // errors open by default — they're the thing you came to read
+    const blk = el("div","block result" + (b.is_error ? " err" : " closed"));
+    const bh = el("div","bh"); bh.append(el("span",null, b.is_error ? "⎿ error" : "⎿ result"));
+    bh.append(el("span","badge", (b.tool_use_id||"").slice(0,8)));
+    bh.append(el("span","tg", lines[0].slice(0, 100)));
+    const sz = el("span","sz"); bh.append(sz);
+    const setSz = () => { sz.textContent = fmtBytes((text || "").length) + " · " + lines.length + " line" + (lines.length===1?"":"s") + (blk.classList.contains("closed") ? " ▸" : " ▾"); };
+    setSz();
+    bh.onclick = () => { blk.classList.toggle("closed"); setSz(); };
+    blk.append(bh);
+    blk.append(el("pre", null, text));
     return blk;
   }
   if (t === "image") {
@@ -1315,18 +1913,41 @@ async function loadModels() {
   // Not a list of strings: what each model can do, side by side, from the
   // SDK's own capability table. Filter chips answer the three questions people
   // actually arrive with — what can I use now, what's free, what's locked.
+  // Grouped by the five families, with what each model costs per 1M tokens
+  // beside its window — from budget.py's table, and a dash (never a guess)
+  // where the table has no row. Local Ollama models join the open-source
+  // family with their size on disk and whether they're loaded right now.
   const info = m.model_info || {};
+  const famOrder = (m.families || []).map(f => f.id);
+  const famLabel = {}, famLogo = {};
+  (m.families || []).forEach(f => { famLabel[f.id] = f.label; famLogo[f.id] = f.logo; });
+  const famIdx = f => { const i = famOrder.indexOf(f); return i < 0 ? 99 : i; };
+  const oll = m.ollama || {};
   const allModels = [];
   m.providers.forEach(p => (p.models || []).forEach(x =>
-    allModels.push({ model: x, label: p.label || p.id, pid: p.id,
-                     backend: p.base_url, enabled: p.enabled, info: info[x] || {} })));
+    allModels.push({ model: x, label: p.label || p.id, pid: p.id, fam: p.family || "oss",
+                     backend: p.base_url, enabled: p.enabled, info: info[x] || {},
+                     price: (p.prices || {})[x] || null })));
+  (oll.models || []).forEach(om => allModels.push({
+    model: om.name, label: "local · " + fmtBytes(om.size) + (om.loaded ? " · loaded" : ""), pid: "ollama",
+    fam: "oss", backend: oll.base_url, enabled: true, info: info[om.name] || {}, local: om,
+    price: (info[om.name] || {}).price || { in: 0, out: 0, free: true } }));
+  const price2 = v => v >= 10 ? v.toFixed(0) : v.toFixed(2);
+  const priceCell = (p) => {
+    if (!p) { const s = el("span","mprice na", "—"); s.title = "no row in the price table"; return s; }
+    if (p.free) { const s = el("span","mprice free", "free"); s.title = "your hardware, no API charge"; return s; }
+    const s = el("span","mprice", "$" + price2(p.in) + " · $" + price2(p.out));
+    s.title = "$" + p.in + " in · $" + p.out + " out, per 1M tokens" + (p.cache_read != null ? " · cache read $" + p.cache_read : "");
+    return s;
+  };
   if (allModels.length) {
-    const sec = section(pad, "choose a model", allModels.length + " across " + m.providers.length + " providers");
+    const nFam = new Set(allModels.map(a => a.fam)).size;
+    const sec = section(pad, "choose a model", allModels.length + " across " + nFam + " famil" + (nFam===1?"y":"ies"));
     const bar = el("div","filters");
-    const find = findBox("Filter — gpt, claude, 200k, qwen…  ( / )");
+    const find = findBox("Filter — gpt, claude, grok, 200k, free, local…  ( / )");
     find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1";
     bar.append(find.wrap);
-    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","needs a key"]];
+    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","needs a key"], ["free","free / local"]];
     let mode = "all";
     const chips = el("div","fchips");
     FILTERS.forEach(([k, lab]) => {
@@ -1342,40 +1963,64 @@ async function loadModels() {
     sec.append(bar);
 
     const list = el("div","mtable");
-    allModels.forEach(a => {
-      const row = el("div","mrow" + (a.model===cur ? " cur" : "") + (a.enabled ? "" : " locked"));
-      row.dataset.q = (a.model + " " + a.label + " " + (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "")).toLowerCase();
-      row.dataset.state = a.enabled ? "ready" : "locked";
-      row.append(el("span","mn", a.model));
-      row.append(el("span","mp", a.label));
-      row.append(el("span","mctx", a.info.ctx ? fmtCtx(a.info.ctx) : ""));
-      const caps = el("span","mcaps");
-      if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
-      if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
-      if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
-      row.append(caps);
-      row.append(el("span","mgo", a.model===cur ? "current" : (a.enabled ? "use →" : "unlock")));
-      row.onclick = () => a.enabled ? useModel(a.model, a.backend) : focusProvider(a.pid);
-      list.append(row);
+    const head = el("div","mhead");
+    ["model", "provider", "window", "$ / 1M in · out", "capabilities", ""].forEach(x => head.append(el("span", null, x)));
+    list.append(head);
+    famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
+      const rows = allModels.filter(a => a.fam === fid);
+      if (!rows.length) return;
+      const fh = el("div","mfam"); fh.dataset.fam = fid;
+      fh.append(providerMark(famLogo[fid] || fid, famLabel[fid] || fid));
+      fh.append(document.createTextNode(famLabel[fid] || fid));
+      fh.append(el("span","cnt3", rows.length + " model" + (rows.length===1?"":"s")));
+      list.append(fh);
+      rows.forEach(a => {
+        const row = el("div","mrow" + (a.model===cur ? " cur" : "") + (a.enabled ? "" : " locked"));
+        const pr = a.price;
+        row.dataset.fam = fid;
+        row.dataset.q = (a.model + " " + a.label + " " + (famLabel[fid] || fid) + " " + a.pid + " " +
+          (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "") + (pr && pr.free ? " free" : "") +
+          (a.local ? " local ollama" + (a.local.loaded ? " loaded" : "") : "")).toLowerCase();
+        row.dataset.state = a.enabled ? "ready" : "locked";
+        row.dataset.free = (pr && pr.free) || a.local ? "1" : "";
+        row.append(el("span","mn", a.model));
+        row.append(el("span","mp", a.label));
+        const ctx = el("span","mctx", a.info.ctx ? fmtCtx(a.info.ctx) : "");
+        if (a.info.ctx_learned) { ctx.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned); ctx.textContent += "*"; }
+        row.append(ctx);
+        row.append(priceCell(pr));
+        const caps = el("span","mcaps");
+        if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
+        if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
+        if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
+        if (a.local && a.local.loaded) { const c = el("span","cap","loaded"); c.title = "in memory now"; caps.append(c); }
+        row.append(caps);
+        row.append(el("span","mgo", a.model===cur ? "current" : (a.enabled ? "use →" : "unlock")));
+        row.onclick = () => a.enabled ? useModel(a.model, a.backend) : focusProvider(a.pid);
+        list.append(row);
+      });
     });
     sec.append(list);
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
       let shown = 0;
+      const perFam = {};
       list.querySelectorAll(".mrow").forEach(r => {
         const okQ = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
-        const okF = mode === "all" || r.dataset.state === mode;
-        r.style.display = okQ && okF ? "" : "none";
+        const okF = mode === "all" || (mode === "free" ? !!r.dataset.free : r.dataset.state === mode);
+        const on = okQ && okF;
+        r.style.display = on ? "" : "none";
         r.classList.remove("kb");
-        if (okQ && okF) shown++;
+        if (on) { shown++; perFam[r.dataset.fam] = (perFam[r.dataset.fam] || 0) + 1; }
       });
+      list.querySelectorAll(".mfam").forEach(h => { h.style.display = perFam[h.dataset.fam] ? "" : "none"; });
       let e = list.querySelector(".find-none");
       if (!shown) { if (!e) { e = el("div","find-none empty",
         "Nothing matches. Self-host below to run something that isn't on this list."); list.append(e); } }
       else if (e) e.remove();
     };
     find.input.oninput = apply;
-    // Keyboard: / focuses, ↑↓ walk the visible rows, Enter switches to one.
+    // Keyboard: / focuses (global handler), ↑↓ walk the visible rows, Enter switches to one.
     let kbi = -1;
     const visible = () => [...list.querySelectorAll(".mrow")].filter(r => r.style.display !== "none");
     find.input.onkeydown = (e) => {
@@ -1388,12 +2033,33 @@ async function loadModels() {
       } else if (e.key === "Enter" && rows[kbi]) { rows[kbi].click(); }
       else if (e.key === "Escape") { find.input.value = ""; kbi = -1; apply(); }
     };
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "/" && curView === "models" && document.activeElement !== find.input
-          && !document.getElementById("modal").className) {
-        find.input.focus(); e.preventDefault();
-      }
+  }
+
+  // ---- local models — what Ollama has on disk, and what's in memory ----
+  const oSec = section(pad, "local models · ollama", (oll.base_url || "").replace(/^https?:\/\//, ""));
+  if (!oll.reachable) {
+    oSec.append(zero("Ollama isn't answering" + (oll.base_url ? " at " + oll.base_url.replace(/^https?:\/\//, "") : ""),
+      "Start it with `ollama serve` (or point OLLAMA_HOST at the box that runs it) and this list fills " +
+      "with every pulled model, its size on disk, and whether it's loaded in memory right now."));
+  } else if (!(oll.models || []).length) {
+    oSec.append(zero("Ollama is up, nothing pulled yet",
+      "`ollama pull gpt-oss:20b` (or any tag) and it appears here, ready to use with no key."));
+  } else {
+    const box = el("div","list");
+    oll.models.forEach(om => {
+      const row = el("div","orow" + (om.name===cur ? " cur" : ""));
+      row.append(el("span","on2", om.name));
+      row.append(el("span","osz", fmtBytes(om.size)));
+      row.append(el("span","opq", [om.param, om.quant].filter(Boolean).join(" ")));
+      const st = el("span","ost");
+      st.append(el("span","t2 " + (om.loaded ? "acc" : ""), om.loaded ? "loaded" + (om.vram ? " · " + fmtBytes(om.vram) : "") : "on disk"));
+      row.append(st);
+      row.append(el("span","ogo", om.name===cur ? "current" : "use →"));
+      row.title = (om.family ? om.family + " · " : "") + (om.modified_at ? "pulled " + String(om.modified_at).slice(0, 10) : "");
+      row.onclick = () => useModel(om.name, oll.base_url);
+      box.append(row);
     });
+    oSec.append(box);
   }
 
   // ---- connect a provider ----------------------------------------------
@@ -1419,15 +2085,21 @@ async function loadModels() {
   provSec.append(prog);
 
   const plist = el("div","list");
-  const ordered = [...m.providers].sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0));
+  // Family order first (OpenAI · Claude · Gemini · Grok · open source), then
+  // connected before not-yet — so the five kinds read as five groups.
+  const fIdx = p => { const i = (m.families || []).findIndex(f => f.id === (p.family || "oss")); return i < 0 ? 99 : i; };
+  const ordered = [...m.providers].sort((a, b) => (fIdx(a) - fIdx(b)) || ((b.enabled ? 1 : 0) - (a.enabled ? 1 : 0)));
+  const famName = {}; (m.families || []).forEach(f => famName[f.id] = f.label);
   ordered.forEach(p => {
     const tags = [];
+    if (famName[p.family]) tags.push({ text: famName[p.family], cls: "" });
     if (p.is_current) tags.push({ text: "in use", cls: "acc" });
+    if (p.auth === "oauth") tags.push({ text: "oauth", cls: "vio" });
     const acts = [];
     if (p.enabled) {
       const st = el("span","ready");
       st.append(el("span","dot2 ok"));
-      st.append(document.createTextNode("connected" + (p.key_source === "env" ? " · from env" : "")));
+      st.append(document.createTextNode("connected" + (p.key_source === "env" ? " · from env" : p.auth === "oauth" ? " · token" : "")));
       acts.push(st);
     } else {
       acts.push(btn("Add key", "pri", null));   // click bubbles to the row → opens setup
@@ -2121,8 +2793,16 @@ async function loadConfig() {
 loadOverview().catch(e => console.error(e));
 loadProjects().catch(e => document.getElementById("projects").append(el("div","empty","Error: " + e.message)));
 {
+  // Deep link into one conversation: /?cwd=<project path>&session=<id>. The
+  // live-activity rows use it to land in a job's session; it also makes a
+  // session URL something you can paste to the other device on the LAN.
+  const qs = new URLSearchParams(location.search);
   const t = location.hash.slice(1);
-  if (["sessions","models","skills","mcp","config"].includes(t)) showTab(t);
+  if (qs.get("session") && qs.get("cwd")) {
+    showTab("sessions");
+    loadConv(qs.get("cwd"), { session_id: qs.get("session"), title: qs.get("title") || "", modified_at: Date.now()/1000 });
+  }
+  else if (["sessions","models","skills","mcp","config"].includes(t)) showTab(t);
   else loadHome();   // default landing
 }
 </script>

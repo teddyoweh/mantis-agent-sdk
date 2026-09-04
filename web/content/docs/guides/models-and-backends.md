@@ -58,7 +58,8 @@ URL:
 | `accounts/fireworks/models/…` | `https://api.fireworks.ai/inference/v1` |
 | `Qwen/Qwen2.5-72B-Instruct` | `https://api.together.xyz/v1` (`org/repo` shape) |
 | `gpt-oss:20b` | `http://localhost:11434` — open weights, *not* served by OpenAI |
-| `claude-opus-5` | refuses: raises `BackendRoutingError`, name your backend |
+| `claude-opus-5` | Anthropic Messages API, native (`ANTHROPIC_API_KEY` or a Claude subscription login) |
+| `grok-4` | `https://api.x.ai/v1` (`XAI_API_KEY`) |
 
 ```python
 from mantis_agent import MantisAgentOptions

@@ -20,7 +20,7 @@ def test_priced_model_returns_positive_cost() -> None:
 
 def test_unpriced_and_local_return_none() -> None:
     # Guarded by the caller's `if c:` — must be None, not a bogus number or crash.
-    assert estimate_cost(_ONE_M, "gpt-5.5", "openai") is None
+    assert estimate_cost(_ONE_M, "totally-unknown-model-xyz", "openai") is None
     assert estimate_cost(_ONE_M, "qwen2.5-coder:7b", None) is None
 
 

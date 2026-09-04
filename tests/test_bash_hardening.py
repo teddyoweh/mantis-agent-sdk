@@ -11,8 +11,21 @@ import time
 
 import anyio
 
+import pytest
+
+import mantis_agent.builtin_tools.fs as fs
 from mantis_agent.builtin_tools import bash
 from mantis_agent.builtin_tools.fs import _strip_terminal_controls
+
+
+@pytest.fixture(autouse=True)
+def _fresh_global_cwd():
+    """The foreground shell's tracked cwd is process-global for direct callers;
+    a ``cd`` here must not leak into later test files (it made
+    ``test_agent_cwd_scoping`` order-dependent)."""
+    fs._BASH_CWD_BY_SCOPE["__global__"] = {"cwd": None}
+    yield
+    fs._BASH_CWD_BY_SCOPE["__global__"] = {"cwd": None}
 
 
 def test_interactive_editor_does_not_hang(tmp_path) -> None:

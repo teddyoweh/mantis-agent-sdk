@@ -445,10 +445,11 @@ def test_query_dict_options_budget_exceeded_mid_stream_maps_to_error_subtype():
     a generic ``error_during_execution``. This regression-guards the
     exception-translation block that lives after the ``async for``."""
 
-    # A high-cost first turn that immediately blows the $0.0001 cap.
-    # Pricing for unknown models is 0, so we set a max_turns=1 ceiling
-    # instead — the second turn never starts because the loop hits
-    # the turn cap, raising ``error_max_turns``.
+    # Pricing for unknown models is 0, so a USD cap can't fire; the run is
+    # cut off by ``max_turns=1`` instead — the model still wanted a tool on
+    # its only turn, so the result is ``error_max_turns``. The USD ceiling
+    # alongside must not change that (it once did: the shortcut budget
+    # mirrored max_turns and raised on the very turn the loop had scheduled).
     events_turn1 = (
         _msg()
         + _tool_use_block(0, "c1", "double", '{"x": 1}')
@@ -486,7 +487,7 @@ def test_query_dict_options_budget_exceeded_mid_stream_maps_to_error_subtype():
     result = next(m for m in reversed(seen) if isinstance(m, SDKResultMessage))
     assert result.is_error is True
     assert result.subtype == "error_max_turns", result.subtype
-    assert any("BudgetExceededError" in e for e in result.errors)
+    assert any("max_turns" in e for e in result.errors), result.errors
 
 
 # ---------------------------------------------------------------------------

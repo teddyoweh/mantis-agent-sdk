@@ -19,16 +19,20 @@ so a runaway ``find /`` or a huge log can't blow up the context window.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import anyio
 
 from ..tools import Tool, tool
+
+_LOG = logging.getLogger("mantis_agent.builtin_tools.fs")
 
 # Caps — keep tool output from swamping the model's context window.
 _MAX_OUTPUT = 30_000  # chars of bash stdout/stderr returned
@@ -93,6 +97,40 @@ AGENT_CWD: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 def agent_cwd() -> str | None:
     """The active agent working directory, or None for the process cwd."""
     return AGENT_CWD.get()
+
+
+#: Opt-in live output for the foreground ``bash`` tool. When set, stdout and
+#: stderr are read incrementally as the child produces them and every decoded,
+#: control-stripped chunk is handed to the callback ``on_output(chunk: str)`` —
+#: so a terminal can render a build's progress instead of a blank spinner until
+#: the command exits. ``None`` (the default) keeps the buffered
+#: ``proc.communicate()`` path byte-for-byte unchanged. A ContextVar, like the
+#: scope/cwd above, so a UI can install it once in its main task (child tasks
+#: inherit the context) or scope it to a single run with the returned token.
+#: The tool's own result string is unaffected: same truncation, timeout, kill
+#: and cwd-persistence semantics whether or not a sink is installed.
+BashOutputSink = Callable[[str], Any]
+BASH_OUTPUT_SINK: contextvars.ContextVar[BashOutputSink | None] = contextvars.ContextVar(
+    "mantis_bash_output_sink", default=None
+)
+
+
+def set_bash_output_sink(on_output: BashOutputSink | None) -> contextvars.Token:
+    """Install ``on_output`` as the live-output sink for foreground ``bash``
+    calls made from this context (and tasks spawned after this call). Pass
+    ``None`` to switch the streaming path off. Returns a token for
+    :func:`reset_bash_output_sink`."""
+    return BASH_OUTPUT_SINK.set(on_output)
+
+
+def reset_bash_output_sink(token: contextvars.Token) -> None:
+    """Restore the sink that was active before the matching ``set`` call."""
+    BASH_OUTPUT_SINK.reset(token)
+
+
+def bash_output_sink() -> BashOutputSink | None:
+    """The live-output sink active in this context, or ``None``."""
+    return BASH_OUTPUT_SINK.get()
 
 
 def resolve_path(path: str | Path) -> Path:
@@ -442,21 +480,18 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
         cwd=cwd,
         start_new_session=True,
     )
+    sink = BASH_OUTPUT_SINK.get()
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout)
+        if sink is None:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout)
+        else:
+            # Opt-in live output: same process, same timeout, same kill —
+            # only the read side differs (incremental, bounded, forwarded).
+            stdout, stderr = await asyncio.wait_for(
+                _pump_streams(proc, stdin_bytes, sink), timeout
+            )
     except (TimeoutError, asyncio.TimeoutError):
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), 2)
-        except (TimeoutError, asyncio.TimeoutError):
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                proc.kill()
-            await proc.wait()
+        await _kill_process_group(proc)
         raise TimeoutError(
             f"command timed out after {timeout}s (is it interactive, waiting "
             f"on input, or a long-running server? use run_in_background=True "
@@ -477,6 +512,143 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
     if proc.returncode != 0:
         body = f"{body}\n[exit code: {proc.returncode}]".lstrip()
     return _truncate(body) or f"(no output, exit code {proc.returncode})"
+
+
+async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """SIGTERM the child's whole process group, escalate to SIGKILL after 2s,
+    and reap it. Shared by the buffered and streaming foreground paths so a
+    timeout behaves identically on both."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), 2)
+    except (TimeoutError, asyncio.TimeoutError):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+        await proc.wait()
+
+
+# Bounds for the streaming path's in-memory copy of the output. ``communicate``
+# buffers unboundedly; here we keep the first ``_STREAM_HEAD_BYTES`` (more than
+# ``_truncate`` will ever return) plus a small tail (the trailing ``$PWD``
+# marker line must survive) and count what fell between.
+_STREAM_HEAD_BYTES = _MAX_OUTPUT * 4
+_STREAM_TAIL_BYTES = 8192
+_STREAM_READ_SIZE = 4096
+
+
+class _BoundedBuf:
+    """Head + tail byte buffer with a dropped-bytes counter."""
+
+    __slots__ = ("_head", "_tail", "_dropped")
+
+    def __init__(self) -> None:
+        self._head = bytearray()
+        self._tail = bytearray()
+        self._dropped = 0
+
+    def append(self, chunk: bytes) -> None:
+        room = _STREAM_HEAD_BYTES - len(self._head)
+        if room >= len(chunk):
+            self._head += chunk
+            return
+        if room > 0:
+            self._head += chunk[:room]
+            chunk = chunk[room:]
+        self._dropped += len(chunk)
+        self._tail += chunk
+        if len(self._tail) > _STREAM_TAIL_BYTES:
+            del self._tail[: len(self._tail) - _STREAM_TAIL_BYTES]
+
+    def value(self) -> bytes:
+        if not self._dropped:
+            return bytes(self._head)
+        elided = self._dropped - len(self._tail)
+        note = f"\n… [{elided} bytes elided while streaming]\n".encode()
+        return bytes(self._head) + note + bytes(self._tail)
+
+
+def _without_marker_lines(text: str) -> str:
+    return "".join(
+        ln for ln in text.splitlines(keepends=True) if not ln.startswith(_CWD_MARKER)
+    )
+
+
+async def _pump_streams(
+    proc: asyncio.subprocess.Process, stdin_bytes: bytes, sink: BashOutputSink,
+) -> tuple[bytes, bytes]:
+    """Feed stdin, read stdout/stderr concurrently in chunks, forward each
+    decoded chunk to ``sink`` and return the (bounded) captured bytes — the
+    streaming counterpart of ``proc.communicate``.
+
+    stdout is forwarded a whole line at a time so the internal ``$PWD``
+    marker line the wrapper prints can be withheld; stderr chunks go straight
+    through. A sink that raises is logged and ignored — live rendering must
+    never change what the model gets back.
+    """
+    import codecs  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
+
+    async def emit(text: str) -> None:
+        text = _strip_terminal_controls(text)
+        if not text:
+            return
+        try:
+            res = sink(text)
+            if inspect.isawaitable(res):
+                await res
+        except Exception:  # noqa: BLE001 — a UI callback must not break the tool
+            _LOG.debug("bash output sink raised", exc_info=True)
+
+    async def feed_stdin() -> None:
+        assert proc.stdin is not None
+        try:
+            if stdin_bytes:
+                proc.stdin.write(stdin_bytes)
+                await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # child exited before reading — same as communicate()
+        finally:
+            try:
+                proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def pump(stream: asyncio.StreamReader, buf: _BoundedBuf, is_stdout: bool) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        held = ""  # stdout: partial trailing line, withheld until it completes
+        while True:
+            chunk = await stream.read(_STREAM_READ_SIZE)
+            if not chunk:
+                break
+            buf.append(chunk)
+            text = decoder.decode(chunk)
+            if not is_stdout:
+                await emit(text)
+                continue
+            held += text
+            nl = held.rfind("\n")
+            if nl == -1:
+                continue
+            ready, held = held[: nl + 1], held[nl + 1:]
+            await emit(_without_marker_lines(ready))
+        held += decoder.decode(b"", final=True)
+        if held:
+            await emit(_without_marker_lines(held) if is_stdout else held)
+
+    out_buf, err_buf = _BoundedBuf(), _BoundedBuf()
+    assert proc.stdout is not None and proc.stderr is not None
+    await asyncio.gather(
+        feed_stdin(),
+        pump(proc.stdout, out_buf, True),
+        pump(proc.stderr, err_buf, False),
+    )
+    await proc.wait()
+    return out_buf.value(), err_buf.value()
 
 
 # ---------------------------------------------------------------------------

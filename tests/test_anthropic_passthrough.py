@@ -1,7 +1,7 @@
 """Anthropic passthrough — offline tests.
 
-The adapter ships with one purpose: A/B parity testing of an
-mantis-agent-sdk run against real Claude. These tests verify the parts
+The adapter is the Claude provider — one of the five first-class families
+(OpenAI, Claude, Gemini, Grok, open-source). These tests verify the parts
 that don't need live API contact:
 
 * Construction + auth header derivation (env-var fallback, missing-key
@@ -87,11 +87,14 @@ class TestAnthropicRouting:
             == "anthropic_passthrough"
         )
 
-    def test_bare_claude_model_does_not_route_here(self) -> None:
-        """We don't auto-route claude-* model names to this adapter —
-        that would undermine the "don't proxy Anthropic" stance."""
-        # claude-* falls through to the bare-name openai_compat default.
-        assert detect_provider("claude-sonnet-4-5") == "openai_compat"
+    def test_bare_claude_model_routes_here(self) -> None:
+        """Claude is first-class: a bare ``claude-*`` name selects this
+        adapter, so ``Agent(model="claude-opus-5")`` needs no backend."""
+        assert detect_provider("claude-sonnet-4-5") == "anthropic_passthrough"
+        assert detect_provider("claude-opus-5") == "anthropic_passthrough"
+        assert detect_provider("claude/claude-sonnet-5") == "anthropic_passthrough"
+        # Other bare names still take the OpenAI-compat default.
+        assert detect_provider("qwen2.5:7b") == "openai_compat"
 
     def test_registry_resolves_passthrough(self) -> None:
         cls = resolve("anthropic_passthrough")
@@ -829,6 +832,44 @@ class TestAgentBuildsProvider:
         assert isinstance(agent.provider, AnthropicPassthroughProvider)
         # Sentinel uses the provider's default base URL.
         assert agent.provider.base_url == ANTHROPIC_DEFAULT_BASE_URL
+        anyio.run(agent.provider.aclose)
+
+    def test_bare_claude_model_builds_passthrough_provider(
+        self, monkeypatch
+    ) -> None:
+        """``Agent(model="claude-opus-5")`` with ANTHROPIC_API_KEY set and no
+        other config: first-class, no backend, no api_key kwarg."""
+        from mantis_agent import Agent
+
+        monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+        agent = Agent(model="claude-opus-5")
+        assert isinstance(agent.provider, AnthropicPassthroughProvider)
+        assert agent.provider.base_url == ANTHROPIC_DEFAULT_BASE_URL
+        assert {k.lower(): v for k, v in agent.provider.client.headers.items()}[
+            "x-api-key"] == "sk-ant-from-env"
+        # The adapter's profile is adopted so cost tracking keys on "anthropic".
+        assert agent.backend_capability is not None
+        assert agent.backend_capability.provider_hint == "anthropic"
+        # And the capability table knows the model.
+        assert agent.model_capability.supports_native_tools is True
+        assert agent.model_capability.context_window >= 200_000
+        anyio.run(agent.provider.aclose)
+
+    def test_bare_claude_model_with_oauth_token_builds_passthrough_provider(
+        self, monkeypatch
+    ) -> None:
+        """A subscription/gateway Bearer token alone is enough."""
+        from mantis_agent import Agent
+
+        monkeypatch.delenv("MANTIS_AGENT_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-" + "A" * 40)
+        agent = Agent(model="claude-sonnet-5")
+        assert isinstance(agent.provider, AnthropicPassthroughProvider)
+        headers = {k.lower(): v for k, v in agent.provider.client.headers.items()}
+        assert headers["authorization"].startswith("Bearer sk-ant-oat01-")
+        assert "oauth-2025-04-20" in headers["anthropic-beta"]
         anyio.run(agent.provider.aclose)
 
 

@@ -183,9 +183,9 @@ def test_family_capability_snapshot() -> None:
     # session — a regression in any one (like the o-series 128k→200k) fails here.
     from mantis_agent.capabilities import lookup_model
     expected = {
-        "gpt-4o": (True, 128000), "gpt-5.4": (True, 128000),
+        "gpt-4o": (True, 128000), "gpt-5.4": (True, 400000),
         "o1": (True, 200000), "o3-mini": (True, 200000), "o4-mini": (True, 200000),
-        "claude-opus-4-8": (True, 200000), "gemini-2.5-pro": (True, 1000000),
+        "claude-opus-4-8": (True, 1000000), "gemini-2.5-pro": (True, 1048576),
         "glm-4.7": (True, 128000), "deepseek-chat": (True, 65536),
         "kimi-latest": (True, 131072), "qwen2.5-coder:7b": (True, 32768),
         "llama3.1:8b": (True, 131072),
@@ -1193,7 +1193,7 @@ def test_resolve_provider_name_jumps_to_flagship() -> None:
 
 def test_resolve_tier_word_via_fuzzy_targets_specific_model() -> None:
     # "opus"/"sonnet"/"haiku" aren't provider names but uniquely match one id.
-    assert catalog.resolve_model_query("opus", _ACTIVE).model == "claude-opus-4-8"
+    assert catalog.resolve_model_query("opus", _ACTIVE).model == "claude-opus-5"
     assert catalog.resolve_model_query("sonnet", _ACTIVE).model == "claude-sonnet-5"
 
 

@@ -119,9 +119,19 @@ CATALOG: tuple[Provider, ...] = (
     Provider(
         "gemini", "Gemini",
         "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY",
-        ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"),
-        "aistudio.google.com",
+        ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"),
+        "aistudio.google.com · thinking budgets",
         key_env_aliases=("GOOGLE_API_KEY",),
+    ),
+    # xAI is OpenAI-compatible at api.x.ai. grok-4 reasons always-on;
+    # grok-3-mini takes reasoning_effort low/high; grok-4-fast is the cheap
+    # 2M-context tier (reasoning and non-reasoning variants share the id
+    # prefix).
+    Provider(
+        "xai", "Grok (xAI)", "https://api.x.ai/v1", "XAI_API_KEY",
+        ("grok-4", "grok-4-fast", "grok-3", "grok-3-mini"),
+        "console.x.ai · Grok 4",
+        key_env_aliases=("GROK_API_KEY",),
     ),
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
@@ -144,21 +154,24 @@ CATALOG: tuple[Provider, ...] = (
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-        # Public-endpoint catalog as of 2026-08-04: production gpt-oss-120b,
-        # then the two previews. llama-3.3-70b used to be here and is gone —
-        # it now resolves only on a Dedicated Endpoint, so offering it as a
-        # starter pick sent people to a model their key cannot reach.
-        # zai-glm-4.7 is last on purpose: deprecated 2026-08-17.
-        ("gpt-oss-120b", "gemma-4-31b", "zai-glm-4.7"),
+        # Public-endpoint catalog as of 2026-09-04 (https://api.cerebras.ai/
+        # public/v1/models): production gpt-oss-120b first, then gemma-4-31b
+        # and qwen-3.8-27b. llama-3.3-70b and zai-glm-4.7 are gone — they
+        # resolve only on Dedicated Endpoints now — so offering either sent
+        # people to a model their key cannot reach. The keyless refresh
+        # (``refresh_public_models``) keeps this list current at runtime.
+        ("gpt-oss-120b", "gemma-4-31b", "qwen-3.8-27b"),
         "cloud.cerebras.ai · very fast · hosts OpenAI gpt-oss",
     ),
-    # Anthropic is NOT OpenAI-compatible — mantis routes api.anthropic.com to the
-    # anthropic_passthrough provider, and its /models + auth use x-api-key +
-    # anthropic-version headers (handled by _models_headers below). Listed here
-    # so it shows up in `mantis setup` and /models like any other provider.
+    # Anthropic is NOT OpenAI-compatible — mantis routes api.anthropic.com (and
+    # any bare claude-* model name) to the native anthropic_passthrough
+    # provider; its /models + auth use x-api-key + anthropic-version headers
+    # (handled by _models_headers below). A first-class provider like the rest.
     Provider(
         "anthropic", "Claude (Anthropic)", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY",
-        ("claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-fable-5"),
+        # One id per tier so a bare "opus"/"sonnet"/"haiku" resolves uniquely;
+        # the live /v1/models refresh fills in the rest.
+        ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-fable-5-1"),
         "console.anthropic.com · Claude (Opus/Sonnet/Haiku)",
     ),
 )
@@ -209,6 +222,7 @@ KEY_SHAPES: dict[str, tuple[str | None, str]] = {
     "groq": ("gsk_", "console.groq.com/keys"),
     "gemini": ("AIza", "aistudio.google.com/apikey"),
     "fireworks": ("fw_", "fireworks.ai/account/api-keys"),
+    "xai": ("xai-", "console.x.ai"),
     "openai": (None, "platform.openai.com/api-keys"),
     "deepseek": (None, "platform.deepseek.com/api_keys"),
     "moonshot": (None, "platform.moonshot.ai/console/api-keys"),
@@ -420,6 +434,8 @@ def provider_for_model(model_id: str) -> Provider | None:
         "o3": "openai",
         "o4": "openai",
         "gemini-": "gemini",
+        "grok-": "xai",
+        "grok/": "xai",
         "claude-": "anthropic",
         "claude/": "anthropic",
     }
@@ -486,6 +502,7 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "openai": "openai", "gpt": "openai", "chatgpt": "openai",
     "anthropic": "anthropic", "claude": "anthropic",
     "gemini": "gemini", "google": "gemini",
+    "xai": "xai", "grok": "xai", "x.ai": "xai",
     "deepseek": "deepseek",
     "moonshot": "moonshot", "kimi": "moonshot",
     "qwen": "qwen", "alibaba": "qwen", "dashscope": "qwen",

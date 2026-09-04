@@ -8,6 +8,120 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.63.0] - 2026-09-04
+
+### Added — five provider families, first-class
+
+- **Claude is a first-class provider now.** `claude-*` model names used to raise
+  `BackendRoutingError` with a pointer at Anthropic's own SDK. They now route
+  to the native Anthropic Messages API adapter automatically:
+  `Agent(model="claude-opus-5")` with `ANTHROPIC_API_KEY` (or a Claude
+  subscription login) needs nothing else. The adapter maps the universal
+  `thinking` config per generation — `budget_tokens` on Haiku 4.5 and older,
+  `adaptive` plus `output_config.effort` on Opus 4.7+/5 and Sonnet 5, effort
+  only on Fable — drops `temperature` where sampling was removed, and retries
+  once with the other thinking form on an unknown id. The "parity testing
+  only" framing is gone from the docstrings and docs.
+- **xAI Grok.** `grok-*` routes to `https://api.x.ai/v1` with `XAI_API_KEY`
+  (`GROK_API_KEY` accepted as an alias). Catalog entry `xai` ("Grok (xAI)"),
+  `/enable xai`, key-shape hint (`xai-…`, console.x.ai), provider guide,
+  capability rows for grok-4 / grok-4-fast / grok-3 / grok-3-mini /
+  grok-code-fast, pricing and context limits. `reasoning_effort` is sent only
+  to the models that accept it; `reasoning_content` deltas surface as thinking
+  blocks.
+- **Native reasoning knobs on OpenAI and Gemini.** The universal `thinking`
+  config is shaped per backend profile: OpenAI reasoning models get
+  `reasoning_effort` and `max_completion_tokens` with `temperature` dropped;
+  Gemini gets `reasoning_effort` for effort words and an exact
+  `thinking_config.thinking_budget` via `extra_body` for a numeric budget,
+  with thought parts surfacing as thinking blocks. Vendor env keys now win by
+  host — a stale `OPENAI_API_KEY` no longer outranks `XAI_API_KEY` for Grok.
+- **Bare hosted names get their vendor URL.** `gpt-*`, o-series, `gemini-*`
+  and `grok-*` without `backend=` go to the vendor instead of falling through
+  to `localhost:8000`.
+- **Capability, pricing and context tables** for current models across all
+  five families (gpt-5 / o3 / o4-mini, claude-opus-5 / sonnet-5 / haiku-4-5,
+  gemini-2.5 and 3, grok-4), with longest-prefix fallback. `mantis-agent probe`
+  and `list-models` work against every family with the right auth headers.
+
+### Added — the terminal, a lot better
+
+- **`/dash` — a mini dashboard inside the terminal.** One panel that fits
+  80x24: model with provider family and auth source, a context-window bar
+  with the same green/yellow/red ramp everywhere, session cost and tokens,
+  permission mode, effort and sandbox state, background jobs and workflow
+  runs, MCP servers and tool counts, skills, and the last files edited.
+  `/dash live` repaints in place every two seconds until you press a key.
+  `/status` now opens with the one-line form of the same facts.
+- **Footer** shows the provider family glyph and name next to the model,
+  context percentage on the colour ramp, session cost, and the permission
+  mode, degrading gracefully by width and never wrapping.
+- **Five-family model switching.** `/model claude-opus-5`, `/model grok-4`,
+  `/model gemini-2.5-pro`, `/model gpt-5` all switch with a one-line
+  confirmation naming the route and the key source. A locked provider prints
+  the exact `/enable <id>` command, the key shape, and the console URL.
+  `/models` groups by family (Local, OpenAI, Claude, Gemini, Grok, Hosted OSS,
+  Self-host) with auth state per group; bare `/enable` and `/disable` print
+  the same table.
+- **Live shell output.** Foreground `bash` calls stream their output as it
+  arrives: the engine's shell tool gained an opt-in output sink
+  (`set_bash_output_sink`), and the terminal shows a live tail under the
+  call line with an elapsed clock, replaced by the usual result preview when
+  the command exits. Without a sink the tool's behaviour is byte-identical.
+- **Rendering.** Thinking is collapsed to one dim line with a token count
+  (`/thinking show|hide|collapse`); the spinner names the in-flight tool with
+  its own elapsed clock; provider errors (401, 404, 429, overflow,
+  unreachable) render as one boxed hint with the fix line and never a
+  traceback; tool result previews cut to width.
+
+### Added — `mantis serve`, an instrument panel for all five families
+
+- **Overview** opens with the signal path (families ready, current model,
+  running work, sessions, seven-day spend), five family cards with logo,
+  auth state (saved key, env, OAuth, none), last-used model and a one-click
+  connection test, a live list of background jobs and workflow runs, and a
+  spend card with a 7/30-day toggle and a per-provider ledger.
+- **Sessions** render the conversation timeline with tool results collapsed,
+  a context-fill-per-turn chart with the window ceiling and a cumulative
+  cost line, compaction cliffs, and a deep link per session. Session cost is
+  estimated from transcript text and drawn hatched; workflow runs carry real
+  usage and are drawn solid. USD is left blank rather than guessed.
+- **Models** group by family with a per-provider price column (the same OSS
+  id costs differently on Groq and Together), learned context limits, a
+  free/local filter, and an Ollama section showing size, quantisation, and
+  whether the model is loaded.
+- New JSON endpoints under the existing LAN-token check: `/api/providers`,
+  `/api/spend`, `/api/activity`, `/api/workflow`, `/api/ollama`, with
+  `/api/session`, `/api/models` and `/api/overview` extended.
+- Keyboard navigation (`g o`, `g s`, `g m`, `/` for search), auto-refresh
+  that pauses while the tab is hidden, dark theme, and a 900px breakpoint.
+  Still no external assets, so it works offline.
+- Fixed a redaction gap: `"api_key": "value"` with a quote before the colon
+  escaped the key masker.
+
+### Fixed — engine audit across providers
+
+- Tool calls with empty or duplicated ids (Gemini's OpenAI-compat endpoint,
+  some vLLM builds) collapsed into one result slot; ids are now minted per
+  call and saved histories are re-keyed.
+- Inline `<think>` text leaked into answer text for models the capability
+  table didn't flag; the engine now splits it after assembly.
+- `max_usd` combined with `max_steps` raised `BudgetExceededError` on the
+  wrap-up turn instead of stopping cleanly; and the persist nudge no longer
+  contradicts a wrap-up reminder it just issued.
+- Abandoning a run mid-tool (budget error, consumer breaking out of
+  `run_iter`) left a dangling `tool_use`; the list is healed on every exit.
+- A crashing `can_use_tool` killed the run with no denial recorded; it now
+  fails closed and shows up in `permission_denials`, which also reset per run.
+- Stale or duplicate `tool_result`s in a rewound transcript were sent as-is
+  (an Anthropic 400); history repair now drops them, and a message-invariant
+  check runs before every provider call with a clear `MessageInvariantError`.
+- `response_format` / `response_model` on Anthropic raised on every turn;
+  structured output now picks native envelope, `json_object` plus a schema
+  instruction, or instruct-only per backend.
+- A plain `max_turns` cutoff reported `success`; it now reports
+  `error_max_turns`.
+
 ### Added — the four things dogfooding said were missing
 
 - **`response_model` — ask for a type, get an instance.** Structured output
@@ -988,6 +1102,8 @@ reading it. Each was invisible from the source and obvious from a run.
   set the model string but the running agent kept the old model).
 
 ## [Unreleased]
+
+## [2.63.0] - 2026-09-04
 
 ### Added
 

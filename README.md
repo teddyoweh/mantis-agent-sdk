@@ -1,6 +1,6 @@
 # mantis-agent-sdk
 
-**The Claude Agent SDK, for open-source models.** Write to Anthropic's `claude-agent-sdk` API; run the loop against Llama, Qwen, DeepSeek, GLM, Phi, or Gemma — anything you serve through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter. The migration is one import:
+**The Claude Agent SDK, for every model.** Write to Anthropic's `claude-agent-sdk` API once; run the same loop against **Claude, OpenAI, Gemini, Grok, or any open-weight model** — Llama, Qwen, DeepSeek, GLM, Kimi, Phi, Gemma — served through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter. The migration is one import:
 
 ```python
 # Before
@@ -10,7 +10,15 @@ from claude_agent_sdk import query, MantisAgentOptions, tool
 from mantis_agent import query, MantisAgentOptions, tool
 ```
 
-That's the whole diff. Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, the wire format underneath is OpenAI-compat or Ollama.
+That's the whole diff. Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, and underneath it speaks Anthropic Messages, OpenAI chat completions, or Ollama, whichever the model you named needs. Five provider families, one env var each:
+
+| Family | `model=` | Key |
+| --- | --- | --- |
+| Claude | `claude-opus-5`, `claude-sonnet-5` | `ANTHROPIC_API_KEY` (or a Claude subscription login) |
+| OpenAI | `gpt-5`, `o4-mini` | `OPENAI_API_KEY` |
+| Gemini | `gemini-2.5-pro` | `GEMINI_API_KEY` |
+| Grok | `grok-4` | `XAI_API_KEY` |
+| Open-weight | `qwen3:32b`, `Qwen/Qwen3-235B-A22B` | none locally · `TOGETHER_API_KEY` etc. hosted |
 
 **Two ways in**, one `pip install`: the **[`mantis` terminal](#the-mantis-terminal)** — a Claude-Code-style coding agent you run in any directory — and the **[Python library](#quick-start)** for building your own agents on top of the same engine.
 
@@ -229,9 +237,10 @@ Auto-routing reads the model name shape (see `mantis_agent/routing.py`):
 | `name:tag` (e.g. `qwen3:8b`)               | Ollama (`http://localhost:11434`)             | —                                           |
 | `org/repo` (e.g. `Qwen/Qwen3-235B-...`)    | Together AI                                   | `TOGETHER_API_KEY`                          |
 | `accounts/fireworks/models/...`            | Fireworks AI                                  | `FIREWORKS_API_KEY`                         |
-| `gpt-*`, `o1-*`, `o3-*`, `o4-*`            | OpenAI native                                 | `OPENAI_API_KEY`                            |
-| `gemini-*`                                 | Google Gen-Lang (OpenAI-compat)               | `GEMINI_API_KEY`                            |
-| `claude-*`                                 | refused — use the real `claude-agent-sdk`     | —                                           |
+| `gpt-*`, `o1-*`, `o3-*`, `o4-*`            | OpenAI native (reasoning knobs mapped)        | `OPENAI_API_KEY`                            |
+| `gemini-*`                                 | Google Gen-Lang (thinking budget mapped)      | `GEMINI_API_KEY`                            |
+| `claude-*`                                 | Anthropic Messages API, native                | `ANTHROPIC_API_KEY` / subscription OAuth    |
+| `grok-*`                                   | xAI (reasoning effort mapped)                 | `XAI_API_KEY`                               |
 | anything else                              | Ollama default                                | —                                           |
 
 For Groq, Moonshot (Kimi native), DeepSeek native, OpenRouter, Cerebras, DeepInfra, Anyscale, LM Studio, self-hosted vLLM / llama.cpp / TGI — pass `backend=` explicitly or set `MANTIS_AGENT_BASE_URL` (see **Custom backend** above). The pattern is the same: it's an OpenAI-compatible URL plus an API key.
@@ -407,7 +416,8 @@ The full surface, laid out honestly — what's shipped (almost all of it) and wh
 - [x] Mock provider for tests
 - [x] Auto-route from model name shape — no `backend=` needed
 - [x] Modal serverless adapter
-- [x] Anthropic via separate `anthropic_passthrough` (for parity testing only)
+- [x] Anthropic native Messages API — `claude-*` routes to it automatically (API key or subscription OAuth)
+- [x] xAI Grok (`grok-*`) with reasoning effort mapped
 
 **Tool use**
 - [x] Path A: native via OpenAI-compat `tools[]`

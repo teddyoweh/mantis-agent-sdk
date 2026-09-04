@@ -55,6 +55,21 @@ GUIDES: dict[str, dict[str, Any]] = {
         ],
         "free_note": "Free tier with rate limits; paid tier unlocks higher quotas.",
     },
+    "xai": {
+        "name": "Grok (xAI)",
+        "env_var": "XAI_API_KEY",
+        "keys_url": "https://console.x.ai/",
+        "signup_url": "https://console.x.ai/",
+        "pricing_url": "https://docs.x.ai/docs/models",
+        "steps": [
+            "Sign in at console.x.ai (an X account works)",
+            "Create or pick a team, then open 'API Keys'",
+            "Click 'Create API key', name it, and copy the xai- key (shown once)",
+            "Add credits under Billing (prepaid; per-token pricing)",
+            "Export it as XAI_API_KEY (GROK_API_KEY is accepted too)",
+        ],
+        "free_note": "No ongoing free tier; prepaid credits, with promotional credits for new teams at times.",
+    },
     "groq": {
         "name": "Groq",
         "env_var": "GROQ_API_KEY",

@@ -1,12 +1,12 @@
-"""Anthropic passthrough — talk to Anthropic's native Messages API.
+"""Anthropic — talk to Claude over the native Messages API.
 
-This adapter is **for parity testing only**. mantis-agent-sdk does not aim
-to proxy Claude — if your production code targets Claude you should use
-the real ``claude-agent-sdk``. The reason we ship a passthrough is the
-inverse: when you build something on mantis-agent-sdk against an OSS model,
-you almost always want to A/B it against Claude at some point ("does my
-agent loop work as well on Claude as it does on Qwen?"). Going through
-this adapter is the way to do that without rewriting your SDK calls.
+Claude is a **first-class provider** here, alongside OpenAI, Gemini, Grok and
+the open-source backends. ``Agent(model="claude-opus-5")`` with
+``ANTHROPIC_API_KEY`` (or a subscription OAuth token in
+``ANTHROPIC_AUTH_TOKEN``) set needs no other configuration: ``routing.py``
+maps ``claude-*`` to the ``"anthropic"`` sentinel and
+:func:`mantis_agent.providers.base.detect_provider` maps both the sentinel
+and a bare ``claude-*`` name to this adapter.
 
 Why it's a separate adapter, not folded into ``openai_compat``
 -------------------------------------------------------------
@@ -26,37 +26,48 @@ shape from). So the streaming hot path is unusually clean: every
 inbound Anthropic event maps to exactly one of our ``StreamEvent``
 variants with a tiny amount of unwrapping.
 
-Opt-in
-------
-This provider is **never** auto-selected by model name. ``routing.py``
-still refuses ``claude-*`` model names with :class:`BackendRoutingError`,
-preserving the "we don't proxy Anthropic" stance. To use this provider
-you must explicitly opt in, in any of these forms:
+Thinking
+--------
+The universal ``thinking`` config is translated per model generation, because
+Anthropic changed the knob (see :func:`_claude_generation`):
 
-* Pass an instance directly::
+* Haiku 4.5, Sonnet/Opus 4.5 and older, and the 4.6 pair: the fixed-budget
+  form ``{"type": "enabled", "budget_tokens": N}`` (``max_tokens`` is raised
+  above the budget when needed — the API requires ``budget_tokens <
+  max_tokens``).
+* Opus 4.7 / 4.8 / 5, Sonnet 5: ``{"type": "adaptive"}`` plus
+  ``output_config: {"effort": …}`` derived from the budget (``budget_tokens``
+  is rejected with a 400 there).
+* Fable / Mythos: thinking is always on and an explicit block is rejected;
+  only ``output_config.effort`` is sent.
 
-      provider = AnthropicPassthroughProvider(api_key=...)
-      agent = Agent(model="claude-sonnet-4-5", provider=provider)
+Selecting this adapter
+----------------------
+Any of these forms works:
 
-* Pass an Anthropic API URL as the backend::
+* A bare Claude model name (auto-routed)::
 
-      agent = Agent(
-          model="claude-sonnet-4-5",
-          backend="https://api.anthropic.com/v1",
-      )
+      agent = Agent(model="claude-opus-5")
 
-* Pass the literal sentinel ``"anthropic"`` as backend::
+* The literal sentinel ``"anthropic"`` as backend::
 
-      agent = Agent(model="claude-sonnet-4-5", backend="anthropic")
+      agent = Agent(model="claude-opus-5", backend="anthropic")
 
-Either of the URL / sentinel forms routes through
-:func:`mantis_agent.providers.base.detect_provider` to this adapter
-without invoking the bare-model routing path that would otherwise raise.
+* An Anthropic API URL, or an Anthropic-Messages gateway path
+  (``…/anthropic/v1`` — Bedrock Access Gateway, Azure Foundry, LiteLLM)::
+
+      agent = Agent(model="claude-opus-5", backend="https://api.anthropic.com/v1")
+
+* An instance, when you want to set headers / beta flags yourself::
+
+      provider = AnthropicPassthroughProvider(api_key=..., anthropic_beta="...")
+      agent = Agent(model="claude-opus-5", provider=provider)
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import AsyncIterator, Iterable
 from typing import Any
 from uuid import uuid4
@@ -135,9 +146,7 @@ _PAYLOAD_ENCODER = msgspec.json.Encoder()
 
 
 class AnthropicPassthroughProvider(HTTPProviderMixin):
-    """Adapter for the native Anthropic Messages API.
-
-    Parity-testing tool only. See module docstring for the rationale.
+    """Adapter for the native Anthropic Messages API — the Claude provider.
 
     Parameters
     ----------
@@ -271,16 +280,18 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
 
         ``thinking`` is the universal reasoning config —
         ``{"type": "adaptive"|"enabled"|"disabled", "budget_tokens": int|None}``.
-        It maps to Anthropic's native ``thinking`` block (``{"type": "enabled",
-        "budget_tokens": N}`` when a budget is given, else ``{"type": "adaptive"}``
-        / ``{"type": "disabled"}``). An explicit ``extra["thinking"]`` wins. When
-        ``thinking`` is ``None`` the request body is byte-for-byte unchanged.
+        It maps to Anthropic's native knob for the model's generation — the
+        ``{"type": "enabled", "budget_tokens": N}`` block on Haiku 4.5 /
+        4.6-and-older, ``{"type": "adaptive"}`` + ``output_config.effort`` on
+        4.7+ / 5-series, effort only on Fable/Mythos (see module docstring).
+        An explicit ``extra["thinking"]`` wins. When ``thinking`` is ``None``
+        the request body is byte-for-byte unchanged.
         """
 
         if not model:
             raise ProviderError(
                 "AnthropicPassthroughProvider.stream needs a model name "
-                "(e.g. 'claude-sonnet-4-5')."
+                "(e.g. 'claude-opus-5')."
             )
 
         messages_list = list(messages)
@@ -325,43 +336,80 @@ class AnthropicPassthroughProvider(HTTPProviderMixin):
         if tools:
             payload["tools"] = _normalize_tools(tools)
         # Universal thinking config -> Anthropic thinking block. An explicit
-        # extra["thinking"] takes precedence (respected via the guard + the
-        # setdefault merge below).
-        # An explicit extra["thinking"] is already in Anthropic's native block
-        # shape, so it wins outright; extra["max_thinking_tokens"] is the
-        # Claude-SDK alias for a fixed budget and becomes one here. Everything
-        # else in the control set is an SDK-level knob with no Anthropic wire
-        # field — it is translated above or dropped, never forwarded (the
-        # Messages API 400s on any unrecognized top-level key).
+        # extra["thinking"] is already in Anthropic's native block shape, so it
+        # wins outright; extra["max_thinking_tokens"] is the Claude-SDK alias
+        # for a fixed budget and becomes one here (in whichever form this
+        # model generation accepts). extra["effort"] / ["reasoning_effort"]
+        # become ``output_config.effort`` on generations that have it.
+        # Everything else in the control set is an SDK-level knob with no
+        # Anthropic wire field — translated above or dropped, never forwarded
+        # (the Messages API 400s on any unrecognized top-level key).
+        generation = _claude_generation(model)
         block: dict[str, Any] | None = None
+        effort: str | None = None
         if extra and isinstance(extra.get("thinking"), dict):
             block = dict(extra["thinking"])
-        elif extra and extra.get("max_thinking_tokens") is not None:
-            block = {"type": "enabled",
-                     "budget_tokens": int(extra["max_thinking_tokens"])}
-        elif thinking is not None:
-            block = _thinking_to_anthropic(thinking)
+        else:
+            cfg: dict[str, Any] | None = None
+            if extra and extra.get("max_thinking_tokens") is not None:
+                cfg = {"type": "enabled",
+                       "budget_tokens": int(extra["max_thinking_tokens"])}
+            elif thinking is not None:
+                cfg = thinking
+            if cfg is not None:
+                block, effort, payload["max_tokens"] = _thinking_plan(
+                    cfg, generation, payload["max_tokens"]
+                )
+        if extra:
+            word = extra.get("reasoning_effort", extra.get("effort"))
+            if word is not None:
+                effort = _normalize_claude_effort(str(word), generation) or effort
         if block is not None:
             payload["thinking"] = block
-            # With thinking on, Anthropic requires the default sampling
-            # temperature — a non-default temperature is a 400 on the models
-            # that take a thinking block. Drop it so enabling thinking can't
-            # turn a valid request into a rejected one.
-            if block.get("type") != "disabled":
-                payload.pop("temperature", None)
+        if effort is not None and generation != "budget" and (
+            block is None or "budget_tokens" not in block
+        ) and (block is None or block.get("type") != "disabled" or effort in ("low", "medium", "high")):
+            # ``output_config.effort`` is GA on 4.6+; never paired with the
+            # deprecated budget form, and never sent to a pre-4.6 model.
+            payload.setdefault("output_config", {})["effort"] = effort
+        # With thinking on, Anthropic requires the default sampling
+        # temperature — a non-default temperature is a 400 on the models
+        # that take a thinking block. Opus 4.7+ / the 5-series / Fable have
+        # removed sampling parameters outright. Drop it so enabling thinking
+        # (or picking a current model) can't turn a valid request into a
+        # rejected one.
+        if (block is not None and block.get("type") != "disabled") or (
+            generation == "always_on" or _sampling_removed(model)
+        ):
+            payload.pop("temperature", None)
         for k, v in strip_control_keys(extra).items():
             payload.setdefault(k, v)
 
         body = _PAYLOAD_ENCODER.encode(payload)
 
-        async with self.client.stream(
-            "POST",
-            "/messages",
-            content=body,
-        ) as response:
-            await _raise_if_error(response)
-            async for ev in _iter_normalized_events(response):
-                yield ev
+        for attempt in range(2):
+            async with self.client.stream(
+                "POST",
+                "/messages",
+                content=body,
+            ) as response:
+                if (attempt == 0 and response.status_code == 400
+                        and "thinking" in payload):
+                    # The generation table is a best guess for an id we have
+                    # never seen. If the API rejects the thinking form we
+                    # picked (``budget_tokens`` on a model that dropped it, or
+                    # ``adaptive`` on one that never had it), swap to the other
+                    # form once rather than fail the turn.
+                    text = (await response.aread()).decode("utf-8", "replace")
+                    swapped = _swap_thinking_form(payload, text)
+                    if swapped:
+                        body = _PAYLOAD_ENCODER.encode(payload)
+                        continue
+                    _raise_for_body(response, text)
+                await _raise_if_error(response)
+                async for ev in _iter_normalized_events(response):
+                    yield ev
+                return
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -542,7 +590,10 @@ async def _raise_if_error(response: httpx.Response) -> None:
         text = (await response.aread()).decode("utf-8", errors="replace")
     except Exception:  # noqa: BLE001 — best effort
         text = ""
+    _raise_for_body(response, text)
 
+
+def _raise_for_body(response: httpx.Response, text: str) -> None:
     payload: dict[str, Any] | None = None
     if text:
         try:
@@ -803,35 +854,196 @@ def _decode_usage(payload: Any) -> Usage | None:
 # ---------------------------------------------------------------------------
 
 
-def _thinking_to_anthropic(thinking: dict[str, Any]) -> dict[str, Any] | None:
-    """Translate the universal thinking config to an Anthropic ``thinking`` block.
+# ``claude-opus-4-8``, ``claude-3-5-sonnet-20241022``, ``claude-sonnet-4-20250514``:
+# the minor version is at most two digits and never runs into a date suffix.
+_CLAUDE_ID_RE = re.compile(
+    r"claude-(?:(opus|sonnet|haiku|fable|mythos)-)?(\d+)(?:[-.](\d{1,2})(?!\d))?"
+)
+
+#: Fixed thinking budget used when a "budget" generation is asked for
+#: ``adaptive`` (which it doesn't understand) or ``enabled`` with no budget.
+_DEFAULT_BUDGET = 8192
+#: Anthropic's floor for ``budget_tokens``.
+_MIN_BUDGET = 1024
+#: Room left for the visible answer above the thinking budget when
+#: ``max_tokens`` has to be raised to satisfy ``budget_tokens < max_tokens``.
+_ANSWER_HEADROOM = 1024
+
+
+def _claude_generation(model: str) -> str:
+    """Which thinking dialect a Claude id speaks.
+
+    * ``"budget"``    — ``{"type": "enabled", "budget_tokens": N}`` only:
+      Haiku 4.5 and everything ≤ 4.5. No ``adaptive``, no ``effort``.
+    * ``"hybrid"``    — the 4.6 pair (Opus 4.6 / Sonnet 4.6): ``adaptive`` and
+      ``output_config.effort`` work, and the budget form is deprecated but
+      still accepted — an explicit budget keeps its exact meaning there.
+    * ``"adaptive"``  — ``{"type": "adaptive"}`` + ``output_config.effort``:
+      Opus 4.7 / 4.8 / 5, Sonnet 5, and any newer id (``budget_tokens`` 400s).
+    * ``"always_on"`` — Fable / Mythos: thinking can't be configured at all;
+      only ``output_config.effort`` is sent.
+
+    Unknown / unparseable Claude ids default to ``"adaptive"`` — the form
+    every current model accepts — and the request-time fallback swaps once if
+    the API disagrees.
+    """
+
+    bare = model.lower().rsplit("/", 1)[-1]
+    if "fable" in bare or "mythos" in bare:
+        return "always_on"
+    m = _CLAUDE_ID_RE.search(bare)
+    if not m:
+        return "adaptive"
+    family, major_s, minor_s = m.group(1), m.group(2), m.group(3)
+    major, minor = int(major_s), int(minor_s or 0)
+    if family == "haiku":
+        return "budget" if major <= 4 else "adaptive"
+    if major >= 5:
+        return "adaptive"
+    if major == 4 and minor >= 7:
+        return "adaptive"
+    if major == 4 and minor == 6:
+        return "hybrid"
+    return "budget"
+
+
+def _sampling_removed(model: str) -> bool:
+    """Opus 4.7+, the 5-series and Fable/Mythos reject ``temperature`` /
+    ``top_p`` / ``top_k`` outright (400), so a default temperature must not
+    be sent to them."""
+
+    bare = model.lower().rsplit("/", 1)[-1]
+    if "fable" in bare or "mythos" in bare:
+        return True
+    m = _CLAUDE_ID_RE.search(bare)
+    if not m:
+        return False
+    family, major, minor = m.group(1), int(m.group(2)), int(m.group(3) or 0)
+    if family == "haiku":
+        return major >= 5
+    return major >= 5 or (major == 4 and minor >= 7)
+
+
+def _budget_to_effort(budget: int) -> str:
+    """The ``output_config.effort`` level a fixed token budget stands for.
+    Mirrors the agent's effort ladder (2048 / 12288 / 24576)."""
+
+    if budget <= 2048:
+        return "low"
+    if budget <= 8192:
+        return "medium"
+    if budget <= 16384:
+        return "high"
+    return "max"
+
+
+def _normalize_claude_effort(word: str, generation: str) -> str | None:
+    """An SDK effort word as Anthropic spells it. ``ultra`` (a multi-agent
+    mode) and anything unknown clamp to ``max``; ``minimal`` → ``low``;
+    ``xhigh`` only exists from Opus 4.7 / Sonnet 5 on and drops to ``high``
+    on the 4.6 pair. Pre-4.6 models have no effort field at all."""
+
+    w = word.strip().lower()
+    if w == "minimal":
+        w = "low"
+    if w == "ultra":
+        w = "max"
+    if w == "none":
+        w = "low"
+    if w not in ("low", "medium", "high", "xhigh", "max"):
+        return None
+    if w == "xhigh" and generation in ("budget", "hybrid"):
+        return "high"
+    return w
+
+
+def _thinking_plan(
+    thinking: dict[str, Any], generation: str, max_tokens: int
+) -> tuple[dict[str, Any] | None, str | None, int]:
+    """Translate the universal config for one generation.
+
+    Returns ``(thinking_block, effort, max_tokens)`` — the block to send (or
+    ``None`` to omit), the ``output_config.effort`` to send (or ``None``), and
+    a possibly-raised ``max_tokens`` (the budget form needs ``budget_tokens <
+    max_tokens``, and a budget with no room for an answer is useless anyway).
 
     Universal shape: ``{"type": "adaptive"|"enabled"|"disabled",
     "budget_tokens": int|None}``.
-
-    * ``disabled``                     -> ``{"type": "disabled"}``
-    * ``enabled``/``adaptive`` + budget -> ``{"type": "enabled", "budget_tokens": N}``
-      (the fixed-budget form; required on pre-4.6 models, honored elsewhere)
-    * ``adaptive`` without a budget      -> ``{"type": "adaptive"}`` (Claude paces
-      itself; the modern default on 4.6+)
-
-    Returns ``None`` for an unrecognized/empty config so the caller leaves the
-    payload untouched.
     """
 
     if not isinstance(thinking, dict):
-        return None
+        return None, None, max_tokens
     ttype = thinking.get("type")
     budget = thinking.get("budget_tokens")
+    if ttype not in ("adaptive", "enabled", "disabled"):
+        return None, None, max_tokens
+
+    if generation == "always_on":
+        # Fable / Mythos: any explicit block is a 400. Effort is the only lever.
+        if ttype == "disabled":
+            return None, "low", max_tokens
+        return None, (_budget_to_effort(int(budget)) if budget is not None else None), max_tokens
+
+    if generation == "adaptive":
+        if ttype == "disabled":
+            return {"type": "disabled"}, None, max_tokens
+        effort = _budget_to_effort(int(budget)) if budget is not None else None
+        return {"type": "adaptive"}, effort, max_tokens
+
     if ttype == "disabled":
-        return {"type": "disabled"}
-    if ttype in ("enabled", "adaptive"):
-        if budget is not None:
-            return {"type": "enabled", "budget_tokens": int(budget)}
-        # No budget: adaptive is a valid standalone block; a bare "enabled" is
-        # not (it needs budget_tokens), so fall through to adaptive for it too.
-        return {"type": "adaptive"}
-    return None
+        return {"type": "disabled"}, None, max_tokens
+
+    if generation == "hybrid" and budget is None:
+        # 4.6: ``adaptive`` is the modern form and a bare ``enabled`` (no
+        # budget) is not valid, so both map to adaptive.
+        return {"type": "adaptive"}, None, max_tokens
+
+    # The fixed-budget form — required on ≤ 4.5, honoured (deprecated) on 4.6.
+    # ``adaptive`` without a budget on a pre-4.6 model gets a real budget.
+    budget = max(_MIN_BUDGET, int(budget if budget is not None else _DEFAULT_BUDGET))
+    if budget >= max_tokens:
+        max_tokens = budget + _ANSWER_HEADROOM
+    return {"type": "enabled", "budget_tokens": budget}, None, max_tokens
+
+
+def _swap_thinking_form(payload: dict[str, Any], error_text: str) -> bool:
+    """Flip ``payload["thinking"]`` to the other form after a 400 that names
+    the thinking config. Returns True when the payload changed and the
+    request should be retried once.
+
+    * budget form rejected (a model that dropped ``budget_tokens``) →
+      ``adaptive`` + the equivalent ``output_config.effort``.
+    * ``adaptive`` rejected (a pre-4.6 id the table didn't recognise) → the
+      budget form, sized from the effort that was going to be sent.
+    * ``disabled`` rejected (an always-on model) → omit the block.
+    """
+
+    text = error_text.lower()
+    if "thinking" not in text and "budget_tokens" not in text:
+        return False
+    block = payload.get("thinking")
+    if not isinstance(block, dict):
+        return False
+    if block.get("type") == "disabled":
+        payload.pop("thinking", None)
+        return True
+    if "budget_tokens" in block:
+        effort = _budget_to_effort(int(block["budget_tokens"]))
+        payload["thinking"] = {"type": "adaptive"}
+        payload.setdefault("output_config", {})["effort"] = effort
+        return True
+    if block.get("type") == "adaptive":
+        oc = payload.get("output_config") or {}
+        effort = oc.pop("effort", None)
+        if not oc:
+            payload.pop("output_config", None)
+        budget = {"low": 2048, "medium": 8192, "high": 12288, "xhigh": 16384,
+                  "max": 24576}.get(effort or "", _DEFAULT_BUDGET)
+        if budget >= payload.get("max_tokens", 0):
+            payload["max_tokens"] = budget + _ANSWER_HEADROOM
+        payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        return True
+    return False
 
 
 def _normalize_base_url(url: str) -> str:

@@ -272,22 +272,56 @@ def watch_followup_prompt(desc: str, text: str) -> str:
 
 
 def _footer_line(mode_idx: int, model: str, knobs: Any = (), ctx: str = "",
-                 live: str = "") -> str:
-    """The status line under the prompt: permission mode · model · knobs ·
-    context fill · live work. Split out of ``footer_ft`` so the string can be
-    rendered (and asserted on) without standing up a prompt_toolkit application.
+                 live: str = "", *, family: str = "", width: int = 0) -> str:
+    """The status line under the prompt: permission mode · family glyph + model
+    · knobs · context fill (+ session cost) · live work. Split out of
+    ``footer_ft`` so the string can be rendered (and asserted on) without
+    standing up a prompt_toolkit application.
+
+    ``family`` is ``"✦ Claude"`` from :func:`mantis_agent.tui.family_tag` —
+    which of the five provider families the model runs on — painted green
+    before the (grey) model id. ``ctx`` is ``format_ctx_status``'s coloured
+    ``12k/200k 6% · $0.03`` (its colour is the shared green/yellow/red ramp).
 
     ``live`` is the roll-up from ``activity.render.footer_counts`` — "1 monitor ·
     3 agents". It carries its own ``↓ to manage`` hint because a count with no
     way to act on it just raises a question; and it is omitted entirely when
-    nothing is running, so a plain chat session grows no chrome."""
+    nothing is running, so a plain chat session grows no chrome.
+
+    With ``width`` the line degrades instead of wrapping: the ``(shift+tab to
+    cycle)`` hint goes first, then the manage hint, then the knobs, then the
+    family name (the glyph stays), and whatever is still too long is cut on a
+    safe boundary. The mode, model and context fill are never dropped."""
     label, symbol, color = MODES[mode_idx]
-    left = "" if mode_idx == 0 else f"{symbol}{label} (shift+tab to cycle)"
-    knob_seg = f"   {' '.join(knobs)}" if knobs else ""
-    ctx_seg = f"   {ctx}" if ctx else ""
-    live_seg = f"{_GREY} · {live} · ↓ to manage{_RESET}" if live else ""
-    return (f"{_mode_color(color)}{left}{_RESET}   "
-            f"{_GREY}{model}{_RESET}{knob_seg}{ctx_seg}{live_seg}")
+
+    def build(*, hint: bool, manage: bool, knob: bool, fam: str) -> str:
+        left = "" if mode_idx == 0 else (
+            f"{symbol}{label} (shift+tab to cycle)" if hint else f"{symbol}{label}")
+        knob_seg = f"   {' '.join(knobs)}" if (knobs and knob) else ""
+        ctx_seg = f"   {ctx}" if ctx else ""
+        if live:
+            live_seg = (f"{_GREY} · {live} · ↓ to manage{_RESET}" if manage
+                        else f"{_GREY} · {live}{_RESET}")
+        else:
+            live_seg = ""
+        fam_seg = f"{_GREEN}{fam}{_RESET} " if fam else ""
+        return (f"{_mode_color(color)}{left}{_RESET}   "
+                f"{fam_seg}{_GREY}{model}{_RESET}{knob_seg}{ctx_seg}{live_seg}")
+
+    line = build(hint=True, manage=True, knob=True, fam=family)
+    if not width or _cells(line) <= width:
+        return line
+    glyph = family.split(" ", 1)[0] if family else ""
+    for attempt in (
+        dict(hint=False, manage=True, knob=True, fam=family),
+        dict(hint=False, manage=False, knob=True, fam=family),
+        dict(hint=False, manage=False, knob=False, fam=family),
+        dict(hint=False, manage=False, knob=False, fam=glyph),
+    ):
+        line = build(**attempt)
+        if _cells(line) <= width:
+            return line
+    return _cut(line, width)
 
 _MENTION_IGNORE = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", ".mypy_cache",
@@ -449,6 +483,8 @@ async def run_fullscreen(tui: Any) -> int:
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
         "awaiting_key": None, "picking_effort": None, "picking_auth": None,
         "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
+        "tokens_in": 0, "tokens_out": 0, "tool_inflight": None, "dash_live": None,
+        "bash_tail": None, "bash_painter": None,
         "agent_inspector": None, "workflows": None, "mcp_view": None,
         # Label of whatever attachable thing is sitting on the system clipboard
         # ("Image", "shot.png"), refreshed by _poll_clipboard.
@@ -492,7 +528,8 @@ async def run_fullscreen(tui: Any) -> int:
             pct = min(100, round(used / win * 100)) if used else 0
             filled = round(pct / 5)
             bar = "█" * filled + "░" * (20 - filled)
-            colr = "red" if pct >= 90 else ("yellow" if pct >= 75 else "green")
+            from .tui import ctx_fill_color  # noqa: PLC0415
+            colr = ctx_fill_color(pct)
             tui.console.print(
                 f"  [{colr}]{bar}[/]  {_fmt(used)} / {_fmt(win)} tokens  "
                 f"[{colr}]{pct}%[/]  [ansibrightblack]({_fmt(win - used)} free)[/]")
@@ -735,7 +772,7 @@ async def run_fullscreen(tui: Any) -> int:
 
     # Short, lowercase tab names for the picker tab bar. Provider/model
     # families are intentionally distinct: Claude is not an OpenAI model.
-    _TAB_LABELS = {"anthropic": "claude", "moonshot": "kimi"}
+    _TAB_LABELS = {"anthropic": "claude", "moonshot": "kimi", "xai": "grok"}
 
     def _tab_label(provider_id: str) -> str:
         return _TAB_LABELS.get(provider_id, provider_id)
@@ -831,10 +868,20 @@ async def run_fullscreen(tui: Any) -> int:
                         continue
                     seen_open.add(canon)
                     open_rows.append({**row, "open": True})
-                tag = "" if g["enabled"] else "  🔒 not enabled — enter adds a key"
+                # Header = family glyph · provider · auth state, or the exact
+                # /enable line for a locked one — so the picker says both which
+                # of the five families this is and how to unlock it.
+                from .tui import FAMILIES, family_of_provider, provider_auth  # noqa: PLC0415
+                prov_obj = catalog.BY_ID.get(g["provider_id"])
+                glyph = FAMILIES[family_of_provider(g["provider_id"])][0]
+                if g["enabled"]:
+                    auth = provider_auth(prov_obj) if prov_obj else ""
+                    tag = f"  · {auth}" if auth else ""
+                else:
+                    tag = f"  🔒 enter adds a key · /enable {g['provider_id']}"
                 prov_groups.append({
                     "tab": g["provider_id"], "tablabel": _tab_label(g["provider_id"]),
-                    "header": f"{g['label']}{tag}", "enabled": g["enabled"],
+                    "header": f"{glyph} {g['label']}{tag}", "enabled": g["enabled"],
                     "rows": rows})
         except Exception:  # noqa: BLE001
             pass
@@ -862,7 +909,10 @@ async def run_fullscreen(tui: Any) -> int:
         # (enabled-first) catalog order after these. Stable sort makes it so, so
         # the bar reads: all · free.local · glm · qwen · kimi · openai · claude ·
         # gemini · <the rest>.
-        _PREF = ("active", "local", "open", "openai", "anthropic", "moonshot", "glm", "qwen", "gemini")
+        # Family order: local · OpenAI · Claude · Gemini · Grok, then the
+        # hosted open-source APIs in catalog order.
+        _PREF = ("active", "local", "open", "openai", "anthropic", "gemini", "xai",
+                 "moonshot", "glm", "qwen", "deepseek")
         _rank = {pid: i for i, pid in enumerate(_PREF)}
         prov_groups.sort(key=lambda g: _rank.get(g["tab"], len(_PREF)))
         groups.extend(prov_groups)
@@ -1467,6 +1517,55 @@ async def run_fullscreen(tui: Any) -> int:
         except Exception:  # noqa: BLE001
             pass
 
+    def _switch_msg() -> str:
+        """``model → gpt-5 · ◯ OpenAI via api.openai.com · $OPENAI_API_KEY (env)``
+        — the one-line confirmation every switch path prints, so the user sees
+        WHERE the model routes, not just its name."""
+        from .tui import switch_note  # noqa: PLC0415
+        try:
+            return switch_note(tui.model, tui.backend, tui._auth_kind())
+        except Exception:  # noqa: BLE001
+            return f"model → {tui.model}"
+
+    async def _model_command(arg: str) -> None:
+        """``/model <id|alias>`` — resolve, check the provider's key, switch,
+        confirm in one line. A locked provider prints the exact ``/enable``
+        command (and where the key comes from) instead of a 401 later."""
+        from . import catalog  # noqa: PLC0415
+        from .tui import missing_key_markup, prefix_flagship  # noqa: PLC0415
+
+        try:
+            active = await asyncio.to_thread(_chat_models)
+        except Exception:  # noqa: BLE001
+            active = []
+        res = catalog.resolve_model_query(arg, active)
+        model, pid = res.model, res.provider_id
+        if model is None and res.candidates:
+            pick = prefix_flagship(arg, res.candidates)
+            if pick:
+                prov = catalog.provider_for_model(pick)
+                model, pid = pick, (prov.id if prov else None)
+            else:
+                await _announce(f"{len(res.candidates)} models match {arg!r} — pick one")
+                _open_model_picker(arg)
+                return
+        if model is None:
+            # A full id the catalog has not cached yet (a brand-new release)
+            # still routes by its family prefix — send it there as typed.
+            prov = catalog.provider_for_model(arg)
+            if prov is None:
+                await _announce(f"no model matches {arg!r} — /models to browse, "
+                                "/enable <provider> to add a family")
+                return
+            model, pid = arg, prov.id
+        prov = catalog.BY_ID.get(pid) if pid else None
+        if prov is not None and not catalog.is_enabled(prov):
+            await _print(lambda: tui.console.print(missing_key_markup(model, prov),
+                                                   highlight=False))
+            return
+        await _switch_model(model, provider_id=pid)
+        await _announce(_switch_msg())
+
     def _key_prompt(pid: str, env_name: str, mode: str = "") -> str:
         """What the paste line asks for.
 
@@ -1550,7 +1649,7 @@ async def run_fullscreen(tui: Any) -> int:
                 state.pop("model_cache", None)
             except Exception:  # noqa: BLE001 — the catalog refresh is a nicety
                 pass
-            await _announce(f"✓ {prov.label} enabled ({cred.mode}) · model → {model}")
+            await _announce(f"✓ {prov.label} enabled ({cred.mode}) · {_switch_msg()}")
             return
 
         # A key pasted into the wrong provider row comes back as a generic
@@ -1580,7 +1679,7 @@ async def run_fullscreen(tui: Any) -> int:
             state.pop("model_cache", None)  # invalidate the active-backend cache
         except Exception:  # noqa: BLE001
             pass
-        await _announce(f"✓ {prov.label} enabled · model → {model}")
+        await _announce(f"✓ {prov.label} enabled · {_switch_msg()}")
 
     # -- MCP servers — inspect / add / edit view (/mcp) ------------------------
     # A state-driven overlay in the same family as the model picker, with two
@@ -2042,8 +2141,15 @@ async def run_fullscreen(tui: Any) -> int:
             extra = f"  {_YELLOW}{note[0]}{_RESET}"
         nq = len(state.get("queue") or [])
         queued = f" {_DIM}· {nq} queued{_RESET}" if nq else ""
+        word = state["word"]
+        inflight = state.get("tool_inflight")
+        if inflight:
+            # A running tool: its label and ITS clock, cut so the line never
+            # wraps under the prompt.
+            word = _cut(inflight[0], max(20, _width() - 30))
+            el = int(time.monotonic() - inflight[1])
         return ANSI(
-            f"\n{_GREEN}{frame} {state['word']}…{_RESET} "
+            f"\n{_GREEN}{frame} {word}…{_RESET} "
             f"{_DIM}({el}s · esc to interrupt){_RESET}{queued}{extra}"
         )
 
@@ -2141,8 +2247,13 @@ async def run_fullscreen(tui: Any) -> int:
             knobs.append(f"verb={tui.verbosity}")
         if getattr(tui, "reasoning_mode", None):
             knobs.append(f"reasoning={tui.reasoning_mode}")
+        from .tui import family_tag  # noqa: PLC0415
+        try:
+            fam = family_tag(tui.model, tui.backend)
+        except Exception:  # noqa: BLE001 — the glyph is decoration, never a crash
+            fam = ""
         return ANSI(_footer_line(tui.mode_idx, tui.model, knobs, _ctx_status(),
-                                 _live_counts()))
+                                 _live_counts(), family=fam, width=_width()))
 
     _LIVE_TODO_ROWS = 8
 
@@ -2599,9 +2710,65 @@ async def run_fullscreen(tui: Any) -> int:
     def _result(m: Any) -> None:
         tui._render_tool_results(m, ToolResultBlock)
 
+    # -- live bash output --------------------------------------------------------
+    # The foreground bash tool streams its output into a BashTail; a throttled
+    # painter task redraws the last few rows under the ``⚒ Run …`` call line,
+    # in place, through run_in_terminal like every other block. The result
+    # erases the window before printing, so the transcript keeps its shape.
+
+    def _on_bash_output(chunk: str) -> None:
+        from .tui import BashTail  # noqa: PLC0415
+
+        tail = state.get("bash_tail")
+        if tail is None:
+            tail = state["bash_tail"] = BashTail(_width())
+        tail.feed(chunk)
+        painter = state.get("bash_painter")
+        if painter is None or painter.done():
+            try:
+                state["bash_painter"] = get_app().create_background_task(_bash_tail_painter())
+            except Exception:  # noqa: BLE001 — no app (tests): paint on finish
+                state["bash_painter"] = None
+
+    def _bash_tail_paint() -> None:
+        tail = state.get("bash_tail")
+        if tail is None:
+            return
+        out = tui.console.file
+        tail.paint(out.write)
+        out.flush()
+
+    async def _bash_tail_painter() -> None:
+        try:
+            while state.get("bash_tail") is not None:
+                tail = state["bash_tail"]
+                # Wait for the call line: the tail must sit UNDER "⚒ Run …",
+                # and the tool can start before that line has been printed.
+                if tail.dirty and state.get("tool_inflight"):
+                    await _print(_bash_tail_paint)
+                await asyncio.sleep(0.15)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            state["bash_painter"] = None
+
+    def _bash_tail_finish() -> None:
+        tail = state.get("bash_tail")
+        state["bash_tail"] = None
+        painter = state.get("bash_painter")
+        if painter is not None and not painter.done():
+            painter.cancel()
+        if tail is not None and tail.painted:
+            out = tui.console.file
+            tail.erase(out.write)
+            out.flush()
+
     async def _handle(text: str) -> None:
         state["suggested_prompt"] = None  # a submitted turn invalidates the ghost
         input_buffer.suggestion = None
+        if state.get("dash_live") and text.strip().lower() != "/dash live":
+            state["dash_live"]["stopped"].set()  # anything typed ends the live panel
+            state["dash_live"] = None
         await _print(lambda: _echo(text))
 
         # ``!cmd`` → run the shell command NOW, print its output, and inject it
@@ -2650,12 +2817,7 @@ async def run_fullscreen(tui: Any) -> int:
                 state.update(working=False, task=None)  # a command may have set it
 
                 def _show_cmd_err(e: Any = e) -> None:
-                    tui.console.print(f"[ansired]error:[/] {e}")
-                    from .tui import error_hint  # noqa: PLC0415
-                    hint = error_hint(e, tui.backend, tui.model)
-                    if hint:
-                        styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)
-                        tui.console.print(f"[ansibrightblack]  → {styled}[/]")
+                    tui._print_error(e)
                     tui.console.print()
                 await _print(_show_cmd_err)
                 handled = True
@@ -2699,6 +2861,9 @@ async def run_fullscreen(tui: Any) -> int:
                     if getattr(msg, "usage", None) is not None:
                         # input+output of the latest turn ≈ current context fill.
                         state["ctx_tokens"] = (msg.usage.input_tokens or 0) + (msg.usage.output_tokens or 0)
+                        state["tokens_in"] += msg.usage.input_tokens or 0
+                        state["tokens_out"] += msg.usage.output_tokens or 0
+                        tui._tokens_in, tui._tokens_out = state["tokens_in"], state["tokens_out"]
                         # Accumulate USD across turns (each call re-bills the full
                         # prompt, so cost is summed per turn, not from token totals).
                         from .budget import estimate_cost  # noqa: PLC0415
@@ -2707,8 +2872,19 @@ async def run_fullscreen(tui: Any) -> int:
                         if c:
                             state["session_cost"] += c
                     await _print(lambda m=msg: _assist(m))
+                    # The spinner names the tool now running and times IT —
+                    # "⚒ Run pytest -q (38s)" — until its result lands.
+                    calls = [b for b in msg.content if isinstance(b, ToolUseBlock)]
+                    if calls:
+                        verb, target = tui._tool_label(calls[-1].name, calls[-1].input or {})
+                        state["tool_inflight"] = (f"⚒ {verb} {target}".rstrip(), time.monotonic())
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
-                    await _print(lambda m=msg: _result(m))
+                    state["tool_inflight"] = None
+
+                    def _result_after_tail(m: Any = msg) -> None:
+                        _bash_tail_finish()   # the live window gives way to the preview
+                        _result(m)
+                    await _print(_result_after_tail)
         except asyncio.CancelledError:
             # Keep the work done so far; just close any tool_use left unanswered
             # by the interrupt so the next turn's request stays well-formed and
@@ -2732,12 +2908,7 @@ async def run_fullscreen(tui: Any) -> int:
             del tui.messages[base:]
 
             def _show_err(e: Any = e) -> None:
-                tui.console.print(f"[ansired]error:[/] {e}")
-                from .tui import error_hint  # noqa: PLC0415
-                hint = error_hint(e, tui.backend, tui.model)
-                if hint:
-                    styled = re.sub(r"`([^`]+)`", r"[white]\1[/]", hint)  # `cmd` → styled
-                    tui.console.print(f"[ansibrightblack]  → {styled}[/]")
+                tui._print_error(e)  # one boxed hint with the fix — never a traceback
             await _print(_show_err)
         finally:
             # Close the stream in THIS task. run_iter holds the tool executor's
@@ -2745,6 +2916,9 @@ async def run_fullscreen(tui: Any) -> int:
             # finalize it later raises "exit cancel scope in a different task".
             from .agent import aclose_stream  # noqa: PLC0415
             await aclose_stream(_stream)
+            state["tool_inflight"] = None
+            if state.get("bash_tail") is not None:   # interrupted mid-command
+                await _print(_bash_tail_finish)
             tui._turn_active = False
             tui._persist_messages(base)  # save this turn for /resume + /branch
             elapsed = time.monotonic() - state.get("started", time.monotonic())
@@ -3281,11 +3455,80 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui.console.print(f"[ansibrightblack](vim mode {on})[/]"))
             return True
         if cmd == "/models":
-            # One command, one behaviour: open the picker. The old `/model` was
-            # a second name for this that additionally took a query; both the
-            # duplicate name and the query form are gone, because "type a
-            # fragment and hope it resolves" is what the picker's filter is for.
+            # `/models` opens the picker (a filter word narrows it); `/models
+            # list` prints the family listing into the scrollback instead.
+            if arg.strip().lower() in {"list", "ls", "all"}:
+                from prompt_toolkit.application.run_in_terminal import in_terminal  # noqa: PLC0415
+                async with in_terminal():
+                    await asyncio.to_thread(tui._show_models)
+                get_app().invalidate()
+                return True
             _open_model_picker(arg or "")
+            return True
+        if cmd == "/model":
+            # `/model <id|alias>` switches directly with a one-line routing
+            # confirmation; a bare `/model` is the picker, same as /models.
+            if not arg.strip():
+                _open_model_picker("")
+                return True
+            await _model_command(arg.strip())
+            return True
+        if cmd == "/thinking":
+            await _print(lambda: tui._cmd_thinking(arg))
+            return True
+        if cmd == "/dash":
+            sub = arg.strip().lower()
+
+            def _draw_dash() -> None:
+                tui._show_dash(state["ctx_tokens"], state["session_cost"], _ctx_window(),
+                               state.get("tokens_in", 0), state.get("tokens_out", 0))
+
+            if sub not in {"live", "watch"}:
+                await _print(_draw_dash)
+                return True
+            if state.get("dash_live"):
+                await _announce("dash live is already running — esc stops it")
+                return True
+            rec: dict[str, Any] = {"stopped": asyncio.Event(), "lines": 0}
+            state["dash_live"] = rec
+
+            def _redraw() -> None:
+                # Repaint IN PLACE: cursor up over the previous panel and clear
+                # to the end of the screen, so a live dashboard does not scroll
+                # a new panel into the transcript every two seconds.
+                if rec["lines"]:
+                    sys.stdout.write(term_caps.repaint_above(rec["lines"]))
+                    sys.stdout.flush()
+                with tui.console.capture() as cap:
+                    tui.console.print()
+                    tui.console.print(tui._dash_renderable(
+                        state["ctx_tokens"], state["session_cost"], _ctx_window(),
+                        state.get("tokens_in", 0), state.get("tokens_out", 0)))
+                    tui.console.print("[ansibrightblack]live · refreshes every 2s · esc stops[/]")
+                text = cap.get()
+                rec["lines"] = text.count("\n")
+                sys.stdout.write(text)
+                sys.stdout.flush()
+
+            async def _dash_loop() -> None:
+                try:
+                    while not rec["stopped"].is_set():
+                        if state["working"]:
+                            # A turn is streaming above us — do not paint over
+                            # it; the next idle tick starts a fresh panel.
+                            rec["lines"] = 0
+                        else:
+                            await _print(_redraw)
+                        try:
+                            await asyncio.wait_for(rec["stopped"].wait(), 2.0)
+                        except asyncio.TimeoutError:
+                            pass
+                finally:
+                    if state.get("dash_live") is rec:
+                        state["dash_live"] = None
+                    get_app().invalidate()
+
+            get_app().create_background_task(_dash_loop())
             return True
         if cmd == "/pull":
             # Download an open model with ollama and switch to it — same
@@ -3581,7 +3824,9 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui._cmd_advisor(arg))
             return True
         if cmd == "/status":
-            await _print(lambda: tui._show_status(state["ctx_tokens"], state["session_cost"]))
+            await _print(lambda: tui._show_status(
+                state["ctx_tokens"], state["session_cost"], _ctx_window(),
+                state.get("tokens_in", 0), state.get("tokens_out", 0)))
             return True
         if cmd == "/cost":
             await _print(lambda: tui._show_cost(state["ctx_tokens"], state["session_cost"]))
@@ -3606,12 +3851,10 @@ async def run_fullscreen(tui: Any) -> int:
         if cmd == "/disable":
             from . import catalog  # noqa: PLC0415
 
-            enabled = [p.id for p in catalog.CATALOG if catalog.is_enabled(p)]
             pid = arg.strip().lower()
             if not pid:
-                await _print(lambda e=enabled: tui.console.print(
-                    "[ansibrightblack]usage: [white]/disable <provider>[/]  · enabled: "
-                    f"[white]{', '.join(e) or 'none'}[/][/]"))
+                await _print(lambda: tui._show_providers(only_enabled=True,
+                                                         usage="/disable <provider>"))
                 return True
             prov = catalog.BY_ID.get(pid)
             if prov is None:
@@ -3634,9 +3877,9 @@ async def run_fullscreen(tui: Any) -> int:
             pid = arg.strip().lower()
             prov = catalog.BY_ID.get(pid)
             if prov is None:
-                await _print(lambda: tui.console.print(
-                    "[ansibrightblack]usage: [white]/enable <provider>[/]  · providers: "
-                    f"[white]{', '.join(p.id for p in catalog.CATALOG)}[/][/]"))
+                if pid:
+                    await _announce(f"unknown provider {pid!r} — the ones below are available")
+                await _print(lambda: tui._show_providers(usage="/enable <provider>"))
                 return True
             # Reuse the picker's inline key-entry: prompt (masked) for the key,
             # then validate + enable + switch to the provider's flagship model.
@@ -4470,15 +4713,14 @@ async def run_fullscreen(tui: Any) -> int:
                     tag, backend = it["local_tag"], it["backend"]
                     async def _run(tag: str = tag, backend: str = backend) -> None:
                         await _switch_model(tag, backend=backend)
-                        await _announce(f"model → {tag} · local (free)")
+                        await _announce(_switch_msg() + " · free")
                     event.app.create_background_task(_run())
                 elif it["enabled"]:
                     model, provider_id, backend = it["model"], it.get("provider_id"), it.get("backend")
                     async def _run(model: str = model, provider_id: Any = provider_id,
                                    backend: Any = backend) -> None:
                         await _switch_model(model, provider_id=provider_id, backend=backend)
-                        where = " · local (free)" if backend else ""
-                        await _announce(f"model → {model}{where}")
+                        await _announce(_switch_msg() + (" · free" if backend else ""))
                     event.app.create_background_task(_run())
                 elif it.get("pull_tag"):
                     # Open model, not installed → download it RIGHT HERE with
@@ -4538,9 +4780,20 @@ async def run_fullscreen(tui: Any) -> int:
             return
         _spawn_handle(text)
 
+    def _stop_dash_live() -> bool:
+        rec = state.get("dash_live")
+        if not rec:
+            return False
+        rec["stopped"].set()
+        state["dash_live"] = None
+        return True
+
     @kb.add("c-c")
     def _(event: Any) -> None:
         # Interrupt a running reply; if idle, quit (the usual terminal Ctrl+C).
+        if _stop_dash_live():
+            event.app.create_background_task(_announce("dash live stopped"))
+            return
         task = state.get("task")
         if state["working"] and task is not None:
             task.cancel()
@@ -4554,6 +4807,9 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("escape", eager=True)
     def _(event: Any) -> None:
+        if _stop_dash_live():
+            event.app.create_background_task(_announce("dash live stopped"))
+            return
         if state.get("agent_inspector") is not None:
             state["agent_inspector"] = None
             event.app.invalidate()
@@ -4845,6 +5101,10 @@ async def run_fullscreen(tui: Any) -> int:
             pass
 
     _retry.notify = _on_retry
+    # Foreground bash streams its output to the live tail. Installed in the
+    # main task so every agent task spawned from here inherits it.
+    from .builtin_tools import reset_bash_output_sink, set_bash_output_sink  # noqa: PLC0415
+    _bash_sink_token = set_bash_output_sink(_on_bash_output)
 
     def _notify_job(job: Any) -> None:
         from .tui import format_job_completion_line  # noqa: PLC0415
@@ -4963,6 +5223,7 @@ async def run_fullscreen(tui: Any) -> int:
         await app.run_async()
     finally:
         _retry.notify = None
+        reset_bash_output_sink(_bash_sink_token)
         # Collect every background task, request cancellation, THEN await them
         # so the cancellation actually propagates to each task's next await —
         # subprocess termination / transport close only happen there. Merely

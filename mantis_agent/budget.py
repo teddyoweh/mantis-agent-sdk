@@ -169,6 +169,65 @@ PRICING_TABLE: Final[dict[tuple[str, str], Pricing]] = {
     # TODO: look up at request time via OpenRouter /api/v1/models
     ("openrouter", "*"): Pricing(0.0, 0.0),
     # ------------------------------------------------------------------
+    # First-party hosted APIs. Keys are PREFIXES — ``lookup_pricing`` falls
+    # back to the longest matching prefix within a provider, so a dated or
+    # suffixed id (``claude-opus-5-20260401``, ``gpt-5.4-2026-03-01``)
+    # bills at its base row. Where a vendor tiers by prompt size the
+    # standard-tier (≤200k) rate is used.
+    # ------------------------------------------------------------------
+    # Anthropic — published API rates (cache read 10%, cache write 125%).
+    ("anthropic", "claude-fable-5"): Pricing(10.00, 50.00, 1.00, 12.50),
+    ("anthropic", "claude-mythos-5"): Pricing(10.00, 50.00, 1.00, 12.50),
+    ("anthropic", "claude-opus-5"): Pricing(5.00, 25.00, 0.50, 6.25),
+    ("anthropic", "claude-opus-4-8"): Pricing(5.00, 25.00, 0.50, 6.25),
+    ("anthropic", "claude-opus-4-7"): Pricing(5.00, 25.00, 0.50, 6.25),
+    ("anthropic", "claude-opus-4-6"): Pricing(5.00, 25.00, 0.50, 6.25),
+    ("anthropic", "claude-opus-4-5"): Pricing(5.00, 25.00, 0.50, 6.25),
+    ("anthropic", "claude-opus-4-1"): Pricing(15.00, 75.00, 1.50, 18.75),
+    ("anthropic", "claude-opus-4"): Pricing(15.00, 75.00, 1.50, 18.75),
+    ("anthropic", "claude-sonnet-5"): Pricing(2.00, 10.00, 0.20, 2.50),
+    ("anthropic", "claude-sonnet-4-6"): Pricing(3.00, 15.00, 0.30, 3.75),
+    ("anthropic", "claude-sonnet-4-5"): Pricing(3.00, 15.00, 0.30, 3.75),
+    ("anthropic", "claude-sonnet-4"): Pricing(3.00, 15.00, 0.30, 3.75),
+    ("anthropic", "claude-haiku-4-5"): Pricing(1.00, 5.00, 0.10, 1.25),
+    ("anthropic", "claude-haiku-3-5"): Pricing(0.80, 4.00, 0.08, 1.00),
+    # OpenAI — gpt-5 family and o-series (cached input at 10%). The 5.x point
+    # releases are billed at the gpt-5 rate unless a distinct rate is known;
+    # treat the 5.4 rows as approximate.
+    ("openai", "gpt-5-mini"): Pricing(0.25, 2.00, 0.025),
+    ("openai", "gpt-5-nano"): Pricing(0.05, 0.40, 0.005),
+    ("openai", "gpt-5.4-mini"): Pricing(0.25, 2.00, 0.025),  # approximate
+    ("openai", "gpt-5.4-nano"): Pricing(0.05, 0.40, 0.005),  # approximate
+    ("openai", "gpt-5.4-pro"): Pricing(15.00, 120.00),  # approximate
+    ("openai", "gpt-5"): Pricing(1.25, 10.00, 0.125),
+    ("openai", "o3-pro"): Pricing(20.00, 80.00),
+    ("openai", "o3-mini"): Pricing(1.10, 4.40, 0.55),
+    ("openai", "o3"): Pricing(2.00, 8.00, 0.50),
+    ("openai", "o4-mini"): Pricing(1.10, 4.40, 0.275),
+    ("openai", "o1-mini"): Pricing(1.10, 4.40, 0.55),
+    ("openai", "o1"): Pricing(15.00, 60.00, 7.50),
+    ("openai", "gpt-4.1-mini"): Pricing(0.40, 1.60, 0.10),
+    ("openai", "gpt-4.1-nano"): Pricing(0.10, 0.40, 0.025),
+    ("openai", "gpt-4.1"): Pricing(2.00, 8.00, 0.50),
+    ("openai", "gpt-4o-mini"): Pricing(0.15, 0.60, 0.075),
+    ("openai", "gpt-4o"): Pricing(2.50, 10.00, 1.25),
+    # Google Gemini — paid tier, ≤200k prompts (cached input at 25%).
+    # The 3.x rows are conservative placeholders.
+    ("gemini", "gemini-3-pro"): Pricing(2.00, 12.00, 0.20),  # approximate
+    ("gemini", "gemini-3-flash"): Pricing(0.50, 3.00, 0.05),  # approximate
+    ("gemini", "gemini-2.5-pro"): Pricing(1.25, 10.00, 0.31),
+    ("gemini", "gemini-2.5-flash-lite"): Pricing(0.10, 0.40, 0.025),
+    ("gemini", "gemini-2.5-flash"): Pricing(0.30, 2.50, 0.075),
+    ("gemini", "gemini-2.0-flash-lite"): Pricing(0.075, 0.30),
+    ("gemini", "gemini-2.0-flash"): Pricing(0.10, 0.40, 0.025),
+    # xAI Grok — published rates (cached input at 25%). grok-4-fast is the
+    # ≤128k tier; the reasoning / non-reasoning variants share it.
+    ("xai", "grok-4-fast"): Pricing(0.20, 0.50, 0.05),
+    ("xai", "grok-4"): Pricing(3.00, 15.00, 0.75),
+    ("xai", "grok-3-mini"): Pricing(0.30, 0.50, 0.075),
+    ("xai", "grok-3"): Pricing(3.00, 15.00, 0.75),
+    ("xai", "grok-code-fast"): Pricing(0.20, 1.50, 0.02),
+    # ------------------------------------------------------------------
     # Self-hosted — compute is paid elsewhere
     # ------------------------------------------------------------------
     ("ollama", "*"): _FREE,
@@ -195,8 +254,13 @@ def lookup_pricing(model_id: str, backend_hint: str | None = None) -> Pricing | 
 
     Resolution order:
       1. Exact (provider, model) key.
-      2. Provider wildcard ``(provider, "*")``.
-      3. ``None`` — the caller can choose to fall back to "free" or to
+      2. Longest (provider, prefix) key the model starts with — so
+         ``claude-opus-5-20260401`` bills as ``claude-opus-5`` and
+         ``gpt-5.4-mini-2026-03-01`` as ``gpt-5.4-mini``.
+      3. Provider wildcard ``(provider, "*")``.
+      4. The same exact-then-prefix search across every provider (when the
+         caller doesn't know which one served the request).
+      5. ``None`` — the caller can choose to fall back to "free" or to
          skip USD tracking entirely.
     """
 
@@ -208,18 +272,40 @@ def lookup_pricing(model_id: str, backend_hint: str | None = None) -> Pricing | 
         hit = PRICING_TABLE.get((hint, model))
         if hit is not None:
             return hit
+        prefixed = _prefix_match(model, provider=hint)
+        if prefixed is not None:
+            return prefixed
         # Provider wildcard — covers OpenRouter / self-hosted families
         wild = PRICING_TABLE.get((hint, "*"))
         if wild is not None:
             return wild
 
-    # Last-ditch: scan every provider for an exact model match. Useful when
-    # the caller doesn't know which provider hosted the request (rare).
+    # Last-ditch: scan every provider for an exact model match, then the
+    # longest prefix. Useful when the caller doesn't know which provider
+    # hosted the request (e.g. ``Agent(model="claude-opus-5")`` with no
+    # backend URL to derive a hint from).
     for (_provider, m), pricing in PRICING_TABLE.items():
         if m == model:
             return pricing
+    return _prefix_match(model, provider=None)
 
-    return None
+
+def _prefix_match(model: str, *, provider: str | None) -> Pricing | None:
+    """Longest table key (within ``provider``, or anywhere) that ``model``
+    starts with, at a ``-`` / ``.`` boundary so ``gpt-5`` never claims
+    ``gpt-50`` and ``o1`` never claims ``o1x``."""
+
+    best: tuple[int, Pricing] | None = None
+    for (prov, key), pricing in PRICING_TABLE.items():
+        if key == "*" or (provider is not None and prov != provider):
+            continue
+        if not model.startswith(key) or len(model) <= len(key):
+            continue
+        if model[len(key)] not in "-." and not key.endswith("-"):
+            continue
+        if best is None or len(key) > best[0]:
+            best = (len(key), pricing)
+    return best[1] if best else None
 
 
 def estimate_cost(

@@ -43,6 +43,12 @@ _LIMIT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"maximum\s+context\s+length\s+is\s+(\d+)", re.I),
     # Anthropic: "prompt is too long: 210000 tokens > 200000 maximum"
     re.compile(r">\s*(\d+)\s*maximum", re.I),
+    # xAI: "This model's maximum prompt length is 131072 but the request
+    # contains 150000 tokens"
+    re.compile(r"maximum\s+prompt\s+length\s+is\s+(\d+)", re.I),
+    # Gemini (OpenAI-compat): "The input token count (1100000) exceeds the
+    # maximum number of tokens allowed (1048576)"
+    re.compile(r"maximum\s+number\s+of\s+tokens\s+allowed\s*\(?(\d+)\)?", re.I),
     # TGI / Together: "`inputs` tokens + `max_new_tokens` must be <= 8192"
     re.compile(r"must\s+be\s+<=\s*(\d+)", re.I),
     # Vertex / misc: "input tokens exceed the configured limit of 32768"

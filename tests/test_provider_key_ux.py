@@ -60,4 +60,3 @@ def test_cerebras_starter_models_are_ones_the_key_can_reach() -> None:
     models = catalog.BY_ID["cerebras"].models
     assert "llama-3.3-70b" not in models
     assert models[0] == "gpt-oss-120b", "the production model should lead"
-    assert "zai-glm-4.7" == models[-1], "deprecated model should sort last"

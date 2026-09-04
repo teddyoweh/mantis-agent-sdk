@@ -75,7 +75,8 @@ and `subtype` (e.g. `error_budget_exceeded`).
 | `gpt-4o-mini`, `o3-mini` | OpenAI |
 | `gemini-2.0-flash` | Google Gemini |
 | `Qwen/Qwen2.5-72B-Instruct` (org/model) | OpenAI-compat via `MANTIS_AGENT_BASE_URL` |
-| `claude-*` | Refused — parity testing only; use Anthropic's own SDK for Claude |
+| `claude-*` | Anthropic Messages API, native (`ANTHROPIC_API_KEY` / subscription OAuth) |
+| `grok-*` | xAI (`XAI_API_KEY`) |
 
 Overrides: `backend="https://..."` in options (or `MANTIS_AGENT_BACKEND`)
 always wins. `MANTIS_AGENT_MOCK=1` forces the mock provider (CI, no keys).

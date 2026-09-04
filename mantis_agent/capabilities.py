@@ -409,6 +409,124 @@ _TABLE: dict[str, ModelCapability] = {
 
 
 # ---------------------------------------------------------------------------
+# Hosted flagships — OpenAI / Anthropic / Google / xAI, matched by PREFIX
+# ---------------------------------------------------------------------------
+#
+# These are served over their vendor APIs (or the anthropic passthrough), so the
+# chat template is unused — the capability drives native-tool routing (path A),
+# the request-side reasoning knob, the context-window indicator and
+# auto-compaction. Matched with ``startswith`` (longest prefix wins) rather than
+# the substring scan used for the OSS table: ``claude-opus-4`` must NOT inherit
+# the 1M window of ``claude-opus-4-8`` just because one contains the other, and
+# ``o3`` is far too short to be a safe substring. Dated/suffixed ids
+# (``claude-opus-5-20260401``, ``gpt-5.4-mini-2026-03-01``) resolve to their
+# base row. Windows are the vendor's published input ceiling; where a vendor
+# tiers pricing by prompt size the window is still the hard limit.
+
+
+def _hosted(
+    name: str,
+    family: str,
+    *,
+    ctx: int,
+    out: int,
+    reasoning: bool = True,
+    thinking_blocks: bool = False,
+) -> ModelCapability:
+    return ModelCapability(
+        name=name,
+        family=family,
+        supports_native_tools=True,
+        supports_grammar=False,
+        supports_reasoning_effort=reasoning,
+        emits_thinking_blocks=thinking_blocks,
+        context_window=ctx,
+        max_output_tokens=out,
+        chat_template_id="chatml",
+    )
+
+
+_HOSTED_TABLE: dict[str, ModelCapability] = {
+    # --- Anthropic Claude ---------------------------------------------------
+    # 4.6+ and the 5-series carry a 1M window and 128k output; Haiku 4.5 keeps
+    # 200k / 64k. Thinking is native (``thinking`` content blocks).
+    "claude-fable-5": _hosted("claude-fable-5", "claude", ctx=1_000_000, out=128_000,
+                              thinking_blocks=True),
+    "claude-mythos-5": _hosted("claude-mythos-5", "claude", ctx=1_000_000, out=128_000,
+                               thinking_blocks=True),
+    "claude-opus-5": _hosted("claude-opus-5", "claude", ctx=1_000_000, out=128_000,
+                             thinking_blocks=True),
+    "claude-opus-4-8": _hosted("claude-opus-4-8", "claude", ctx=1_000_000, out=128_000,
+                               thinking_blocks=True),
+    "claude-opus-4-7": _hosted("claude-opus-4-7", "claude", ctx=1_000_000, out=128_000,
+                               thinking_blocks=True),
+    "claude-opus-4-6": _hosted("claude-opus-4-6", "claude", ctx=1_000_000, out=128_000,
+                               thinking_blocks=True),
+    "claude-sonnet-5": _hosted("claude-sonnet-5", "claude", ctx=1_000_000, out=128_000,
+                               thinking_blocks=True),
+    "claude-sonnet-4-6": _hosted("claude-sonnet-4-6", "claude", ctx=1_000_000, out=128_000,
+                                 thinking_blocks=True),
+    "claude-haiku-4-5": _hosted("claude-haiku-4-5", "claude", ctx=200_000, out=64_000,
+                                thinking_blocks=True),
+    # --- OpenAI -------------------------------------------------------------
+    # gpt-5 family: 400k window, 128k output, request-side reasoning_effort.
+    # o-series: 200k window, 100k output. gpt-4.1: 1M window, no reasoning knob.
+    # gpt-4o: 128k, no reasoning knob.
+    "gpt-5": _hosted("gpt-5", "openai", ctx=400_000, out=128_000),
+    "o1": _hosted("o1", "openai", ctx=200_000, out=100_000),
+    "o3": _hosted("o3", "openai", ctx=200_000, out=100_000),
+    "o4": _hosted("o4", "openai", ctx=200_000, out=100_000),
+    "gpt-4.1": _hosted("gpt-4.1", "openai", ctx=1_000_000, out=32_768, reasoning=False),
+    "gpt-4o": _hosted("gpt-4o", "openai", ctx=128_000, out=16_384, reasoning=False),
+    # --- Google Gemini ------------------------------------------------------
+    # 2.5 Pro/Flash: 1,048,576-token window, 65,536 output, thinking budgets.
+    # 3.x rows are conservative (same window/output as 2.5) — adjust when the
+    # published limits differ.
+    "gemini-3": _hosted("gemini-3", "gemini", ctx=1_048_576, out=65_536,
+                        thinking_blocks=True),
+    "gemini-2.5": _hosted("gemini-2.5", "gemini", ctx=1_048_576, out=65_536,
+                          thinking_blocks=True),
+    "gemini-2.0": _hosted("gemini-2.0", "gemini", ctx=1_048_576, out=8_192,
+                          reasoning=False),
+    # --- xAI Grok -----------------------------------------------------------
+    # grok-4: 256k window, reasoning always on (no reasoning_effort knob).
+    # grok-4-fast: 2M window. grok-3: 131k; grok-3-mini takes reasoning_effort
+    # low/high. grok-code-fast-1: 256k, reasoning_content streamed.
+    "grok-4-fast": _hosted("grok-4-fast", "grok", ctx=2_000_000, out=30_000,
+                           reasoning=False, thinking_blocks=True),
+    "grok-4": _hosted("grok-4", "grok", ctx=256_000, out=16_384,
+                      reasoning=False, thinking_blocks=True),
+    "grok-3-mini": _hosted("grok-3-mini", "grok", ctx=131_072, out=16_384,
+                           reasoning=True, thinking_blocks=True),
+    "grok-3": _hosted("grok-3", "grok", ctx=131_072, out=16_384, reasoning=False),
+    "grok-code-fast": _hosted("grok-code-fast", "grok", ctx=256_000, out=16_384,
+                              reasoning=False, thinking_blocks=True),
+}
+
+# Longest prefix first so ``grok-4-fast`` beats ``grok-4`` and ``gpt-4.1``
+# beats a hypothetical ``gpt-4``.
+_HOSTED_PREFIXES: tuple[str, ...] = tuple(
+    sorted(_HOSTED_TABLE, key=len, reverse=True)
+)
+
+
+def _lookup_hosted(key: str) -> ModelCapability | None:
+    """Prefix match against the hosted-flagship rows. ``key`` is normalized
+    (lowercase, provider prefix stripped). ``o1``/``o3``/``o4`` are anchored
+    so ``o3`` matches ``o3-mini`` / ``o3-pro`` but never ``qwen-o3x``."""
+
+    for prefix in _HOSTED_PREFIXES:
+        if key == prefix or key.startswith(prefix + "-") or (
+            # ``gpt-5.4``, ``gemini-2.5-pro`` style dotted minors.
+            key.startswith(prefix) and len(key) > len(prefix)
+            and key[len(prefix)] in ".-"
+        ):
+            row = _HOSTED_TABLE[prefix]
+            return row if key == prefix else replace(row, name=key)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Family-level fallback heuristics
 # ---------------------------------------------------------------------------
 
@@ -542,6 +660,15 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         supports_native_tools=True, supports_reasoning_effort=True,
         context_window=128000,
     ),
+    # xAI Grok (api.x.ai, OpenAI-compatible). Native tools; the reasoning knob
+    # is per-model (only grok-3-mini takes ``reasoning_effort``), so the family
+    # default leaves it off and the exact rows above opt in.
+    "grok": ModelCapability(
+        name="grok-unknown", family="grok",
+        supports_native_tools=True, supports_reasoning_effort=False,
+        emits_thinking_blocks=True,
+        context_window=131072,
+    ),
 }
 
 # Heuristic: substrings to family
@@ -588,6 +715,7 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     ("o4", "openai_reasoning"),
     ("gemini", "gemini"),
     ("glm", "glm"),
+    ("grok", "grok"),
 )
 
 
@@ -615,6 +743,12 @@ def lookup_model(model_id: str) -> ModelCapability:
         if tail in _TABLE:
             return _TABLE[tail]
         key = tail
+
+    # Hosted flagships (claude-*, gpt-5*, o-series, gemini-*, grok-*) — prefix
+    # matched, before the OSS substring scan can mis-hit on a shared fragment.
+    hosted = _lookup_hosted(key)
+    if hosted is not None:
+        return hosted
 
     # DeepSeek-R1 distills wear a Llama or Qwen backbone, so their chat template
     # and stop tokens must follow that backbone — NOT the "deepseek-r1" prefix
@@ -687,6 +821,16 @@ class BackendCapability:
     max_concurrent_requests: int = 64
     # Provider-specific hints surfaced for adapters.
     provider_hint: str = ""  # e.g. "together", "fireworks", "groq", "openrouter"
+    # How the backend takes ``response_format``:
+    #   "json_schema" — the OpenAI ``{"type": "json_schema", ...}`` envelope
+    #                   is enforced server-side (schema-constrained decoding)
+    #   "json_object" — only ``{"type": "json_object"}`` (JSON-ness, no
+    #                   schema); the engine puts the schema in the prompt
+    #   "none"        — no request-side support; prompt-only
+    # The engine's structured-output gate reads this; a wrong "json_schema"
+    # is a 400 on the first request, a wrong "json_object"/"none" only costs
+    # a few prompt tokens — so when unsure, pick the weaker value.
+    structured_output: Literal["json_schema", "json_object", "none"] = "json_schema"
 
 
 # Pre-canned profiles for the well-known hosted providers. The OpenAI-compat
@@ -713,6 +857,7 @@ HOSTED_PROFILES: dict[str, BackendCapability] = {
         supports_logprobs=True,
         max_concurrent_requests=30,
         provider_hint="groq",
+        structured_output="json_object",
     ),
     "openrouter": BackendCapability(
         kind="openai_compat",
@@ -744,12 +889,14 @@ HOSTED_PROFILES: dict[str, BackendCapability] = {
         supports_native_tools=True,
         supports_grammar=False,
         provider_hint="deepseek",
+        structured_output="json_object",
     ),
     "moonshot": BackendCapability(
         kind="openai_compat",
         supports_native_tools=True,
         supports_grammar=False,
         provider_hint="moonshot",
+        structured_output="json_object",
     ),
     "vllm": BackendCapability(
         kind="openai_compat",
@@ -794,6 +941,7 @@ HOSTED_PROFILES: dict[str, BackendCapability] = {
         supports_logprobs=False,
         supports_prefix_caching=True,  # implicit prompt caching with cache_control blocks
         provider_hint="anthropic",
+        structured_output="none",
     ),
     # OpenAI + other first-party hosted APIs. Without these they fell through to
     # the generic vLLM fallback, which tags provider_hint="vllm" — so budget/cost
@@ -813,17 +961,29 @@ HOSTED_PROFILES: dict[str, BackendCapability] = {
         supports_logprobs=False,
         provider_hint="gemini",
     ),
+    # xAI Grok — OpenAI-compatible at api.x.ai. Native tools, no grammar mode;
+    # reasoning models stream ``reasoning_content`` deltas.
+    "xai": BackendCapability(
+        kind="openai_compat",
+        supports_native_tools=True,
+        supports_grammar=False,
+        supports_logprobs=False,
+        supports_prefix_caching=True,  # xAI bills cached prompt tokens at a discount
+        provider_hint="xai",
+    ),
     "glm": BackendCapability(
         kind="openai_compat",
         supports_native_tools=True,
         supports_grammar=False,
         provider_hint="glm",
+        structured_output="json_object",
     ),
     "qwen": BackendCapability(
         kind="openai_compat",
         supports_native_tools=True,
         supports_grammar=False,
         provider_hint="qwen",
+        structured_output="json_object",
     ),
     "mock": BackendCapability(
         kind="mock",
@@ -872,6 +1032,8 @@ def hosted_profile_from_url(base_url: str) -> BackendCapability | None:
         return HOSTED_PROFILES["openai"]
     if "generativelanguage.googleapis" in url:
         return HOSTED_PROFILES["gemini"]
+    if "api.x.ai" in url:
+        return HOSTED_PROFILES["xai"]
     if "z.ai" in url or "bigmodel.cn" in url or "zhipu" in url:
         return HOSTED_PROFILES["glm"]
     if "dashscope" in url or "aliyuncs" in url:
