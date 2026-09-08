@@ -339,8 +339,10 @@ INDEX_HTML = r"""<!doctype html>
   .acard:hover { background: var(--panel-2); }
   .acard.open { background: var(--panel-2); }
   .ac-h { display: flex; align-items: center; gap: 11px; min-width: 0; cursor: pointer; }
-  .ac-h .bigmark { width: 32px; height: 32px; border-radius: 9px; }
-  .ac-h .bigmark svg { width: 18px; height: 18px; }
+  .ac-h .bigmark { width: 32px; height: 32px; border-radius: 8px; }
+  .ac-h .bigmark svg { width: 32px; height: 32px; }
+  /* the letter stand-in matches the glyphs' optical weight and the UI's scale */
+  .bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink-2); }
   .ac-h .ft { min-width: 0; flex: 1; }
   .ac-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .ac-h .fn { font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis;
@@ -488,9 +490,12 @@ INDEX_HTML = r"""<!doctype html>
   .comp .foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
   .comp .hint { font-size: 11.5px; color: var(--ink-3); flex: 1; line-height: 1.5; }
   .comp .hint code { font-family: var(--mono); background: var(--fill); padding: 1px 5px; border-radius: 4px; }
+  /* One square, one glyph size, everywhere. The ink inside is normalised by
+     the fit viewBox, so a 62%-of-box glyph is 62% for every vendor. */
   .mark2 { width: 22px; height: 22px; border-radius: 6px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--fill); color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 700; overflow: hidden; }
-  .mark2 svg { width: 14px; height: 14px; display: block; }
+    background: var(--fill); color: var(--ink); overflow: hidden; }
+  .mark2 svg { width: 22px; height: 22px; display: block; }
+  .mark2.letter { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-2); }
   .refresh { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
 
   /* ---- modal sheet ---- */
@@ -881,9 +886,9 @@ INDEX_HTML = r"""<!doctype html>
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
-  .dpc .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--fill); color: var(--ink); font-family: var(--mono); font-weight: 700; font-size: 15px; overflow: hidden; }
-  .dpc .bigmark svg { width: 22px; height: 22px; display: block; }
+  .dpc .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex; align-items: center;
+    justify-content: center; background: var(--fill); color: var(--ink); overflow: hidden; }
+  .dpc .bigmark svg { width: 40px; height: 40px; display: block; }
   .dpc .ft { min-width: 0; flex: 1; }
   .dpc .fn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dpc.on .fn { color: var(--accent); }
@@ -945,8 +950,9 @@ INDEX_HTML = r"""<!doctype html>
   .mcard .mh { display: flex; align-items: center; gap: 10px; min-width: 0; padding-right: 70px; }
   .mcard .mh .mtt { min-width: 0; flex: 1; }
   .omark { width: 34px; height: 34px; border-radius: 9px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--fill); color: var(--ink-2); font-family: var(--mono); font-weight: 700; font-size: 14px; overflow: hidden; position: relative; }
-  .omark svg { width: 20px; height: 20px; display: block; }
+    background: var(--fill); color: var(--ink-2); overflow: hidden; position: relative; }
+  .omark svg { width: 34px; height: 34px; display: block; }
+  .omark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600; }
   .omark img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--t); }
   .omark.img img { opacity: 1; }
   .omark.img { color: transparent; }
@@ -3445,9 +3451,10 @@ function orgMark(org) {
   const key = (org || "").toLowerCase();
   const m = ORG_MARKS[key];
   w.textContent = (org || "?").slice(0, 1).toUpperCase();
+  w.classList.add("letter");
   if (m && m.svg) {
-    w.textContent = ""; w.innerHTML = m.svg;
-    if (m.tint) { w.style.color = m.tint; w.style.background = "color-mix(in srgb, " + m.tint + " 16%, transparent)"; }
+    w.textContent = ""; w.classList.remove("letter"); w.innerHTML = markSvg(m);
+    if (m.tint) w.style.color = m.tint;
     return w;
   }
   if (key) {
@@ -3464,31 +3471,30 @@ function orgMark(org) {
 // square is tinted only when the vendor's own colour is known (a hex); a
 // monochrome mark inherits the ink and sits on the neutral square, so no
 // provider gets a stray grey box while its neighbour glows.
-const TINT_ALPHA = "12%";
-function markSvg(svg) {
-  return String(svg).replace(/<svg\b/, '<svg preserveAspectRatio="xMidYMid meet"');
+// Every mark renders in the same neutral square at the same optical weight.
+// Each vendor drew on its own grid — measured across the set, a mark's ink
+// covers 50%–100% of its declared viewBox — so the page swaps in the `fit`
+// viewBox computed from that mark's measured ink bounds (serve_logos.py).
+// The square stays neutral for all of them: the glyph carries the vendor's
+// colour, and one card glowing while its neighbour doesn't reads as broken.
+function markSvg(m) {
+  let svg = String(m.svg).replace(/<svg\b/, '<svg preserveAspectRatio="xMidYMid meet"');
+  if (m.fit) svg = svg.replace(/viewBox="[^"]*"/, 'viewBox="' + m.fit + '"');
+  return svg;
 }
-function bigMark(pid, label) {
+function fillMark(w, pid, label) {
   const m = MARKS[pid];
-  const w = el("span","bigmark");
   if (m && m.svg) {
-    w.innerHTML = markSvg(m.svg);
-    if (m.tint) w.style.color = m.tint;
-    if (m.tint && /^#/.test(m.tint)) w.style.background = "color-mix(in srgb, " + m.tint + " " + TINT_ALPHA + ", transparent)";
-  } else w.textContent = (label || pid || "?").slice(0, 1).toUpperCase();
-  return w;
-}
-function providerMark(pid, label) {
-  const m = MARKS[pid];
-  const w = el("span","mark2");
-  if (m && m.svg) {
-    w.innerHTML = markSvg(m.svg);
+    w.innerHTML = markSvg(m);
     if (m.tint) w.style.color = m.tint;
   } else {
     w.textContent = (label || pid || "?").slice(0, 1).toUpperCase();
+    w.classList.add("letter");
   }
   return w;
 }
+function bigMark(pid, label) { return fillMark(el("span","bigmark"), pid, label); }
+function providerMark(pid, label) { return fillMark(el("span","mark2"), pid, label); }
 
 // ---- provider setup: every way to authenticate each family ----------------
 // One card per family; opening one reveals its methods as selectable rows.
@@ -3592,16 +3598,12 @@ function cardState(e) {
 function authCard(e) {
   const meta = provMeta(e);
   const st8 = cardState(e);
-  const tint = vendorTint(e.logo || e.family);
   const open = AUTH.open === e.key;
   const card = el("div","acard " + st8.cls + (open ? " open" : ""));
   card.id = "auth-" + e.key.replace("/", "-");
-  if (tint) card.style.setProperty("--vendor", tint);
 
   const head = el("div","ac-h");
-  const mk = bigMark(e.logo || e.family, e.label);
-  if (tint) mk.style.background = "color-mix(in srgb, " + tint + " 14%, transparent)";
-  head.append(mk);
+  head.append(bigMark(e.logo || e.family, e.label));
   const ht = el("div","ft");
   ht.append(el("div","fn", e.label));
   const stw = el("div","ac-s");

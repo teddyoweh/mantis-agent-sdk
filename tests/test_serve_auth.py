@@ -404,8 +404,10 @@ def test_provider_card_surface_is_neutral_with_a_rail_for_the_one_in_use(fake):
     assert ".acard.use::before { background: var(--accent); }" in css
     assert ".acard.idle::before { background: var(--warn)" in css
     assert "background: transparent;" in css.split(".acard::before {")[1].split("}")[0]
-    # the vendor colour is used once, on the mark, and never on the rail
-    assert 'mk.style.background = "color-mix(in srgb, " + tint + " 14%, transparent)"' in js
+    # no per-vendor tint anywhere on the card's surfaces: one neutral square
+    # for every mark, and the accent — never a vendor hue — on the rail
+    marks = js[js.index("function markSvg(m)"):js.index("// ---- models & hosting ----")]
+    assert "color-mix" not in marks and "style.background" not in marks
     assert "var(--vendor" not in css
     # two type sizes, two weights
     assert "font-size: 14.5px" in css.split(".ac-h .fn {")[1].split("}")[0]
@@ -460,6 +462,61 @@ def test_collapsed_cards_are_one_height_by_construction(fake):
     assert "align-items: start" in css.split(".auth-grid {")[1].split("}")[0]
 
 
+def test_every_mark_is_optically_normalised_to_one_square():
+    """Vendors draw on their own grids — measured across this set a mark's ink
+    covers 50%-100% of its declared viewBox — so each mark carries a `fit`
+    viewBox centred on its measured ink that makes it fill the same share of
+    the square. Every square is the same size and neutrally filled; the glyph
+    carries the vendor's colour.
+
+    (The browser-side check that all 15 rendered ink boxes measure the same
+    lives in the render gate; this pins the data that guarantees it.)"""
+    from mantis_agent.serve_logos import (
+        INK_TARGET,
+        MARK_INK,
+        ORG_LOGOS,
+        PROVIDER_LOGOS,
+        fit_viewbox,
+    )
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    assert 0.5 < INK_TARGET < 0.8
+    # the ink table really does describe a wide spread — that's the problem it solves
+    wide, narrow = [], []
+    for key, (x, y, w, h) in MARK_INK.items():
+        assert w > 0 and h > 0, key
+        wide.append(max(w, h) / 24.0)
+        narrow.append(min(w, h) / 24.0)
+    assert min(narrow) < 0.6 and max(wide) >= 1.0      # 50%-wide to edge-to-edge
+    # a fit viewBox is square, centred on the ink, and sized by the target
+    fit = fit_viewbox((0.0, 6.0, 12.0, 6.0), 0.5)
+    fx, fy, fw, fh = (float(v) for v in fit.split())
+    assert fw == fh == 24.0 and fx + fw / 2 == 6.0 and fy + fh / 2 == 9.0
+    # every mark the page can draw carries one
+    for name, marks in (("provider", PROVIDER_LOGOS), ("org", ORG_LOGOS)):
+        for mark_id, entry in marks.items():
+            if entry.get("svg"):
+                assert entry.get("fit"), "%s mark %s was never measured" % (name, mark_id)
+                assert len(entry["fit"].split()) == 4, mark_id
+    # the page swaps the fit in and centres what's left
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert "function markSvg(m)" in js and "'viewBox=\"' + m.fit + '\"'" in js
+    assert 'preserveAspectRatio="xMidYMid meet"' in js
+    # one neutral square for all of them — no per-vendor tinted background
+    fill = js.split("function fillMark(")[1].split("function bigMark(")[0]
+    assert "color-mix" not in fill and "style.background" not in fill
+    for box in ("\n  .mark2 {", "\n  .omark {", "\n  .dpc .bigmark {"):
+        rule = css.split(box)[1].split("}")[0]
+        assert "background: var(--fill)" in rule, box
+    # the svg fills its square; the fit viewBox does the insetting, not the CSS
+    assert ".ac-h .bigmark svg { width: 32px; height: 32px; }" in css
+    assert ".mark2 svg { width: 22px; height: 22px; display: block; }" in css
+    # the letter stand-in matches the UI's type scale, centred like the glyphs
+    assert ".bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600" in css
+    assert ".mark2.letter" in css and ".omark.letter" in css
+    assert 'w.classList.add("letter")' in js
+
+
 def test_no_fact_is_printed_twice_on_a_provider_card(fake):
     from mantis_agent.serve_ui import INDEX_HTML
 
@@ -480,7 +537,7 @@ def test_no_fact_is_printed_twice_on_a_provider_card(fake):
     # a self-host backend is a template until the user fills it in
     assert "the URL you set above" in js and "/[{}]/.test(String(ep))" in js
     # marks render identically whatever grid the vendor drew on
-    assert 'preserveAspectRatio="xMidYMid meet"' in js and "markSvg(m.svg)" in js
+    assert 'preserveAspectRatio="xMidYMid meet"' in js and "function markSvg(m)" in js
 
 
 def test_every_empty_state_has_an_illustration(fake):

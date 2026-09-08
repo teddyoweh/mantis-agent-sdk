@@ -15,6 +15,7 @@ Regenerate with ``tools/gen_provider_logos.py``.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -127,3 +128,158 @@ def load_org_logos(path: Path | None = None) -> dict[str, dict[str, str]]:
 
 
 ORG_LOGOS: dict[str, dict[str, str]] = load_org_logos()
+
+# ---------------------------------------------------------------------------
+# Optical normalisation — every mark reads at the same weight
+#
+# Each vendor draws on its own grid with its own padding baked in: measured
+# across this set, a mark's ink covers anywhere from 50% to 100% of its
+# declared viewBox, so a fixed 18px box renders some marks twice the optical
+# size of others. These are the measured ink bounding boxes (x, y, w, h in
+# each mark's own viewBox units, from ``getBBox()`` in a browser), and
+# :func:`fit_viewbox` turns one into a square viewBox centred on the *ink*
+# that makes it fill ``INK_TARGET`` of the box. Keys are ``p:<provider id>``
+# for :data:`PROVIDER_LOGOS` and ``o:<org id>`` for :data:`ORG_LOGOS`.
+#
+# Regenerate with ``tools/measure_mark_ink.py`` after adding a mark; a mark
+# with no entry keeps its declared viewBox and simply isn't normalised.
+# ---------------------------------------------------------------------------
+
+#: How much of the square a mark's longer ink dimension should occupy.
+INK_TARGET = 0.62
+
+MARK_INK: dict[str, tuple[float, float, float, float]] = {
+    "o:01-ai": (2.501, 2, 17.226, 20),
+    "o:01.ai": (2.501, 2, 17.226, 20),
+    "o:01ai": (2.501, 2, 17.226, 20),
+    "o:ai2": (0, 0.058, 23.895, 23.885),
+    "o:ai21": (0, 6.999, 23, 10.001),
+    "o:ai21labs": (0, 6.999, 23, 10.001),
+    "o:alibaba": (0, 0.118, 24, 23.765),
+    "o:alibaba-nlp": (0, 0.118, 24, 23.765),
+    "o:allenai": (0, 0.058, 23.895, 23.885),
+    "o:anthropic": (0, 3.541, 24, 16.918),
+    "o:c4ai": (1, 1, 22, 21.997),
+    "o:claude": (0, 3.541, 24, 16.918),
+    "o:cohere": (1, 1, 22, 21.997),
+    "o:cohere-labs": (1, 1, 22, 21.997),
+    "o:cohereforai": (1, 1, 22, 21.997),
+    "o:coherelabs": (1, 1, 22, 21.997),
+    "o:deepmind": (0.307, 0, 23.386, 24),
+    "o:deepseek": (0, 3.169, 24, 17.661),
+    "o:deepseek-ai": (0, 3.169, 24, 17.661),
+    "o:facebook": (0, 4.029, 24, 15.942),
+    "o:falcon": (4.75, 0, 19.25, 24),
+    "o:gemma": (0.307, 0, 23.386, 24),
+    "o:glm": (1, 0, 22, 24),
+    "o:google": (0.307, 0, 23.386, 24),
+    "o:google-bert": (0.307, 0, 23.386, 24),
+    "o:google-deepmind": (0.307, 0, 23.386, 24),
+    "o:google-t5": (0.307, 0, 23.386, 24),
+    "o:gpt": (0, 0, 24, 23.787),
+    "o:granite": (0, 7, 24, 10),
+    "o:grok": (2, 1, 20, 22),
+    "o:hf": (0, 1.13, 24, 21.738),
+    "o:huggingface": (0, 1.13, 24, 21.738),
+    "o:huggingfaceh4": (0, 1.13, 24, 21.738),
+    "o:huggingfacem4": (0, 1.13, 24, 21.738),
+    "o:huggingfacetb": (0, 1.13, 24, 21.738),
+    "o:ibm": (0, 7, 24, 10),
+    "o:ibm-granite": (0, 7, 24, 10),
+    "o:ibm-research": (0, 7, 24, 10),
+    "o:jamba": (0, 6.999, 23, 10.001),
+    "o:kimi": (0.001, 0, 24, 24),
+    "o:llama": (0, 4.029, 24, 15.942),
+    "o:meta": (0, 4.029, 24, 15.942),
+    "o:meta-llama": (0, 4.029, 24, 15.942),
+    "o:microsoft": (2, 2, 20, 20),
+    "o:microsoft-research": (2, 2, 20, 20),
+    "o:minimax": (0, 1.922, 24, 20.156),
+    "o:minimax-ai": (0, 1.922, 24, 20.156),
+    "o:minimaxai": (0, 1.922, 24, 20.156),
+    "o:mistral": (0, 3.429, 24, 17.143),
+    "o:mistral-community": (0, 3.429, 24, 17.143),
+    "o:mistralai": (0, 3.429, 24, 17.143),
+    "o:moonshot": (0.001, 0, 24, 24),
+    "o:moonshotai": (0.001, 0, 24, 24),
+    "o:nemotron": (0, 4.063, 24, 15.874),
+    "o:nvidia": (0, 4.063, 24, 15.874),
+    "o:olmo": (0, 0.058, 23.895, 23.885),
+    "o:openai": (0, 0, 24, 23.787),
+    "o:openai-community": (0, 0, 24, 23.787),
+    "o:phi": (2, 2, 20, 20),
+    "o:qwen": (0, 0.118, 24, 23.765),
+    "o:smol": (0, 1.13, 24, 21.738),
+    "o:stability": (1, 3, 22, 18),
+    "o:stabilityai": (1, 3, 22, 18),
+    "o:stable-diffusion": (1, 3, 22, 18),
+    "o:thudm": (1, 0, 22, 24),
+    "o:tii": (4.75, 0, 19.25, 24),
+    "o:tiiuae": (4.75, 0, 19.25, 24),
+    "o:tongyi": (0, 0.118, 24, 23.765),
+    "o:x-ai": (2, 1, 20, 22),
+    "o:xai": (2, 1, 20, 22),
+    "o:xai-org": (2, 1, 20, 22),
+    "o:yi": (2.501, 2, 17.226, 20),
+    "o:z.ai": (1, 0, 22, 24),
+    "o:zai": (1, 0, 22, 24),
+    "o:zai-org": (1, 0, 22, 24),
+    "o:zhipuai": (1, 0, 22, 24),
+    "p:anthropic": (0, 0, 24, 24),
+    "p:baseten": (2.401, 0, 19.198, 24),
+    "p:cerebras": (3.421, 1.299, 16.353, 21.401),
+    "p:deepinfra": (1, 0, 22.032, 24),
+    "p:deepseek": (0, 3, 24, 17.66),
+    "p:fireworks": (0, 5, 24, 12),
+    "p:gemini": (1, 1.003, 21.998, 21.998),
+    "p:glm": (1, 0, 22, 24),
+    "p:groq": (5, 2, 14, 20),
+    "p:hf": (0, 1.13, 24, 21.738),
+    "p:modal": (0, 72, 300, 156),
+    "p:moonshot": (3, 0, 20.77, 20),
+    "p:ollama": (3.5, 1, 17, 22.001),
+    "p:openai": (0, 0, 24, 23.787),
+    "p:openrouter": (0.001, 3.869, 23.999, 16.958),
+    "p:qwen": (1, 1, 22, 22),
+    "p:runpod": (1.041, 0, 21.918, 24),
+    "p:together": (0, 1.501, 24.054, 22.393),
+    "p:vastai": (0, 1.767, 23.998, 20.465),
+    "p:xai": (2.6, 3, 18.6, 18),
+}
+
+
+def fit_viewbox(ink: tuple[float, float, float, float], target: float = INK_TARGET) -> str:
+    """A square viewBox centred on ``ink`` in which the ink fills ``target``."""
+    x, y, w, h = ink
+    side = max(w, h) / target
+    cx, cy = x + w / 2.0, y + h / 2.0
+    return "%g %g %g %g" % (round(cx - side / 2, 3), round(cy - side / 2, 3),
+                               round(side, 3), round(side, 3))
+
+
+def _apply_fit(marks: dict[str, dict[str, str]], prefix: str) -> None:
+    """Give every mark we measured a ``fit`` viewBox; the page uses it in
+    place of the declared one so the glyphs share an optical weight."""
+    for mark_id, entry in marks.items():
+        ink = MARK_INK.get(prefix + mark_id.lower())
+        if ink:
+            entry["fit"] = fit_viewbox(ink)
+
+
+def _ink_white(marks: dict[str, dict[str, str]]) -> None:
+    """A mark drawn white-on-dark loses its body on a light square — Kimi's
+    is one blue crescent plus a white bowl, which simply vanishes. Baked-in
+    white becomes ``currentColor`` so the body inherits the page's ink and
+    reads in both themes; the vendor's own colours are untouched."""
+    for entry in marks.values():
+        svg = entry.get("svg")
+        if svg:
+            entry["svg"] = _WHITE_FILL_RE.sub('fill="currentColor"', svg)
+
+
+_WHITE_FILL_RE = re.compile(r'fill="(?:#fff(?:fff)?|white)"', re.I)
+
+_ink_white(PROVIDER_LOGOS)
+_ink_white(ORG_LOGOS)
+_apply_fit(PROVIDER_LOGOS, "p:")
+_apply_fit(ORG_LOGOS, "o:")
