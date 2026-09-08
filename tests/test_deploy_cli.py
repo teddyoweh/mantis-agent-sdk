@@ -7,7 +7,9 @@ import os
 import subprocess
 import sys
 
+import httpx
 import pytest
+import respx
 
 from mantis_agent.cli import _build_parser, main
 from mantis_agent.deploy import store
@@ -85,7 +87,10 @@ def test_grammar_parses():
     assert a.cmd == "deploy" and a.deploy_cmd == "up" and a.gpu == "AMPERE_80" and a.max == 2 and a.json
     for argv in (["deploy", "providers"], ["deploy", "creds", "runpod", "--set", "RUNPOD_API_KEY=x"],
                  ["deploy", "gpus", "hf", "--min-vram", "40"], ["deploy", "models", "qwen", "--sort", "downloads"],
-                 ["deploy", "inspect", "Qwen/Qwen3-8B"], ["deploy", "ls", "--refresh"], ["deploy", "status", "id"],
+                 ["deploy", "inspect", "Qwen/Qwen3-8B"],
+                 ["deploy", "find", "coding model under 40B", "--provider", "clifake",
+                  "--limit", "5", "--no-agent"],
+                 ["deploy", "ls", "--refresh"], ["deploy", "status", "id"],
                  ["deploy", "logs", "id", "--tail", "50"], ["deploy", "connect", "id"], ["deploy", "down", "id", "--yes"]):
         assert p.parse_args(argv + ["--json"]).json is True
     with pytest.raises(SystemExit):
@@ -188,3 +193,57 @@ def test_cli_import_does_not_load_deploy_or_providers():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                          env={**os.environ, "PYTHONPATH": os.getcwd()}).stdout.strip()
     assert out == "0 0"
+
+
+# ---------------------------------------------------------------------------
+# deploy find — the natural-language picker
+# ---------------------------------------------------------------------------
+
+_HUB_ROW = {
+    "id": "Qwen/Qwen3-8B", "gated": False, "downloads": 2_000_000, "likes": 2500,
+    "lastModified": "2025-05-01T00:00:00.000Z", "tags": ["license:apache-2.0"],
+    "cardData": {"license": "apache-2.0"},
+    "config": {"architectures": ["Qwen3ForCausalLM"]},
+    "safetensors": {"parameters": {"BF16": 8_200_000_000}, "total": 8_200_000_000},
+}
+
+
+@pytest.fixture()
+def _hub():
+    with respx.mock(assert_all_called=False) as router:
+        router.get("https://huggingface.co/api/models").mock(
+            return_value=httpx.Response(200, json=[_HUB_ROW]))
+        yield router
+
+
+def test_find_json_shape(capsys, _hub):
+    rc, obj = _run(capsys, ["deploy", "find", "coding model under 40B", "--no-agent", "--json"])
+    assert rc == 0 and obj["ok"] is True and obj["source"] == "rules"
+    assert obj["query"] == "coding model under 40B"
+    assert obj["interpretation"].startswith("coding models, under 40B")
+    assert obj["filters"]["max_params_b"] == 40.0 and obj["filters"]["task"] == "coding"
+    assert set(obj["columns"]) <= {"params", "dtype", "vram", "context", "fit", "price",
+                                   "license", "downloads", "updated"}
+    group = obj["groups"][0]
+    assert {"title", "reason", "models", "best"} == set(group)
+    assert group["models"][0]["id"] == "Qwen/Qwen3-8B" and group["best"] == "Qwen/Qwen3-8B"
+    assert obj["extras"]["Qwen/Qwen3-8B"]["updated"].startswith("2025-05-01")
+    assert any("rule parser" in n for n in obj["notes"])
+
+
+def test_find_human_output_renders_sections_and_columns(capsys, _hub):
+    rc = main(["deploy", "find", "coding model under 40B", "--no-agent"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "coding models, under 40B parameters" in out and "[rules]" in out
+    assert "why:" in out and "* Qwen/Qwen3-8B" in out
+    assert "params" in out and "8.2B" in out
+    assert "note:" in out
+
+
+def test_find_with_a_provider_adds_fit_and_price(capsys, _hub):
+    rc, obj = _run(capsys, ["deploy", "find", "a good model", "--provider", "clifake",
+                            "--no-agent", "--json"])
+    assert rc == 0 and "fit" in obj["columns"] and "price" in obj["columns"]
+    assert obj["extras"]["Qwen/Qwen3-8B"]["gpu"] == "g1"
+    assert obj["extras"]["Qwen/Qwen3-8B"]["price_per_hour"] == 0.5

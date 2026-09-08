@@ -479,59 +479,150 @@ def test_at_most_one_provider_is_ever_marked_current(fake, monkeypatch):
     assert ".acard::before" not in css and ".acard.use::before" not in css
 
 
-def test_the_current_card_is_marked_by_a_ring_of_pixel_blocks(fake):
-    """The active marker is a ring of hard pixel blocks around the WHOLE card:
-    one stroked path whose 3px width and 3/3 dash array lay down 3x3 squares,
-    with antialiasing off so every block edge is hard at 1x and 2x."""
+def test_no_card_state_wears_an_outline(fake):
+    """An outline — however it is drawn — reads as a border at real size, and
+    with every connected card wearing one the grid became a field of dotted
+    rectangles. Nothing on the auth grid, in any state, may carry one."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
     css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
 
-    rect = css.split("  .ac-pix rect {")[1].split("}")[0]
-    # square blocks: the stroke width and the dash both 3, so block == gap
-    assert "stroke-width: 3" in rect
-    assert "stroke-dasharray: 3 3" in rect
-    assert "stroke: var(--accent)" in rect
-    assert "border" not in rect
-    # not a border and not `outline: dashed` — neither can be made square,
-    # and a border would change layout and break the equal-height matrix
-    assert "outline:" not in css.split("  .ac-pix {")[1].split("}")[0]
+    # the ring, and everything that drew it, is gone
+    for dead in (".ac-pix", "pixMarker", "pixmarch", "ac-dash", "dashMarker"):
+        assert dead not in css and dead not in js, dead
+    # nothing on the provider grid strokes a dashed path any more (the context
+    # diagram elsewhere in the sheet still may — it is drawing a chart, not a
+    # card state)
+    for sel, block in _all_rules(css):
+        if ".ac" in sel or ".dpc" in sel:
+            assert "stroke-dasharray" not in block, sel
+    # no card rule paints a border, an outline or a ring on any state
+    for sel in (".acard", ".acard.cur", ".acard.rdy", ".acard.idle", ".acard.off", ".acard::before"):
+        for block in _rules(css, sel):
+            for banned in ("border:", "outline:", "border-top", "border-left", "box-shadow"):
+                assert banned not in block, (sel, banned, block)
+    assert ".acard::before" not in css and ".acard.use::before" not in css
 
-    box = css.split("  .ac-pix {")[1].split("}")[0]
+
+def _all_rules(css):
+    """(selector list, declarations) for every block in the sheet."""
+    out = []
+    for chunk in css.split("}"):
+        if "{" not in chunk:
+            continue
+        head, _, body = chunk.partition("{")
+        out.append((head.strip(), body))
+    return out
+
+
+def _rules(css, sel):
+    """Every declaration block whose selector list contains exactly `sel`."""
+    return [body for head, body in _all_rules(css)
+            if sel in [x.strip() for x in head.split(",")]]
+
+
+def test_the_current_card_is_marked_by_a_pixel_dither_on_its_surface(fake):
+    """The active marker sits ON the card: a dither of hard 3px blocks on a
+    4px pitch, dense at the mark's left edge and thinning to nothing, laid in
+    the card's empty bottom strip. Current and Ready differ in reach, rows and
+    block count — a difference in PATTERN, so it survives greyscale."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+
+    box = css.split("  .ac-mot {")[1].split("}")[0]
+    # it is painted over the card, costs no layout, and eats no clicks
     assert "position: absolute" in box and "pointer-events: none" in box
-    # inset 4px + half the 3px stroke = 5.5, a HALF pixel, so the 3px stroke
-    # spans whole device pixels instead of bleeding across two
-    assert "top: 5.5px" in box and "left: 5.5px" in box
-    assert "calc(100% - 11px)" in box
-
-    mk = js[js.index("function pixMarker()"):js.index("// ---- the floating panel")] \
-        if "function pixMarker()" in js and js.index("function pixMarker()") < js.index("// ---- the floating panel") \
-        else js[js.index("function pixMarker()"):js.index("function authCard(")]
-    assert 'setAttribute("shape-rendering", "crispEdges")' in mk, "antialiasing would soften the blocks"
-    # the card's 12px radius less the 5.5px the path is inset by
-    assert '"rx", "6.5"' in mk and '"ry", "6.5"' in mk
-    assert '"width", "100%"' in mk and '"height", "100%"' in mk
-    assert 'setAttribute("aria-hidden", "true")' in mk
-
-    # Current wears the accent ring, Ready the same ring held far back, the
-    # two quiet states none at all
-    assert 'if (st8.cls === "cur" || st8.cls === "rdy") card.append(pixMarker());' in js
-    rdy = css.split("  .acard.rdy .ac-pix rect {")[1].split("}")[0]
-    assert "stroke: var(--ink-3)" in rdy and "opacity: .3" in rdy
-    for quiet in (".acard.idle .ac-pix", ".acard.off .ac-pix"):
+    # anchored to the ONE left edge the card already has — the mark's — and to
+    # an INTEGER offset, or the blocks would land on half pixels
+    assert "left: 14px" in box and "bottom: 3px" in box
+    for banned in ("border", "outline", "stroke", "width: calc", "height: calc"):
+        assert banned not in box, banned
+    assert "  .ac-mot rect { fill: var(--accent); }" in css
+    # Ready is the same pattern held back: neutral and half-strength
+    rdy = css.split("  .acard.rdy .ac-mot rect {")[1].split("}")[0]
+    assert "fill: var(--ink-3)" in rdy and "opacity: .5" in rdy
+    # the two quiet states carry nothing at all
+    for quiet in (".acard.idle .ac-mot", ".acard.off .ac-mot"):
         assert quiet not in css, quiet
+    # a dither does not march: animating it reads as noise, not as life
+    assert ".ac-mot" not in css.split("@media (prefers-reduced-motion: no-preference) {")[1][:400]
 
-    # the march is opt-out-able and seamless: one block cycle is 3 + 3 = 6px,
-    # and the offset travels a whole number of them
-    assert "@media (prefers-reduced-motion: no-preference) {" in css
-    anim = css.split("@media (prefers-reduced-motion: no-preference) {")[1][:200]
-    assert ".acard.cur .ac-pix rect { animation: pixmarch 18s linear infinite; }" in anim
-    off = css.split("@keyframes pixmarch { to { stroke-dashoffset: -")[1].split(";")[0]
-    assert int(off) % 6 == 0, "a partial block cycle would jump at the loop point"
+    mk = js[js.index("const MOT_BLK"):js.index("const rdyMotif")]
+    # integer block on an integer pitch, and antialiasing off at every scale
+    assert "const MOT_BLK = 3, MOT_PITCH = 4;" in mk
+    assert 'setAttribute("shape-rendering", "crispEdges")' in mk
+    assert 'setAttribute("aria-hidden", "true")' in mk
+    # width/height/viewBox agree, so one SVG unit is one CSS pixel
+    assert 'svg.setAttribute("width", w); svg.setAttribute("height", h);' in mk
+    assert 'svg.setAttribute("viewBox", "0 0 " + w + " " + h);' in mk
+    # every block is placed on the pitch — never a fractional coordinate
+    assert 'b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_PITCH);' in mk
+    assert 'b.setAttribute("width", MOT_BLK); b.setAttribute("height", MOT_BLK);' in mk
+    # deterministic: the same card draws the same pattern on every render
+    assert "Math.random" not in mk
 
-    # the old dashed marker is gone entirely
-    assert "ac-dash" not in css and "dashMarker" not in js
+    # Current reaches further, in more rows, than Ready
+    cur_reach, cur_rows = _motif_args(js, "curMotif")
+    rdy_reach, rdy_rows = _motif_args(js, "rdyMotif")
+    assert cur_reach > rdy_reach and cur_rows > rdy_rows
+    assert _blocks(cur_reach, cur_rows) > 3 * _blocks(rdy_reach, rdy_rows), "Ready is not quieter enough"
+
+    # the band lives in the 12px strip below the 39px head, so it cannot reach
+    # the mark, the name, the badge or the action — and the height is untouched
+    assert ".acard:not(.open) { height: 63px; }" in css
+    assert ".acard .ac-h { height: 39px; }" in css
+    assert 14 + cur_reach * 4 < 330, "the band must fit the narrowest card in the grid"
+    assert 3 + cur_rows * 4 <= 12, "the band must stay inside the bottom padding"
+
+    # Current and Ready wear it; nothing else does
+    assert 'if (st8.cls === "cur") card.append(curMotif());' in js
+    assert 'else if (st8.cls === "rdy") card.append(rdyMotif());' in js
+
+
+def _motif_args(js, name):
+    call = js.split("const %s = () => pixMotif(" % name)[1].split(")")[0]
+    a, b = [int(x) for x in call.split(",")]
+    return a, b
+
+
+def _blocks(reach, rows):
+    """The dither the page draws, counted here from the same rule."""
+    return sum(1 for c in range(reach) for r in range(rows)
+               if ((c * 3 + r * 5) % 10) / 10 < 1 - c / reach)
+
+
+def test_one_motif_across_all_three_card_kinds(fake):
+    """The provider card, the GPU provider card and the current model's card
+    are marked the same way, by the same function — and on the two cards whose
+    height is not fixed the motif is LAID OUT beside the action rather than
+    pinned over it, because a card that grows or wraps would otherwise close
+    the gap."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+
+    # one builder, three callers
+    assert js.count("const curMotif = () => pixMotif(") == 1
+    assert js.count("card.append(curMotif());") == 2      # deploy card + model card
+    assert 'if (st8.cls === "cur") card.append(curMotif());' in js
+    assert "if (p.configured && ready) card.append(curMotif());" in js
+    assert "foot.append(curMotif());" in js
+
+    # the fixed-height provider card pins it inside its own bottom padding
+    assert "position: absolute" in css.split("  .ac-mot {")[1].split("}")[0]
+    # the two variable-height cards lay it out instead
+    assert "  .dpc .ac-mot { position: static; align-self: flex-start; }" in css
+    assert "  .mm-foot .ac-mot { position: static; flex: none; }" in css
+    # ...and on the GPU card it comes after the engine chips, before the
+    # bottom-pinned action row, so no card height can bring the two together
+    dpc = js[js.index('const chips = el("div","chips");\n    (p.engines'):]
+    dpc = dpc[:dpc.index('const ff = el("div","ff");')]
+    assert "card.append(chips);" in dpc and "curMotif()" in dpc
+    assert "  .dpc .ff { display: flex; align-items: center; gap: 6px; margin-top: auto;" in css
 
 
 def test_current_is_the_only_slanted_badge(fake):

@@ -321,6 +321,15 @@ def _add_deploy_parser(sub: Any) -> None:
     q.add_argument("--limit", type=int, default=25)
     _json(q)
 
+    q = dsub.add_parser("find", help="Ask for a model in plain English; get ranked, labelled groups.")
+    q.add_argument("query", help='e.g. "best open coding model under 40B, 2025".')
+    q.add_argument("--provider", default=None, help="Rank by what actually fits this provider's GPUs (adds fit/price).")
+    q.add_argument("--limit", type=int, default=24)
+    q.add_argument("--hf-token", default=None, help="For gated repos (else $HF_TOKEN).")
+    q.add_argument("--no-agent", action="store_true",
+                   help="Skip the agent tier and use mantis's deterministic query parser.")
+    _json(q)
+
     q = dsub.add_parser("inspect", help="Pre-flight one model: params, dtype, gated, vLLM support, VRAM estimate.")
     q.add_argument("model", help="HF id (org/name) or ollama:<tag>.")
     _json(q)
@@ -1271,6 +1280,32 @@ def _deploy_dispatch(args: argparse.Namespace, want_json: bool, out_json: Any) -
             [[m.id, f"{m.params_b:g}B" if m.params_b else "?", m.dtype or "?", "yes" if m.gated else "",
               {True: "yes", False: "no"}.get(m.vllm_ok, "?"),
               f"{m.est_vram_gb:g} GB" if m.est_vram_gb else "?", m.downloads or ""] for m in infos]))
+        return 0
+
+    if cmd == "find":
+        from .deploy import smart_search  # noqa: PLC0415
+
+        res = anyio.run(lambda: manager.find_models(
+            args.query, provider_id=args.provider, limit=args.limit,
+            hf_token=args.hf_token, use_agent=not args.no_agent,
+            progress=None if want_json else progress))
+        if want_json:
+            return out_json({"ok": True, **res.to_dict()})
+        print(f"{res.interpretation}   [{res.source}]")
+        headers = ["model"] + list(res.columns)
+        for g in res.groups:
+            print(f"\n{g.title}  ({len(g.models)})")
+            print(f"  why: {g.reason}")
+            rows = [[("* " if g.best and m.id == g.best else "  ") + m.id]
+                    + [smart_search.column_value(c, m, res.extras.get(m.id)) for c in res.columns]
+                    for m in g.models]
+            print("\n".join("  " + line for line in _deploy_table(headers, rows).splitlines()))
+        if not res.groups:
+            print("\nno models matched")
+        if res.notes:
+            print()
+            for note in res.notes:
+                print(f"note: {note}")
         return 0
 
     if cmd == "inspect":

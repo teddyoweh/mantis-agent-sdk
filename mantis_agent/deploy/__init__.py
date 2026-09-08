@@ -4,7 +4,7 @@ Public surface::
 
     from mantis_agent.deploy import (
         deploy, connect, teardown, list_deployments, status, logs,
-        providers, gpus, inspect_model, search_models, fit,
+        gpus, inspect_model, search_models, fit,
     )
 
 See :mod:`mantis_agent.deploy.base` for the types and the provider contract,
@@ -29,6 +29,13 @@ from .base import (
     get_provider,
     register_provider,
 )
+# NOTE: ``manager.providers`` is deliberately NOT re-exported here. This
+# package contains a ``providers`` SUBPACKAGE (the adapters), and importing it
+# — which every manager call does, to register the built-ins — rebinds
+# ``mantis_agent.deploy.providers`` from any function we bound to the module
+# object. A name that stops being callable partway through a process is worse
+# than no name at all, so the list is reached through ``manager.providers``,
+# which is what every caller already uses.
 from .manager import (
     connect,
     deploy,
@@ -37,7 +44,6 @@ from .manager import (
     inspect_model,
     list_deployments,
     logs,
-    providers,
     search_models,
     status,
     teardown,
@@ -66,7 +72,6 @@ __all__ = [
     "inspect_model",
     "list_deployments",
     "logs",
-    "providers",
     "register_provider",
     "search_models",
     "status",

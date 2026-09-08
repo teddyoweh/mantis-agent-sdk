@@ -266,3 +266,32 @@ def test_search_models_curated_when_empty(monkeypatch):
     assert len(out) == 5 and out[0].id == "Qwen/Qwen3-8B" and "curated" in out[0].tags
     out = anyio.run(lambda: manager.search_models("hit", limit=5))
     assert [m.id for m in out] == ["org/hit"] and out[0].vllm_ok is True
+
+
+# ---------------------------------------------------------------------------
+# The package holds a `providers` SUBPACKAGE (the adapters). Re-exporting a
+# `providers` FUNCTION beside it meant the first adapter import rebound the
+# name to the module, so the function stopped being callable partway through a
+# process. The list is reached through `manager.providers` instead.
+# ---------------------------------------------------------------------------
+
+
+def test_the_package_does_not_shadow_its_adapters_subpackage() -> None:
+    import importlib
+
+    import anyio
+
+    import mantis_agent.deploy as deploy_pkg
+    from mantis_agent.deploy import manager
+
+    assert "providers" not in deploy_pkg.__all__
+
+    # Importing the adapters is what used to do the shadowing; the manager's
+    # entry point must survive it, twice.
+    importlib.import_module("mantis_agent.deploy.providers")
+    first = anyio.run(manager.providers)
+    importlib.import_module("mantis_agent.deploy.providers")
+    second = anyio.run(manager.providers)
+
+    assert first and len(first) == len(second)
+    assert {p["id"] for p in first} == {p["id"] for p in second}

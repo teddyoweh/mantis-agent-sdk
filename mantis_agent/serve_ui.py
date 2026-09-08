@@ -139,7 +139,7 @@ INDEX_HTML = r"""<!doctype html>
 
   /* ---- cards & lists: filled surfaces; hover one step; selected = accent tint ---- */
   .card, .card2, .fam, .dpc, .setup, .trace, .ctxbox, .hero, .host, .selfhost-card, .comp, details.layer,
-  .cfg, .list, .mtable, .browse, .mcard, .gcard { background: var(--panel); border-radius: var(--radius); }
+  .cfg, .list, .browse, .mcard, .gcard { background: var(--panel); border-radius: var(--radius); }
   .card { padding: 15px 16px; display: flex; flex-direction: column; gap: 10px; }
   .card2 { padding: 14px 16px 16px; }
   .card2 h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 3px; }
@@ -335,37 +335,27 @@ INDEX_HTML = r"""<!doctype html>
   .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
   /* Collapsed, a card says four things: whose it is, what it's called, what
      state it's in, and the one action that changes that. The surface is the
-     same neutral panel in every state — the provider in use is marked by a
-     thin rail, never by a wash. Everything else waits until it's opened. */
-  /* THE ACTIVE MARKER — a ring of hard pixel blocks around the whole card.
-     Drawn as one stroked path, not a field of <rect>s: a 3px stroke with a
-     3/3 dash array puts down 3x3 squares, which is what makes it read as
-     PIXELS rather than as a dashed line — the blocks are square, and the gap
-     equals the block. `crispEdges` turns off antialiasing so every edge is
-     hard at 1x and 2x, and the path centreline sits on a half pixel (inset 4
-     + half the 3px stroke = 5.5) so the stroke spans whole device pixels
-     instead of bleeding across two.
-       block 3px · pitch 6px (3 on, 3 off) · inset 4px · rx 6.5
-     Picked by rendering six block/pitch pairs at true 1x and 2x: 2px blocks
-     at any pitch collapse back into a dashed line, and 4px blocks shout over
-     the badge. 3/3 is where the blocks stay square and separate at both. */
-  .ac-pix { position: absolute; top: 5.5px; left: 5.5px;
-    width: calc(100% - 11px); height: calc(100% - 11px);
-    pointer-events: none; overflow: visible; z-index: 1; }
-  .ac-pix rect { fill: none; stroke: var(--accent); stroke-width: 3;
-    stroke-dasharray: 3 3; stroke-linecap: butt; }
-  /* Connected-but-idle is the SAME pixel ring held far back — same rhythm, a
-     third of the presence, neutral rather than accent, so it can never be
-     mistaken for the current card. The badge glyph differs in shape too, so
-     the pair survives colour blindness. */
-  .acard.rdy .ac-pix rect { stroke: var(--ink-3); opacity: .3; }
-  /* One block cycle is 6px, so the offset travels a whole number of them and
-     the loop has no seam. 36px over 18s is one block every 3 seconds: the
-     ring marches, but only for someone already looking at it. */
-  @media (prefers-reduced-motion: no-preference) {
-    .acard.cur .ac-pix rect { animation: pixmarch 18s linear infinite; }
-  }
-  @keyframes pixmarch { to { stroke-dashoffset: -36; } }
+     same neutral panel in every state — never a wash, never a rail, never an
+     outline. Everything else waits until it's opened. */
+  /* THE ACTIVE MARKER — a pixel DITHER on the card's surface, not a ring
+     around its edge. Any outline, however it is drawn, reads as a border, and
+     with every connected card wearing one the grid became a field of dotted
+     rectangles.
+       block 3px · pitch 4px · 2 rows · reach 22 columns · bottom-left
+     The band lives in the card's empty bottom strip, anchored to the mark's
+     left edge, so it cannot collide with the mark, the name, the badge or the
+     action at any width, and it costs no layout — the 63px height is
+     untouched. Current and Ready differ in REACH, ROW COUNT and DENSITY, not
+     in hue, so the pair survives a colour-blind or greyscale reading.
+     Picked over three other placements rendered side by side at true 1x and
+     2x in both themes: a corner cluster reads as dust at Ready's density, a
+     run under the name reads as a text underline, and a bleed from the left
+     edge brings back the rail this design already threw out.
+     No animation: a marching dither reads as noise, not as life. */
+  .ac-mot { position: absolute; left: 14px; bottom: 3px; pointer-events: none; z-index: 1;
+    display: block; }
+  .ac-mot rect { fill: var(--accent); }
+  .acard.rdy .ac-mot rect { fill: var(--ink-3); opacity: .5; }
   .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
     padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
     transition: background var(--t); }
@@ -544,10 +534,62 @@ INDEX_HTML = r"""<!doctype html>
   .dp-donem { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none;
     align-self: center; }
   .dp-donex { flex-basis: 100%; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+  /* dual-mode search: the mode is a control you can see and flip */
+  .dp-mode { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px;
+    padding: 0 11px; border: 0; border-radius: 8px; background: var(--fill); font: inherit;
+    font-size: 12px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
+    transition: background var(--t), color var(--t); }
+  .dp-mode:hover { background: var(--panel-2); color: var(--ink); }
+  .dp-mode.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .dp-mode:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+  /* the marker is a filled pip when the agent will answer, a hollow one when
+     the Hub will — shape, not only colour */
+  .dp-modem { width: 7px; height: 7px; border-radius: 50%; flex: none;
+    box-shadow: inset 0 0 0 2px var(--ink-3); }
+  .dp-mode.on .dp-modem { background: currentColor; box-shadow: none; }
+  /* pinned: the user chose, so it is no longer a guess */
+  .dp-mode.pinned { box-shadow: inset 0 0 0 2px var(--accent); }
+
+  /* the agent's answer */
+  .dp-groups { display: block; }
+  .ask-head { margin: 0 0 14px; }
+  .ask-int { font-size: 14px; color: var(--ink); line-height: 1.5; margin-bottom: 7px; max-width: 82ch; }
+  .ask-src { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px;
+    color: var(--ink-3); margin-bottom: 8px; }
+  .ask-badge { height: 19px; padding: 0 8px; border-radius: 6px; background: var(--fill);
+    color: var(--ink-2); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; }
+  .ask-badge.on { background: var(--accent); color: var(--accent-ink); }
+  .ask-srcx { min-width: 0; }
+  .ask-link { border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
+    color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .ask-note { font-size: 12px; color: var(--warn); line-height: 1.5; margin-bottom: 5px; max-width: 82ch; }
+  .ask-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .ask-flbl { font-size: 11.5px; color: var(--ink-3); }
+  .ask-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 4px 0 9px;
+    border-radius: 7px; background: var(--fill); font-size: 12px; color: var(--ink-2); }
+  .ask-chip b { font-weight: 600; color: var(--ink-3); font-size: 11px; }
+  .ask-x { border: 0; background: none; padding: 0 5px; font: inherit; font-size: 14px; line-height: 1;
+    color: var(--ink-3); cursor: pointer; border-radius: 5px; }
+  .ask-x:hover { color: var(--ink); background: var(--panel-2); }
+  .ask-x:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+  /* a group: its title, why it is a group, how many are in it */
+  .dp-gh { display: flex; align-items: baseline; gap: 9px; margin: 16px 0 8px; flex-wrap: wrap; }
+  .dp-gt { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .dp-gr { font-size: 12px; color: var(--ink-3); min-width: 0; }
+  .dp-gn { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-left: auto; }
+  .ask-best { margin-left: auto; height: 19px; padding: 0 8px; border-radius: 6px; flex: none;
+    background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 600;
+    display: inline-flex; align-items: center; }
+  .mcard.best { background: var(--panel-2); }
+  .sk-mcard { height: 104px; border-radius: var(--radius); }
+  .dp-asking .dp-asksteps { margin-bottom: 14px; }
   /* the deploy job as steps: what has happened, what is happening now */
-  .dp-steps { list-style: none; margin: 4px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .dp-steps { list-style: none; margin: 4px 0 12px; padding: 0; display: flex; flex-direction: column;
+    align-items: stretch; gap: 2px; }
+  /* width and flex stated outright rather than leaning on stretch: a step
+     that collapses to its marker renders its label one character per line */
   .dp-step { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; font-size: 12.5px;
-    color: var(--ink-3); line-height: 1.45; }
+    color: var(--ink-3); line-height: 1.45; width: 100%; align-self: stretch; }
   .dp-step.live { color: var(--ink); }
   .dp-stepm { width: 14px; height: 14px; border-radius: 50%; flex: none; margin-top: 2px;
     background: var(--fill); position: relative; }
@@ -559,7 +601,7 @@ INDEX_HTML = r"""<!doctype html>
     .dp-step.live .dp-stepm { animation: steppulse 1.5s ease-in-out infinite; }
   }
   @keyframes steppulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-  .dp-stept { min-width: 0; word-break: break-word; }
+  .dp-stept { flex: 1 1 auto; min-width: 0; word-break: break-word; }
   .dp-logbox { margin: 0 0 12px; }
   .dp-logbox summary { font-size: 11.5px; color: var(--ink-3); cursor: pointer; padding: 3px 0; }
   .dp-logbox summary::marker { color: var(--ink-3); }
@@ -955,35 +997,42 @@ INDEX_HTML = r"""<!doctype html>
   .kh-l { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
   .kh-v { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
   .kh-n { font-size: 11px; color: var(--ink-3); }
-  .mtable { padding: 4px; max-height: 460px; overflow-y: auto; }
-  .mrow { display: grid; grid-template-columns: minmax(0,1fr) 104px 52px 104px 118px 62px; align-items: center; gap: 12px; padding: 8px 11px;
-    border-radius: 7px; cursor: pointer; font-size: 12.5px; transition: background var(--t); }
-  .mrow:hover, .mrow.kb { background: var(--panel-2); }
-  .mrow.kb { background: var(--fill); }
-  .mrow.cur { background: var(--accent-soft); }
-  .mrow .mn { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mrow.cur .mn { color: var(--accent); font-weight: 600; }
-  .mrow.locked .mn { color: var(--ink-2); }
-  .mrow .mp { color: var(--ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mrow .mctx { color: var(--ink-2); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
-  .mrow .mcaps { display: flex; gap: 4px; }
+  /* MY MODELS — the same card the Deploy picker draws, filled with what the
+     SDK knows about a model you can already reach. One component, two pages:
+     .mcard, .mh, .omark, .mt, .mo, .mp2 and .pill are shared outright, so the
+     two model surfaces cannot drift into two design eras. */
+  /* a labelled grid per source */
+  .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 12.5px;
+    font-weight: 600; color: var(--ink-2); }
+  .mm-glabel .mark2 { width: 18px; height: 18px; border-radius: 5px; }
+  .mm-glabel .mark2 svg { width: 11px; height: 11px; }
+  .mm-gn { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
+  /* The head gives its 70px back: nothing sits top-right unless the card is
+     the current one, and reserving that space would truncate a long model id
+     for no reason. */
+  .mmcard .mh { padding-right: 0; }
+  .mmcard.on .mh { padding-right: 84px; }
+  /* keyboard focus is a background step, like every other state on the page */
+  .mmcard.kb { background: var(--fill); }
+  .mmcard.locked .mt { color: var(--ink-2); }
+  /* The foot: the motif on the left, the one action on the right, laid out
+     rather than stacked, so neither can ever reach the other at any width.
+     16px and not 15: an even row centres the 8px motif on a whole pixel, so
+     its blocks land on the device grid instead of straddling it. */
+  .mm-foot { display: flex; align-items: center; gap: 10px; min-height: 16px; margin-top: auto; }
+  .mm-foot .ac-mot { position: static; flex: none; }
+  .mm-act { margin-left: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  .mmcard:hover .mm-act { color: var(--accent); }
+  .mmcard.locked .mm-act { color: var(--warn); }
+  /* the same slanted Current tag the provider cards wear, pinned where the
+     Deploy card puts its hover verb */
+  .mmcard > .ac-st.cur { position: absolute; top: 12px; right: 13px; }
   .cap { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; padding: 2px 6px; border-radius: 4px;
     background: var(--fill); color: var(--ink-3); }
   .cap.ok { background: var(--ok-soft); color: var(--ok); }
   .cap.bad { background: var(--bad-soft); color: var(--bad); }
   .cap.amb { background: var(--warn-soft); color: var(--warn); }
-  .mrow .mgo { font-size: 11px; color: var(--ink-3); text-align: right; white-space: nowrap; }
-  .mrow:hover .mgo { color: var(--accent); }
-  .mrow.locked .mgo { color: var(--warn); }
-  .mrow .mprice { color: var(--ink-2); font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); }
-  .mrow .mprice.free { color: var(--ok); } .mrow .mprice.na { color: var(--ink-3); }
-  .mfam { display: flex; align-items: center; gap: 9px; padding: 10px 11px 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2);
-    position: sticky; top: 0; background: var(--panel); z-index: 1; }
-  .mfam .mark2 { width: 18px; height: 18px; border-radius: 5px; } .mfam .mark2 svg { width: 11px; height: 11px; }
-  .mfam .cnt3 { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
-  .mhead { display: grid; grid-template-columns: minmax(0,1fr) 104px 52px 104px 118px 62px; gap: 12px; padding: 4px 11px 6px;
-    font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
-  .mhead span:nth-child(3), .mhead span:nth-child(4) { text-align: right; }
+  .mcard.on .cap { background: var(--panel); }
   .orow { display: grid; grid-template-columns: minmax(0,1fr) 90px 72px 92px 62px; gap: 12px; align-items: center; padding: 8px 11px;
     border-radius: 7px; font-size: 12.5px; cursor: pointer; transition: background var(--t); }
   .orow:hover { background: var(--panel-2); }
@@ -1026,12 +1075,17 @@ INDEX_HTML = r"""<!doctype html>
   .dpc { padding: 16px 16px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; position: relative; transition: background var(--t); }
   .dpc:hover { background: var(--panel-2); }
   /* One system: a connected GPU provider is marked the same way a connected
-     model provider is — the pixel ring — not with an accent wash. The wash
+     model provider is — the pixel dither — not with an accent wash. The wash
      was the last surface on the pre-redesign system. */
   .dpc { position: relative; }
   .dpc.on { background: var(--panel); }
   .dpc.on:hover { background: var(--panel-2); }
-  .dpc.on .ac-pix rect { stroke: var(--accent); }
+  /* This card is a column with a bottom-pinned action row that can wrap to
+     two lines, so the motif is a LAID-OUT item in that column rather than an
+     overlay pinned to the bottom: no card height can bring it and the buttons
+     together. It sits at the padding edge, under the engine chips, in line
+     with the mark above it. */
+  .dpc .ac-mot { position: static; align-self: flex-start; }
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
@@ -1088,7 +1142,7 @@ INDEX_HTML = r"""<!doctype html>
   .dpc.on .dp-field input.in { background: var(--panel); }
   .dp-field .kh-n { line-height: 1.45; }
   /* the Hub search — model cards */
-  .dp-mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
   .dp-glabel { grid-column: 1 / -1; font-size: 12.5px; font-weight: 600; color: var(--ink-2); padding: 4px 2px 0; }
   .dp-status { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-left: auto; white-space: nowrap; }
   .mcard { padding: 14px 15px 13px; cursor: pointer; display: flex; flex-direction: column; gap: 9px; min-width: 0; position: relative;
@@ -1194,8 +1248,6 @@ INDEX_HTML = r"""<!doctype html>
     .page { padding: 18px 14px 60px; }
     #sessions.on { grid-template-columns: 1fr; }
     .col { display: none; } .col.mobile-on { display: block; }
-    .mrow, .mhead { grid-template-columns: minmax(0,1fr) 52px 96px 62px; }
-    .mrow .mp, .mrow .mcaps, .mhead span:nth-child(2), .mhead span:nth-child(5) { display: none; }
     .orow { grid-template-columns: minmax(0,1fr) 72px 62px; }
     .orow .osz, .orow .opq { display: none; }
     #transcript { padding: 14px 12px; }
@@ -2005,7 +2057,8 @@ async function loadHome() {
 // ==========================================================================
 const DEPLOY = { providers: [], deployments: [], model: null, inspect: null, q: "", sort: "trending",
                  provider: "all", org: "all", orgsOpen: false, fresh: false, hfToken: false,
-                 source: "curated", gpuMax: {}, results: [] };
+                 source: "curated", mode: "auto", find: null, findJob: null,
+                 gpuMax: {}, results: [] };
 const DAY = 86400000;
 // How current a model is. Inside a year people think in "3 days ago"; beyond
 // it, the month and year say more than "14 months ago".
@@ -2267,9 +2320,6 @@ function renderDpProviders(box) {
     // configured but unrunnable must not read as ready
     card.className = "dpc" + (p.configured && ready ? " on" : "") + (ready ? "" : " blocked");
     card.id = "dpc-" + p.id;
-    // same marker as a connected model provider, so the two pages read as
-    // one app rather than two design eras
-    if (p.configured && ready) card.append(pixMarker());
     const fh = el("div","fh");
     fh.append(bigMark(p.logo || p.id, p.display_name));
     const ft = el("div","ft");
@@ -2302,6 +2352,10 @@ function renderDpProviders(box) {
     const chips = el("div","chips");
     (p.engines || []).forEach(e => chips.append(el("span","chip", e)));
     card.append(chips);
+    // the same marker a connected model provider wears, so the two pages read
+    // as one app rather than two design eras — laid out in the column, above
+    // the action row, never floating over it
+    if (p.configured && ready) card.append(curMotif());
     const ff = el("div","ff");
     // the key form is a sheet, never an in-card panel: a card that grew to
     // fit a guide stretched its whole grid row and hollowed out its neighbours
@@ -2493,6 +2547,32 @@ function renderDpPicker(sec) {
   const find = findBox("Search every model on Hugging Face — llama, qwen, gemma, deepseek…  ( / )");
   find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = DEPLOY.q;
   bar.append(find.wrap);
+  // The mode is a visible control, not a guess made behind your back. It
+  // shows what WOULD run for what is typed, and clicking it pins the choice.
+  const modeBtn = el("button","dp-mode");
+  const modeLbl = el("span","dp-model");
+  modeBtn.append(el("span","dp-modem"), modeLbl);
+  const paintMode = () => {
+    const on = askMode(find.input.value);
+    modeBtn.classList.toggle("on", on);
+    modeLbl.textContent = on ? "Ask" : "Keywords";
+    modeBtn.title = DEPLOY.mode === "auto"
+      ? (on ? "This reads as a question — Enter asks the agent. Click to force keyword search."
+            : "This reads as keywords — Enter searches the Hub. Click to ask the agent instead.")
+      : DEPLOY.mode === "ask" ? "Pinned to Ask. Click to go back to automatic."
+      : "Pinned to keyword search. Click to go back to automatic.";
+    modeBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    modeBtn.classList.toggle("pinned", DEPLOY.mode !== "auto");
+  };
+  modeBtn.onclick = () => {
+    // one click pins the opposite of what is showing; a second returns to auto
+    const on = askMode(find.input.value);
+    DEPLOY.mode = DEPLOY.mode !== "auto" ? "auto" : (on ? "keyword" : "ask");
+    paintMode();
+  };
+  find.input.addEventListener("input", paintMode);
+  paintMode();
+  bar.append(modeBtn);
   const chips = el("div","fchips");
   [["trending","Trending"], ["downloads","Downloads"], ["likes","Likes"], ["recent","Recent"]].forEach(([k, lab]) => {
     const c = el("button","fchip" + (k === DEPLOY.sort ? " on" : ""), lab);
@@ -2513,8 +2593,17 @@ function renderDpPicker(sec) {
   sec.append(sub);
   const grid = el("div","dp-mgrid"); grid.id = "dp-models"; sec.append(grid);
   let t = null;
+  // deep link: /?ask=<question>#deploy lands on the agent's answer
+  const ask0 = new URLSearchParams(location.search).get("ask");
+  if (ask0 && !DEPLOY.q) { find.input.value = ask0; DEPLOY.q = ask0; DEPLOY.mode = "ask"; paintMode();
+    setTimeout(() => runAsk(grid, status), 0); }
   const runSearch = async () => {
     DEPLOY.q = find.input.value.trim();
+    paintMode();
+    // a question goes to the agent; everything else takes the path it always
+    // took, untouched
+    if (DEPLOY.q && DEPLOY.source !== "ollama" && askMode(DEPLOY.q)) { runAsk(grid, status); return; }
+    DEPLOY.find = null;
     // typing always means the Hub: the curated list is a starting point, not
     // a filter you have to escape from
     if (DEPLOY.q && DEPLOY.source === "curated") setSource("hub");
@@ -2603,6 +2692,229 @@ const VRAM_CAP_GB = 80;
 // One pill per company present in the results, with its real mark and count.
 // Ollama reports a parameter size as a string ("8.0B", "70B"); the cards
 // carry it as a number, so it is parsed once here rather than at each use.
+// ---- the agent path --------------------------------------------------------
+// The search is a background job because it may call a model. Its progress
+// arrives as the same step treatment the deploy job uses — not a spinner —
+// and the results area holds the SHAPE of grouped results while it works, so
+// the page does not jump when the answer lands.
+let askReq = 0;
+async function runAsk(grid, status) {
+  const my = ++askReq;
+  const mine = ++modelSearchReq;               // cancels any in-flight keyword search
+  DEPLOY.find = null;
+  status.textContent = "asking…";
+  grid.innerHTML = ""; grid.className = "dp-groups";
+  const steps = el("ol","dp-steps dp-asksteps");
+  const wrap = el("div","dp-asking");
+  wrap.append(steps, askSkeleton());
+  grid.append(wrap);
+  let drawn = 0;
+  const paint = (lines, running) => {
+    for (let i = drawn; i < lines.length; i++) {
+      const li = el("li","dp-step");
+      li.append(el("span","dp-stepm"), el("span","dp-stept", lines[i]));
+      steps.append(li);
+    }
+    drawn = lines.length;
+    [...steps.children].forEach((li, i) => {
+      const live = running && i === lines.length - 1;
+      li.classList.toggle("live", live); li.classList.toggle("did", !live);
+    });
+  };
+  paint(["reading your question…"], true);
+  let start;
+  try { start = await api("/api/deploy/find?" + q({ q: DEPLOY.q, provider: DEPLOY.provider, limit: 24,
+                                                    agent: DEPLOY.mode === "keyword" ? 0 : 1 })); }
+  catch (e) { start = { ok: false, error: e.message }; }
+  if (my !== askReq) return;
+  if (!start.ok) { askFailed(grid, status, start); return; }
+  DEPLOY.findJob = start.job;
+  for (let i = 0; i < 90; i++) {
+    await sleep(i < 6 ? 350 : 800);
+    if (my !== askReq) return;
+    let j;
+    try { j = await api("/api/deploy/job?" + q({ id: start.job })); } catch (e) { continue; }
+    if (my !== askReq) return;
+    paint((j.lines || []).length ? j.lines : ["reading your question…"], j.status === "running");
+    if (j.status === "running") continue;
+    if (j.status === "error") { askFailed(grid, status, j); return; }
+    DEPLOY.find = j.result || null;
+    DEPLOY.results = { ok: true, models: askModels(j.result) };
+    await gpuCeiling();
+    renderOrgPills();
+    renderAskResults(grid, j.result);
+    status.textContent = askCount(j.result);
+    return;
+  }
+  askFailed(grid, status, { error: "the search took too long" });
+}
+const askModels = r => (r && r.groups || []).reduce((a, g) => a.concat(g.models || []), []);
+function askCount(r) {
+  const n = askModels(r).length, g = ((r && r.groups) || []).length;
+  if (!n) return "nothing matched";
+  return n + " model" + (n === 1 ? "" : "s") + " in " + g + " group" + (g === 1 ? "" : "s");
+}
+function askFailed(grid, status, r) {
+  grid.innerHTML = ""; grid.className = "dp-mgrid";
+  status.textContent = "";
+  grid.append(emptyState("search", "That search didn't finish",
+    errText(r) + " — try plain keywords, or ask again.",
+    btn("Search keywords instead", "pri", () => {
+      DEPLOY.mode = "keyword";
+      const i = document.querySelector("#deploypad .find input"); if (i) { i.focus(); }
+      const ev = new Event("keydown"); document.dispatchEvent(ev);
+      runSearchAgain();
+    })));
+}
+function runSearchAgain() {
+  const i = document.querySelector("#deploypad .find input");
+  if (i) { i.dispatchEvent(new Event("input")); i.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); }
+}
+// The waiting shape: two labelled groups of cards, so the answer lands into
+// the space it will occupy instead of pushing the page around.
+function askSkeleton() {
+  const w = el("div","dp-skel");
+  for (let gi = 0; gi < 2; gi++) {
+    const h = el("div","dp-gh");
+    h.append(el("span","sk sk-name"));
+    w.append(h);
+    const g = el("div","dp-mgrid");
+    for (let i = 0; i < (gi ? 2 : 3); i++) g.append(el("div","sk sk-mcard"));
+    w.append(g);
+  }
+  return w;
+}
+// The answer: what it understood, what it derived, then the groups. The
+// derived filters are chips you can drop, because the fastest way to fix a
+// misreading is to remove the bit it got wrong and let it run again.
+function renderAskResults(grid, r) {
+  grid.innerHTML = ""; grid.className = "dp-groups";
+  if (!r) return;
+  const head = el("div","ask-head");
+  if (r.interpretation) head.append(el("div","ask-int", r.interpretation));
+  // WHERE the answer came from, always — a rules answer never poses as an
+  // agent one
+  const src = el("div","ask-src");
+  if (r.source === "agent") {
+    src.append(el("span","ask-badge on", "Agent"));
+    src.append(el("span","ask-srcx", "interpreted by the model you have connected."));
+  } else {
+    src.append(el("span","ask-badge", "Rules"));
+    src.append(el("span","ask-srcx", "matched by keyword rules — no model answered this."));
+    const a = el("button","ask-link", "Connect a model provider");
+    a.onclick = () => { location.hash = "#models"; showTab("models"); };
+    src.append(a);
+  }
+  head.append(src);
+  (r.notes || []).forEach(n => head.append(el("div","ask-note", n)));
+  const fk = Object.keys(r.filters || {}).filter(k => r.filters[k] != null && r.filters[k] !== "");
+  if (fk.length) {
+    const fr = el("div","ask-filters");
+    fr.append(el("span","ask-flbl", "reading that as"));
+    fk.forEach(k => {
+      const c = el("span","ask-chip");
+      c.append(el("b", null, k.replace(/_/g, " ")), el("span", null, fmtFilter(r.filters[k])));
+      const x = el("button","ask-x", "×");
+      x.title = "drop this and ask again";
+      x.setAttribute("aria-label", "Remove filter " + k);
+      x.onclick = () => {
+        const next = Object.assign({}, r.filters); delete next[k];
+        DEPLOY.q = (DEPLOY.q + " (without " + k.replace(/_/g, " ") + ")").trim();
+        const i = document.querySelector("#deploypad .find input");
+        if (i) i.value = DEPLOY.q;
+        runSearchAgain();
+      };
+      c.append(x);
+      fr.append(c);
+    });
+    head.append(fr);
+  }
+  grid.append(head);
+  const cols = r.columns || [];
+  (r.groups || []).forEach(g => {
+    const gh = el("div","dp-gh");
+    gh.append(el("b","dp-gt", g.title || "Results"));
+    if (g.reason) gh.append(el("span","dp-gr", g.reason));
+    gh.append(el("span","dp-gn", String((g.models || []).length)));
+    grid.append(gh);
+    const box = el("div","dp-mgrid");
+    (g.models || []).forEach(m => box.append(askCard(m, cols, g.best === m.id)));
+    grid.append(box);
+  });
+}
+function fmtFilter(v) {
+  if (Array.isArray(v)) return v.join(", ");
+  if (v && typeof v === "object") return Object.keys(v).map(k => k + " " + v[k]).join(" · ");
+  return String(v);
+}
+// One card, showing only the facts this QUERY cares about. The standout in a
+// group is marked once, on the card, and never repeated in the group header.
+function askCard(m, cols, best) {
+  const card = el("div","mcard ask-card" + (m.id === DEPLOY.model ? " on" : "") + (best ? " best" : ""));
+  card.dataset.model = m.id;
+  const slash = m.id.indexOf("/");
+  const mh = el("div","mh");
+  mh.append(orgMark(m.org || (slash > 0 ? m.id.slice(0, slash) : "")));
+  const mtt = el("div","mtt");
+  const t = el("div","mt", slash > 0 ? m.id.slice(slash + 1) : m.id); t.title = m.id; mtt.append(t);
+  if (slash > 0) { const og = m.id.slice(0, slash); const o2 = el("div","mo", orgName(og));
+    if (orgName(og) !== og) o2.title = og; mtt.append(o2); }
+  mh.append(mtt);
+  if (best) mh.append(el("span","ask-best", "pick"));
+  card.append(mh);
+  const lcd = el("div","lcd tight");
+  let any = false;
+  cols.forEach(c => {
+    const v = colValue(m, c);
+    if (v == null) return;
+    any = true;
+    lcdCell(lcd, v, COL_LABEL[c] || c, c === "vram" ? "hot" : "dim");
+  });
+  if (any) card.append(lcd);
+  card.onclick = () => pickModel(m.id);
+  return card;
+}
+// ---- dual-mode search ------------------------------------------------------
+// A keyword goes to the Hub the way it always has. A QUESTION goes to the
+// agent, which answers with grouped models and the columns that matter. The
+// guess is never silent: the mode is shown as a control you can flip before
+// you press Enter, so nobody is surprised by which one ran.
+const ASK_WORDS = /\b(what|which|who|whats|what's|why|how|can|should|find|show|recommend|suggest|best|cheapest|fastest|smallest|biggest|smarter|better|good|great|need|want|looking|help|compare|vs|versus|instead|under|over|less|more|fits?|run)\b/i;
+const ASK_UNITS = /\b\d+(\.\d+)?\s?(gb|gib|tb|b|m|k)\b|\bparams?\b|\bvram\b|\bcontext\b|\btokens?\b/i;
+// A question is a sentence, not a token: several words, or a word that asks
+// something, or a comparative, or a real unit.
+function looksLikeQuestion(q) {
+  const t = String(q || "").trim();
+  if (!t) return false;
+  if (/^[\w.\-]+\/[\w.\-]+$/.test(t)) return false;      // a bare repo id is never a question
+  const words = t.split(/\s+/).filter(Boolean);
+  if (t.endsWith("?")) return true;
+  if (words.length >= 5) return true;
+  return words.length >= 3 && (ASK_WORDS.test(t) || ASK_UNITS.test(t));
+}
+// "auto" follows the guess; "ask" and "keyword" are the user overriding it.
+function askMode(q) {
+  if (DEPLOY.mode === "ask") return true;
+  if (DEPLOY.mode === "keyword") return false;
+  return looksLikeQuestion(q);
+}
+// Which facts a card shows is decided by the query, not by the card. Nine
+// columns on every card is how a result grid stops being readable.
+const COL_LABEL = { params: "params", dtype: "dtype", vram: "est. vram", license: "license",
+                    downloads: "downloads", updated: "updated", context: "context",
+                    fit: "fits", price: "$/h" };
+function colValue(m, c) {
+  if (c === "params") return m.params_b != null ? fmtParams(m.params_b) : null;
+  if (c === "dtype") return m.dtype || null;
+  if (c === "vram") return m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : null;
+  if (c === "license") return m.license || null;
+  if (c === "downloads") return m.downloads != null ? fmtTok(m.downloads) : null;
+  if (c === "updated") return whenText(m) || null;
+  if (c === "context") return m.context_len ? fmtCtx(m.context_len) : null;
+  if (c === "fit") return m.vllm_ok === true ? "vllm ok" : m.vllm_ok === false ? "no vllm" : null;
+  if (c === "price") return m.price_per_hour != null ? fmtUsd(m.price_per_hour) + "/h" : null;
+  return null;
+}
 function parseParams(v) {
   const m = /^\s*([\d.]+)\s*([BbMm])/.exec(String(v || ""));
   if (!m) return null;
@@ -4018,23 +4330,36 @@ function placeAuthPanel(box, card, pan) {
   }
   pan.style.top = top + "px";
 }
-// The pixel marker. The SVG box is inset by CSS (4px + half the 3px stroke =
-// 5.5px), so the rect is a plain 100%x100% — SVG will not parse calc() in a
-// geometry attribute. rx is the card's 12px radius less that 5.5px, so the
-// blocks ride the card's curve instead of cutting across it, and
-// crispEdges keeps every block hard-edged at any device scale.
-function pixMarker() {
+// The pixel dither. Deterministic — the same card draws the same pattern on
+// every render, so nothing shimmers on refresh — and hard-edged: integer
+// blocks on an integer pitch with crispEdges, which is what keeps it looking
+// drawn on a pixel grid rather than like a rounded decoration.
+const MOT_BLK = 3, MOT_PITCH = 4;
+function pixMotif(reach, rows) {
+  const w = reach * MOT_PITCH, h = rows * MOT_PITCH;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "ac-pix");
+  svg.setAttribute("class", "ac-mot");
+  svg.setAttribute("width", w); svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
   svg.setAttribute("shape-rendering", "crispEdges");
   svg.setAttribute("aria-hidden", "true");
-  const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  r.setAttribute("x", "0"); r.setAttribute("y", "0");
-  r.setAttribute("width", "100%"); r.setAttribute("height", "100%");
-  r.setAttribute("rx", "6.5"); r.setAttribute("ry", "6.5");
-  svg.append(r);
+  for (let c = 0; c < reach; c++) {
+    // density falls off from solid at the anchored edge to nothing at the tip
+    const dens = 1 - c / reach;
+    for (let r = 0; r < rows; r++) {
+      if (((c * 3 + r * 5) % 10) / 10 >= dens) continue;
+      const b = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_PITCH);
+      b.setAttribute("width", MOT_BLK); b.setAttribute("height", MOT_BLK);
+      svg.append(b);
+    }
+  }
   return svg;
 }
+// Current is dense and long; Ready is short and thin. The difference is the
+// pattern itself, so it holds with no colour at all.
+const curMotif = () => pixMotif(22, 2);
+const rdyMotif = () => pixMotif(8, 1);
 // Two shapes from one description: the 63px card that lives in the grid, and
 // — with `panel` — the same card expanded, which is drawn ABOVE the grid so
 // opening one never moves another. The grid's geometry is fixed for good.
@@ -4046,7 +4371,8 @@ function authCard(e, panel) {
   card.id = (panel ? "authp-" : "auth-") + e.key.replace("/", "-");
   // Current wears the accent pixel ring; Ready wears the same ring held far
   // back. Idle and not-connected wear none — the badge alone speaks.
-  if (st8.cls === "cur" || st8.cls === "rdy") card.append(pixMarker());
+  if (st8.cls === "cur") card.append(curMotif());
+  else if (st8.cls === "rdy") card.append(rdyMotif());
 
   const head = el("div","ac-h");
   head.append(bigMark(e.logo || e.family, e.label));
@@ -4360,6 +4686,84 @@ const TAB_FAM = Object.fromEntries(Object.entries(TAB_SLUG).map(([k, v]) => [v, 
 const tabFromHash = () => { const [t, sub] = location.hash.slice(1).split("/"); return t === "models" && sub ? (TAB_FAM[sub] || sub) : "all"; };
 let MODEL_TAB = tabFromHash();
 let applyModelFilter = null;
+
+// ---- one model, as a card -------------------------------------------------
+// The SAME component the Deploy picker draws — .mcard with its mark square,
+// its mono title, its caption and its quiet pills — so the two model surfaces
+// are one design, not two. What differs is only the facts: a model you can
+// already reach is described by what it costs and what it can do, never by
+// how big its weights are.
+const price2 = v => v >= 10 ? v.toFixed(0) : v.toFixed(2);
+// Price per 1M tokens, in then out. `free` is not a price of zero — it means
+// your own hardware, which is a different claim, so it gets its own pill.
+function pricePill(p) {
+  if (!p) { const q = pill("—", " / 1M"); q.title = "no row in the price table"; return q; }
+  if (p.free) { const q = pill("free", "", "acc"); q.title = "your hardware, no API charge"; return q; }
+  const q = pill("$" + price2(p.in) + " · $" + price2(p.out), " / 1M", "mono");
+  q.title = "$" + p.in + " in · $" + p.out + " out, per 1M tokens" +
+    (p.cache_read != null ? " · cache read $" + p.cache_read : "");
+  return q;
+}
+function myModelCard(a, fid, cur, famName) {
+  const on = a.model === cur;
+  const card = el("div","mcard mmcard" + (on ? " on" : "") + (a.enabled ? "" : " locked"));
+  const pr = a.price;
+  card.dataset.fam = fid;
+  card.dataset.state = a.enabled ? "ready" : "locked";
+  if (a.local) card.dataset.local = "1";
+  card.dataset.free = (pr && pr.free) || a.local ? "1" : "";
+  card.dataset.q = (a.model + " " + a.label + " " + (famName || fid) + " " + a.pid + " " +
+    (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "") + (pr && pr.free ? " free" : "") +
+    (a.local ? " local ollama" + (a.local.loaded ? " loaded" : "") : "")).toLowerCase();
+
+  // the model id is the title; who serves it is the caption under it
+  const head = el("div","mh");
+  head.append(fillMark(el("span","omark"), a.pid, a.label));
+  const tt = el("div","mtt");
+  const t = el("div","mt", a.model); t.title = a.model; tt.append(t);
+  const o = el("div","mo", a.label); o.title = a.label; tt.append(o);
+  head.append(tt);
+  card.append(head);
+
+  // the facts, each said once
+  const pills = el("div","mp2");
+  if (a.info.ctx) {
+    const c = pill(fmtCtx(a.info.ctx), " context");
+    if (a.info.ctx_learned) { c.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned);
+      c.querySelector("b").textContent += "*"; }
+    pills.append(c);
+  }
+  pills.append(pricePill(pr));
+  // readiness is printed ONLY when it is not "ready": every card that can be
+  // used already says so with its action, and a grid of "ready" pills would
+  // drown the one card that needs a key
+  if (!a.enabled && !on) { const w = pill("needs a key", "", "amb"); w.title = "connect this family to use it"; pills.append(w); }
+  card.append(pills);
+  const caps = el("div","mp2");
+  if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
+  if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
+  if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
+  if (a.local && a.local.loaded) { const c = el("span","cap ok","loaded"); c.title = "in memory now"; caps.append(c); }
+  if (caps.childElementCount) card.append(caps);
+
+  // the foot: the pixel motif on the left, the one action on the right
+  const foot = el("div","mm-foot");
+  if (on) foot.append(curMotif());
+  if (!on) foot.append(el("span","mm-act", a.enabled ? "use →" : "unlock →"));
+  card.append(foot);
+  // the current model wears the same slanted tag the provider cards wear, so
+  // the two pages mark "in use" in one language
+  if (on) {
+    const st = el("span","ac-st cur");
+    st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
+    st.title = "the model mantis is using right now";
+    card.append(st);
+  }
+  // `unlock` deep-links into this family's setup with its recommended method
+  // already chosen — the same link the locked row used to carry
+  card.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(fid);
+  return card;
+}
 let modelsReq = 0;
 async function loadModels() {
   const pad = document.getElementById("modelspad");
@@ -4403,17 +4807,9 @@ async function loadModels() {
                      backend: p.base_url, enabled: p.enabled, info: info[x] || {},
                      price: (p.prices || {})[x] || null })));
   (oll.models || []).forEach(om => allModels.push({
-    model: om.name, label: "local · " + fmtBytes(om.size) + (om.loaded ? " · loaded" : ""), pid: "ollama",
+    model: om.name, label: "local · " + fmtBytes(om.size), pid: "ollama",
     fam: "oss", backend: oll.base_url, enabled: true, info: info[om.name] || {}, local: om,
     price: (info[om.name] || {}).price || { in: 0, out: 0, free: true } }));
-  const price2 = v => v >= 10 ? v.toFixed(0) : v.toFixed(2);
-  const priceCell = (p) => {
-    if (!p) { const s = el("span","mprice na", "—"); s.title = "no row in the price table"; return s; }
-    if (p.free) { const s = el("span","mprice free", "free"); s.title = "your hardware, no API charge"; return s; }
-    const s = el("span","mprice", "$" + price2(p.in) + " · $" + price2(p.out));
-    s.title = "$" + p.in + " in · $" + p.out + " out, per 1M tokens" + (p.cache_read != null ? " · cache read $" + p.cache_read : "");
-    return s;
-  };
   if (allModels.length) {
     const nFam = new Set(allModels.map(a => a.fam)).size;
     const sec = section(pad, "Choose a model", allModels.length + " across " + nFam + " famil" + (nFam===1?"y":"ies"));
@@ -4463,51 +4859,28 @@ async function loadModels() {
     bar.append(chips);
     sec.append(bar);
 
-    const list = el("div","mtable");
-    const head = el("div","mhead");
-    ["model", "provider", "window", "$ / 1M in · out", "capabilities", ""].forEach(x => head.append(el("span", null, x)));
-    list.append(head);
+    // One labelled card grid per source, so "Open models · 34 models" reads
+    // as a heading over its own cards rather than a stripe in a table.
+    const list = el("div","mm-list");
+    const groups = [];
     famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
       const rows = allModels.filter(a => a.fam === fid);
       if (!rows.length) return;
-      const fh = el("div","mfam"); fh.dataset.fam = fid;
+      const fh = el("div","mm-glabel"); fh.dataset.fam = fid;
       fh.append(providerMark(famLogo[fid] || fid, famLabel[fid] || fid));
       fh.append(document.createTextNode(famLabel[fid] || fid));
-      fh.append(el("span","cnt3", rows.length + " model" + (rows.length===1?"":"s")));
-      list.append(fh);
-      rows.forEach(a => {
-        const row = el("div","mrow" + (a.model===cur ? " cur" : "") + (a.enabled ? "" : " locked"));
-        const pr = a.price;
-        row.dataset.fam = fid;
-        row.dataset.q = (a.model + " " + a.label + " " + (famLabel[fid] || fid) + " " + a.pid + " " +
-          (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "") + (pr && pr.free ? " free" : "") +
-          (a.local ? " local ollama" + (a.local.loaded ? " loaded" : "") : "")).toLowerCase();
-        row.dataset.state = a.enabled ? "ready" : "locked";
-        if (a.local) row.dataset.local = "1";
-        row.dataset.free = (pr && pr.free) || a.local ? "1" : "";
-        row.append(el("span","mn", a.model));
-        row.append(el("span","mp", a.label));
-        const ctx = el("span","mctx", a.info.ctx ? fmtCtx(a.info.ctx) : "");
-        if (a.info.ctx_learned) { ctx.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned); ctx.textContent += "*"; }
-        row.append(ctx);
-        row.append(priceCell(pr));
-        const caps = el("span","mcaps");
-        if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
-        if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
-        if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
-        if (a.local && a.local.loaded) { const c = el("span","cap","loaded"); c.title = "in memory now"; caps.append(c); }
-        row.append(caps);
-        row.append(el("span","mgo", a.model===cur ? "current" : (a.enabled ? "use →" : "unlock")));
-        row.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(fid);
-        list.append(row);
-      });
+      fh.append(el("span","mm-gn", rows.length + " model" + (rows.length===1?"":"s")));
+      const grid = el("div","mm-grid"); grid.dataset.fam = fid;
+      rows.forEach(a => grid.append(myModelCard(a, fid, cur, famLabel[fid] || fid)));
+      list.append(fh, grid);
+      groups.push([fh, grid]);
     });
     sec.append(list);
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
       let shown = 0;
       const perFam = {};
-      list.querySelectorAll(".mrow").forEach(r => {
+      list.querySelectorAll(".mmcard").forEach(r => {
         const okQ = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
         const okF = mode === "all" || (mode === "free" ? !!r.dataset.free : r.dataset.state === mode);
         const okT = MODEL_TAB === "all" || (MODEL_TAB === "local" ? !!r.dataset.local : r.dataset.fam === MODEL_TAB);
@@ -4516,9 +4889,13 @@ async function loadModels() {
         r.classList.remove("kb");
         if (on) { shown++; perFam[r.dataset.fam] = (perFam[r.dataset.fam] || 0) + 1; }
       });
-      // one family selected → the group header is noise; "All" keeps it
-      list.querySelectorAll(".mfam").forEach(h => {
-        h.style.display = (MODEL_TAB === "all" && perFam[h.dataset.fam]) ? "" : "none";
+      // one family selected → the group label is noise; "All" keeps it. A
+      // group with nothing left in it takes its grid down too, or the page
+      // keeps its gaps.
+      groups.forEach(([fh, grid]) => {
+        const n = perFam[fh.dataset.fam] || 0;
+        fh.style.display = (MODEL_TAB === "all" && n) ? "" : "none";
+        grid.style.display = n ? "" : "none";
       });
       let e = list.querySelector(".find-none");
       if (!shown) { if (!e) { e = emptyState("search", "No model matches",
@@ -4529,9 +4906,9 @@ async function loadModels() {
     applyModelFilter = apply;
     find.input.oninput = apply;
     apply();
-    // Keyboard: / focuses (global handler), ↑↓ walk the visible rows, Enter switches to one.
+    // Keyboard: / focuses (global handler), ↑↓ walk the visible cards, Enter switches to one.
     let kbi = -1;
-    const visible = () => [...list.querySelectorAll(".mrow")].filter(r => r.style.display !== "none");
+    const visible = () => [...list.querySelectorAll(".mmcard")].filter(r => r.style.display !== "none");
     find.input.onkeydown = (e) => {
       const rows = visible();
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {

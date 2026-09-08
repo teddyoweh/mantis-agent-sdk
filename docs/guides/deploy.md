@@ -171,6 +171,86 @@ the network.
    well under $0.50/h — charged every hour until `deploy down`.
 5. Optional — `HF_TOKEN` for gated repos (passed to the container).
 
+## Finding a model in plain English
+
+You rarely know the repo id you want. You know the shape of the problem: *a
+coding model small enough for one 40 GB card*, *the cheapest thing that fits a
+4090*, *whatever is strongest at reasoning on an A100*. `deploy find` takes
+that sentence and answers with labelled groups instead of a flat list:
+
+```bash
+mantis-agent deploy find "best open coding model under 40B, 2025"
+mantis-agent deploy find "cheapest model that fits 24GB" --provider runpod
+mantis-agent deploy find "strongest reasoning model I can run on an A100" --json
+```
+
+```text
+coding models, under 40B parameters, updated in 2025 or later   [rules]
+
+Repos that say they are coding models  (1)
+  why: the repo id or its Hub tags name coding — a name/tag signal, not a
+       benchmark; mantis does not run evals
+  model                                params  vram     downloads  updated
+  * Qwen/Qwen3-Coder-30B-A3B-Instruct  30.5B   73.2 GB  900k       2025-08-01
+```
+
+Each answer carries an **interpretation** line, the **groups** (title, a
+one-line `reason`, the models, and the standout `best`), the **columns** that
+matter for that particular question, the **filters** it derived (so a UI can
+show them and let you edit them), which tier answered, and **notes** for every
+caveat — how many repos were dropped for being too big, unservable by vLLM or
+gated.
+
+**Two tiers.** If a model is already connected (`deploy connect`, `mantis
+setup`, or any saved auth method), mantis runs *your* model as an agent: it
+gets the candidates the Hub already returned, a Hub-search tool under a hard
+call budget, and a response schema — so the answer is structured output, never
+parsed prose. With no model configured, `--no-agent`, or any failure in that
+path, the same question is answered by a deterministic parser (sizes, VRAM and
+GPU names, task words, recency, licence, gating, "cheapest"/"smallest") and a
+fixed grouping strategy. The note line and the `source` field always say which
+one answered.
+
+**What it will not tell you.** There is no benchmark column, no "code score",
+no leaderboard rank. Groups are justified from Hub metadata (parameters per
+dtype, dtype, tags, licence, downloads, likes, last-modified, architectures,
+gated), mantis's own VRAM estimate, and — with `--provider` — that provider's
+GPU catalogue and live prices, which is what unlocks the `fit` and `price`
+columns. When a question asks for something unverifiable, the grouping falls
+back to what *is* checkable and the group's `reason` says so.
+
+From Python it is one call:
+
+```python
+import anyio
+
+from mantis_agent.deploy import manager
+
+
+async def main() -> None:
+    res = await manager.find_models(
+        "cheapest coding model that fits 24GB",
+        provider_id="runpod",   # adds fit/price from the live GPU catalogue
+        limit=24,
+        use_agent=True,         # False = deterministic parser only
+    )
+    print(res.interpretation, res.source, res.columns)
+    for group in res.groups:
+        print(group.title, "-", group.reason)
+        for m in group.models:
+            print("   ", m.id, m.params_b, m.est_vram_gb, res.extras[m.id].get("fit"))
+
+
+anyio.run(main)
+```
+
+`res.to_dict()` is the JSON the dashboard and `deploy find --json` render:
+`{"query", "interpretation", "groups": [{"title", "reason", "models", "best"}],
+"columns", "filters", "source", "notes", "extras"}`. `columns` is always a
+subset of `params, dtype, vram, context, fit, price, license, downloads,
+updated`, and `smart_search.COLUMN_SOURCES` says where each one's value lives
+(`info.<ModelInfo field>` or `extra.<key>`).
+
 ## From Python
 
 ```python
@@ -200,8 +280,9 @@ async def main() -> None:
 anyio.run(main)
 ```
 
-`inspect_model`, `search_models`, `fit`, `gpus`, `status`, `logs`, `teardown`
-and `list_deployments` are the same operations the CLI exposes; every one is
+`inspect_model`, `search_models`, `find_models`, `fit`, `gpus`, `status`,
+`logs`, `teardown` and `list_deployments` are the same operations the CLI
+exposes; every one is
 async and raises `DeployError` (with a user-facing `hint`) on failure.
 `NotSupported` means the provider has no API for that operation.
 

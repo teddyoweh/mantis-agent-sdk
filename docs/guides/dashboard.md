@@ -165,15 +165,27 @@ is also the only **slanted** badge: an 8° tag with its label counter-skewed
 back upright, so it differs from the rest in shape before you read a word.
 
 The card surface stays the same neutral panel in every state; there is no
-colour wash and no edge rail. The current provider is marked instead by a
-**ring of pixel blocks** around the whole card — one stroked path whose 3px
-width and 3/3 dash array lay down 3×3 squares, with antialiasing off
-(`crispEdges`) and the centreline on a half pixel so every block is hard at
-1x and 2x. The ring marches one block every three seconds, and stops entirely
-under `prefers-reduced-motion`. A connected-but-idle card wears the same ring
-in neutral ink at a third of the presence, so the two can never be confused.
-The deploy page's GPU provider cards use the same ring, so the two surfaces
-read as one app.
+colour wash, no edge rail and **no outline of any kind** — an earlier ring of
+pixel blocks around the card read as a dashed border at real size, and with
+every connected card wearing one the grid became a field of dotted rectangles.
+The current provider is marked instead by a **pixel dither on the card
+itself**: 3px accent blocks on a 4px pitch, laid two rows deep in the empty
+strip below the head, dense at the mark's left edge and thinning to nothing
+22 columns later. It is drawn with `shape-rendering="crispEdges"` on integer
+coordinates, so every block is a hard square at 1x and 2x; it is
+deterministic, so nothing shimmers on a re-render; and it does not animate,
+because a marching dither reads as noise rather than as life. On the provider
+card — whose 63px height is fixed — it is pinned inside the card's own bottom
+padding, so it costs no layout; on the two cards whose height is not fixed
+(the GPU provider card and the model card) it is a laid-out item beside the
+action rather than an overlay above it, so no card height, wrap or width can
+bring the two together. The render gate measures the gap at 900, 1200 and
+1440 and fails if it falls below 4px. A
+connected-but-idle card wears the same dither at a **third of the reach, one
+row and a fifth of the blocks**, in neutral ink — the pair differs in pattern,
+not only in hue, so it survives a greyscale or colour-blind reading. The
+deploy page's GPU provider cards and the current model's card in *Choose a
+model* wear the same motif, so the three surfaces read as one app.
 
 ### Three groups, and one tally
 
@@ -236,12 +248,25 @@ grouped view with the vendor's mark on each group header; a family tab
 narrows to that family and drops the headers, and **Local** shows just what
 Ollama has pulled. The choice lives in the URL (`#models/claude`), so a
 refresh or a pasted link lands on the same tab, and it combines with the
-filter chips and the search box. Every row shows the provider, the **context window** (an
-asterisk marks a ceiling mantis learned from the endpoint's own error, which
-overrides the declared number), **price per 1M tokens in · out** from the
-SDK's price table (a dash where the table has no row, *free* for local
-runtimes), capability badges (tools / effort / thinks), and a one-click
-*use →*. Filter chips: all, ready to use, needs a key, free / local.
+filter chips and the search box.
+
+Models are **cards**, in the same responsive `minmax(300px, 1fr)` grid and the
+same card component the Deploy page's model picker uses — one design for
+"pick a model", not two. Each card carries the vendor's mark in its optically
+normalised square, the **model id** as its title with the **serving provider**
+as the caption under it, and the facts as quiet pills: the **context window**
+(an asterisk marks a ceiling mantis learned from the endpoint's own error,
+which overrides the declared number), **price per 1M tokens in · out** from
+the SDK's price table (a dash where the table has no row, *free* for a local
+runtime, which is not a price of zero but your own hardware), and capability
+tags — *tools · effort · thinks*, plus *loaded* for an Ollama model that is in
+memory right now. Readiness is printed **only when it is not ready**: a card
+that needs a key says so in amber, and every other card says it is usable by
+offering *use →*. The card's foot carries that one action; the current model's
+card carries the slanted **Current** tag and the pixel motif instead, and no
+action at all, because there is nothing left to do to it. *unlock →*
+deep-links into that family's setup panel with the recommended method
+preselected. Filter chips: all, ready to use, needs a key, free / local.
 
 A **local models · ollama** section lists everything the local daemon has
 pulled — size on disk, parameter count and quantisation, and whether the

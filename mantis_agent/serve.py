@@ -2563,6 +2563,96 @@ JOB_MAX_LINES = 400
 JOB_KEEP = 40
 
 
+# ---------------------------------------------------------------------------
+# Agent-powered model search
+#
+# `manager.find_models` interprets a plain question and answers with GROUPS of
+# models plus the columns that matter for that question. It can be slow (it may
+# call a model), so it runs as a background job with the same progress channel
+# the deploy jobs use, and the page polls /api/deploy/job for the steps.
+#
+# The contract is not assumed to exist: an older build has no find_models at
+# all, so the absence is reported as a normal degraded answer rather than a
+# 500, exactly like the rest of the Deploy page.
+
+# The column vocabulary is fixed; anything outside it is dropped rather than
+# passed through to the page, so a bad answer can't inject arbitrary keys.
+_FIND_COLUMNS = ("params", "dtype", "vram", "license", "downloads", "updated",
+                 "context", "fit", "price")
+
+
+def _find_model_row(m: Any) -> dict[str, Any]:
+    d = _deploy_redact(_dc(m))
+    d["org"] = _org_of(d.get("id"))
+    cached = _model_info_get(d.get("id") or "")
+    if cached and not cached.get("error"):
+        d = _merge_info(d, cached)
+    return d
+
+
+def _find_group(g: Any) -> dict[str, Any]:
+    d = g if isinstance(g, dict) else _dc(g)
+    models = d.get("models") or []
+    return {
+        "title": _redact_text(str(d.get("title") or "")),
+        "reason": _redact_text(str(d.get("reason") or "")),
+        "best": (str(d["best"]) if d.get("best") else None),
+        "models": [_find_model_row(m) for m in models],
+    }
+
+
+def _find_dict(r: Any) -> dict[str, Any]:
+    """SmartSearchResult -> the page's shape. Every string is redacted on the
+    way out: an interpretation line is model-written text and could otherwise
+    echo back something that was in the environment."""
+    d = r if isinstance(r, dict) else _dc(r)
+    cols = [c for c in (d.get("columns") or []) if c in _FIND_COLUMNS]
+    filters = d.get("filters") or {}
+    if not isinstance(filters, dict):
+        filters = {}
+    src = str(d.get("source") or "rules")
+    return {
+        "query": _redact_text(str(d.get("query") or "")),
+        "interpretation": _redact_text(str(d.get("interpretation") or "")),
+        "groups": [_find_group(g) for g in (d.get("groups") or [])],
+        "columns": cols or ["params", "vram", "license"],
+        "filters": {str(k): _deploy_redact(v) if isinstance(v, dict) else v for k, v in filters.items()},
+        "source": src if src in ("agent", "rules") else "rules",
+        "notes": [_redact_text(str(n)) for n in (d.get("notes") or [])],
+    }
+
+
+def deploy_find(query: str = "", provider: str | None = None, limit: Any = 24,
+                agent: Any = "1") -> dict[str, Any]:
+    """Start an agent-powered search. Returns a job id; the page polls
+    /api/deploy/job for progress lines and the finished result."""
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    q = (query or "").strip()
+    if not q:
+        return {"ok": False, "error": "ask a question first"}
+    try:
+        lim = max(1, min(int(limit), 60))
+    except (TypeError, ValueError):
+        lim = 24
+    use_agent = str(agent if agent is not None else "1").lower() not in ("0", "false", "no")
+    finder = getattr(_dm, "find_models", None)
+    if finder is None:
+        return {"ok": False, "error": "agent search isn't available in this build yet",
+                "hint": "update mantis-agent-sdk"}
+    job = _new_job("find", q)
+
+    def go(**kw: Any) -> Any:
+        import os  # noqa: PLC0415
+
+        return finder(q, provider_id=(provider or None), limit=lim,
+                      hf_token=(os.environ.get("HF_TOKEN") or None),
+                      use_agent=use_agent, **kw)
+
+    _run_job(job, go, progress=_job_progress(job), _shape=_find_dict)
+    return {"ok": True, "job": job["id"], "query": q, "agent": use_agent}
+
+
 def _new_job(kind: str, target: str) -> dict[str, Any]:
     import time  # noqa: PLC0415
 
@@ -2590,14 +2680,22 @@ def _job_progress(job: dict[str, Any]) -> Any:
 
 
 def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> None:
+    """Run one async manager call on a background thread, recording progress
+    lines and the result on the job. `_shape` lets a caller convert a result
+    that isn't a Deployment into the page's shape (agent search does)."""
     import time  # noqa: PLC0415
+
+    shape = kwargs.pop("_shape", None)
 
     def body() -> None:
         try:
             res = _run_async(coro_fn, *args, **kwargs)
             with _deploy_lock:
-                job["result"] = _deploy_redact(_dep_dict(res)) if res is not None and hasattr(res, "gpu") \
-                    else (_deploy_redact(_dc(res)) if res is not None else None)
+                if shape is not None:
+                    job["result"] = shape(res) if res is not None else None
+                else:
+                    job["result"] = _deploy_redact(_dep_dict(res)) if res is not None and hasattr(res, "gpu") \
+                        else (_deploy_redact(_dc(res)) if res is not None else None)
                 job["status"] = "done"
         except BaseException as e:  # noqa: BLE001 — the job record is the error channel
             d = _deploy_err(e)
@@ -2609,9 +2707,10 @@ def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> No
             with _deploy_lock:
                 job["ended_at"] = time.time()
         # a finished deploy/teardown changes the list — drop the fit cache too,
-        # the provider's availability may have moved
-        with _deploy_lock:
-            _inspect_cache.clear()
+        # the provider's availability may have moved. A search changes nothing.
+        if job["kind"] != "find":
+            with _deploy_lock:
+                _inspect_cache.clear()
 
     threading.Thread(target=body, name=f"mantis-deploy-{job['kind']}", daemon=True).start()
 
@@ -3311,6 +3410,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/deploy/gpus":
             self._json(deploy_gpus((q.get("provider") or [""])[0], (q.get("min_vram") or [None])[0]))
+            return
+        if path == "/api/deploy/find":
+            self._json(deploy_find((q.get("q") or [""])[0], (q.get("provider") or [None])[0],
+                                   (q.get("limit") or ["24"])[0], (q.get("agent") or ["1"])[0]))
             return
         if path == "/api/deploy/models":
             self._json(deploy_models((q.get("q") or [""])[0], (q.get("sort") or ["trending"])[0],

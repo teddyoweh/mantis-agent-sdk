@@ -218,12 +218,12 @@ def test_stylesheet_has_no_elevation_shadows():
             continue
         for m in re.finditer(r"box-shadow:\s*([^;]+);", line):
             v = m.group(1).strip()
-            if v == "none" or re.match(r"^0 0 0 \dpx var\(--[a-z-]+\)$", v):
+            if v == "none" or re.match(r"^0 0 0 \dpx var\(--[a-z0-9-]+\)$", v):
                 continue
             # an INSET ring is a drawn shape, not elevation: it is how a live
             # step reads as a hollow circle against a filled done one, so the
             # two differ without relying on colour
-            if re.match(r"^inset 0 0 0 \dpx var\(--[a-z-]+\)$", v):
+            if re.match(r"^inset 0 0 0 \dpx var\(--[a-z0-9-]+\)$", v):
                 continue
             raised.append(line.strip())
     # exactly one raised surface in the whole stylesheet, and it is the panel
@@ -270,8 +270,8 @@ def test_models_page_has_family_tabs_and_no_route_strip():
                    '"Open models"', '"Local"', 'el("span","tn2"', "applyModelFilter"):
         assert marker in js, marker
     assert ".mtabs" in css and ".mtabs .tn2" in css
-    # the tab narrows the rows and hides the group headers; "all" keeps them
-    assert 'r.dataset.fam === MODEL_TAB' in js and 'MODEL_TAB === "all" && perFam[h.dataset.fam]' in js
+    # the tab narrows the cards and hides the group labels; "all" keeps them
+    assert 'r.dataset.fam === MODEL_TAB' in js and 'MODEL_TAB === "all" && n) ? "" : "none"' in js
     # the URL says the name people use, the code keeps the family id
     assert 'anthropic: "claude"' in js and 'xai: "grok"' in js
     # gone: the route strip, its chips, its CSS, and the data that fed it
@@ -280,6 +280,94 @@ def test_models_page_has_family_tabs_and_no_route_strip():
     for gone in (".recent {", ".hero-lbl"):
         assert gone not in css, gone
     assert "Enable a provider, or point mantis at your own server." not in js
+
+
+def test_choose_a_model_is_a_card_grid_not_a_table():
+    """"Choose a model" draws the SAME card the Deploy picker draws — one
+    component, two pages — in the same responsive grid. The table it replaced
+    is gone from the stylesheet as well as the script."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    # one grid definition, shared: the two pickers cannot drift apart
+    assert ".dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));" in css
+    # the card is .mcard plus a page modifier, never a second card component
+    assert 'el("div","mcard mmcard"' in js
+    for shared in (".mcard {", ".mcard .mh {", ".omark {", ".mcard .mt {", ".mcard .mo {", ".mcard .mp2 {"):
+        assert shared in css, shared
+    # the table, its header, its rows and its sticky family stripe are gone
+    for dead in (".mtable", ".mrow", ".mhead", ".mfam"):
+        assert dead not in css, dead
+    for dead in ('el("div","mtable")', 'el("div","mhead")', 'el("div","mrow"', 'el("div","mfam")',
+                 '"mprice"', '"mctx"', '"mcaps"', "priceCell"):
+        assert dead not in js, dead
+    # grouped by source, as a labelled grid per group with its count
+    assert 'el("div","mm-glabel")' in js and 'el("div","mm-grid")' in js
+    assert 'el("span","mm-gn", rows.length + " model"' in js
+
+
+def test_a_model_card_says_each_fact_once():
+    """Title, caption, the pills, one action — and readiness only where it is
+    not ready, because a grid of "ready" pills would drown the one card that
+    needs a key."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    card = js[js.index("function myModelCard("):js.index("async function loadModels()")]
+    # the model id titles the card; the serving provider is its caption
+    assert 'el("div","mt", a.model)' in card and 'el("div","mo", a.label)' in card
+    # the vendor's mark, in the same optically normalised square the Deploy
+    # card uses — not a second mark treatment
+    assert 'fillMark(el("span","omark"), a.pid, a.label)' in card
+    # the facts, as quiet pills
+    assert 'pill(fmtCtx(a.info.ctx), " context")' in card
+    assert "pills.append(pricePill(pr));" in card
+    for cap in ('"cap","tools"', '"cap","effort"', '"cap","thinks"', '"cap ok","loaded"'):
+        assert cap in card, cap
+    # readiness is stated once, and never on the card that is already in use
+    assert card.count('pill("needs a key"') == 1
+    assert 'if (!a.enabled && !on) {' in card
+    # ONE action, and the current card has none: its tag already says so
+    assert card.count('"mm-act"') == 1
+    assert 'if (!on) foot.append(el("span","mm-act", a.enabled ? "use \u2192" : "unlock \u2192"));' in card
+    # the same slanted Current tag the provider cards wear, and the same motif
+    assert 'el("span","ac-st cur")' in card and 'el("span","ac-stl", "Current")' in card
+    assert "foot.append(curMotif());" in card
+    # unlock still deep-links into that family's setup
+    assert "unlockFamily(fid)" in card and "useModel(a.model, a.backend)" in card
+    # the local size is said in the caption, "loaded" only as a tag
+    assert '"local \u00b7 " + fmtBytes(om.size),' in js and '" \u00b7 loaded"' not in js
+
+
+def test_the_motif_and_the_action_cannot_collide_on_a_model_card():
+    """They are laid out side by side in the card's foot, not stacked on top
+    of each other — so no width can bring them together."""
+    css = _css()
+    foot = css.split("  .mm-foot {")[1].split("}")[0]
+    assert "display: flex" in foot and "align-items: center" in foot
+    assert "margin-top: auto" in foot                      # the foot is always last
+    act = css.split("  .mm-act {")[1].split("}")[0]
+    assert "margin-left: auto" in act                      # ...and the action is always right
+    # inside the foot the motif is a laid-out sibling, not an absolute overlay
+    assert "  .mm-foot .ac-mot { position: static; flex: none; }" in css
+    # the head gives its 70px reservation back unless something sits top-right
+    assert "  .mmcard .mh { padding-right: 0; }" in css
+    assert "  .mmcard.on .mh { padding-right: 84px; }" in css
+    assert "  .mmcard > .ac-st.cur { position: absolute; top: 12px; right: 13px; }" in css
+    # keyboard focus is a background step, like every other state on the page
+    assert "  .mmcard.kb { background: var(--fill); }" in css
+    for banned in ("border", "outline", "box-shadow"):
+        assert banned not in css.split("  .mmcard.kb {")[1].split("}")[0], banned
+
+
+def test_a_free_model_is_not_a_price_of_zero():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    fn = js[js.index("function pricePill("):js.index("function myModelCard(")]
+    assert 'pill("free", "", "acc")' in fn
+    assert "your hardware, no API charge" in fn
+    assert 'pill("\u2014", " / 1M")' in fn and "no row in the price table" in fn
 
 
 def test_models_state_no_longer_ships_the_recent_list(home):
@@ -507,7 +595,7 @@ def test_page_carries_the_shell_cards_transcript_and_palette(home):
                    "renderTopStatus", "watchEvents", "/api/events?", "EVENTS_OK", "openPalette", "paletteItems",
                    'e.key.toLowerCase() === "k"', "cycleTheme", "applyTheme", 'get("theme")', "rollback",
                    "grid-template-columns: 280px 320px", "repeat(auto-fill, minmax(260px, 1fr))", "max-width: 900px",
-                   "CHORDS", "visibilitychange", "sessfind", "fam-grid", "spend-card", "$ / 1M in"):
+                   "CHORDS", "visibilitychange", "sessfind", "fam-grid", "spend-card", "mm-grid", "mmcard"):
         assert marker in page, marker
     for gone in ("live-act", "renderActivitySummary", "act-sum", "see all"):
         assert gone not in page, gone

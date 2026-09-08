@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 import os
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -35,6 +35,7 @@ __all__ = [
     "connect",
     "cost",
     "deploy",
+    "find_models",
     "fit",
     "gpus",
     "inspect_model",
@@ -47,6 +48,9 @@ __all__ = [
     "teardown",
     "validate",
 ]
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the import cost off callers
+    from .smart_search import SmartSearchResult
 
 ProgressFn = Callable[[str], Any]  # called with human-readable progress lines; sync or async
 
@@ -226,6 +230,48 @@ async def search_models(query: str = "", *, limit: int = 25, sort: str = "trendi
             if len(out) >= limit:
                 break
     return out[:limit]
+
+
+async def find_models(
+    query: str,
+    *,
+    provider_id: str | None = None,
+    limit: int = 24,
+    hf_token: str | None = None,
+    use_agent: bool = True,
+    progress: ProgressFn | None = None,
+) -> "SmartSearchResult":
+    """Natural-language model search: ask a question, get grouped answers.
+
+    ``query`` is what a person typed — "best open coding model under 40B,
+    2025", "cheapest model that fits 24GB", "strongest reasoning model I can
+    run on an A100". The reply is a
+    :class:`~mantis_agent.deploy.smart_search.SmartSearchResult`: an
+    ``interpretation`` line, labelled ``groups`` of
+    :class:`~mantis_agent.deploy.base.ModelInfo` (each with a one-line
+    ``reason`` and a ``best`` id), the ``columns`` worth rendering for *this*
+    question, the ``filters`` that were derived (editable by the UI), whether
+    the ``agent`` or the ``rules`` tier answered, and ``notes`` for every
+    caveat.
+
+    Two tiers. With ``use_agent`` (the default) and a model already configured
+    (``deploy connect``, ``mantis setup``, or a saved auth method) an agent on
+    *that* model interprets the question and groups a pre-fetched candidate
+    list, answering through a response schema — never parsed prose. With no
+    model configured, ``use_agent=False``, or any agent failure, the same
+    question is answered by mantis's deterministic parser + grouping, and a
+    note says so.
+
+    Nothing here invents a benchmark. Groups are justified from Hub metadata
+    (params, dtype, tags, licence, downloads, likes, ``lastModified``,
+    architectures, ``gated``), mantis's VRAM estimate, and — when
+    ``provider_id`` is given — that provider's GPU catalogue and prices, which
+    also unlocks the ``fit`` and ``price`` columns.
+    """
+    from .smart_search import find_models as _find  # noqa: PLC0415
+
+    return await _find(query, provider_id=provider_id, limit=limit, hf_token=hf_token,
+                       use_agent=use_agent, progress=progress)
 
 
 async def fit(info: ModelInfo, candidates: list[GpuSpec], *, context_len: int | None = None) -> list[tuple[GpuSpec, str]]:
