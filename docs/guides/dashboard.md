@@ -160,16 +160,46 @@ connected and available — pick one of its models and it becomes Current.
 **Not active** means credentials are saved but no method is switched on, and
 **Not connected** means there is no credential yet. Each badge carries a
 glyph whose *shape* differs — a filled dot, a hollow ring, a diamond, a faint
-pip — so the states stay distinguishable without relying on colour.
+pip — so the states stay distinguishable without relying on colour. Current
+is also the only **slanted** badge: an 8° tag with its label counter-skewed
+back upright, so it differs from the rest in shape before you read a word.
 
 The card surface stays the same neutral panel in every state; there is no
 colour wash and no edge rail. The current provider is marked instead by a
-**dashed accent outline** around the whole card — an SVG stroke at 1.5px with
-a 2.5/3.5 dash array, inset 4px so it reads as a marker laid on the card
-rather than a border, following the card's corner radius exactly, and
-creeping one dash cycle every three seconds (stopped entirely under
-`prefers-reduced-motion`). A connected-but-idle card wears the same dash in
-neutral ink at a third of the presence, so the two can never be confused.
+**ring of pixel blocks** around the whole card — one stroked path whose 3px
+width and 3/3 dash array lay down 3×3 squares, with antialiasing off
+(`crispEdges`) and the centreline on a half pixel so every block is hard at
+1x and 2x. The ring marches one block every three seconds, and stops entirely
+under `prefers-reduced-motion`. A connected-but-idle card wears the same ring
+in neutral ink at a third of the presence, so the two can never be confused.
+The deploy page's GPU provider cards use the same ring, so the two surfaces
+read as one app.
+
+### Three groups, and one tally
+
+Providers are grouped by what you can do with them, not by who makes them.
+**Connected** gathers everything currently usable regardless of family, with
+Current first and Ready after it; **First-party** and **Open-source &
+self-host** hold what is left. A provider is in exactly one group, connecting
+moves it between them with a 140ms fade, and an empty group shows no label at
+all. The "*N* of *M* connected" line and the Connected group are produced by
+the same predicate, so the number can never disagree with the cards — an
+earlier version counted active auth methods and so missed a provider that was
+current from the environment. There is no progress bar: the Connected group
+is that same ratio at full size, with names on it.
+
+### Opening a card
+
+Opening a provider does not reflow the grid. The card expands as a panel
+layered **above** it, anchored to the card's left edge and width, growing
+downward — or upward if it would run off the bottom, and with its own scroll
+if it fits neither way. The collapsed card keeps its 63px footprint
+underneath, so every other card stays exactly where it was; the render gate
+measures all fifteen rects open and closed and fails if any moves. Click
+outside, press Escape, or open another card to close it — one at a time.
+Focus moves to the first field on open and returns to the card on close. The
+panel is the one raised surface in the stylesheet: everything flat still gets
+its depth from a background step, never a shadow.
 
 Opening a card (one at a time) reveals the rest in place — no sibling moves.
 Inside is an **auth-type toggle**: Claude offers *API key · Claude subscription ·

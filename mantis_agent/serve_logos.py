@@ -130,6 +130,57 @@ def load_org_logos(path: Path | None = None) -> dict[str, dict[str, str]]:
 ORG_LOGOS: dict[str, dict[str, str]] = load_org_logos()
 
 # ---------------------------------------------------------------------------
+# Display names for Hub organisations
+#
+# A Hub org id is a slug, not a name: "zai-org", "moonshotai", "meta-llama",
+# "ibm-granite". Title-casing a slug produces "Zai-Org" and "Ifm", which is
+# worse than leaving it alone — so unknown orgs fall back to the slug
+# UNMODIFIED and only the ones we actually know get a real name. The names
+# ride the same alias table the marks use, so every alias of an org resolves
+# to the same name.
+_ORG_NAME_BASE: dict[str, str] = {
+    "01-ai": "01.AI", "ai21labs": "AI21", "allenai": "AI2", "anthropic": "Anthropic",
+    "cohereforai": "Cohere", "deepseek-ai": "DeepSeek", "google": "Google",
+    "huggingface": "Hugging Face", "ibm-granite": "IBM", "meta-llama": "Meta",
+    "microsoft": "Microsoft", "minimaxai": "MiniMax", "mistralai": "Mistral",
+    "moonshotai": "Moonshot", "nvidia": "NVIDIA", "openai": "OpenAI", "qwen": "Qwen",
+    "stabilityai": "Stability AI", "tiiuae": "TII", "xai-org": "xAI", "zai-org": "Z.ai",
+    # orgs that publish weights but carry no mark of their own yet
+    "nousresearch": "Nous", "teknium": "Nous", "togethercomputer": "Together",
+    "bigcode": "BigCode", "bigscience": "BigScience", "eleutherai": "EleutherAI",
+    "facebook": "Meta", "intfloat": "intfloat", "sentence-transformers": "SBERT",
+    "openchat": "OpenChat", "upstage": "Upstage", "databricks": "Databricks",
+    "snowflake": "Snowflake", "cognitivecomputations": "Cognitive Computations",
+    "unsloth": "Unsloth", "bartowski": "bartowski", "thudm": "THUDM",
+    "internlm": "InternLM", "baichuan-inc": "Baichuan", "01ai": "01.AI",
+    "perplexity-ai": "Perplexity", "liquid": "Liquid AI", "lgai-exaone": "LG AI",
+    "servicenow": "ServiceNow", "salesforce": "Salesforce", "amazon": "Amazon",
+    "apple": "Apple", "arcee-ai": "Arcee", "jinaai": "Jina", "voyageai": "Voyage",
+}
+
+
+def load_org_names(path: Path | None = None) -> dict[str, str]:
+    """Slug -> display name, expanded through the mark file's alias lists so an
+    org known by several ids answers to one name."""
+    out = dict(_ORG_NAME_BASE)
+    try:
+        raw = json.loads((path or ORG_LOGO_JSON).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    if not isinstance(raw, dict):
+        return out
+    for oid, spec in raw.items():
+        name = _ORG_NAME_BASE.get(str(oid).lower())
+        if not name or not isinstance(spec, dict):
+            continue
+        for alias in spec.get("aliases") or []:
+            out.setdefault(str(alias).lower(), name)
+    return out
+
+
+ORG_NAMES: dict[str, str] = load_org_names()
+
+# ---------------------------------------------------------------------------
 # Optical normalisation — every mark reads at the same weight
 #
 # Each vendor draws on its own grid with its own padding baked in: measured

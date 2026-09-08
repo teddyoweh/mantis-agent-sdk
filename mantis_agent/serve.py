@@ -3227,9 +3227,10 @@ class _Handler(BaseHTTPRequestHandler):
             # Provider logos are inlined so the page stays offline and doesn't
             # phone twelve CDNs. json.dumps also escapes </script> safely.
             html = html.replace("__LOGOS__", json.dumps(PROVIDER_LOGOS).replace("</", "<\\/"))
-            from .serve_logos import ORG_LOGOS  # noqa: PLC0415
+            from .serve_logos import ORG_LOGOS, ORG_NAMES  # noqa: PLC0415
 
             html = html.replace("__ORGLOGOS__", json.dumps(ORG_LOGOS).replace("</", "<\\/"))
+            html = html.replace("__ORGNAMES__", json.dumps(ORG_NAMES).replace("</", "<\\/"))
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/overview":

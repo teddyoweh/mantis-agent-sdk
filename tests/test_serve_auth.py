@@ -371,8 +371,10 @@ def test_collapsed_provider_card_says_four_things_and_nothing_else(fake):
     from mantis_agent.serve_ui import INDEX_HTML
 
     js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    card = js[js.index("function authCard(e) {"):js.index("function metaBit(")]
-    head, body = card.split("if (!open) return card;")
+    card = js[js.index("function authCard(e, panel) {"):js.index("function metaBit(")]
+    # the grid always gets the collapsed half; only the floating panel is
+    # built with the body, so an open card never changes the grid's geometry
+    head, body = card.split("if (!panel) return card;")
     # the collapsed half builds exactly these four things
     assert "bigMark(" in head and 'el("div","fn"' in head and 'el("span","ac-st " + st8.cls)' in head
     assert 'btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho"' in head
@@ -380,15 +382,16 @@ def test_collapsed_provider_card_says_four_things_and_nothing_else(fake):
         assert later not in head, "collapsed card renders " + later
         assert later in body, "opened card is missing " + later
     # one card open at a time, remembered on AUTH.open
-    assert "AUTH.open = open ? null : e.key" in js and 'const open = AUTH.open === e.key' in js
+    assert "if (open) closeAuthPanel(); else openAuthPanel(e.key);" in js
+    assert 'const open = AUTH.open === e.key' in js
     # the state is one badge with its own surface, in the header, always present
     assert 'el("span","ac-st " + st8.cls)' in js
     assert "height: 20px" in css.split(".ac-st {")[1].split("}")[0]
 
 
-def test_provider_card_surface_is_neutral_and_the_active_one_is_dashed(fake):
+def test_provider_card_surface_is_neutral_and_the_active_one_is_pixelated(fake):
     """No colour wash in either theme: the surface is the same panel in every
-    state, the current provider is marked by a dashed accent outline, and the
+    state, the current provider is marked by a ring of pixel blocks, and the
     vendor's own colour appears in exactly one place — the mark's square."""
     from mantis_agent.serve_ui import INDEX_HTML
 
@@ -476,57 +479,78 @@ def test_at_most_one_provider_is_ever_marked_current(fake, monkeypatch):
     assert ".acard::before" not in css and ".acard.use::before" not in css
 
 
-def test_the_current_card_is_marked_by_a_dashed_outline_not_a_border(fake):
-    """The active marker is a dashed accent outline around the WHOLE card,
-    drawn as an SVG stroke so the dash array is ours to specify, inset from
-    the edge so it reads as a marker rather than a border, and following the
-    card's corner radius exactly."""
+def test_the_current_card_is_marked_by_a_ring_of_pixel_blocks(fake):
+    """The active marker is a ring of hard pixel blocks around the WHOLE card:
+    one stroked path whose 3px width and 3/3 dash array lay down 3x3 squares,
+    with antialiasing off so every block edge is hard at 1x and 2x."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
     css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
 
-    # an SVG stroke, not `outline: dashed` (no control over the array) and not
-    # a border (it would change layout and break the equal-height matrix)
-    assert "outline: 1px dashed" not in css and "outline: 1.5px dashed" not in css
-    rect = css.split("  .ac-dash rect {")[1].split("}")[0]
-    assert "stroke-width: 1.5" in rect
-    assert "stroke-dasharray: 2.5 3.5" in rect
-    assert "opacity: .75" in rect
+    rect = css.split("  .ac-pix rect {")[1].split("}")[0]
+    # square blocks: the stroke width and the dash both 3, so block == gap
+    assert "stroke-width: 3" in rect
+    assert "stroke-dasharray: 3 3" in rect
     assert "stroke: var(--accent)" in rect
     assert "border" not in rect
+    # not a border and not `outline: dashed` — neither can be made square,
+    # and a border would change layout and break the equal-height matrix
+    assert "outline:" not in css.split("  .ac-pix {")[1].split("}")[0]
 
-    # the marker costs no layout, so collapsed cards stay one height
-    box = css.split("  .ac-dash {")[1].split("}")[0]
+    box = css.split("  .ac-pix {")[1].split("}")[0]
     assert "position: absolute" in box and "pointer-events: none" in box
-    # inset 4px + half the 1.5px stroke, so the stroke's OUTER edge lands 4px in
-    assert "top: 4.75px" in box and "left: 4.75px" in box
-    assert "calc(100% - 9.5px)" in box
+    # inset 4px + half the 3px stroke = 5.5, a HALF pixel, so the 3px stroke
+    # spans whole device pixels instead of bleeding across two
+    assert "top: 5.5px" in box and "left: 5.5px" in box
+    assert "calc(100% - 11px)" in box
 
-    # the corner radius is the card's 12px less the 4.75px the path is inset by
-    mk = js[js.index("function dashMarker()"):js.index("function authCard(")]
-    assert '"rx", "7.25"' in mk and '"ry", "7.25"' in mk
+    mk = js[js.index("function pixMarker()"):js.index("// ---- the floating panel")] \
+        if "function pixMarker()" in js and js.index("function pixMarker()") < js.index("// ---- the floating panel") \
+        else js[js.index("function pixMarker()"):js.index("function authCard(")]
+    assert 'setAttribute("shape-rendering", "crispEdges")' in mk, "antialiasing would soften the blocks"
+    # the card's 12px radius less the 5.5px the path is inset by
+    assert '"rx", "6.5"' in mk and '"ry", "6.5"' in mk
     assert '"width", "100%"' in mk and '"height", "100%"' in mk
-    # SVG will not parse calc() in a geometry attribute — the box is sized in CSS
-    assert "calc(" not in "".join(ln for ln in mk.split("\n") if not ln.strip().startswith("//"))
     assert 'setAttribute("aria-hidden", "true")' in mk
 
-    # Current wears the accent marker; Ready wears the same shape held far
-    # back, in neutral ink so it can never be mistaken for Current; the two
-    # quiet states wear none
-    assert 'if (st8.cls === "cur" || st8.cls === "rdy") card.append(dashMarker());' in js
-    rdy = css.split("  .acard.rdy .ac-dash rect {")[1].split("}")[0]
+    # Current wears the accent ring, Ready the same ring held far back, the
+    # two quiet states none at all
+    assert 'if (st8.cls === "cur" || st8.cls === "rdy") card.append(pixMarker());' in js
+    rdy = css.split("  .acard.rdy .ac-pix rect {")[1].split("}")[0]
     assert "stroke: var(--ink-3)" in rdy and "opacity: .3" in rdy
-    for quiet in (".acard.idle .ac-dash", ".acard.off .ac-dash"):
+    for quiet in (".acard.idle .ac-pix", ".acard.off .ac-pix"):
         assert quiet not in css, quiet
 
-    # the slow creep is opt-out-able and loops without a seam: one dash cycle
-    # is 2.5 + 3.5 = 6px, and the offset travels a whole number of them
+    # the march is opt-out-able and seamless: one block cycle is 3 + 3 = 6px,
+    # and the offset travels a whole number of them
     assert "@media (prefers-reduced-motion: no-preference) {" in css
     anim = css.split("@media (prefers-reduced-motion: no-preference) {")[1][:200]
-    assert ".acard.cur .ac-dash rect { animation: dashmove 18s linear infinite; }" in anim
-    off = css.split("@keyframes dashmove { to { stroke-dashoffset: -")[1].split(";")[0]
-    assert int(off) % 6 == 0, "a partial dash cycle would jump at the loop point"
+    assert ".acard.cur .ac-pix rect { animation: pixmarch 18s linear infinite; }" in anim
+    off = css.split("@keyframes pixmarch { to { stroke-dashoffset: -")[1].split(";")[0]
+    assert int(off) % 6 == 0, "a partial block cycle would jump at the loop point"
+
+    # the old dashed marker is gone entirely
+    assert "ac-dash" not in css and "dashMarker" not in js
+
+
+def test_current_is_the_only_slanted_badge(fake):
+    """Current is a tag pinned to the card, not a word in the row — and it is
+    the only slanted one, so it differs from the rest in shape as well as
+    colour. Its label is counter-skewed so it reads upright."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    cur = css.split("  .ac-st.cur {")[1].split("}")[0]
+    assert "transform: skewX(-8deg)" in cur
+    # the label is counter-skewed by the SAME angle, or it reads italicised
+    assert ".ac-st.cur > * { transform: skewX(8deg); }" in css
+    # ...which only works on an element, never a bare text node
+    assert 'el("span","ac-stl", st8.badge)' in js
+    # every other state stays square
+    for other in ("rdy", "idle", "off"):
+        assert "skew" not in css.split("  .ac-st.%s {" % other)[1].split("}")[0], other
 
 
 def test_a_providers_name_survives_a_narrow_card(fake):
@@ -537,7 +561,7 @@ def test_a_providers_name_survives_a_narrow_card(fake):
 
     js = INDEX_HTML.split("<script>")[1]
     css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    card = js[js.index("function authCard(e) {"):js.index("function authMethodForm(")]
+    card = js[js.index("function authCard(e, panel) {"):js.index("function authMethodForm(")]
     assert 'el("span","ac-nm", par[1])' in card and 'el("span","ac-nv", par[2])' in card
     # the stem never shrinks; the vendor is the part that gives way
     assert "flex: none" in css.split("  .ac-nm {")[1].split("}")[0]
@@ -551,6 +575,46 @@ def test_a_providers_name_survives_a_narrow_card(fake):
     entries = js[js.index("function authEntries()"):js.index("function provMeta(")]
     assert 'mm.label === "Self-hosted endpoint" ? "Self-hosted" : mm.label' in entries
     assert "full: mm.label" in entries, "the contract's own label still travels, for comparison"
+
+
+def test_providers_are_grouped_and_the_tally_cannot_disagree_with_the_cards(fake):
+    """Connected providers gather at the top regardless of family, and the
+    header's number is the Connected group's card count — the same predicate
+    produces both, so the two cannot drift apart."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    r = js[js.index("function renderAuthCards(box, r) {"):js.index("const VENDOR_TINT")]
+
+    # ONE predicate. The old tally asked "has an active auth method", which
+    # misses a provider that is current from the environment and carries no
+    # method of its own — that is how the header could read 3 while 4 cards
+    # showed a connected state.
+    assert 'const isConnected = e => ["cur", "rdy"].includes(cardState(e).cls);' in r
+    assert "entries.filter(e => e.active).length" not in r
+    assert "const connected = conn.length;" in r
+    assert "const conn = entries.filter(isConnected)" in r
+
+    # three groups, in order, each provider in exactly one
+    for i, label in enumerate(["Connected", "First-party", "Open-source & self-host"]):
+        assert '"%s"' % label in r, label
+    assert r.index('["Connected"') < r.index('["First-party"') < r.index('["Open-source & self-host"')
+    assert 'e.kind === "family" && !isConnected(e)' in r
+    assert 'e.kind === "method" && !isConnected(e)' in r
+
+    # Current sorts to the front of the Connected group
+    assert '(cardState(a).cls === "cur" ? 0 : 1) - (cardState(b).cls === "cur" ? 0 : 1)' in r
+
+    # an empty group hides its label rather than showing a bare heading
+    assert "if (!list.length) return;" in r
+
+    # the progress bar is gone — the Connected group is that ratio at full
+    # size, with names on it
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert ".setup-bar" not in css and 'el("div","setup-bar")' not in js
+    # the move is a 140ms fade, and only for those who want motion
+    assert '.ac-moved { animation: ac-land 140ms ease-out; }' in css
+    assert "@keyframes ac-land { from { opacity: 0; } to { opacity: 1; } }" in css
 
 
 def test_collapsed_cards_are_one_height_by_construction(fake):

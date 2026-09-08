@@ -207,13 +207,31 @@ def _css():
 
 
 def test_stylesheet_has_no_elevation_shadows():
+    """Flat surfaces get their depth from a background step, never a shadow.
+    The two exceptions are the focus ring and the ONE genuinely layered
+    surface — the provider panel, which floats above the grid and has to read
+    as being off the page."""
     css = _css()
+    raised = []
     for line in css.split("\n"):
         if "box-shadow" not in line:
             continue
         for m in re.finditer(r"box-shadow:\s*([^;]+);", line):
             v = m.group(1).strip()
-            assert v == "none" or re.match(r"^0 0 0 \dpx var\(--[a-z-]+\)$", v), line.strip()
+            if v == "none" or re.match(r"^0 0 0 \dpx var\(--[a-z-]+\)$", v):
+                continue
+            # an INSET ring is a drawn shape, not elevation: it is how a live
+            # step reads as a hollow circle against a filled done one, so the
+            # two differ without relying on colour
+            if re.match(r"^inset 0 0 0 \dpx var\(--[a-z-]+\)$", v):
+                continue
+            raised.append(line.strip())
+    # exactly one raised surface in the whole stylesheet, and it is the panel
+    assert len(raised) == 1, raised
+    assert "var(--dim)" in raised[0], "the raise takes the theme's own dim"
+    panel = css.split("  .ac-panel {")[1].split("}")[0]
+    assert "box-shadow" in panel, "the one raise belongs to the floating panel"
+    assert "position: absolute" in panel, "and only a layered surface earns it"
 
 
 def test_stylesheet_has_no_lines_at_all():
@@ -297,7 +315,104 @@ def test_model_picker_filters_by_company_and_shows_recency():
     assert "size unknown" in js and "not in the vLLM support list" in js
     # the GPU-provider toggle left the model picker for Fit & deploy
     assert 'fSec.querySelector(".sec-t").append(providerToggle())' in js
-    assert "dp-orgs" in js[js.index('section(pad, "Pick a model"'):js.index('section(pad, "Fit & deploy")')]
+
+
+def test_model_picker_reads_search_then_narrow():
+    """You search, THEN you narrow. The search row comes first and carries the
+    sort control with it; the org pills and the token line sit underneath, and
+    the token line ends the row rather than floating in its middle."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], _css()
+    pick = js[js.index("function renderDpPicker(sec) {"):js.index("function parseParams(")]
+
+    # source selector, then search, then filters, then results — in that order
+    for i, marker in enumerate(['el("div","dp-src")', 'el("div","dp-find")',
+                                'el("div","dp-sub")', 'grid.id = "dp-models"']):
+        assert marker in pick, marker
+    order = [pick.index(x) for x in ('el("div","dp-src")', 'el("div","dp-find")',
+                                     'el("div","dp-sub")', 'grid.id = "dp-models"')]
+    assert order == sorted(order), "the picker rows are out of order"
+
+    # the sort control rides in the SEARCH row, not with the org pills
+    assert pick.index("chips.append(fresh);") < pick.index('bar.append(chips); sec.append(bar);')
+    assert 'bar.append(find.wrap);' in pick
+    # the org pills are in the row BELOW the search box
+    assert 'orgRow.id = "dp-orgs"; sub.append(orgRow)' in pick
+    # ...and the token line ends that row instead of sitting in its middle
+    assert 'hfState.id = "hf-state"; renderHfState(hfState); sub.append(hfState)' in pick
+    assert ".dp-sub .dp-status { margin-left: auto; }" in css
+    assert ".dp-sub .hf-state { margin-left: 0; }" in css
+
+    # the heading is gone: the search box is the instruction
+    assert 'section(pad, "Pick a model"' not in js
+    # ...as is the implementation jargon that captioned the provider strip
+    code = "\n".join(x for x in js.split("\n") if not x.strip().startswith("//"))
+    assert "keys → user settings env" not in code
+
+
+def test_org_pills_use_real_names_and_do_not_mangle_unknown_slugs():
+    """A Hub org id is a slug. Known orgs get their real name; an unknown one
+    keeps its slug EXACTLY, because title-casing turns "zai-org" into
+    "Zai-Org" and "ifm" into a company that does not exist."""
+    from mantis_agent.serve_logos import ORG_NAMES
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], _css()
+    # the names ride the mark file's own alias table
+    for slug, name in (("zai-org", "Z.ai"), ("moonshotai", "Moonshot"), ("meta-llama", "Meta"),
+                       ("minimaxai", "MiniMax"), ("mistralai", "Mistral"), ("ibm-granite", "IBM"),
+                       ("deepseek-ai", "DeepSeek"), ("nousresearch", "Nous"), ("qwen", "Qwen")):
+        assert ORG_NAMES[slug] == name, slug
+    assert "orcarouter" not in ORG_NAMES, "an unknown org must fall through to its slug"
+
+    assert "const ORG_NAMES = __ORGNAMES__;" in js
+    assert 'const orgName = o => ORG_NAMES[String(o || "").toLowerCase()] || String(o || "");' in js
+    # the capitalize that mangled the slugs is gone
+    orgs = css.split("  .dp-orgs .fchip {")[1].split("}")[0]
+    assert "text-transform" not in orgs
+    # pills and the model card's second line both take the mapped name
+    pills = js[js.index("function renderOrgPills("):js.index("function modelShown(")]
+    assert "orgName(o)" in pills
+    assert 'el("div","mo", orgName(og))' in js
+
+    # the row shows the busiest few plus an overflow, and never hides the
+    # filter that is currently active behind it
+    assert "const TOP = 6;" in pills
+    assert "DEPLOY.org !== \"all\" && orgs.includes(DEPLOY.org) && !head.includes(DEPLOY.org)" in pills
+    assert 'el("button","fchip dp-more"' in pills and "DEPLOY.orgsOpen" in pills
+    assert 'more.setAttribute("aria-expanded"' in pills
+
+
+def test_the_curated_list_reads_as_a_starting_point_not_the_whole_world():
+    """"30 curated" with nothing else on screen reads as a hard limit. The
+    sources are a visible control, the counts say what they are counting, and
+    a query states that it reaches all of Hugging Face."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], _css()
+    pick = js[js.index("function renderDpPicker(sec) {"):js.index("function parseParams(")]
+
+    # three named sources, as a real tablist
+    for k, lab in (("curated", "Curated"), ("hub", "Hugging Face"), ("ollama", "Ollama")):
+        assert '["%s", "%s"' % (k, lab) in pick, k
+    assert 'srcRow.setAttribute("role", "tablist")' in pick
+    assert 'c.setAttribute("role", "tab")' in pick and 'aria-selected' in pick
+    assert ".dp-srcb.on" in css and ".dp-srcb:focus-visible" in css
+
+    # typing reaches the Hub even from the curated list — the starting point
+    # is never a filter you have to escape
+    assert 'if (DEPLOY.q && DEPLOY.source === "curated") setSource("hub");' in pick
+
+    # the status line says how many, out of what
+    assert 'searching all of Hugging Face…' in pick
+    assert '" of all Hugging Face, for “" + DEPLOY.q + "”"' in pick
+    assert '" curated · search above to reach all of Hugging Face"' in pick
+    # Ollama is a real source, and says so when the daemon is not running
+    assert '"reading local models…"' in pick
+    assert '"Ollama is not running on this machine"' in pick
+    assert '" pulled locally"' in pick
+    assert 'await api("/api/ollama")' in pick
 
 
 def test_no_signal_path_and_short_captions():

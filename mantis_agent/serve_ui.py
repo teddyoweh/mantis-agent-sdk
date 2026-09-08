@@ -240,6 +240,19 @@ INDEX_HTML = r"""<!doctype html>
   label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
   .enable { display: flex; gap: 8px; }
   .filters { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  /* the source selector: three places models can come from, stated before
+     you search so the curated list never reads as the whole world */
+  .dp-src { display: inline-flex; gap: 3px; padding: 3px; margin-bottom: 9px;
+    background: var(--fill); border-radius: 8px; }
+  .dp-srcb { height: 26px; padding: 0 11px; border: 0; border-radius: 6px; background: transparent;
+    font: inherit; font-size: 12px; line-height: 1; color: var(--ink-2); cursor: pointer;
+    white-space: nowrap; transition: background var(--t), color var(--t); }
+  .dp-srcb:hover { background: var(--panel-2); color: var(--ink); }
+  .dp-srcb.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .dp-srcb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+  /* the deploy picker: search first, then the filter row under it */
+  .dp-find { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+  .dp-sub { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; min-width: 0; }
   /* segmented control — pills, like the tabs */
   .fchips { display: flex; gap: 2px; flex: none; }
   .fchip { font: inherit; font-size: 12px; padding: 6px 12px; border: 0; border-radius: 6px; background: transparent;
@@ -263,11 +276,13 @@ INDEX_HTML = r"""<!doctype html>
   .dp-ptoggle .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none; }
   .dp-ptoggle .mark2 svg { width: 13px; height: 13px; }
   /* the company filter — one line of org pills, scrolls rather than wraps */
-  .dp-orgs { display: flex; align-items: center; gap: 3px; margin-left: 6px; min-width: 0; overflow-x: auto;
-    flex-wrap: nowrap; scrollbar-width: none; }
-  .dp-orgs::-webkit-scrollbar { display: none; }
-  .dp-orgs .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; flex: none; font-weight: 500;
-    text-transform: capitalize; }
+  /* with an overflow control the row no longer has to scroll sideways */
+  .dp-orgs { display: flex; align-items: center; gap: 3px; min-width: 0; flex-wrap: wrap; }
+  .dp-more { font-weight: 500; color: var(--ink-3); }
+  /* no text-transform: it is what turned "zai-org" into "Zai-Org". The names
+     are already cased correctly, and an unknown slug stays as the Hub spells
+     it rather than being mangled into a word that is not a company. */
+  .dp-orgs .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; flex: none; font-weight: 500; }
   .dp-orgs .fchip.on { font-weight: 600; }
   .dp-orgs .omark { width: 16px; height: 16px; border-radius: 4px; background: none; font-size: 9px; }
   .dp-orgs .omark svg { width: 13px; height: 13px; }
@@ -322,44 +337,35 @@ INDEX_HTML = r"""<!doctype html>
      state it's in, and the one action that changes that. The surface is the
      same neutral panel in every state — the provider in use is marked by a
      thin rail, never by a wash. Everything else waits until it's opened. */
-  /* THE ACTIVE MARKER — a dashed accent outline around the whole card.
-     Technique: an inline SVG rect, not `outline: dashed` and not a border.
-       - `outline` gives no control over the dash pattern; every engine picks
-         its own array, so it cannot be tuned at the pixel level.
-       - a border would change layout and break the equal-height matrix.
-     The SVG costs zero layout (absolute, pointer-events: none), matches the
-     card's corner radius exactly via rx, and is the only option that can
-     animate the dash. Sizes are in CSS px inside a viewBox-less SVG so one
-     unit is one CSS px — on a 2x screen the 1.5px stroke lands on 3 device
-     pixels and stays crisp instead of blurring across a half pixel.
-     Inset 3px from the edge so it reads as a marker laid ON the card rather
-     than as the card's own border. */
-  /* an <svg> is a replaced element: with `inset` alone it falls back to its
-     300x150 intrinsic size and gets clipped. The box is sized explicitly. */
-  .ac-dash { position: absolute; top: 4.75px; left: 4.75px;
-    width: calc(100% - 9.5px); height: calc(100% - 9.5px);
+  /* THE ACTIVE MARKER — a ring of hard pixel blocks around the whole card.
+     Drawn as one stroked path, not a field of <rect>s: a 3px stroke with a
+     3/3 dash array puts down 3x3 squares, which is what makes it read as
+     PIXELS rather than as a dashed line — the blocks are square, and the gap
+     equals the block. `crispEdges` turns off antialiasing so every edge is
+     hard at 1x and 2x, and the path centreline sits on a half pixel (inset 4
+     + half the 3px stroke = 5.5) so the stroke spans whole device pixels
+     instead of bleeding across two.
+       block 3px · pitch 6px (3 on, 3 off) · inset 4px · rx 6.5
+     Picked by rendering six block/pitch pairs at true 1x and 2x: 2px blocks
+     at any pitch collapse back into a dashed line, and 4px blocks shout over
+     the badge. 3/3 is where the blocks stay square and separate at both. */
+  .ac-pix { position: absolute; top: 5.5px; left: 5.5px;
+    width: calc(100% - 11px); height: calc(100% - 11px);
     pointer-events: none; overflow: visible; z-index: 1; }
-  /* THE DASH SPEC, picked by rendering six candidates at true 1x and 2x:
-       stroke-width 1.5  ·  dasharray 2.5 3.5  ·  opacity .75  ·  inset 4px
-     A 5/4 array at full opacity reads like a coupon and shouts over the
-     badge; a 1px stroke with 2px dashes collapses into a plain hairline at
-     1x. 2.5/3.5 at 1.5px keeps real weight — so the dash survives a
-     non-retina screen — while .75 opacity keeps it under the badge, which
-     stays the loudest accent on the card. */
-  .ac-dash rect { fill: none; stroke: var(--accent); stroke-width: 1.5;
-    stroke-dasharray: 2.5 3.5; stroke-linecap: butt; opacity: .75; }
-  /* Connected-but-idle is the SAME marker held far back — same rhythm, a
-     third of the presence, and neutral rather than accent, so it can never be
-     mistaken for the current card. The difference is weight and colour, and
-     the badge glyph differs in shape too, so it survives colour blindness. */
-  .acard.rdy .ac-dash rect { stroke: var(--ink-3); opacity: .3; }
-  /* One dash cycle is 6px, so the offset steps by a multiple of 6 and the
-     loop has no visible seam. 36px over 18s is 2px/s: you notice it only
-     after you have already looked at the card. */
+  .ac-pix rect { fill: none; stroke: var(--accent); stroke-width: 3;
+    stroke-dasharray: 3 3; stroke-linecap: butt; }
+  /* Connected-but-idle is the SAME pixel ring held far back — same rhythm, a
+     third of the presence, neutral rather than accent, so it can never be
+     mistaken for the current card. The badge glyph differs in shape too, so
+     the pair survives colour blindness. */
+  .acard.rdy .ac-pix rect { stroke: var(--ink-3); opacity: .3; }
+  /* One block cycle is 6px, so the offset travels a whole number of them and
+     the loop has no seam. 36px over 18s is one block every 3 seconds: the
+     ring marches, but only for someone already looking at it. */
   @media (prefers-reduced-motion: no-preference) {
-    .acard.cur .ac-dash rect { animation: dashmove 18s linear infinite; }
+    .acard.cur .ac-pix rect { animation: pixmarch 18s linear infinite; }
   }
-  @keyframes dashmove { to { stroke-dashoffset: -36; } }
+  @keyframes pixmarch { to { stroke-dashoffset: -36; } }
   .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
     padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
     transition: background var(--t); }
@@ -373,6 +379,19 @@ INDEX_HTML = r"""<!doctype html>
      place, on every card. */
   .acard:hover { background: var(--panel-2); }
   .acard.open { background: var(--panel-2); }
+  /* the container the panel is measured against */
+  #auth-cards { position: relative; }
+  /* THE FLOATING PANEL. It sits above the grid, exactly over the card it came
+     from, so the rows behind it never move. A layered surface is the one
+     place a raise is honest — everything flat still has no shadow — and it is
+     kept subtle: a background step does most of the work. */
+  .ac-panel { position: absolute; z-index: 20; background: var(--panel-2);
+    box-shadow: 0 12px 32px -8px var(--dim); overflow: auto;
+    animation: ac-rise 140ms cubic-bezier(.2,.7,.2,1); }
+  @media (prefers-reduced-motion: reduce) { .ac-panel { animation: none; } }
+  @keyframes ac-rise { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+  /* the card underneath keeps its 63px footprint and simply waits */
+  .ac-under { visibility: hidden; }
   .ac-h { display: flex; align-items: center; gap: 11px; min-width: 0; cursor: pointer; }
   /* an inline span puts a LETTER stand-in on the text baseline, which is why
      it used to sit high and left of every real glyph. The container centres
@@ -413,7 +432,15 @@ INDEX_HTML = r"""<!doctype html>
   .ac-st { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 20px; padding: 0 8px;
     border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
   .ac-stg { width: 7px; height: 7px; border-radius: 50%; flex: none; box-sizing: border-box; }
-  .ac-st.cur { background: var(--accent); color: var(--accent-ink); }
+  /* Current is the only slanted badge on the page — a tag pinned to the card
+     rather than a word sitting in the row. The label is counter-skewed by
+     the same angle so it reads upright instead of italicised, and the skew
+     is bounded (8deg over a 20px tall pill is ~2.8px of lean) so it stays
+     inside the card and cannot reach the name. Ready, Not active and Not
+     connected stay square, so Current differs in SHAPE as well as colour. */
+  .ac-st.cur { background: var(--accent); color: var(--accent-ink);
+    transform: skewX(-8deg); padding: 0 9px; margin-right: 2px; }
+  .ac-st.cur > * { transform: skewX(8deg); }
   .ac-st.cur .ac-stg { background: currentColor; }
   .ac-st.rdy { background: var(--ok-soft); color: var(--ok); }
   .ac-st.rdy .ac-stg { border: 1.5px solid currentColor; }
@@ -493,7 +520,11 @@ INDEX_HTML = r"""<!doctype html>
   .oauth-paste input.in { background: var(--panel); }
 
   /* the gated-model notice and its token field */
-  .hf-state { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  /* the token state sits at the END of the filter row, never in its middle */
+  .hf-state { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex: none;
+    font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  .dp-sub .dp-status { margin-left: auto; }
+  .dp-sub .hf-state { margin-left: 0; }
   .hf-add { font: inherit; font-size: 11.5px; color: var(--accent); background: none; border: 0; padding: 0 0 0 2px; cursor: pointer; }
   .hf-add:hover { text-decoration: underline; }
   .hf-notice { display: none; background: var(--warn-soft); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
@@ -507,6 +538,44 @@ INDEX_HTML = r"""<!doctype html>
   .hf-form .hf-row input.in { background: var(--panel); }
   .hf-form .hf-foot { margin-top: 6px; font-size: 11.5px; }
 
+  /* the finish: an arrival, not a spec dump */
+  .dp-done { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; margin: 2px 0 12px; }
+  .dp-done b { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .dp-donem { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none;
+    align-self: center; }
+  .dp-donex { flex-basis: 100%; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+  /* the deploy job as steps: what has happened, what is happening now */
+  .dp-steps { list-style: none; margin: 4px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .dp-step { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; font-size: 12.5px;
+    color: var(--ink-3); line-height: 1.45; }
+  .dp-step.live { color: var(--ink); }
+  .dp-stepm { width: 14px; height: 14px; border-radius: 50%; flex: none; margin-top: 2px;
+    background: var(--fill); position: relative; }
+  /* done: a filled accent pip. live: a ring that breathes. The two differ in
+     shape as well as colour, like every other state on the page. */
+  .dp-step.did .dp-stepm { background: var(--accent); }
+  .dp-step.live .dp-stepm { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .dp-step.live .dp-stepm { animation: steppulse 1.5s ease-in-out infinite; }
+  }
+  @keyframes steppulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  .dp-stept { min-width: 0; word-break: break-word; }
+  .dp-logbox { margin: 0 0 12px; }
+  .dp-logbox summary { font-size: 11.5px; color: var(--ink-3); cursor: pointer; padding: 3px 0; }
+  .dp-logbox summary::marker { color: var(--ink-3); }
+  .dp-logbox .dp-log { margin-top: 7px; }
+  /* the fit step's waiting shape — each piece is the size of the thing it
+     stands in for, so nothing moves when the data lands */
+  .dp-skel .sk { animation: skpulse 1.4s ease-in-out infinite; }
+  .dp-skel .lcd .sk { display: inline-block; vertical-align: baseline; }
+  .sk-tag { width: 74px; height: 18px; border-radius: 6px; }
+  .sk-num { width: 42px; height: 15px; border-radius: 4px; margin-right: 5px; }
+  .sk-lbl { width: 34px; height: 11px; border-radius: 3px; }
+  .sk-mark { width: 24px; height: 24px; border-radius: 6px; }
+  .sk-name { width: 128px; height: 15px; border-radius: 4px; }
+  .sk-row { height: 34px; border-radius: 7px; margin-top: 7px; }
+  @keyframes skpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+  @media (prefers-reduced-motion: reduce) { .dp-skel .sk { animation: none; } }
   /* empty states & skeletons */
   .zero { background: var(--panel-2); border-radius: var(--radius); padding: 30px 22px 32px; text-align: center; }
   .zero .zart { color: var(--ink-2); margin: 0 auto 12px; width: 140px; }
@@ -873,9 +942,14 @@ INDEX_HTML = r"""<!doctype html>
   .setup-h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .setup-n { font-weight: 600; font-size: 13px; }
   .setup-s { font-size: 12.5px; color: var(--ink-2); }
-  .setup-bar { height: 4px; border-radius: 2px; background: var(--fill); margin: 10px 0 8px; overflow: hidden; }
-  .setup-bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .5s cubic-bezier(.2,.7,.2,1); }
-  .setup-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; }
+  .setup-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 8px; }
+  /* a card that changed group fades in where it landed — 140ms, the same
+     step as every other transition on the page, and no motion for anyone
+     who has asked for none */
+  @media (prefers-reduced-motion: no-preference) {
+    .ac-moved { animation: ac-land 140ms ease-out; }
+  }
+  @keyframes ac-land { from { opacity: 0; } to { opacity: 1; } }
   .ready { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
   .keyheld { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); }
   .kh-l { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
@@ -951,8 +1025,13 @@ INDEX_HTML = r"""<!doctype html>
   .dp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 12px; }
   .dpc { padding: 16px 16px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; position: relative; transition: background var(--t); }
   .dpc:hover { background: var(--panel-2); }
-  .dpc.on { background: var(--accent-soft); }
-  .dpc.on:hover { background: var(--accent-soft-2); }
+  /* One system: a connected GPU provider is marked the same way a connected
+     model provider is — the pixel ring — not with an accent wash. The wash
+     was the last surface on the pre-redesign system. */
+  .dpc { position: relative; }
+  .dpc.on { background: var(--panel); }
+  .dpc.on:hover { background: var(--panel-2); }
+  .dpc.on .ac-pix rect { stroke: var(--accent); }
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
@@ -1925,7 +2004,8 @@ async function loadHome() {
 // status); the page never guesses a dollar figure it wasn't given.
 // ==========================================================================
 const DEPLOY = { providers: [], deployments: [], model: null, inspect: null, q: "", sort: "trending",
-                 provider: "all", org: "all", fresh: false, hfToken: false, gpuMax: {}, results: [] };
+                 provider: "all", org: "all", orgsOpen: false, fresh: false, hfToken: false,
+                 source: "curated", gpuMax: {}, results: [] };
 const DAY = 86400000;
 // How current a model is. Inside a year people think in "3 days ago"; beyond
 // it, the month and year say more than "14 months ago".
@@ -2122,7 +2202,9 @@ async function loadDeploy() {
     t.innerHTML = "<b>Deploy isn't available:</b> " + esc(errText(pv)); b.append(t); pad.append(b);
   }
 
-  const pSec = section(pad, "GPU providers · " + configured.length + "/" + DEPLOY.providers.length + " configured", "keys → user settings env");
+  // no caption: "keys → user settings env" is implementation jargon, and the
+  // cards below already say where each key stands
+  const pSec = section(pad, "GPU providers · " + configured.length + "/" + DEPLOY.providers.length + " configured");
   const strip = el("div","dp-grid"); strip.id = "dp-grid"; renderDpProviders(strip); pSec.append(strip);
 
   // what's running sits right under the providers; picking and fitting follow
@@ -2130,12 +2212,11 @@ async function loadDeploy() {
   const tbl = el("div"); tbl.id = "dp-deps"; renderDeployments(tbl); dSec.append(tbl);
 
   initDeployProvider(configured);
-  const mSec = section(pad, "Pick a model", "huggingface.co");
-  const secT = mSec.querySelector(".sec-t");
-  // the org filter belongs to choosing a model; the GPU-provider toggle is a
-  // deploy target and now lives on Fit & deploy, where it scopes the table
-  const orgRow = el("div","dp-orgs"); orgRow.id = "dp-orgs"; secT.append(orgRow);
-  const hfState = el("div","hf-state"); hfState.id = "hf-state"; renderHfState(hfState); secT.append(hfState);
+  // No "Pick a model" heading: the search box IS the instruction, and the
+  // section header was only there to hold the org pills and the token line —
+  // which is how the token line ended up floating in the middle of a row it
+  // had nothing to do with.
+  const mSec = el("div","sec"); pad.append(mSec);
   if (!configured.length) {
     mSec.append(emptyState("socket", "Add a GPU provider to deploy any model",
       "Paste one provider key above, then search every open model on the Hub."));
@@ -2186,6 +2267,9 @@ function renderDpProviders(box) {
     // configured but unrunnable must not read as ready
     card.className = "dpc" + (p.configured && ready ? " on" : "") + (ready ? "" : " blocked");
     card.id = "dpc-" + p.id;
+    // same marker as a connected model provider, so the two pages read as
+    // one app rather than two design eras
+    if (p.configured && ready) card.append(pixMarker());
     const fh = el("div","fh");
     fh.append(bigMark(p.logo || p.id, p.display_name));
     const ft = el("div","ft");
@@ -2377,8 +2461,36 @@ function trapFocus(sheet) {
 // ---- model picker: the Hub, in the model-table shape ----
 let modelSearchReq = 0;
 function renderDpPicker(sec) {
-  const bar = el("div","filters");
-  const find = findBox("Search the Hub — llama, qwen, gemma, deepseek…  ( / )");
+  // You search, THEN you narrow. The search row comes first and carries the
+  // sort and the token state with it; the org pills sit underneath, where a
+  // filter belongs.
+  // WHERE the models come from, stated before you search. The curated list
+  // was reading as the whole world — "30 curated" and nothing else on screen
+  // — so the sources are now a control you can see and switch.
+  const srcRow = el("div","dp-src"); srcRow.setAttribute("role", "tablist");
+  srcRow.setAttribute("aria-label", "Model source");
+  [["curated", "Curated", "a short starting list — good first deploys"],
+   ["hub", "Hugging Face", "search every public model on the Hub"],
+   ["ollama", "Ollama", "models already pulled on this machine"]].forEach(([k, lab, why]) => {
+    const c = el("button","dp-srcb" + (k === DEPLOY.source ? " on" : ""), lab);
+    c.setAttribute("role", "tab");
+    c.setAttribute("aria-selected", k === DEPLOY.source ? "true" : "false");
+    c.title = why;
+    c.onclick = () => {
+      if (DEPLOY.source === k) return;
+      DEPLOY.source = k; DEPLOY.org = "all"; DEPLOY.orgsOpen = false;
+      srcRow.querySelectorAll(".dp-srcb").forEach(x => {
+        x.classList.toggle("on", x === c);
+        x.setAttribute("aria-selected", x === c ? "true" : "false");
+      });
+      runSearch();
+    };
+    srcRow.append(c);
+  });
+  sec.append(srcRow);
+
+  const bar = el("div","dp-find");
+  const find = findBox("Search every model on Hugging Face — llama, qwen, gemma, deepseek…  ( / )");
   find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = DEPLOY.q;
   bar.append(find.wrap);
   const chips = el("div","fchips");
@@ -2390,19 +2502,37 @@ function renderDpPicker(sec) {
   const fresh = el("button","fchip" + (DEPLOY.fresh ? " on" : ""), "New");
   fresh.title = "released or updated in the last 30 days";
   fresh.onclick = () => { DEPLOY.fresh = !DEPLOY.fresh; fresh.classList.toggle("on", DEPLOY.fresh); paintModels(); };
-  const chipWrap = el("div","fchips"); chipWrap.append(fresh);
-  bar.append(chips, chipWrap); sec.append(bar);
-  const status = el("div","dp-status"); status.id = "dp-mstatus";
-  const head = sec.querySelector(".sec-t"); if (head) head.append(status);
+  chips.append(fresh);
+  bar.append(chips); sec.append(bar);
+  // second row: what is being searched, how it is filtered, and where the
+  // token stands — one line, left to right, nothing floating in the middle
+  const sub = el("div","dp-sub");
+  const orgRow = el("div","dp-orgs"); orgRow.id = "dp-orgs"; sub.append(orgRow);
+  const status = el("div","dp-status"); status.id = "dp-mstatus"; sub.append(status);
+  const hfState = el("div","hf-state"); hfState.id = "hf-state"; renderHfState(hfState); sub.append(hfState);
+  sec.append(sub);
   const grid = el("div","dp-mgrid"); grid.id = "dp-models"; sec.append(grid);
   let t = null;
   const runSearch = async () => {
     DEPLOY.q = find.input.value.trim();
-    status.textContent = DEPLOY.q ? "searching the Hub…" : "loading curated…";
+    // typing always means the Hub: the curated list is a starting point, not
+    // a filter you have to escape from
+    if (DEPLOY.q && DEPLOY.source === "curated") setSource("hub");
+    setStatus(searchingLine());
     const my = ++modelSearchReq;
     let r;
-    try { r = await api("/api/deploy/models?" + q({ q: DEPLOY.q, sort: DEPLOY.sort, limit: 30 })); }
-    catch (e) { r = { ok: false, error: e.message, models: [] }; }
+    if (DEPLOY.source === "ollama") {
+      try {
+        const o = await api("/api/ollama");
+        r = { ok: true, source: "ollama", reachable: !!o.reachable, error: o.error,
+              models: (o.models || []).map(x => ({
+                id: x.name, org: "ollama", local: true, params_b: parseParams(x.param),
+                dtype: x.quant, size_b: x.size, loaded: x.loaded, lastModified: x.modified_at })) };
+      } catch (e) { r = { ok: false, error: e.message, models: [] }; }
+    } else {
+      try { r = await api("/api/deploy/models?" + q({ q: DEPLOY.q, sort: DEPLOY.sort, limit: 30 })); }
+      catch (e) { r = { ok: false, error: e.message, models: [] }; }
+    }
     if (my !== modelSearchReq) return;
     if (r.hf_token_set != null) DEPLOY.hfToken = !!r.hf_token_set;
     (r.models || []).forEach(m => { if ((r.pending || []).includes(m.id)) m._pending = true; });
@@ -2410,8 +2540,29 @@ function renderDpPicker(sec) {
     await gpuCeiling();
     renderOrgPills();
     renderModelRows(grid, r);
-    status.textContent = r.ok === false ? "" : (r.models || []).length + (r.curated ? " curated" : " results");
+    setStatus(resultLine(r));
     if (r.partial) enrichLoop(r, grid, status, my);
+  };
+  // the status is a sentence about REACH, not a bare number: how many, out of
+  // what, and — while a query is running — what is being searched
+  const setSource = k => {
+    DEPLOY.source = k;
+    srcRow.querySelectorAll(".dp-srcb").forEach((x, i) => {
+      const on = ["curated", "hub", "ollama"][i] === k;
+      x.classList.toggle("on", on); x.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  };
+  const setStatus = txt => { status.textContent = txt; };
+  const searchingLine = () => DEPLOY.source === "ollama" ? "reading local models…"
+    : DEPLOY.q ? "searching all of Hugging Face…" : "loading the curated list…";
+  const resultLine = r => {
+    if (r.ok === false) return "";
+    const n = (r.models || []).length;
+    if (DEPLOY.source === "ollama")
+      return r.reachable === false ? "Ollama is not running on this machine"
+        : n + " pulled locally";
+    if (DEPLOY.q) return n + " of all Hugging Face, for “" + DEPLOY.q + "”";
+    return n + " curated · search above to reach all of Hugging Face";
   };
   // Progressive enrichment: bare ids paint first, then params / dtype /
   // license / vLLM / VRAM fill in as the server's lookups land (diff-render,
@@ -2450,6 +2601,14 @@ function renderDpPicker(sec) {
 // "inspect →" on hover. Results replace the grid in place — keyed, no flash.
 const VRAM_CAP_GB = 80;
 // One pill per company present in the results, with its real mark and count.
+// Ollama reports a parameter size as a string ("8.0B", "70B"); the cards
+// carry it as a number, so it is parsed once here rather than at each use.
+function parseParams(v) {
+  const m = /^\s*([\d.]+)\s*([BbMm])/.exec(String(v || ""));
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return isNaN(n) ? null : (m[2].toLowerCase() === "m" ? n / 1000 : n);
+}
 function renderOrgPills() {
   const row = document.getElementById("dp-orgs"); if (!row) return;
   const models = (DEPLOY.results && DEPLOY.results.models) || [];
@@ -2473,7 +2632,22 @@ function renderOrgPills() {
     row.append(c);
   };
   add("all", "All", null, models.length);
-  orgs.forEach(o => add(o, o, orgMark(o), counts[o]));
+  // A dozen-plus pills on one scrolling line is a strip nobody reads. Show
+  // the busiest few — plus whichever one is selected, so the active filter is
+  // never hidden behind "More" — and put the rest behind one overflow.
+  const TOP = 6;
+  let head = orgs.slice(0, TOP);
+  if (DEPLOY.org !== "all" && orgs.includes(DEPLOY.org) && !head.includes(DEPLOY.org))
+    head = head.slice(0, TOP - 1).concat(DEPLOY.org);
+  head.forEach(o => add(o, orgName(o), orgMark(o), counts[o]));
+  const rest = orgs.filter(o => !head.includes(o));
+  if (!rest.length) return;
+  if (DEPLOY.orgsOpen) { rest.forEach(o => add(o, orgName(o), orgMark(o), counts[o])); }
+  const more = el("button","fchip dp-more",
+    DEPLOY.orgsOpen ? "Fewer" : "+" + rest.length + " more");
+  more.setAttribute("aria-expanded", DEPLOY.orgsOpen ? "true" : "false");
+  more.onclick = () => { DEPLOY.orgsOpen = !DEPLOY.orgsOpen; renderOrgPills(); };
+  row.append(more);
 }
 function modelShown(m) {
   if (m._label) return true;
@@ -2515,7 +2689,10 @@ function renderModelRows(grid, r) {
     mh.append(orgMark(m.org || (slash > 0 ? m.id.slice(0, slash) : "")));
     const mtt = el("div","mtt");
     const t = el("div","mt", slash > 0 ? m.id.slice(slash + 1) : m.id); t.title = m.id; mtt.append(t);
-    if (slash > 0) mtt.append(el("div","mo", m.id.slice(0, slash)));
+    // the card's second line is the company, so it takes the real name too —
+    // and keeps the slug as its tooltip, since that is what the Hub URL says
+    if (slash > 0) { const og = m.id.slice(0, slash); const o2 = el("div","mo", orgName(og));
+      if (orgName(og) !== og) o2.title = og; mtt.append(o2); }
     mh.append(mtt); card.append(mh);
     const pend = !!(m._pending && m.params_b == null && m.vllm_ok == null);
     const pills = el("div","mp2");
@@ -2588,7 +2765,10 @@ function renderFit(sec, loading) {
       "Every configured provider's GPUs get checked against it and priced per hour."));
     return;
   }
-  if (loading || !DEPLOY.inspect) { sec.append(el("div","card2 dp-loading", "inspecting " + DEPLOY.model + "…")); return; }
+  // A one-line "inspecting…" card that is then replaced by a header, a six
+  // cell spec strip and a GPU table is a ~400px jump. The waiting state is
+  // the SHAPE of the answer, so the step settles instead of leaping.
+  if (loading || !DEPLOY.inspect) { sec.append(fitSkeleton(DEPLOY.model)); return; }
   const r = DEPLOY.inspect;
   if (r.ok === false) {
     const p = el("div","probe bad"); const h = el("div","ph2");
@@ -2653,6 +2833,32 @@ function renderFit(sec, loading) {
   if (blocked && DEPLOY.provider === "all")
     sec.append(el("div","note2", blocked + " provider" + (blocked === 1 ? "" : "s") + " hidden — a package needs installing (see the cards above)."));
   fits.forEach(f => sec.append(fitTable(f, m)));
+}
+// The waiting shape for one model's fit: the same header, the same six spec
+// cells, the same GPU rows — drawn empty. Sized off the real thing so the
+// section does not change height when the answer lands.
+function fitSkeleton(id) {
+  const w = el("div","dp-skel");
+  const card = el("div","card2");
+  const h = el("div","dp-mh");
+  h.append(el("span","dp-mid", id || ""));
+  h.append(el("span","sk sk-tag"));
+  card.append(h);
+  const lcd = el("div","lcd tight");
+  for (let i = 0; i < 6; i++) {
+    const c = el("div","lc");
+    c.append(el("i","sk sk-num"), el("b","sk sk-lbl"));
+    lcd.append(c);
+  }
+  card.append(lcd);
+  w.append(card);
+  const box = el("div","card2 dp-fitbox");
+  const bh = el("div","dp-mh");
+  bh.append(el("span","sk sk-mark"), el("span","sk sk-name"));
+  box.append(bh);
+  for (let i = 0; i < 3; i++) box.append(el("div","sk sk-row"));
+  w.append(box);
+  return w;
 }
 function fitTable(f, m) {
   const p = DEPLOY.providers.find(x => x.id === f.provider) || {};
@@ -2846,15 +3052,40 @@ function openJobSheet(jobId, ctx) {
   const st = el("div","hot"); const stI = el("i", null, "running"); st.append(stI, document.createTextNode("status"));
   const ep = el("div","dim"); const elI = el("i", null, "0s"); ep.append(elI, document.createTextNode("elapsed"));
   lcd.append(st, ep); s.append(lcd);
-  const log = el("div","log dp-log", "starting…"); s.append(log);
+  // Progress, not a log. Every line the provider reports IS a step: the ones
+  // behind you are ticked, the newest one is live, and the raw stream stays
+  // available underneath for when something goes wrong. The steps are the
+  // provider's own words — nothing is invented or guessed at.
+  const steps = el("ol","dp-steps"); s.append(steps);
+  const logWrap = el("details","dp-logbox");
+  logWrap.append(el("summary", null, "Provider output"));
+  const log = el("div","log dp-log", "starting…"); logWrap.append(log);
+  s.append(logWrap);
   const done = el("div"); s.append(done);
+  let drawn = 0;
+  const paintSteps = (lines, running) => {
+    // append only what is new, so finished steps never re-render or flicker
+    for (let i = drawn; i < lines.length; i++) {
+      const li = el("li","dp-step");
+      li.append(el("span","dp-stepm"), el("span","dp-stept", lines[i]));
+      steps.append(li);
+    }
+    drawn = lines.length;
+    [...steps.children].forEach((li, i) => {
+      const live = running && i === lines.length - 1;
+      li.classList.toggle("live", live);
+      li.classList.toggle("did", !live);
+    });
+  };
   const tick = async () => {
     let j;
     try { j = await api("/api/deploy/job?" + q({ id: jobId })); } catch (e) { return; }
     if (!j.ok) { stopJobPoll(); stI.textContent = "lost"; st.className = ""; log.textContent = j.error || "job not found"; return; }
     elI.textContent = fmtDur(j.elapsed_s);
-    log.textContent = (j.lines || []).join("\n") || "waiting for the provider…";
+    const lines = j.lines || [];
+    log.textContent = lines.join("\n") || "waiting for the provider…";
     log.scrollTop = log.scrollHeight;
+    paintSteps(lines.length ? lines : ["waiting for the provider…"], j.status === "running");
     if (j.status === "running") return;
     stopJobPoll();
     stI.textContent = j.status; st.className = j.status === "done" ? "hot" : "";
@@ -2874,6 +3105,13 @@ function openJobSheet(jobId, ctx) {
 }
 function renderDeployDone(box, d) {
   box.innerHTML = "";
+  // The end of the flow says it ARRIVED, then what to do next — a bare table
+  // of fields reads as a spec dump, not as a finish.
+  const hd = el("div","dp-done");
+  hd.append(el("span","dp-donem"));
+  hd.append(el("b", null, "Deployed and reachable"));
+  hd.append(el("span","dp-donex", "The endpoint is live — point mantis at it, or copy a line for somewhere else."));
+  box.append(hd);
   const dl = el("dl","kvs");
   kvRow(dl, "status", (d.status || "?").replace(/_/g, " "));
   kvRow(dl, "endpoint", d.endpoint_url || "pending");
@@ -2889,6 +3127,9 @@ function renderDeployDone(box, d) {
   }
   f.append(btn("Close", "gho", hideModal));
   box.append(f);
+  // the obvious next action is also the one the keyboard lands on
+  const use = f.querySelector(".b.pri");
+  if (use) setTimeout(() => use.focus(), 30);
 }
 // Connect: the server re-checks /models (retrying a cold start), then makes
 // this endpoint the current model + backend for the SDK and the terminal.
@@ -3513,6 +3754,10 @@ function renderBlock(b) {
 // colour ones are used as their owners draw them.
 const MARKS = __LOGOS__;
 const ORG_MARKS = __ORGLOGOS__;
+// Hub org ids are slugs. "zai-org" title-cased is "Zai-Org" and "ifm" is not
+// a company at all — an org we do not know keeps its slug UNMODIFIED.
+const ORG_NAMES = __ORGNAMES__;
+const orgName = o => ORG_NAMES[String(o || "").toLowerCase()] || String(o || "");
 // An org's mark for a model card: the JSON set, else the same-origin Hub
 // avatar proxy (lazy, never blocks the card; 204 → the letter shows), else
 // the letter. Only same-origin URLs are ever requested.
@@ -3571,7 +3816,7 @@ function providerMark(pid, label) { return fillMark(el("span","mark2"), pid, lab
 // Several methods can be configured at once — exactly one is active, and
 // switching is a single click. Values only ever travel inward: what comes
 // back is env var names and the contract's masked hints.
-const AUTH = { families: [], open: null, method: {}, latency: {} };
+const AUTH = { families: [], open: null, method: {}, latency: {}, group: null, drop: null, reflow: null };
 function authStatusLine(f) {
   const w = el("div","fa");
   w.append(el("span","dot2 " + (f.connected ? "ok" : f.configured && f.configured.length ? "warn" : "")));
@@ -3616,6 +3861,8 @@ function provMeta(e) {
   return provs.find(x => x.family === e.ui) || null;
 }
 function renderAuthCards(box, r) {
+  if (AUTH.drop) { AUTH.drop(); AUTH.drop = null; }
+  if (AUTH.reflow) { window.removeEventListener("resize", AUTH.reflow); AUTH.reflow = null; }
   box.innerHTML = "";
   if (r.ok === false && !(r.families || []).length) {
     const b = el("div","banner"); const t = el("div","sp");
@@ -3626,7 +3873,16 @@ function renderAuthCards(box, r) {
   // deep link: /?openprov=<provider>#models opens that card straight away
   const want = new URLSearchParams(location.search).get("openprov");
   if (want && AUTH.open == null && entries.some(x => x.key === want)) AUTH.open = want;
-  const connected = entries.filter(e => e.active).length;
+  // ONE predicate decides both the Connected group and the tally, so the
+  // header can never disagree with the cards again. The old count asked
+  // "has an active auth method", which misses a provider that is current
+  // from the environment and carries no method of its own.
+  const isConnected = e => ["cur", "rdy"].includes(cardState(e).cls);
+  // Current first, then Ready; sort is stable, so within a state the cards
+  // keep the catalogue's order.
+  const conn = entries.filter(isConnected)
+    .sort((a, b) => (cardState(a).cls === "cur" ? 0 : 1) - (cardState(b).cls === "cur" ? 0 : 1));
+  const connected = conn.length;
   const prog = el("div","setup");
   const ph = el("div","setup-h");
   ph.append(el("span","setup-n", connected + " of " + entries.length + " connected"));
@@ -3634,20 +3890,58 @@ function renderAuthCards(box, r) {
     ? "Add another to switch between them mid-session."
     : "Connect one and mantis is ready to run."));
   prog.append(ph);
-  const track = el("div","setup-bar"); const fill = el("i");
-  fill.style.width = Math.round(connected / Math.max(1, entries.length) * 100) + "%";
-  track.append(fill); prog.append(track);
+  // The progress bar is gone: the Connected group below IS the filled part of
+  // it, at full size and with names on it. Drawing the same ratio twice made
+  // the smaller, wordless copy the redundant one.
   prog.append(el("div","setup-note",
     "Keys are written to ~/.mantis-agent (chmod 600) on this machine and are only ever shown masked."));
   box.append(prog);
-  [["First-party", entries.filter(e => e.kind === "family")],
-   ["Open-source & self-host", entries.filter(e => e.kind === "method")]].forEach(([label, list]) => {
-    if (!list.length) return;
+  // Connected providers leave their family group and gather at the top: what
+  // you can use right now is one block, and the families below are the menu
+  // of what you have not set up. A provider is in exactly one group.
+  const groups = [["Connected", conn],
+                  ["First-party", entries.filter(e => e.kind === "family" && !isConnected(e))],
+                  ["Open-source & self-host", entries.filter(e => e.kind === "method" && !isConnected(e))]];
+  const was = AUTH.group, now = {};
+  groups.forEach(([label, list]) => list.forEach(e => { now[e.key] = label; }));
+  groups.forEach(([label, list]) => {
+    if (!list.length) return;                 // an empty group shows no label
     box.append(el("div","auth-glabel", label));
     const grid = el("div","auth-grid");
-    list.forEach(e => grid.append(authCard(e)));
+    list.forEach(e => {
+      const c = authCard(e);
+      // connecting moves a card between groups; a short fade is enough to
+      // show it landed somewhere new without animating a flight path
+      if (was && was[e.key] && was[e.key] !== label) c.classList.add("ac-moved");
+      grid.append(c);
+    });
     box.append(grid);
   });
+  AUTH.group = now;
+
+  // the panel is a sibling of the grids, positioned against its own card
+  const oe = entries.find(x => x.key === AUTH.open);
+  if (!oe) return;
+  const card = document.getElementById("auth-" + oe.key.replace("/", "-"));
+  const pan = authCard(oe, true);
+  box.append(pan);
+  if (card) placeAuthPanel(box, card, pan);
+  // focus lands on the first FIELD if there is one — a querySelector over
+  // "input, button" would hand it to Close, which comes first in the markup
+  // but is the last thing anyone opening a card wants to press
+  const first = pan.querySelector("input, textarea, select")
+    || pan.querySelector(".ac-seg.on, .ap-form button, button:not(.ac-act)");
+  setTimeout(() => { if (first) first.focus(); else { pan.tabIndex = -1; pan.focus(); } }, 0);
+  // click outside, Escape, or opening another card — one panel at a time
+  const away = ev => { if (!pan.contains(ev.target) && !(card && card.contains(ev.target))) closeAuthPanel(); };
+  const esc = ev => { if (ev.key === "Escape") { ev.stopPropagation(); closeAuthPanel(); } };
+  setTimeout(() => document.addEventListener("mousedown", away), 0);
+  pan.addEventListener("keydown", esc);
+  document.addEventListener("keydown", esc);
+  AUTH.drop = () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  const reflow = () => { if (card) placeAuthPanel(box, card, pan); };
+  window.addEventListener("resize", reflow);
+  AUTH.reflow = reflow;
 }
 // A vendor's own colour, for the marks drawn in full colour whose logo
 // carries no single tint. Everything else takes its hex from the logo set.
@@ -3687,37 +3981,72 @@ function cardState(e) {
 // authenticates, the fields, the endpoint, the models it serves — appears
 // when you open it. The surface stays neutral in both themes; the only
 // colour is the vendor's mark and, for the provider in use, a thin rail.
-// The dashed marker. Inset INS from every edge, with the radius reduced by
-// the same amount so the dash follows the card's curve exactly — a dashed
-// rectangle that misses the radius is the tell that it was bolted on.
-// Half the stroke is added to the inset so the stroke's OUTER edge, not its
-// centre, sits at INS: strokes are centred on their path.
-function dashMarker() {
+// ---- the floating panel ---------------------------------------------------
+// Opening a provider used to expand it inside its grid cell, which left a
+// hole beside it and shoved every later row down. The expansion is now a
+// panel layered ABOVE the grid, anchored to the card it came from, so the
+// grid's geometry is identical open or closed — provable by measuring a card
+// in another row before and after.
+function openAuthPanel(key) {
+  AUTH.open = key;
+  renderAuthCards(document.getElementById("auth-cards"), { ok: true, families: AUTH.families });
+}
+function closeAuthPanel() {
+  const back = AUTH.open;
+  AUTH.open = null;
+  renderAuthCards(document.getElementById("auth-cards"), { ok: true, families: AUTH.families });
+  // focus goes back to the card it came from, not to the top of the document
+  const c = back && document.getElementById("auth-" + back.replace("/", "-"));
+  const b = c && c.querySelector(".ac-act");
+  if (b) b.focus();
+}
+// Place the panel over its card: same left edge, same width, growing down.
+// If it would run off the bottom it grows upward instead, and if it cannot
+// fit either way it keeps its own scroll rather than escaping the viewport.
+function placeAuthPanel(box, card, pan) {
+  const M = 12;
+  const b = box.getBoundingClientRect(), a = card.getBoundingClientRect();
+  pan.style.left = (a.left - b.left) + "px";
+  pan.style.width = a.width + "px";
+  pan.style.maxHeight = "";
+  const h = pan.offsetHeight, vh = window.innerHeight;
+  let top = a.top - b.top;                       // grow down from the card top
+  if (a.top + h > vh - M) {
+    const up = a.bottom - h;                     // grow up from the card foot
+    if (up >= M) top = up - b.top;
+    else { top = M - b.top; pan.style.maxHeight = (vh - 2 * M) + "px"; }
+  }
+  pan.style.top = top + "px";
+}
+// The pixel marker. The SVG box is inset by CSS (4px + half the 3px stroke =
+// 5.5px), so the rect is a plain 100%x100% — SVG will not parse calc() in a
+// geometry attribute. rx is the card's 12px radius less that 5.5px, so the
+// blocks ride the card's curve instead of cutting across it, and
+// crispEdges keeps every block hard-edged at any device scale.
+function pixMarker() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "ac-dash");
+  svg.setAttribute("class", "ac-pix");
+  svg.setAttribute("shape-rendering", "crispEdges");
   svg.setAttribute("aria-hidden", "true");
-  // The SVG box itself is inset by CSS (4px + half the 1.5px stroke = 4.75px),
-  // so the rect is a plain 100%x100% — no calc() in a geometry attribute,
-  // which SVG will not parse. The stroke is centred on that path and reaches
-  // .75px outward, putting its outer edge exactly 4px in from the card edge.
-  // rx is the card's 12px radius less the 4.75px the path is inset by, so the
-  // dash rides the card's curve instead of cutting across it.
   const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
   r.setAttribute("x", "0"); r.setAttribute("y", "0");
   r.setAttribute("width", "100%"); r.setAttribute("height", "100%");
-  r.setAttribute("rx", "7.25"); r.setAttribute("ry", "7.25");
+  r.setAttribute("rx", "6.5"); r.setAttribute("ry", "6.5");
   svg.append(r);
   return svg;
 }
-function authCard(e) {
+// Two shapes from one description: the 63px card that lives in the grid, and
+// — with `panel` — the same card expanded, which is drawn ABOVE the grid so
+// opening one never moves another. The grid's geometry is fixed for good.
+function authCard(e, panel) {
   const meta = provMeta(e);
   const st8 = cardState(e);
   const open = AUTH.open === e.key;
-  const card = el("div","acard " + st8.cls + (open ? " open" : ""));
-  card.id = "auth-" + e.key.replace("/", "-");
-  // Current wears the dashed accent marker; Ready wears the same shape held
-  // far back. Idle and not-connected wear none — the badge alone speaks.
-  if (st8.cls === "cur" || st8.cls === "rdy") card.append(dashMarker());
+  const card = el("div","acard " + st8.cls + (panel ? " open ac-panel" : open ? " ac-under" : ""));
+  card.id = (panel ? "authp-" : "auth-") + e.key.replace("/", "-");
+  // Current wears the accent pixel ring; Ready wears the same ring held far
+  // back. Idle and not-connected wear none — the badge alone speaks.
+  if (st8.cls === "cur" || st8.cls === "rdy") card.append(pixMarker());
 
   const head = el("div","ac-h");
   head.append(bigMark(e.logo || e.family, e.label));
@@ -3748,21 +4077,20 @@ function authCard(e) {
   head.append(ht);
   const stw = el("span","ac-st " + st8.cls);
   stw.append(el("span","ac-stg"));
-  stw.append(document.createTextNode(st8.badge));
+  // an element, not a text node: only an element can be counter-skewed back
+  // upright inside the slanted Current tag
+  stw.append(el("span","ac-stl", st8.badge));
   stw.title = st8.hint;
   head.append(stw);
   const act = btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho", ev => {
     ev.stopPropagation();
-    AUTH.open = open ? null : e.key;
-    renderAuthCards(document.getElementById("auth-cards"), { ok: true, families: AUTH.families });
-    if (!open) { const c = document.getElementById("auth-" + e.key.replace("/", "-"));
-      if (c) { const i2 = c.querySelector("input"); if (i2) setTimeout(() => i2.focus(), 60); } }
+    if (open) closeAuthPanel(); else openAuthPanel(e.key);
   });
   act.className = "b gho ac-act";
   head.append(act);
   head.onclick = () => act.click();
   card.append(head);
-  if (!open) return card;
+  if (!panel) return card;
 
   // ---- opened: how it authenticates, then the fields, then what it serves
   const body = el("div","ac-body");

@@ -843,6 +843,66 @@ def test_deploy_endpoints_require_the_token(fake):
         httpd.server_close()
 
 
+def test_the_fit_step_waits_in_the_shape_of_its_answer(fake):
+    """A one-line "inspecting…" card replaced by a header, a six-cell spec
+    strip and a GPU table is a ~260px jump. The waiting state is the SHAPE of
+    the answer, so the step settles instead of leaping."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert 'sec.append(fitSkeleton(DEPLOY.model)); return;' in js
+    assert 'el("div","card2 dp-loading", "inspecting "' not in js
+    sk = js[js.index("function fitSkeleton(id) {"):js.index("function fitTable(f, m) {")]
+    # the same pieces the loaded shape has: header, six spec cells, GPU rows
+    assert 'el("div","card2")' in sk and 'el("div","dp-mh")' in sk
+    assert 'el("div","lcd tight")' in sk and "i < 6" in sk
+    assert 'el("div","card2 dp-fitbox")' in sk and "i < 3" in sk
+    # each placeholder is sized to the thing it stands in for
+    for cls in (".sk-tag", ".sk-num", ".sk-lbl", ".sk-mark", ".sk-name", ".sk-row"):
+        assert cls in css, cls
+    # the pulse is motion, so it is opt-out-able
+    assert "@media (prefers-reduced-motion: reduce) { .dp-skel .sk { animation: none; } }" in css
+
+
+def test_the_deploy_job_reads_as_progress_not_as_a_log(fake):
+    """Every line the provider reports is a step: the ones behind you ticked,
+    the newest one live, the raw stream demoted to a disclosure. The steps are
+    the provider's own words — nothing is invented."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    sheet = js[js.index("function openJobSheet(jobId, ctx) {"):js.index("function renderDeployDone(")]
+    assert 'el("ol","dp-steps")' in sheet
+    assert 'el("details","dp-logbox")' in sheet and "Provider output" in sheet
+    # finished steps are never re-rendered, so nothing flickers as lines land
+    assert "for (let i = drawn; i < lines.length; i++)" in sheet
+    assert "drawn = lines.length;" in sheet
+    # live and done differ in SHAPE, not only in colour
+    assert ".dp-step.did .dp-stepm { background: var(--accent); }" in css
+    assert "box-shadow: inset 0 0 0 2px var(--accent)" in css.split(".dp-step.live .dp-stepm {")[1].split("}")[0]
+    assert "@keyframes steppulse" in css
+    assert "@media (prefers-reduced-motion: no-preference) {" in css
+
+
+def test_the_deploy_finish_says_it_arrived_and_where_to_go_next(fake):
+    """The end of the flow is an arrival with one obvious next action, not a
+    table of fields."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    done = js[js.index("function renderDeployDone(box, d) {"):js.index("async function useDeployment(")]
+    assert 'el("div","dp-done")' in done and "Deployed and reachable" in done
+    # the headline comes before the field table
+    assert done.index('el("div","dp-done")') < done.index('el("dl","kvs")')
+    # one filled action, and it is the one the keyboard lands on
+    assert 'btn("Use this model", "pri"' in done
+    assert done.count('"pri"') == 1
+    assert 'const use = f.querySelector(".b.pri");' in done and "use.focus()" in done
+    assert ".dp-done" in css and ".dp-donem" in css
+    # Escape closes every sheet in the flow, from one place
+    assert 'if (e.key === "Escape") { hideModal(); hidePalette(); }' in js
+
+
 def test_page_carries_the_deploy_sections_and_key_binding(fake):
     httpd, base = _boot()
     try:
@@ -865,11 +925,15 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
     for pid in ("runpod", "hf", "modal", "deepinfra", "baseten", "vastai"):
         assert f'"{pid}"' in page, pid
     assert "cdn." not in page and "googleapis" not in page
-    # section order on the Deploy page: providers → deployments → pick a model → fit & deploy
+    # section order on the Deploy page: providers → deployments → the model
+    # picker → fit & deploy. The picker lost its heading — the search box is
+    # the instruction — so it is anchored by the source selector instead.
     js = page.split("<script>")[1]
     order = [js.index('section(pad, "GPU providers · "'), js.index('section(pad, "Deployments"'),
-             js.index('section(pad, "Pick a model"'), js.index('section(pad, "Fit & deploy")')]
+             js.index('const mSec = el("div","sec"); pad.append(mSec);'),
+             js.index('section(pad, "Fit & deploy")')]
     assert order == sorted(order), order
+    assert 'section(pad, "Pick a model"' not in js
     # the provider toggle: pills with real marks, scoping, persistence
     for marker in ("providerToggle", "dp-ptoggle", "PROV_SHORT", "setDeployProvider", "initDeployProvider",
                    "DEPLOY_PROV_KEY", "openAddKey", 'f.provider === DEPLOY.provider', 'runpod: "RunPod"'):
