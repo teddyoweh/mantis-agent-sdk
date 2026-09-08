@@ -351,8 +351,8 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     for gone in ("providerDetail", '"Connect a provider"', "Enable provider", "Save new key",
                  "saveKeyFn", "removeKeyFn", "focusProvider", '"/api/key"'):
         assert gone not in js2, gone
-    # a lone method renders as a label, several render as a toggle
-    assert 'el("div","ac-one"' in js2 and "e.methods.length > 1" in js2
+    # several methods render as a toggle; a lone one needs no chooser at all
+    assert "e.methods.length > 1" in js2 and 'el("div","ac-one"' not in js2
     # the useful parts of the old row survive inside the card
     assert "ac-models" in js2 and "listed" in js2 and "live" in js2
     # grouped, and a card that opens a form must not stretch its neighbours
@@ -364,48 +364,123 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     assert "secret" in panel and "masked" in panel      # fields render masked + saved hints
 
 
-def test_provider_cards_are_uniform_tight_and_say_each_thing_once(fake):
-    """Marks render identically, no fact is printed twice, the actions are one
-    row, the model footer clamps, and the cards keep an even height."""
+def test_collapsed_provider_card_says_four_things_and_nothing_else(fake):
+    """A collapsed card carries the mark, the name, a dot-and-word state and
+    one ghost action. Endpoint, env var, description, method toggle, models
+    and docs all wait until it is opened."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    # 1. one square, one inset, never clipped — tinted only by a real colour
-    mark = js[js.index("function bigMark("):js.index("function providerMark(")]
-    assert 'preserveAspectRatio="xMidYMid meet"' in js and "markSvg(m.svg)" in mark
-    assert '/^#/.test(m.tint)' in mark and "TINT_ALPHA" in mark
-    box = css.split(".ac-h .bigmark {")[1].split("}")[0]
-    assert "width: 32px" in box and "height: 32px" in box and "border-radius: 9px" in box
-    # 2. the description is the card's; oauth doesn't repeat it, and the env
-    # var appears only in its field's help line
+    card = js[js.index("function authCard(e) {"):js.index("function metaBit(")]
+    head, body = card.split("if (!open) return card;")
+    # the collapsed half builds exactly these four things
+    assert "bigMark(" in head and 'el("div","fn"' in head and 'el("div","ac-s")' in head
+    assert 'btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho"' in head
+    for later in ("ac-types", "authMethodForm", "ac-models", "ac-meta", "ac-d", "metaBit("):
+        assert later not in head, "collapsed card renders " + later
+        assert later in body, "opened card is missing " + later
+    # one card open at a time, remembered on AUTH.open
+    assert "AUTH.open = open ? null : e.key" in js and 'const open = AUTH.open === e.key' in js
+    # the state is a dot plus a word, not a badge chip
+    assert 'el("span","ac-sd " + st8.tone)' in js and "text-transform: uppercase" not in css.split(".ac-s {")[1].split("}")[0]
+
+
+def test_provider_card_surface_is_neutral_with_a_rail_for_the_one_in_use(fake):
+    """No colour wash in either theme: the surface is the same panel in every
+    state, the provider in use is marked by a thin accent rail, and the
+    vendor's own colour appears in exactly one place — the mark's square."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    base = css.split("  .acard {")[1].split("}")[0]
+    assert "background: var(--panel)" in base and "min-height" not in base
+    # the wash is gone; hover and open are a background STEP, never a tint
+    assert ".acard.use { background: var(--accent-soft)" not in css
+    assert ".acard:hover { background: var(--panel-2); }" in css
+    assert ".acard.open { background: var(--panel-2); }" in css
+    for tinted in (".acard.use { background:", ".acard.idle { background:", ".acard.off { background:"):
+        assert tinted not in css, tinted
+    # the rail: accent for in use, warn for idle, nothing at all when unconnected
+    assert ".acard.use::before { background: var(--accent); }" in css
+    assert ".acard.idle::before { background: var(--warn)" in css
+    assert "background: transparent;" in css.split(".acard::before {")[1].split("}")[0]
+    # the vendor colour is used once, on the mark, and never on the rail
+    assert 'mk.style.background = "color-mix(in srgb, " + tint + " 14%, transparent)"' in js
+    assert "var(--vendor" not in css
+    # two type sizes, two weights
+    assert "font-size: 14.5px" in css.split(".ac-h .fn {")[1].split("}")[0]
+    assert "font-weight: 400" in css.split(".ac-act {")[1].split("}")[0]
+    # 140ms, on hover and expand, and nothing else
+    assert "transition: background var(--t)" in base
+    assert ".ac-body { transition: opacity 140ms ease; }" in css
+
+
+def test_opened_card_shows_the_method_control_and_one_filled_action(fake):
+    """Opened, the card gains the auth-type control (tablist semantics and
+    all), the selected method's fields, what it serves, and exactly one
+    filled button."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    ctl = js[js.index('const seg = el("div","ac-types")'):js.index("card.append(seg);")]
+    for bit in ('setAttribute("role", "tablist")', 'setAttribute("role", "tab")', '"aria-selected"',
+                "ArrowRight", "ArrowLeft", "Home", "End", "tabIndex", "drawFade"):
+        assert bit in ctl, bit
+    # the marker sits inside its own segment, under its own class name
+    assert 'el("span","ac-mktick"' in js and 'el("span","ac-mkdot"' in js
+    assert ".ac-mkdot { flex: none; width: 6px; height: 6px; padding: 0" in css
+    # single-purpose names: three collisions taught us not to borrow a modifier
+    for stolen in ('"ac-mk act"', '"ac-mk cfg"', '? " live" : ""', ".fchip.live"):
+        assert stolen not in js and stolen not in css, stolen
+    seg = css.split("  .ac-seg {")[1].split("}")[0]
+    assert "height: 26px" in seg and "position: relative" in seg and "flex: none" in seg
+    assert ".ac-seg.on { background: var(--accent); color: #fff" in css
+    assert ".ac-seg:focus-visible" in css
+    # only the opened card's primary action is filled
+    form = js[js.index("function authMethodForm("):js.index("function probeBox(")]
+    assert form.count('"pri"') == 1 and '"gho"' in form
+    # deep link so a card can be opened directly
+    assert 'new URLSearchParams(location.search).get("openprov")' in js
+
+
+def test_collapsed_cards_are_one_height_by_construction(fake):
+    """The grid is a matrix: every collapsed card is the same height because
+    the CSS fixes it, not because their contents happen to match. An opened
+    card grows inside its own cell and never stretches a sibling.
+
+    (The browser-side check that all 15 cards measure the same lives in the
+    headless render gate; this pins the construction that guarantees it.)"""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert ".acard:not(.open) { height: 63px; }" in css
+    assert ".acard .ac-h { height: 39px; }" in css
+    assert "overflow: hidden" in css.split("  .acard {")[1].split("}")[0]
+    # a sibling opening must never reflow the row
+    assert "align-items: start" in css.split(".auth-grid {")[1].split("}")[0]
+
+
+def test_no_fact_is_printed_twice_on_a_provider_card(fake):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    # the description belongs to the card; the oauth flow never repeats it
     oauth = js[js.index("function oauthFlow("):js.index("function unlockFamily(")]
     assert "no API key, no per-token bill" not in oauth
-    assert 'el("div","ac-env"' not in js and 'class="ac-meta"' not in js
+    # the env var appears only in its field's help line
+    assert 'el("div","ac-env"' not in js and 'class="ac-meta"' not in js.split("function authCard(")[1].split("function metaBit(")[0].split("if (!open) return card;")[0]
     assert 'help.append(el("span","envn"' in js
-    # 3. one action row, Save the only filled button, Docs an icon at the end
-    acts = css.split(".ap-acts {")[1].split("}")[0]
-    assert "flex-wrap: nowrap" in acts
-    assert '.ac-doc { margin-left: auto' in css and 'extLink("ac-doc", "↗"' in js
-    # 3b. the model footer clamps to two rows with a +N that expands
-    assert ".ac-models .chips.clamp" in css and '"Show fewer"' in js and 'el("div","chips clamp")' in js
-    # 4. even cards, and an open form still never stretches a neighbour
-    card = css.split(".acard {")[1].split("}")[0]
-    assert "min-height: 160px" in card
-    # the status is a chip on the name row, the description one clamped line,
-    # and the model footer one row plus +N
-    assert 'el("div","ac-top")' in js and ".ac-top {" in css
-    assert "white-space: nowrap" in css.split(".ac-d {")[1].split("}")[0]
-    assert "max-height: 21px" in css.split(".ac-models .chips.clamp {")[1].split("}")[0]
-    assert "align-items: start" in css.split(".auth-grid {")[1].split("}")[0]
-    # 5. the toggle is one control: equal-height pills, active filled + ticked
-    types = css.split(".ac-types .fchip {")[1].split("}")[0]
-    assert "height: 26px" in types
-    # a pill must never shrink its label to a sliver
-    assert "flex: none" in types and "white-space: nowrap" in types
-    assert ".ac-types .fchip.ac-live { background: var(--accent)" in css
-    assert 'el("span","ac-tick"' in js and 'm.status.active ? " ac-live" : ""' in js
-    # ".live" is the 6px status dot: a pill must never borrow its width
-    assert '? " live" : ""' not in js and ".fchip.live" not in css
+    # an open-source card IS its method: with no chooser to draw, its name is
+    # never printed a second time as a label
+    assert 'el("div","ac-one"' not in js and "e.methods.length > 1" in js
+    # and a description that opens with the card's own name is trimmed to what
+    # it adds — "Ollama (local)" is the heading, never also the first body line
+    assert "never restate the card's own name in its body" in js
+    assert 'const desc = (m.description || "").replace(new RegExp("^" + e.label' in js
+    # a self-host backend is a template until the user fills it in
+    assert "the URL you set above" in js and "/[{}]/.test(String(ep))" in js
+    # marks render identically whatever grid the vendor drew on
+    assert 'preserveAspectRatio="xMidYMid meet"' in js and "markSvg(m.svg)" in js
 
 
 def test_every_empty_state_has_an_illustration(fake):

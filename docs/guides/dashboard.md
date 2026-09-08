@@ -146,18 +146,24 @@ masked. Below it, two labelled grids: **First-party** (Claude, OpenAI,
 Gemini, Grok) and **Open-source & self-host** (the hosted catalogue, Ollama,
 your own server).
 
-Each is a card: the vendor's mark in a tinted square, the name, the endpoint
-as a quiet mono caption, and one status line — *Connected via Claude
-subscription · sk-…7f21*, *Connected from env*, *Configured · not active* or
-*Not connected*. The provider in use is accent-tinted. The card's interactive
-core is an **auth-type toggle**: Claude offers *API key · Claude subscription ·
+Each is a card, and collapsed it says exactly four things: the vendor's mark
+in a square tinted with that vendor's own colour, the name, a dot-and-word
+state (*In use* · *Not active* · *Not connected*), and the one action that
+changes it (**Connect** / **Manage**). Every collapsed card is the same
+height, so the grid reads as a matrix; the surface is the same neutral panel
+in every state, and the provider in use is marked by a thin accent rail on
+its left edge rather than a colour wash.
+
+Opening a card (one at a time) reveals the rest in place — no sibling moves.
+Inside is an **auth-type toggle**: Claude offers *API key · Claude subscription ·
 Vertex AI · Bedrock · Azure AI Foundry*, OpenAI *API key · Azure OpenAI*,
 Gemini *API key · Vertex AI*; a provider with only one way in shows that way
 as a plain label rather than a lonely pill. Each pill carries a dot when that
 method is configured (amber) or active (green). Picking a type swaps in only
 that method's fields — generated from `auth_methods`, masked where secret,
-each with its help text and the environment variable it persists under —
-plus **Save & test** (saves, then probes and reports latency and live model
+each with its help text and the environment variable it persists under
+(named once, in that help line) — plus **Save & test**, the only filled
+button on the card, (saves, then probes and reports latency and live model
 ids inline, or the explained error), **Check reachability** once configured,
 and **Forget**. Several methods can be configured at once; exactly one is
 active, and switching is one click.
@@ -167,9 +173,12 @@ the authorize page in a new tab, then takes the pasted code or redirect URL
 and finishes the exchange. Cloud methods (Vertex, Bedrock, Azure) show a
 *detected* badge and name the CLI that already provides ambient credentials
 (`gcloud auth application-default login`, `aws configure`) so you can leave
-the fields blank. A connected card grows a quiet footer with the models it
-serves ("11 listed · 11 live"), the current one highlighted and each one
-click from becoming current. Nothing typed here ever comes back out:
+the fields blank. A connected card also states what it serves — the
+endpoint, the model count with the current model named, the latency of the
+last check and where the key came from — above a footer of its models, the
+current one highlighted and each one click from becoming current. A card you
+point at your own box says *the URL you set above* rather than a raw
+template. `?openprov=<provider>` opens one directly. Nothing typed here ever comes back out:
 responses carry env var *names* and masked hints only.
 
 Below that, the model list is **tabbed by family** — *All · OpenAI · Claude · Gemini ·

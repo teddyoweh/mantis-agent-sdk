@@ -318,45 +318,86 @@ INDEX_HTML = r"""<!doctype html>
   .auth-glabel { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
   /* start-aligned so a card that opens a form never stretches its neighbours */
   .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
-  .acard { background: var(--panel); border-radius: var(--radius); padding: 12px 13px 11px; display: flex;
-    flex-direction: column; gap: 7px; min-width: 0; min-height: 160px; transition: background var(--t); }
+  /* Collapsed, a card says four things: whose it is, what it's called, what
+     state it's in, and the one action that changes that. The surface is the
+     same neutral panel in every state — the provider in use is marked by a
+     thin rail, never by a wash. Everything else waits until it's opened. */
+  .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
+    padding: 12px 14px 12px 15px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
+    transition: background var(--t); }
+  /* collapsed cards are one height BY CONSTRUCTION — the grid is a matrix,
+     and an opened card grows inside its own cell (the grid is align-items:
+     start, so no sibling is ever stretched by its neighbour) */
+  .acard:not(.open) { height: 63px; }
+  .acard .ac-h { height: 39px; }
+  /* only a card with something to say wears a rail; the vendor's colour stays
+     in the mark square, so the rail is the accent and nothing else */
+  .acard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: transparent; }
+  .acard.use::before { background: var(--accent); }
+  .acard.idle::before { background: var(--warn); opacity: .5; }
   .acard:hover { background: var(--panel-2); }
-  .acard.on { background: var(--accent-soft); }
-  .acard.on:hover { background: var(--accent-soft-2); }
-  .ac-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .acard.open { background: var(--panel-2); }
+  .ac-h { display: flex; align-items: center; gap: 11px; min-width: 0; cursor: pointer; }
   .ac-h .bigmark { width: 32px; height: 32px; border-radius: 9px; }
   .ac-h .bigmark svg { width: 18px; height: 18px; }
   .ac-h .ft { min-width: 0; flex: 1; }
   .ac-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .ac-h .fn { font-weight: 600; font-size: 13.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; flex: 1; min-width: 0; }
-  .acard.on .ac-h .fn { color: var(--accent); }
+  .ac-h .fn { font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; min-width: 0; }
+  /* two weights on the card: 600 for the name, regular for everything else */
+  .ac-act { flex: none; margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
+  .acard:hover .ac-act { color: var(--ink); }
   .ac-h .fd { font-size: 10.5px; line-height: 1.35; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; background: none; padding: 0; }
+    white-space: nowrap; background: none; padding: 0; font-family: var(--mono); }
+  .ac-h .fd.sans { font-family: var(--sans); font-style: italic; }
   /* the connection state is a chip on the name row, not a row of its own */
-  .ac-s { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 10.5px; font-weight: 600;
-    color: var(--ink-3); background: var(--fill); border-radius: 5px; padding: 2px 7px; white-space: nowrap; }
-  .ac-s.ok { background: var(--ok-soft); color: var(--ok); }
-  .ac-s.warn { background: var(--warn-soft); color: var(--warn); }
-  .acard.on .ac-s.ok { background: var(--panel); }
-  /* the toggle is one control: equal pills, at most two rows */
-  .ac-types { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 1px; }
-  /* flex: none — a pill must never shrink its label to a sliver */
-  .ac-types .fchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
-    font-size: 12px; line-height: 1; flex: none; white-space: nowrap; max-width: 100%; }
-  /* NB: not ".live" — that class is the 6px status dot, and its width would
-     collapse the button to a sliver */
-  .ac-types .fchip.ac-live { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-  .ac-types .fchip.ac-live:hover { background: var(--accent); filter: brightness(1.06); }
-  .acard.on .ac-types .fchip.on:not(.ac-live) { background: var(--panel); color: var(--accent); }
-  .ac-tick { font-size: 10px; line-height: 1; }
+  .ac-s { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-3);
+    white-space: nowrap; margin-top: 1px; }
+  .ac-sd { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ink-3); opacity: .5; }
+  .ac-sd.ok { background: var(--ok); opacity: 1; }
+  .ac-sd.warn { background: var(--warn); opacity: 1; }
+  /* what a connected card earns its height with */
+  .ac-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-3); margin-top: 9px; }
+  .ac-mb { white-space: nowrap; min-width: 0; }
+  .ac-mb b { color: var(--ink-2); font-weight: 600; }
+  .ac-mb code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: none; padding: 0; }
+  .ac-mb i { font-style: normal; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    margin-left: 6px; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; display: inline-block;
+    vertical-align: bottom; }
+  /* The auth-type control: one filled track, equal segments, two aligned
+     rows when a family offers five ways in. Segments are their own class —
+     never .fchip/.live, whose widths and fills belong to other controls. */
+  .ac-types { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; margin-top: 1px;
+    background: var(--fill); border-radius: 8px; }
+  .acard.open .ac-types { background: var(--fill); }
+  .ac-seg { display: inline-flex; align-items: center; gap: 5px; position: relative; flex: none;
+    height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+    font: inherit; font-size: 12px; line-height: 1; color: var(--ink-2); cursor: pointer;
+    white-space: nowrap; max-width: 100%; transition: background var(--t), color var(--t); }
+  .ac-seg:hover { background: var(--panel-2); color: var(--ink); }
+  .acard.open .ac-seg:hover { background: var(--panel); }
+  .ac-seg.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .ac-seg.on:hover { filter: brightness(1.06); }
+  .ac-seg:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+  .ac-seg .ac-lb { overflow: hidden; text-overflow: ellipsis; }
+  /* The marker is a child of its segment, so it cannot land in the gap.
+     Single-purpose class names on purpose: a shared modifier like .cfg or
+     .act would inherit padding from the Config table and burst the dot. */
+  .ac-mkdot { flex: none; width: 6px; height: 6px; padding: 0; border-radius: 50%;
+    background: var(--warn); align-self: center; }
+  .ac-seg.on .ac-mkdot { background: var(--accent-ink); }
+  .ac-mktick { flex: none; font-size: 10px; line-height: 1; padding: 0; align-self: center; }
   .ac-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
   .ac-dot.cfg { background: var(--warn); }
-  .ac-one { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
-  .ac-d { font-size: 11.5px; line-height: 1.4; color: var(--ink-3); margin-bottom: 5px; overflow: hidden;
+  .ac-one { font-size: 12.5px; color: var(--ink-3); }
+  .ac-d { font-size: 12.5px; line-height: 1.45; color: var(--ink-3); margin-bottom: 8px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
+  /* switching method crossfades the block instead of jumping */
+  .ac-body { transition: opacity 140ms ease; }
+  .ac-body.fade { opacity: 0; }
   .ac-models { margin-top: 9px; }
-  .ac-mh { font-size: 10px; color: var(--ink-3); margin-bottom: 4px; }
+  .ac-mh { font-size: 12.5px; color: var(--ink-3); margin-bottom: 6px; }
   .ac-models .chip { font-size: 10.5px; padding: 2px 7px; }
   /* two rows of models, then +N */
   /* one row by default; +N opens the rest */
@@ -364,7 +405,7 @@ INDEX_HTML = r"""<!doctype html>
   .ac-models .chip.more { cursor: pointer; border: 0; font: inherit; font-family: var(--mono); font-size: 10.5px;
     color: var(--ink-3); background: var(--fill); border-radius: 6px; padding: 2px 7px; margin-top: 4px; }
   .ac-models .chip.more:hover { color: var(--accent); }
-  .acard.on .ac-models .chip { background: var(--panel); }
+  .ac-models .chip { background: var(--fill); }
   .ap-form { margin-top: 6px; }
   .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 7px 10px; margin-bottom: 7px; }
   .ap-fields .dp-field { gap: 3px; }
@@ -376,7 +417,8 @@ INDEX_HTML = r"""<!doctype html>
   .ap-note { font-size: 11.5px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 6px 9px; margin-bottom: 7px; }
   /* one action row: Save is the only filled button, the rest are quiet */
   .ap-acts { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
-  .ap-acts .b { padding: 6px 11px; font-size: 12px; }
+  .ap-acts { margin-top: 2px; }
+  .ap-acts .b { padding: 6px 11px; font-size: 12.5px; }
   .ap-acts .b.gho { background: transparent; color: var(--ink-3); }
   .ap-acts .b.gho:hover { background: var(--fill); color: var(--ink); }
   .ac-doc { margin-left: auto; color: var(--ink-3); font-size: 13px; text-decoration: none; padding: 0 2px; }
@@ -3453,7 +3495,7 @@ function providerMark(pid, label) {
 // Several methods can be configured at once — exactly one is active, and
 // switching is a single click. Values only ever travel inward: what comes
 // back is env var names and the contract's masked hints.
-const AUTH = { families: [], open: null, method: {} };
+const AUTH = { families: [], open: null, method: {}, latency: {} };
 function authStatusLine(f) {
   const w = el("div","fa");
   w.append(el("span","dot2 " + (f.connected ? "ok" : f.configured && f.configured.length ? "warn" : "")));
@@ -3487,6 +3529,8 @@ function authEntries() {
   });
   return out;
 }
+// "4 models · claude-opus-5" / "validated 118ms" / "key saved" — label and
+// value in the order they're spoken, the value carrying the weight.
 function provMeta(e) {
   const provs = MSTATE.providers || [];
   if (e.kind === "method") return provs.find(x => x.id === e.logo) || null;
@@ -3500,6 +3544,9 @@ function renderAuthCards(box, r) {
     b.append(t); box.append(b); return;
   }
   const entries = authEntries();
+  // deep link: /?openprov=<provider>#models opens that card straight away
+  const want = new URLSearchParams(location.search).get("openprov");
+  if (want && AUTH.open == null && entries.some(x => x.key === want)) AUTH.open = want;
   const connected = entries.filter(e => e.active).length;
   const prog = el("div","setup");
   const ph = el("div","setup-h");
@@ -3523,86 +3570,159 @@ function renderAuthCards(box, r) {
     box.append(grid);
   });
 }
-// One provider: the mark and name as the headline, endpoint and key env as
-// quiet metadata, the auth-type toggle as the interactive core, and — only
-// once connected — the models it serves as a footer.
+// A vendor's own colour, for the marks drawn in full colour whose logo
+// carries no single tint. Everything else takes its hex from the logo set.
+// It appears in exactly one place on a card: the mark's square.
+const VENDOR_TINT = { anthropic: "#d97757", gemini: "#3186ff", hf: "#ffd21e" };
+function vendorTint(pid) {
+  const t = VENDOR_TINT[pid] || ((MARKS[pid] || {}).tint || "");
+  return /^#/.test(t) ? t : null;
+}
+// in use · not active · not connected — one dot, one word
+function cardState(e) {
+  if (e.active) return { cls: "use", badge: "In use", tone: "ok" };
+  if ((e.methods || []).some(m => m.status.configured)) return { cls: "idle", badge: "Not active", tone: "warn" };
+  return { cls: "off", badge: "Not connected", tone: "" };
+}
+// One provider, collapsed to what you need at a glance: its mark, its name,
+// its state, and the one action that changes it. Everything else — how it
+// authenticates, the fields, the endpoint, the models it serves — appears
+// when you open it. The surface stays neutral in both themes; the only
+// colour is the vendor's mark and, for the provider in use, a thin rail.
 function authCard(e) {
   const meta = provMeta(e);
-  const card = el("div","acard" + (e.active ? " on" : ""));
+  const st8 = cardState(e);
+  const tint = vendorTint(e.logo || e.family);
+  const open = AUTH.open === e.key;
+  const card = el("div","acard " + st8.cls + (open ? " open" : ""));
   card.id = "auth-" + e.key.replace("/", "-");
-  const am = e.methods.find(x => x.id === e.active);
-  const cfg = e.methods.filter(x => x.status.configured);
+  if (tint) card.style.setProperty("--vendor", tint);
+
   const head = el("div","ac-h");
-  head.append(bigMark(e.logo || e.family, e.label));
+  const mk = bigMark(e.logo || e.family, e.label);
+  if (tint) mk.style.background = "color-mix(in srgb, " + tint + " 14%, transparent)";
+  head.append(mk);
   const ht = el("div","ft");
-  // name and status share one line; the endpoint is the caption under it
-  const top = el("div","ac-top");
-  top.append(el("div","fn", e.label));
-  const st = el("span","ac-s" + (e.active ? " ok" : cfg.length ? " warn" : ""));
-  st.append(el("span","dot2 " + (e.active ? "ok" : cfg.length ? "warn" : "")));
-  if (am) {
-    const masked = Object.values(am.status.masked || {}).find(Boolean);
-    st.append(document.createTextNode(am.status.source === "env" ? "From env" : am.label));
-    st.title = (am.status.source === "env" ? "Connected from env · " : "Connected via " + am.label) + (masked ? " · " + masked : "");
-  } else if (cfg.length) { st.append(document.createTextNode("Not active")); st.title = "Configured, but not the active method"; }
-  else { st.append(document.createTextNode("Not connected")); st.title = "No credential saved yet"; }
-  top.append(st);
-  ht.append(top);
-  const ep = (meta && meta.base_url) || (e.methods[0] && e.methods[0].backend) || "";
-  const epl = el("div","fd mono", String(ep).replace(/^https?:\/\//, "") || "—"); epl.title = ep; ht.append(epl);
+  ht.append(el("div","fn", e.label));
+  const stw = el("div","ac-s");
+  stw.append(el("span","ac-sd " + st8.tone));
+  stw.append(document.createTextNode(st8.badge));
+  ht.append(stw);
   head.append(ht);
+  const act = btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho", ev => {
+    ev.stopPropagation();
+    AUTH.open = open ? null : e.key;
+    renderAuthCards(document.getElementById("auth-cards"), { ok: true, families: AUTH.families });
+    if (!open) { const c = document.getElementById("auth-" + e.key.replace("/", "-"));
+      if (c) { const i2 = c.querySelector("input"); if (i2) setTimeout(() => i2.focus(), 60); } }
+  });
+  act.className = "b gho ac-act";
+  head.append(act);
+  head.onclick = () => act.click();
   card.append(head);
-  // the auth-type toggle — a lone method is a label, not a lonely pill
-  let sel = AUTH.method[e.key] || e.active || (e.methods.find(x => x.recommended) || e.methods[0] || {}).id;
+  if (!open) return card;
+
+  // ---- opened: how it authenticates, then the fields, then what it serves
   const body = el("div","ac-body");
+  let sel = AUTH.method[e.key] || e.active || (e.methods.find(x => x.recommended) || e.methods[0] || {}).id;
   const draw = () => {
     body.innerHTML = "";
     const m = e.methods.find(x => x.id === sel) || e.methods[0];
     if (!m) return;
-    const d1 = el("div","ac-d", m.description || ""); d1.title = m.description || ""; body.append(d1);
+    // never restate the card's own name in its body
+    const desc = (m.description || "").replace(new RegExp("^" + e.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[—·:-]?\\s*", "i"), "").trim();
+    if (desc) { const d = el("div","ac-d", desc); d.title = desc; body.append(d); }
     body.append(authMethodForm({ label: e.label, logo: e.logo, active: e.active }, m));
-    if (meta && (meta.models || []).length) {
+    const bits = el("div","ac-meta");
+    const ep = (meta && meta.base_url) || m.backend || "";
+    if (ep) {
+      const tpl = /[{}]/.test(String(ep));
+      bits.append(metaBit("endpoint", tpl ? "the URL you set above" : String(ep).replace(/^https?:\/\//, ""), null, !tpl));
+    }
+    if (e.active) {
+      const cur = (MSTATE.current || {}).model;
+      const n = meta ? (meta.models || []).length : 0;
+      if (n) bits.append(metaBit("serves", n + " model" + (n === 1 ? "" : "s"), (meta.models || []).includes(cur) ? cur : null));
+      const lat = AUTH.latency[e.key];
+      if (lat != null) bits.append(metaBit("validated", lat + "ms"));
+      const src = m.status.source;
+      if (src) bits.append(metaBit("key", src === "cli" ? "detected" : src === "env" ? "from env" : src));
+    }
+    if (bits.childElementCount) body.append(bits);
+    if (e.active && meta && (meta.models || []).length) {
       const foot = el("div","ac-models");
-      foot.append(el("div","ac-mh", (meta.models.length + " listed") + (meta.live_count ? " · " + meta.live_count + " live" : "")));
       const chips = el("div","chips clamp");
       const cur = (MSTATE.current || {}).model;
       meta.models.forEach(x => {
-        const c = el("span","chip" + (e.active ? " clk" : "") + (x === cur ? " cur" : ""), x);
-        if (e.active) c.onclick = ev => { ev.stopPropagation(); useModel(x, meta.base_url); };
+        const c = el("span","chip clk" + (x === cur ? " cur" : ""), x);
+        c.onclick = ev => { ev.stopPropagation(); useModel(x, meta.base_url); };
         chips.append(c);
       });
       foot.append(chips);
-      // two rows, then a +N that opens the rest in place
       const hidden = Math.max(0, meta.models.length - 2);
-      const more = el("button","chip more", "+" + hidden + " more");
-      more.onclick = ev => { ev.stopPropagation(); chips.classList.toggle("clamp");
-        more.textContent = chips.classList.contains("clamp") ? "+" + hidden + " more" : "Show fewer"; };
-      if (meta.models.length > 2) foot.append(more);
+      if (hidden) {
+        const more = el("button","chip more", "+" + hidden + " more");
+        more.onclick = ev => { ev.stopPropagation(); chips.classList.toggle("clamp");
+          more.textContent = chips.classList.contains("clamp") ? "+" + hidden + " more" : "Show fewer"; };
+        foot.append(more);
+      }
       body.append(foot);
     }
   };
+  const drawFade = () => { body.classList.add("fade"); draw(); requestAnimationFrame(() => body.classList.remove("fade")); };
+
   if (e.methods.length > 1) {
-    const seg = el("div","ac-types");
+    // One track of equal segments: every way in is visible and its readiness
+    // with it, so nobody has to open a menu to learn what is set up.
+    const seg = el("div","ac-types"); seg.setAttribute("role", "tablist");
+    seg.setAttribute("aria-label", e.label + " authentication method");
+    const segs = [];
     e.methods.forEach(m => {
-      const c = el("button","fchip" + (m.id === sel ? " on" : "") + (m.status.active ? " ac-live" : ""), m.label);
-      // the active method is the filled one with a tick; configured-but-idle
-      // carries a dot; unconfigured stays plain
-      if (m.status.active) c.append(el("span","ac-tick", "✓"));
-      else if (m.status.configured) c.append(el("span","ac-dot cfg"));
-      c.onclick = () => {
+      const on = m.id === sel;
+      const c = el("button","ac-seg" + (on ? " on" : ""));
+      c.setAttribute("role", "tab");
+      c.setAttribute("aria-selected", on ? "true" : "false");
+      c.tabIndex = on ? 0 : -1;
+      if (m.status.active) c.append(el("span","ac-mktick", "✓"));
+      else if (m.status.configured) c.append(el("span","ac-mkdot"));
+      c.append(el("span","ac-lb", m.label));
+      c.title = m.description || m.label;
+      const pick = () => {
         sel = m.id; AUTH.method[e.key] = m.id;
-        seg.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
-        draw();
+        segs.forEach(x => {
+          const isOn = x === c;
+          x.classList.toggle("on", isOn);
+          x.setAttribute("aria-selected", isOn ? "true" : "false");
+          x.tabIndex = isOn ? 0 : -1;
+        });
+        drawFade();
       };
-      seg.append(c);
+      c.onclick = ev => { ev.stopPropagation(); pick(); };
+      c.onkeydown = ev => {
+        const i3 = segs.indexOf(c);
+        let k = null;
+        if (ev.key === "ArrowRight" || ev.key === "ArrowDown") k = (i3 + 1) % segs.length;
+        else if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") k = (i3 - 1 + segs.length) % segs.length;
+        else if (ev.key === "Home") k = 0;
+        else if (ev.key === "End") k = segs.length - 1;
+        else if (ev.key === " " || ev.key === "Enter") { pick(); ev.preventDefault(); return; }
+        if (k == null) return;
+        ev.preventDefault(); segs[k].focus(); segs[k].click();
+      };
+      segs.push(c); seg.append(c);
     });
     card.append(seg);
-  } else if (e.methods.length === 1) {
-    card.append(el("div","ac-one", e.methods[0].label));
   }
   card.append(body);
   draw();
   return card;
+}
+function metaBit(label, value, sub, mono) {
+  const w = el("span","ac-mb");
+  if (label) w.append(document.createTextNode(label + " "));
+  w.append(el(mono ? "code" : "b", null, String(value)));
+  if (sub) { const t = el("i", null, sub); t.title = sub; w.append(t); }
+  return w;
 }
 // One method's fields + its action. OAuth swaps Save for a two-step sign-in.
 function authMethodForm(d, m) {
@@ -3651,6 +3771,7 @@ function authMethodForm(d, m) {
       Object.values(inputs).forEach(i => (i.value = ""));
       save.textContent = "Testing…";
       const v = await post("/api/auth/validate", { family: m.family, method: m.id });
+      if (v.ok && v.latency_ms != null) AUTH.latency[m.family === "oss" ? "oss/" + m.id : m.family] = v.latency_ms;
       out.append(probeBox(v.ok, v.ok
         ? "Connected · " + (v.latency_ms != null ? v.latency_ms + "ms" : "") + ((v.models || []).length ? " · " + v.models.slice(0, 3).join(", ") : "")
         : (v.message || errText(v))));
