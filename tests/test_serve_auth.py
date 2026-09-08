@@ -374,20 +374,21 @@ def test_collapsed_provider_card_says_four_things_and_nothing_else(fake):
     card = js[js.index("function authCard(e) {"):js.index("function metaBit(")]
     head, body = card.split("if (!open) return card;")
     # the collapsed half builds exactly these four things
-    assert "bigMark(" in head and 'el("div","fn"' in head and 'el("div","ac-s")' in head
+    assert "bigMark(" in head and 'el("div","fn"' in head and 'el("span","ac-st " + st8.cls)' in head
     assert 'btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho"' in head
     for later in ("ac-types", "authMethodForm", "ac-models", "ac-meta", "ac-d", "metaBit("):
         assert later not in head, "collapsed card renders " + later
         assert later in body, "opened card is missing " + later
     # one card open at a time, remembered on AUTH.open
     assert "AUTH.open = open ? null : e.key" in js and 'const open = AUTH.open === e.key' in js
-    # the state is a dot plus a word, not a badge chip
-    assert 'el("span","ac-sd " + st8.tone)' in js and "text-transform: uppercase" not in css.split(".ac-s {")[1].split("}")[0]
+    # the state is one badge with its own surface, in the header, always present
+    assert 'el("span","ac-st " + st8.cls)' in js
+    assert "height: 20px" in css.split(".ac-st {")[1].split("}")[0]
 
 
-def test_provider_card_surface_is_neutral_with_a_rail_for_the_one_in_use(fake):
+def test_provider_card_surface_is_neutral_and_the_active_one_is_dashed(fake):
     """No colour wash in either theme: the surface is the same panel in every
-    state, the provider in use is marked by a thin accent rail, and the
+    state, the current provider is marked by a dashed accent outline, and the
     vendor's own colour appears in exactly one place — the mark's square."""
     from mantis_agent.serve_ui import INDEX_HTML
 
@@ -398,14 +399,14 @@ def test_provider_card_surface_is_neutral_with_a_rail_for_the_one_in_use(fake):
     assert ".acard.use { background: var(--accent-soft)" not in css
     assert ".acard:hover { background: var(--panel-2); }" in css
     assert ".acard.open { background: var(--panel-2); }" in css
-    for tinted in (".acard.use { background:", ".acard.idle { background:", ".acard.off { background:"):
+    for tinted in (".acard.use { background:", ".acard.cur { background:", ".acard.idle { background:",
+                   ".acard.off { background:"):
         assert tinted not in css, tinted
-    # the rail: accent for in use, warn for idle, nothing at all when unconnected
-    assert ".acard.use::before { background: var(--accent); }" in css
-    assert ".acard.idle::before { background: var(--warn)" in css
-    assert "background: transparent;" in css.split(".acard::before {")[1].split("}")[0]
+    # no rail at all — a solid bar on one edge, present on some cards and
+    # absent on others, reads as a rendering fault
+    assert "::before" not in css.split("  .acard {")[1].split(".ac-h {")[0]
     # no per-vendor tint anywhere on the card's surfaces: one neutral square
-    # for every mark, and the accent — never a vendor hue — on the rail
+    # for every mark, and the accent — never a vendor hue — on the marker
     marks = js[js.index("function markSvg(m)"):js.index("// ---- models & hosting ----")]
     assert "color-mix" not in marks and "style.background" not in marks
     assert "var(--vendor" not in css
@@ -443,6 +444,113 @@ def test_opened_card_shows_the_method_control_and_one_filled_action(fake):
     assert form.count('"pri"') == 1 and '"gho"' in form
     # deep link so a card can be opened directly
     assert 'new URLSearchParams(location.search).get("openprov")' in js
+
+
+def test_at_most_one_provider_is_ever_marked_current(fake, monkeypatch):
+    """Several providers can be connected at once, but only one backs the
+    model the SDK will use — so "Current" and "Ready" are different states and
+    exactly one card may claim the first."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    # Current is read off the provider that serves the current model, never
+    # off "this family has an active auth method"
+    cur = js[js.index("function isCurrentProvider("):js.index("function cardState(")]
+    assert "p.is_current" in cur and 'host.kind === "local"' in cur and 'host.kind === "selfhost"' in cur
+    assert "e.active" not in cur                     # that fact means Ready, not Current
+    state = js[js.index("function cardState("):js.index("function authCard(")]
+    order = [state.index("isCurrentProvider(e)"), state.index("e.active"), state.index("m.status.configured")]
+    assert order == sorted(order), "Current must be decided before Ready"
+    for cls, label in (("cur", "Current"), ("rdy", "Ready"), ("idle", "Not active"), ("off", "Not connected")):
+        assert 'cls: "%s", badge: "%s"' % (cls, label) in state, cls
+    # the state element is one badge, present on every card in the same place
+    assert 'el("span","ac-st " + st8.cls)' in js and 'el("span","ac-stg")' in js
+    # ...and the four states differ by SHAPE as well as hue, so the badge
+    # survives a colour-blind reading
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert ".ac-st.cur .ac-stg { background: currentColor; }" in css      # filled dot
+    assert ".ac-st.rdy .ac-stg { border: 1.5px solid currentColor; }" in css   # hollow ring
+    assert "transform: rotate(45deg)" in css.split(".ac-st.idle .ac-stg {")[1].split("}")[0]  # diamond
+    assert "opacity: .45" in css.split(".ac-st.off .ac-stg {")[1].split("}")[0]               # faint dot
+    # a rail that some cards have and others don't reads as a fault: it's gone
+    assert ".acard::before" not in css and ".acard.use::before" not in css
+
+
+def test_the_current_card_is_marked_by_a_dashed_outline_not_a_border(fake):
+    """The active marker is a dashed accent outline around the WHOLE card,
+    drawn as an SVG stroke so the dash array is ours to specify, inset from
+    the edge so it reads as a marker rather than a border, and following the
+    card's corner radius exactly."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+
+    # an SVG stroke, not `outline: dashed` (no control over the array) and not
+    # a border (it would change layout and break the equal-height matrix)
+    assert "outline: 1px dashed" not in css and "outline: 1.5px dashed" not in css
+    rect = css.split("  .ac-dash rect {")[1].split("}")[0]
+    assert "stroke-width: 1.5" in rect
+    assert "stroke-dasharray: 2.5 3.5" in rect
+    assert "opacity: .75" in rect
+    assert "stroke: var(--accent)" in rect
+    assert "border" not in rect
+
+    # the marker costs no layout, so collapsed cards stay one height
+    box = css.split("  .ac-dash {")[1].split("}")[0]
+    assert "position: absolute" in box and "pointer-events: none" in box
+    # inset 4px + half the 1.5px stroke, so the stroke's OUTER edge lands 4px in
+    assert "top: 4.75px" in box and "left: 4.75px" in box
+    assert "calc(100% - 9.5px)" in box
+
+    # the corner radius is the card's 12px less the 4.75px the path is inset by
+    mk = js[js.index("function dashMarker()"):js.index("function authCard(")]
+    assert '"rx", "7.25"' in mk and '"ry", "7.25"' in mk
+    assert '"width", "100%"' in mk and '"height", "100%"' in mk
+    # SVG will not parse calc() in a geometry attribute — the box is sized in CSS
+    assert "calc(" not in "".join(ln for ln in mk.split("\n") if not ln.strip().startswith("//"))
+    assert 'setAttribute("aria-hidden", "true")' in mk
+
+    # Current wears the accent marker; Ready wears the same shape held far
+    # back, in neutral ink so it can never be mistaken for Current; the two
+    # quiet states wear none
+    assert 'if (st8.cls === "cur" || st8.cls === "rdy") card.append(dashMarker());' in js
+    rdy = css.split("  .acard.rdy .ac-dash rect {")[1].split("}")[0]
+    assert "stroke: var(--ink-3)" in rdy and "opacity: .3" in rdy
+    for quiet in (".acard.idle .ac-dash", ".acard.off .ac-dash"):
+        assert quiet not in css, quiet
+
+    # the slow creep is opt-out-able and loops without a seam: one dash cycle
+    # is 2.5 + 3.5 = 6px, and the offset travels a whole number of them
+    assert "@media (prefers-reduced-motion: no-preference) {" in css
+    anim = css.split("@media (prefers-reduced-motion: no-preference) {")[1][:200]
+    assert ".acard.cur .ac-dash rect { animation: dashmove 18s linear infinite; }" in anim
+    off = css.split("@keyframes dashmove { to { stroke-dashoffset: -")[1].split(";")[0]
+    assert int(off) % 6 == 0, "a partial dash cycle would jump at the loop point"
+
+
+def test_a_providers_name_survives_a_narrow_card(fake):
+    """"Qwen (DashScope)" printed as one string truncates from the right and
+    takes the NAME with it — "Qwen (DashSco…". The stem and the vendor are
+    separate spans so only the vendor degrades."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    card = js[js.index("function authCard(e) {"):js.index("function authMethodForm(")]
+    assert 'el("span","ac-nm", par[1])' in card and 'el("span","ac-nv", par[2])' in card
+    # the stem never shrinks; the vendor is the part that gives way
+    assert "flex: none" in css.split("  .ac-nm {")[1].split("}")[0]
+    nv = css.split("  .ac-nv {")[1].split("}")[0]
+    assert "text-overflow: ellipsis" in nv and "min-width: 0" in nv
+    # only the half that can truncate earns a tooltip — a tooltip repeating
+    # text that is fully visible is the same fact twice
+    assert card.index("nm.title = e.label") < card.index("} else nm.textContent = e.label;")
+    # "Self-hosted endpoint" says endpoint twice over: the card's body is a
+    # URL field. The short name is the one that fits.
+    entries = js[js.index("function authEntries()"):js.index("function provMeta(")]
+    assert 'mm.label === "Self-hosted endpoint" ? "Self-hosted" : mm.label' in entries
+    assert "full: mm.label" in entries, "the contract's own label still travels, for comparison"
 
 
 def test_collapsed_cards_are_one_height_by_construction(fake):
@@ -509,7 +617,15 @@ def test_every_mark_is_optically_normalised_to_one_square():
         rule = css.split(box)[1].split("}")[0]
         assert "background: var(--fill)" in rule, box
     # the svg fills its square; the fit viewBox does the insetting, not the CSS
-    assert ".ac-h .bigmark svg { width: 32px; height: 32px; }" in css
+    assert ".ac-h .bigmark svg { width: 32px; height: 32px; display: block; }" in css
+    # the container centres a letter stand-in the same way it centres a glyph:
+    # an inline span would put the letter on the text baseline, high and left
+    box = css.split("  .ac-h .bigmark {")[1].split("}")[0]
+    assert "display: inline-flex" in box and "align-items: center" in box
+    assert "justify-content: center" in box and "line-height: 1" in box
+    # and the letter is sized to the same .62 ink target the fit viewBox gives
+    ltr = css.split("  .ac-h .bigmark.letter {")[1].split("}")[0]
+    assert "font-size: 27px" in ltr and "translateY(-0.9px)" in ltr
     assert ".mark2 svg { width: 22px; height: 22px; display: block; }" in css
     # the letter stand-in matches the UI's type scale, centred like the glyphs
     assert ".bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600" in css
@@ -528,8 +644,9 @@ def test_no_fact_is_printed_twice_on_a_provider_card(fake):
     assert 'el("div","ac-env"' not in js and 'class="ac-meta"' not in js.split("function authCard(")[1].split("function metaBit(")[0].split("if (!open) return card;")[0]
     assert 'help.append(el("span","envn"' in js
     # an open-source card IS its method: with no chooser to draw, its name is
-    # never printed a second time as a label
+    # never printed a second time — not as a label, not on the via line
     assert 'el("div","ac-one"' not in js and "e.methods.length > 1" in js
+    assert 'only && only !== e.label && only !== e.full ? only : ""' in js
     # and a description that opens with the card's own name is trimmed to what
     # it adds — "Ollama (local)" is the heading, never also the first body line
     assert "never restate the card's own name in its body" in js

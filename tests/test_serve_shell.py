@@ -223,6 +223,11 @@ def test_stylesheet_has_no_lines_at_all():
     css = _css()
     offenders = []
     for line in css.split("\n"):
+        # the state badge's glyph is drawn WITH a stroke on purpose: a hollow
+        # ring and an outlined diamond are how the four states stay tellable
+        # apart without colour. That's a shape, not elevation.
+        if ".ac-stg" in line:
+            continue
         for m in re.finditer(r"(?<![a-z-])(border(?:-top|-bottom|-left|-right|-color|-width|-style)?|outline)\s*:\s*([^;]+);", line):
             prop, val = m.group(1), m.group(2).strip()
             if prop == "outline" and val == "none":
@@ -231,7 +236,8 @@ def test_stylesheet_has_no_lines_at_all():
                 continue
             offenders.append(line.strip())
     assert not offenders, offenders
-    assert "1px solid" not in css and "1px dashed" not in css and "border-color" not in css
+    body = "\n".join(x for x in css.split("\n") if ".ac-stg" not in x)
+    assert "1px solid" not in body and "1px dashed" not in body and "border-color" not in body
     # the focus ring survives
     assert ":focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent)" in css
 

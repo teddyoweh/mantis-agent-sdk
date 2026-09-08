@@ -146,13 +146,30 @@ masked. Below it, two labelled grids: **First-party** (Claude, OpenAI,
 Gemini, Grok) and **Open-source & self-host** (the hosted catalogue, Ollama,
 your own server).
 
-Each is a card, and collapsed it says exactly four things: the vendor's mark
-in a square tinted with that vendor's own colour, the name, a dot-and-word
-state (*In use* · *Not active* · *Not connected*), and the one action that
-changes it (**Connect** / **Manage**). Every collapsed card is the same
-height, so the grid reads as a matrix; the surface is the same neutral panel
-in every state, and the provider in use is marked by a thin accent rail on
-its left edge rather than a colour wash.
+Each is a card, and collapsed it says exactly four things: the vendor's mark,
+the name, a state badge, and the one action that changes it (**Connect** /
+**Manage**). Every collapsed card is 63px, so the grid reads as a matrix, and
+every mark is optically normalised — measured ink, not a nominal box — so no
+glyph looks bigger than its neighbours.
+
+There are four states, and they are deliberately not four shades of the same
+thing. **Current** is the one provider backing the model the SDK will
+actually use; exactly one card can ever hold it, and it is read from the
+current-model state rather than from "this family has a key". **Ready** means
+connected and available — pick one of its models and it becomes Current.
+**Not active** means credentials are saved but no method is switched on, and
+**Not connected** means there is no credential yet. Each badge carries a
+glyph whose *shape* differs — a filled dot, a hollow ring, a diamond, a faint
+pip — so the states stay distinguishable without relying on colour.
+
+The card surface stays the same neutral panel in every state; there is no
+colour wash and no edge rail. The current provider is marked instead by a
+**dashed accent outline** around the whole card — an SVG stroke at 1.5px with
+a 2.5/3.5 dash array, inset 4px so it reads as a marker laid on the card
+rather than a border, following the card's corner radius exactly, and
+creeping one dash cycle every three seconds (stopped entirely under
+`prefers-reduced-motion`). A connected-but-idle card wears the same dash in
+neutral ink at a third of the presence, so the two can never be confused.
 
 Opening a card (one at a time) reveals the rest in place — no sibling moves.
 Inside is an **auth-type toggle**: Claude offers *API key · Claude subscription ·

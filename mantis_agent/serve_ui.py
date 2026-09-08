@@ -322,43 +322,106 @@ INDEX_HTML = r"""<!doctype html>
      state it's in, and the one action that changes that. The surface is the
      same neutral panel in every state — the provider in use is marked by a
      thin rail, never by a wash. Everything else waits until it's opened. */
+  /* THE ACTIVE MARKER — a dashed accent outline around the whole card.
+     Technique: an inline SVG rect, not `outline: dashed` and not a border.
+       - `outline` gives no control over the dash pattern; every engine picks
+         its own array, so it cannot be tuned at the pixel level.
+       - a border would change layout and break the equal-height matrix.
+     The SVG costs zero layout (absolute, pointer-events: none), matches the
+     card's corner radius exactly via rx, and is the only option that can
+     animate the dash. Sizes are in CSS px inside a viewBox-less SVG so one
+     unit is one CSS px — on a 2x screen the 1.5px stroke lands on 3 device
+     pixels and stays crisp instead of blurring across a half pixel.
+     Inset 3px from the edge so it reads as a marker laid ON the card rather
+     than as the card's own border. */
+  /* an <svg> is a replaced element: with `inset` alone it falls back to its
+     300x150 intrinsic size and gets clipped. The box is sized explicitly. */
+  .ac-dash { position: absolute; top: 4.75px; left: 4.75px;
+    width: calc(100% - 9.5px); height: calc(100% - 9.5px);
+    pointer-events: none; overflow: visible; z-index: 1; }
+  /* THE DASH SPEC, picked by rendering six candidates at true 1x and 2x:
+       stroke-width 1.5  ·  dasharray 2.5 3.5  ·  opacity .75  ·  inset 4px
+     A 5/4 array at full opacity reads like a coupon and shouts over the
+     badge; a 1px stroke with 2px dashes collapses into a plain hairline at
+     1x. 2.5/3.5 at 1.5px keeps real weight — so the dash survives a
+     non-retina screen — while .75 opacity keeps it under the badge, which
+     stays the loudest accent on the card. */
+  .ac-dash rect { fill: none; stroke: var(--accent); stroke-width: 1.5;
+    stroke-dasharray: 2.5 3.5; stroke-linecap: butt; opacity: .75; }
+  /* Connected-but-idle is the SAME marker held far back — same rhythm, a
+     third of the presence, and neutral rather than accent, so it can never be
+     mistaken for the current card. The difference is weight and colour, and
+     the badge glyph differs in shape too, so it survives colour blindness. */
+  .acard.rdy .ac-dash rect { stroke: var(--ink-3); opacity: .3; }
+  /* One dash cycle is 6px, so the offset steps by a multiple of 6 and the
+     loop has no visible seam. 36px over 18s is 2px/s: you notice it only
+     after you have already looked at the card. */
+  @media (prefers-reduced-motion: no-preference) {
+    .acard.cur .ac-dash rect { animation: dashmove 18s linear infinite; }
+  }
+  @keyframes dashmove { to { stroke-dashoffset: -36; } }
   .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
-    padding: 12px 14px 12px 15px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
     transition: background var(--t); }
   /* collapsed cards are one height BY CONSTRUCTION — the grid is a matrix,
      and an opened card grows inside its own cell (the grid is align-items:
      start, so no sibling is ever stretched by its neighbour) */
   .acard:not(.open) { height: 63px; }
   .acard .ac-h { height: 39px; }
-  /* only a card with something to say wears a rail; the vendor's colour stays
-     in the mark square, so the rail is the accent and nothing else */
-  .acard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-    background: transparent; }
-  .acard.use::before { background: var(--accent); }
-  .acard.idle::before { background: var(--warn); opacity: .5; }
+  /* No rail: a stripe that four cards have and three don't reads as a
+     rendering fault. One badge carries the state instead — same element, same
+     place, on every card. */
   .acard:hover { background: var(--panel-2); }
   .acard.open { background: var(--panel-2); }
   .ac-h { display: flex; align-items: center; gap: 11px; min-width: 0; cursor: pointer; }
-  .ac-h .bigmark { width: 32px; height: 32px; border-radius: 8px; }
-  .ac-h .bigmark svg { width: 32px; height: 32px; }
-  /* the letter stand-in matches the glyphs' optical weight and the UI's scale */
+  /* an inline span puts a LETTER stand-in on the text baseline, which is why
+     it used to sit high and left of every real glyph. The container centres
+     both cases identically, so a mark is a mark. */
+  .ac-h .bigmark { width: 32px; height: 32px; border-radius: 8px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    overflow: hidden; line-height: 1; }
+  .ac-h .bigmark svg { width: 32px; height: 32px; display: block; }
+  /* the letter stand-in matches the glyphs' optical weight: the fit viewBox
+     puts every real mark's ink at .62 of the 32px box (19.8px), and a 600
+     capital at 26px has a cap height in the same place */
+  /* 27px is where a 600 capital's measured cap height lands on 19.8px, the
+     same ink the fit viewBox gives every real glyph. The nudge is the
+     measured gap between the glyph's ink centre and the box centre —
+     capitals carry no descender, so uncorrected they ride low. */
+  .ac-h .bigmark.letter { font-family: var(--sans); font-size: 27px; font-weight: 600;
+    color: var(--ink-2); transform: translateY(-0.9px); }
   .bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink-2); }
   .ac-h .ft { min-width: 0; flex: 1; }
   .ac-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .ac-h .fn { font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; min-width: 0; }
+    white-space: nowrap; min-width: 0; display: flex; align-items: baseline; gap: 5px; }
+  .ac-nm { flex: none; }
+  .ac-nv { font-weight: 400; font-size: 12.5px; color: var(--ink-3); min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* two weights on the card: 600 for the name, regular for everything else */
-  .ac-act { flex: none; margin-left: auto; font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
+  .ac-act { flex: none; font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
   .acard:hover .ac-act { color: var(--ink); }
   .ac-h .fd { font-size: 10.5px; line-height: 1.35; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; background: none; padding: 0; font-family: var(--mono); }
   .ac-h .fd.sans { font-family: var(--sans); font-style: italic; }
   /* the connection state is a chip on the name row, not a row of its own */
-  .ac-s { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-3);
-    white-space: nowrap; margin-top: 1px; }
-  .ac-sd { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--ink-3); opacity: .5; }
-  .ac-sd.ok { background: var(--ok); opacity: 1; }
-  .ac-sd.warn { background: var(--warn); opacity: 1; }
+  .ac-via { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-top: 1px; }
+  /* The state badge. Four states told apart by surface, colour AND the shape
+     of the glyph — filled dot, hollow ring, amber diamond, faint dot — so it
+     survives a colour-blind reading and a glance. */
+  .ac-st { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 20px; padding: 0 8px;
+    border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .ac-stg { width: 7px; height: 7px; border-radius: 50%; flex: none; box-sizing: border-box; }
+  .ac-st.cur { background: var(--accent); color: var(--accent-ink); }
+  .ac-st.cur .ac-stg { background: currentColor; }
+  .ac-st.rdy { background: var(--ok-soft); color: var(--ok); }
+  .ac-st.rdy .ac-stg { border: 1.5px solid currentColor; }
+  .ac-st.idle { background: var(--warn-soft); color: var(--warn); }
+  .ac-st.idle .ac-stg { border: 1.5px solid currentColor; border-radius: 1px; width: 6px; height: 6px;
+    transform: rotate(45deg); }
+  .ac-st.off { background: var(--fill); color: var(--ink-3); font-weight: 500; }
+  .ac-st.off .ac-stg { background: currentColor; opacity: .45; width: 5px; height: 5px; }
   /* what a connected card earns its height with */
   .ac-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-3); margin-top: 9px; }
   .ac-mb { white-space: nowrap; min-width: 0; }
@@ -866,7 +929,14 @@ INDEX_HTML = r"""<!doctype html>
   .cfg .kv .ck { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
   .cfg .kv .cv { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   details.layer { margin-bottom: 8px; }
-  details.layer summary { padding: 11px 14px; cursor: pointer; font-weight: 600; }
+  details.layer summary { padding: 11px 14px; cursor: pointer; display: flex; align-items: center; gap: 9px;
+    list-style: none; }
+  details.layer summary::-webkit-details-marker { display: none; }
+  details.layer summary::before { content: "▸"; color: var(--ink-3); font-size: 10px; }
+  details.layer[open] summary::before { content: "▾"; }
+  details.layer summary:hover { color: var(--ink); }
+  .lay-n { font-weight: 600; }
+  .lay-c { color: var(--ink-3); font-size: 12.5px; }
   details.layer pre { margin: 0; padding: 0 14px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
   .layerpath { font-family: var(--mono); font-size: 11px; color: var(--ink-3); padding: 0 14px 8px; }
   .note-sec { font-size: 12px; color: var(--ink-3); margin: -14px 0 18px; }
@@ -3530,7 +3600,10 @@ function authEntries() {
   });
   const oss = AUTH.families.find(x => x.family === "oss");
   (oss ? oss.methods || [] : []).forEach(mm => {
-    out.push({ key: "oss/" + mm.id, family: "oss", label: mm.label, logo: mm.id, methods: [mm],
+    // "Self-hosted endpoint" says "endpoint" twice over: the card's whole body
+    // is a URL field. The shorter name fits the card without truncating.
+    const lbl = mm.label === "Self-hosted endpoint" ? "Self-hosted" : mm.label;
+    out.push({ key: "oss/" + mm.id, family: "oss", label: lbl, full: mm.label, logo: mm.id, methods: [mm],
                active: mm.status.active ? mm.id : null, ui: "oss", kind: "method" });
   });
   return out;
@@ -3584,33 +3657,100 @@ function vendorTint(pid) {
   const t = VENDOR_TINT[pid] || ((MARKS[pid] || {}).tint || "");
   return /^#/.test(t) ? t : null;
 }
-// in use · not active · not connected — one dot, one word
+// Which provider actually backs the model the SDK will use. Having an active
+// auth method is a DIFFERENT fact — several providers can be ready at once,
+// but only one serves `model=` — so the two are never conflated.
+function isCurrentProvider(e) {
+  const provs = MSTATE.providers || [];
+  const host = MSTATE.hosting || {};
+  if (e.kind === "method") {
+    if (e.logo === "ollama") return host.kind === "local";
+    if (e.logo === "selfhost") return host.kind === "selfhost";
+    const p = provs.find(x => x.id === e.logo);
+    return !!(p && p.is_current);
+  }
+  return provs.some(p => p.family === e.ui && p.is_current);
+}
+// Four states, in descending order of what they let you do. Exactly one card
+// can be Current; any number can be Ready.
 function cardState(e) {
-  if (e.active) return { cls: "use", badge: "In use", tone: "ok" };
-  if ((e.methods || []).some(m => m.status.configured)) return { cls: "idle", badge: "Not active", tone: "warn" };
-  return { cls: "off", badge: "Not connected", tone: "" };
+  if (isCurrentProvider(e)) return { cls: "cur", badge: "Current", tone: "cur",
+    hint: "serving the model mantis will use" };
+  if (e.active) return { cls: "rdy", badge: "Ready", tone: "rdy",
+    hint: "connected — pick one of its models to use it" };
+  if ((e.methods || []).some(m => m.status.configured)) return { cls: "idle", badge: "Not active", tone: "idle",
+    hint: "credentials saved, but no method is active" };
+  return { cls: "off", badge: "Not connected", tone: "off", hint: "no credential saved yet" };
 }
 // One provider, collapsed to what you need at a glance: its mark, its name,
 // its state, and the one action that changes it. Everything else — how it
 // authenticates, the fields, the endpoint, the models it serves — appears
 // when you open it. The surface stays neutral in both themes; the only
 // colour is the vendor's mark and, for the provider in use, a thin rail.
+// The dashed marker. Inset INS from every edge, with the radius reduced by
+// the same amount so the dash follows the card's curve exactly — a dashed
+// rectangle that misses the radius is the tell that it was bolted on.
+// Half the stroke is added to the inset so the stroke's OUTER edge, not its
+// centre, sits at INS: strokes are centred on their path.
+function dashMarker() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "ac-dash");
+  svg.setAttribute("aria-hidden", "true");
+  // The SVG box itself is inset by CSS (4px + half the 1.5px stroke = 4.75px),
+  // so the rect is a plain 100%x100% — no calc() in a geometry attribute,
+  // which SVG will not parse. The stroke is centred on that path and reaches
+  // .75px outward, putting its outer edge exactly 4px in from the card edge.
+  // rx is the card's 12px radius less the 4.75px the path is inset by, so the
+  // dash rides the card's curve instead of cutting across it.
+  const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  r.setAttribute("x", "0"); r.setAttribute("y", "0");
+  r.setAttribute("width", "100%"); r.setAttribute("height", "100%");
+  r.setAttribute("rx", "7.25"); r.setAttribute("ry", "7.25");
+  svg.append(r);
+  return svg;
+}
 function authCard(e) {
   const meta = provMeta(e);
   const st8 = cardState(e);
   const open = AUTH.open === e.key;
   const card = el("div","acard " + st8.cls + (open ? " open" : ""));
   card.id = "auth-" + e.key.replace("/", "-");
+  // Current wears the dashed accent marker; Ready wears the same shape held
+  // far back. Idle and not-connected wear none — the badge alone speaks.
+  if (st8.cls === "cur" || st8.cls === "rdy") card.append(dashMarker());
 
   const head = el("div","ac-h");
   head.append(bigMark(e.logo || e.family, e.label));
   const ht = el("div","ft");
-  ht.append(el("div","fn", e.label));
-  const stw = el("div","ac-s");
-  stw.append(el("span","ac-sd " + st8.tone));
-  stw.append(document.createTextNode(st8.badge));
-  ht.append(stw);
+  // "Qwen (DashScope)" is a name plus its vendor. Printed as one string it
+  // truncates from the right and you lose the name — "Qwen (DashSco…". Split
+  // it so the stem always survives and only the vendor degrades.
+  const nm = el("div","fn");
+  const par = /^(.+?)\s*\(([^()]+)\)\s*$/.exec(e.label);
+  if (par) {
+    nm.append(el("span","ac-nm", par[1]));
+    nm.append(el("span","ac-nv", par[2]));
+    // only the vendor half can truncate, so only it earns a tooltip
+    nm.title = e.label;
+  } else nm.textContent = e.label;
+  ht.append(nm);
+  // what this provider is FOR, not what state it's in — the badge says that
+  const am0 = e.methods.find(x => x.id === e.active);
+  const only = (e.methods[0] || {}).label || "";
+  // never the card's own name again: an open-source card IS its method, so
+  // there is nothing to add on that line
+  const via = am0 ? "via " + am0.label
+    : (e.methods || []).some(m => m.status.configured) ? "credentials saved"
+    : (only && only !== e.label && only !== e.full ? only : "");
+  // An open multi-method card shows the toggle right below, with the live
+  // method checked. Saying it again here is the same fact twice.
+  if (via && !(open && e.methods.length > 1)) ht.append(el("div","ac-via", via));
   head.append(ht);
+  const stw = el("span","ac-st " + st8.cls);
+  stw.append(el("span","ac-stg"));
+  stw.append(document.createTextNode(st8.badge));
+  stw.title = st8.hint;
+  head.append(stw);
   const act = btn(open ? "Close" : st8.cls === "off" ? "Connect" : "Manage", "gho", ev => {
     ev.stopPropagation();
     AUTH.open = open ? null : e.key;
@@ -4734,12 +4874,15 @@ async function loadMcp() {
   const reload = () => loadMcp();
 
   const composer = mcpComposer(reload);
-  const addBtn = btn("+ Add server", "pri", () => {
+  const openComposer = () => {
     const on = composer.classList.toggle("on");
-    addBtn.textContent = on ? "Cancel" : "+ Add server";
+    addBtn.textContent = on ? "Cancel" : "Add server";
     addBtn.classList.toggle("pri", !on);
     if (on) composer.querySelector("textarea").focus();
-  });
+  };
+  // one filled button per job: with no servers the empty state carries it, so
+  // the header's copy stays quiet rather than shouting the same thing twice
+  const addBtn = btn("Add server", mc.servers.length ? "pri" : "gho", openComposer);
   const stdioN = mc.servers.filter(s => s.transport === "stdio").length;
   pageHead(pad, "MCP servers", mc.servers.length, mc.servers.length
     ? stdioN + " local · " + (mc.servers.length - stdioN) + " remote" : null, [addBtn]);
@@ -4764,7 +4907,7 @@ async function loadMcp() {
   if (!mc.servers.length) {
     pad.append(emptyState("mcp", "No MCP servers configured",
       "Add one to give the agent tools it doesn't ship with — GitHub, a database, your API.",
-      btn("Add a server", "pri", () => { composer.classList.add("on"); composer.querySelector("textarea").focus(); })));
+      btn("Add server", "pri", () => { if (!composer.classList.contains("on")) openComposer(); })));
     return;
   }
 
@@ -4828,7 +4971,8 @@ async function loadConfig() {
   const keys = Object.keys(merged).sort();
 
   const lc = (src) => Object.keys((c.layers || {})[src] || {}).length;
-  pageHead(pad, "Config", keys.length, "user " + lc("user") + " · project " + lc("project") + " · local " + lc("local") + " · secrets redacted");
+  // the per-layer counts are stated once, on the layers themselves
+  pageHead(pad, "Config", keys.length, "The settings mantis runs with · secrets redacted");
   if (!keys.length) {
     pad.append(zero("Running on defaults",
       "No settings files found — mantis is using its built-in defaults. Anything you set in " +
@@ -4849,7 +4993,10 @@ async function loadConfig() {
     const layer = (c.layers||{})[src] || {};
     const d = el("details","layer");
     const n = Object.keys(layer).length;
-    d.append(el("summary", null, src + "  ·  " + n + " setting" + (n===1?"":"s")));
+    const sum = el("summary");
+    sum.append(el("span","lay-n", src));
+    sum.append(el("span","lay-c", n + " setting" + (n === 1 ? "" : "s")));
+    d.append(sum);
     if ((c.paths||{})[src]) d.append(el("div","layerpath", (c.paths)[src]));
     d.append(el("pre", null, JSON.stringify(layer, null, 2)));
     laySec.append(d);
