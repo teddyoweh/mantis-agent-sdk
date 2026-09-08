@@ -306,6 +306,51 @@ def test_choose_a_model_is_a_card_grid_not_a_table():
     assert 'el("span","mm-gn", rows.length + " model"' in js
 
 
+def test_family_tabs_carry_their_vendor_marks():
+    """The tab row is the same pill treatment as the Deploy page's org filter,
+    marks included: 16px box, 13px of ink, no square behind it. All is every
+    family at once and wears none; Open models is not a vendor and wears a
+    neutral glyph rather than borrowing Ollama's llama, which is what the
+    catalogue lists as its logo."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+
+    # exactly the size the Deploy page's two pill rows already use
+    assert "  .mtabs .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none;" in css
+    assert "  .mtabs .mark2 svg { width: 13px; height: 13px; }" in css
+    for row in (".dp-orgs .omark", ".dp-ptoggle .mark2"):
+        box = css.split("  %s {" % row)[1].split("}")[0]
+        assert "width: 16px" in box and "background: none" in box, row
+        assert "width: 13px" in css.split("  %s svg {" % row)[1].split("}")[0], row
+    # the pill's own height is untouched: 16px sits inside its 18px content box
+    assert "  .mtabs .fchip { display: inline-flex; align-items: center; gap: 6px;" in css
+    assert "font-weight: 500; padding: 6px 10px; }" in css.split("  .mtabs .fchip {")[1].split("\n")[0]
+
+    # All alone gets nothing, the way the Deploy page's All pill does
+    assert 'if (t.id !== "all") c.append(famMark(t.id, t.logo, t.label));' in js
+    assert 'add("all", "All", null, models.length);' in js
+    # one rule for what a family looks like, used by the tab AND by the group
+    # label it scrolls to, so the two can never disagree
+    assert js.count("famMark(") == 3        # the definition, the tab, the label
+    assert 'fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));' in js
+    fm = js[js.index("function famMark("):js.index("function anyMark()")]
+    assert 'fid === "oss" ? anyMark() : providerMark(logo || fid, label)' in fm
+    # Local IS Ollama, so there the llama is the honest mark
+    assert 'tabs.push({ id: "local", label: "Local", n: nLocal, logo: "ollama" });' in js
+
+    # the stand-in is drawn, not borrowed: four blocks on the card motif's own
+    # pixel grid, normalised to the same 13px of ink as every real mark
+    i = js.index("function anyMark()")
+    any_ = js[i:js.index("\n}", i)]
+    assert 'viewBox="0 0 13 13"' in any_ and 'shape-rendering="crispEdges"' in any_
+    assert any_.count('<rect x=') == 4
+    assert "mm-anymark" in any_
+    # neutral ink, never a vendor's colour
+    assert "  .mm-anymark { color: var(--ink-3); }" in css
+    assert "  .mm-anymark svg { fill: currentColor; }" in css
+
+
 def test_a_model_card_says_each_fact_once():
     """Title, caption, the pills, one action — and readiness only where it is
     not ready, because a grid of "ready" pills would drown the one card that
@@ -348,8 +393,11 @@ def test_the_motif_and_the_action_cannot_collide_on_a_model_card():
     assert "margin-top: auto" in foot                      # the foot is always last
     act = css.split("  .mm-act {")[1].split("}")[0]
     assert "margin-left: auto" in act                      # ...and the action is always right
-    # inside the foot the motif is a laid-out sibling, not an absolute overlay
-    assert "  .mm-foot .ac-mot { position: static; flex: none; }" in css
+    # inside the foot the motif is a laid-out sibling, not an absolute overlay,
+    # and it takes the rest of the row so the band spans the card
+    foot_mot = css.split("  .mm-foot .ac-mot {")[1].split("}")[0]
+    assert "position: static" in foot_mot and "flex: 1 1 0" in foot_mot
+    assert "align-self: flex-end" in foot_mot and "margin-bottom: 4px" in foot_mot
     # the head gives its 70px reservation back unless something sits top-right
     assert "  .mmcard .mh { padding-right: 0; }" in css
     assert "  .mmcard.on .mh { padding-right: 84px; }" in css

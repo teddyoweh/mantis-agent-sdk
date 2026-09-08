@@ -168,24 +168,52 @@ The card surface stays the same neutral panel in every state; there is no
 colour wash, no edge rail and **no outline of any kind** — an earlier ring of
 pixel blocks around the card read as a dashed border at real size, and with
 every connected card wearing one the grid became a field of dotted rectangles.
-The current provider is marked instead by a **pixel dither on the card
-itself**: 3px accent blocks on a 4px pitch, laid two rows deep in the empty
-strip below the head, dense at the mark's left edge and thinning to nothing
-22 columns later. It is drawn with `shape-rendering="crispEdges"` on integer
-coordinates, so every block is a hard square at 1x and 2x; it is
-deterministic, so nothing shimmers on a re-render; and it does not animate,
-because a marching dither reads as noise rather than as life. On the provider
-card — whose 63px height is fixed — it is pinned inside the card's own bottom
-padding, so it costs no layout; on the two cards whose height is not fixed
-(the GPU provider card and the model card) it is a laid-out item beside the
-action rather than an overlay above it, so no card height, wrap or width can
-bring the two together. The render gate measures the gap at 900, 1200 and
-1440 and fails if it falls below 4px. A
-connected-but-idle card wears the same dither at a **third of the reach, one
-row and a fifth of the blocks**, in neutral ink — the pair differs in pattern,
-not only in hue, so it survives a greyscale or colour-blind reading. The
-deploy page's GPU provider cards and the current model's card in *Choose a
-model* wear the same motif, so the three surfaces read as one app.
+The current provider is marked instead by a **sparse pixel dither spread
+across the card's whole inner width**: 3px accent blocks on an 8px column
+pitch and a 4px row pitch, two rows deep in the empty strip below the head,
+running from the left padding to the right one. Spread thin it reads as a
+property *of* the card — the surface is textured, not trimmed and not
+decorated in one corner.
+
+Which columns carry a block is decided by an integer irrational-rotation test
+(`c × 6183 mod 10000`, 0.6183 being a hair off the golden ratio). That
+sequence is equidistributed, so the kept columns come out evenly spaced in a
+non-repeating 3/5 rhythm with no clumps and no visible period — hashing or a
+random draw at this density gives clusters and holes, which reads as noise;
+this reads as texture somebody laid down on purpose. The second row is the
+same sequence turned half a revolution, so the rows never stack into vertical
+pairs. Being integer arithmetic it is exactly reproducible: the same card
+draws the same field on every repaint. There is no `viewBox`, so one user unit
+is one CSS pixel however wide the card ends up — a wider card gets bigger
+gaps, never bigger blocks — and `shape-rendering="crispEdges"` keeps every
+block a hard square at 1x and 2x. It does not animate, because a marching
+dither reads as noise rather than as life.
+
+The band is as wide as the card, and a card's width is only known after
+layout, so the SVG is created empty and filled from its measured box by a
+**ResizeObserver** — which fires the moment the element first has a box and
+again whenever the grid reflows. (A frame callback loses the race against a
+grid still being filled in from a fetch.) On the provider card — whose 63px
+height is fixed — the band is pinned inside the card's own bottom padding with
+a stated `width: calc(100% - 28px)`, because an `<svg>` is a replaced element
+and setting `left` and `right` together would be ignored in favour of its
+intrinsic 300px. On the two cards whose height is not fixed (the GPU provider
+card and the model card) it is a laid-out item beside the action rather than
+an overlay above it, so no card height, wrap or width can bring the two
+together.
+
+A connected-but-idle card wears the same field at **one row instead of two and
+a seventh fill instead of a quarter** — about 7 blocks where Current has 24 on
+the same card, a third of the density in half the depth — in neutral ink.
+Since both now span the same width, the whole difference is carried by density
+and row count, so it survives a greyscale or colour-blind reading. The render
+gate measures every band at 900, 1200 and 1440: it must span its card, keep a
+≥4px gap from everything else, sit on the pitch, and stop within two of its own
+typical gaps of the right inset. The deploy page's GPU provider cards and the
+current model's card in *Choose a model* wear the same motif, so the three
+surfaces read as one app. An **opened** provider card wears none: it is a form
+in a scrolling panel, its own head already carries the badge, and a band pinned
+to the bottom of a scroll box lands on the body.
 
 ### Three groups, and one tally
 
@@ -246,9 +274,17 @@ family isn't connected shows **unlock**, which opens that family's setup
 panel with the recommended method preselected. **All** keeps the
 grouped view with the vendor's mark on each group header; a family tab
 narrows to that family and drops the headers, and **Local** shows just what
-Ollama has pulled. The choice lives in the URL (`#models/claude`), so a
-refresh or a pasted link lands on the same tab, and it combines with the
-filter chips and the search box.
+Ollama has pulled. Every tab but **All** leads with its family's mark, at the
+same 16px box and 13px of ink the Deploy page's org filter pills use, keeping
+the vendor's own colour on a bare pill — *All* is every family at once and
+carries none, and **Open models** is not a vendor at all, so rather than borrow
+Ollama's llama (which is what the catalogue lists as the family's logo, right
+for a runtime and wrong for a family of thirty vendors) it gets a neutral
+four-block glyph drawn on the same pixel grid as the card motif. *Local* is
+Ollama, so there the llama is honest. The same rule draws the mark on each
+group heading, so a tab and the heading it scrolls to can never disagree. The
+choice lives in the URL (`#models/claude`), so a refresh or a pasted link lands
+on the same tab, and it combines with the filter chips and the search box.
 
 Models are **cards**, in the same responsive `minmax(300px, 1fr)` grid and the
 same card component the Deploy page's model picker uses — one design for

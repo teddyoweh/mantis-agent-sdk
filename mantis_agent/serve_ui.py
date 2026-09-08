@@ -263,6 +263,12 @@ INDEX_HTML = r"""<!doctype html>
   .mtabs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; margin-bottom: 12px; }
   .mtabs .fchip { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; padding: 6px 10px; }
   .mtabs .fchip.on { font-weight: 500; }
+  /* the family's own mark, sized exactly as the Deploy page's org pills size
+     theirs — 16px box, 13px of ink, no square behind it, so the glyph carries
+     the vendor's colour and nothing else does. 16px sits inside the pill's
+     18px content box, so the row keeps its 30px height and its wrap points. */
+  .mtabs .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none; font-size: 9px; }
+  .mtabs .mark2 svg { width: 13px; height: 13px; }
   .mtabs .tn2 { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .mtabs .fchip.on .tn2 { color: var(--accent); }
   /* provider toggle on the Deploy page — the same pills, with the real marks */
@@ -337,23 +343,32 @@ INDEX_HTML = r"""<!doctype html>
      state it's in, and the one action that changes that. The surface is the
      same neutral panel in every state — never a wash, never a rail, never an
      outline. Everything else waits until it's opened. */
-  /* THE ACTIVE MARKER — a pixel DITHER on the card's surface, not a ring
-     around its edge. Any outline, however it is drawn, reads as a border, and
-     with every connected card wearing one the grid became a field of dotted
-     rectangles.
-       block 3px · pitch 4px · 2 rows · reach 22 columns · bottom-left
-     The band lives in the card's empty bottom strip, anchored to the mark's
-     left edge, so it cannot collide with the mark, the name, the badge or the
-     action at any width, and it costs no layout — the 63px height is
-     untouched. Current and Ready differ in REACH, ROW COUNT and DENSITY, not
-     in hue, so the pair survives a colour-blind or greyscale reading.
+  /* THE ACTIVE MARKER — a sparse pixel DITHER spread across the card's whole
+     inner width, not a ring around its edge and not a clump in one corner. An
+     outline, however it is drawn, reads as a border; a short dense run reads
+     as a decoration stuck under the mark. Spread thin from padding to padding
+     it reads as a property OF the card — the surface is textured, not
+     trimmed.
+       block 3px · column pitch 8px · row pitch 4px · left padding → right
+     The band lives in the card's empty bottom strip and spans it end to end.
+     Its column count therefore depends on the card's width, which is only
+     known after layout, so the blocks are painted from the measured box and
+     repainted when the grid reflows (see paintMotif). The field is
+     deterministic, so a repaint draws exactly the same pattern.
+     Current and Ready differ in ROW COUNT and DENSITY — both span the same
+     width now, so reach can no longer carry the difference — which keeps the
+     pair readable in greyscale.
      Picked over three other placements rendered side by side at true 1x and
      2x in both themes: a corner cluster reads as dust at Ready's density, a
      run under the name reads as a text underline, and a bleed from the left
      edge brings back the rail this design already threw out.
      No animation: a marching dither reads as noise, not as life. */
-  .ac-mot { position: absolute; left: 14px; bottom: 3px; pointer-events: none; z-index: 1;
-    display: block; }
+  /* calc, not left+right: an <svg> is a REPLACED element, so an absolutely
+     positioned one with both edges set ignores `right` and falls back to its
+     intrinsic 300px — which quietly made the band a fixed width again on
+     every card. A stated width is the only thing that tracks the card. */
+  .ac-mot { position: absolute; left: 14px; width: calc(100% - 28px); bottom: 2px;
+    pointer-events: none; z-index: 1; display: block; }
   .ac-mot rect { fill: var(--accent); }
   .acard.rdy .ac-mot rect { fill: var(--ink-3); opacity: .5; }
   .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
@@ -1006,6 +1021,10 @@ INDEX_HTML = r"""<!doctype html>
     font-weight: 600; color: var(--ink-2); }
   .mm-glabel .mark2 { width: 18px; height: 18px; border-radius: 5px; }
   .mm-glabel .mark2 svg { width: 11px; height: 11px; }
+  /* the stand-in for a family that is not a vendor: the page's own pixel
+     grid, in neutral ink, so it cannot be mistaken for somebody's logo */
+  .mm-anymark { color: var(--ink-3); }
+  .mm-anymark svg { fill: currentColor; }
   .mm-gn { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
   /* The head gives its 70px back: nothing sits top-right unless the card is
      the current one, and reserving that space would truncate a long model id
@@ -1020,7 +1039,11 @@ INDEX_HTML = r"""<!doctype html>
      16px and not 15: an even row centres the 8px motif on a whole pixel, so
      its blocks land on the device grid instead of straddling it. */
   .mm-foot { display: flex; align-items: center; gap: 10px; min-height: 16px; margin-top: auto; }
-  .mm-foot .ac-mot { position: static; flex: none; }
+  /* the motif takes the rest of the row, so it spans the card and stops one
+     gap short of the action; flex-end plus a whole-pixel margin keeps its
+     blocks off half pixels however tall the row's text turns out to be */
+  .mm-foot .ac-mot { position: static; flex: 1 1 0; min-width: 0;
+    align-self: flex-end; margin-bottom: 4px; }
   .mm-act { margin-left: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
   .mmcard:hover .mm-act { color: var(--accent); }
   .mmcard.locked .mm-act { color: var(--warn); }
@@ -1085,7 +1108,7 @@ INDEX_HTML = r"""<!doctype html>
      overlay pinned to the bottom: no card height can bring it and the buttons
      together. It sits at the padding edge, under the engine chips, in line
      with the mark above it. */
-  .dpc .ac-mot { position: static; align-self: flex-start; }
+  .dpc .ac-mot { position: static; width: 100%; }
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
@@ -4122,6 +4145,24 @@ function fillMark(w, pid, label) {
 }
 function bigMark(pid, label) { return fillMark(el("span","bigmark"), pid, label); }
 function providerMark(pid, label) { return fillMark(el("span","mark2"), pid, label); }
+// A family's mark. Four of the five ARE a vendor and wear its glyph. "Open
+// models" is not: the catalogue names Ollama as its logo, which is right for
+// a runtime and wrong for a family of thirty vendors, so it gets a neutral
+// four-block glyph drawn on the same pixel grid as the card motif. "All" is
+// not a family at all and gets nothing, the way the Deploy page's All pill
+// gets nothing.
+function famMark(fid, logo, label) {
+  return fid === "oss" ? anyMark() : providerMark(logo || fid, label);
+}
+// Not a vendor: four blocks, 6px on a 7px pitch, 13px of ink — the same ink
+// every real mark is normalised to — in neutral ink rather than a colour.
+function anyMark() {
+  const w = el("span","mark2 mm-anymark");
+  w.innerHTML = '<svg viewBox="0 0 13 13" shape-rendering="crispEdges" aria-hidden="true">' +
+    '<rect x="0" y="0" width="6" height="6"/><rect x="7" y="0" width="6" height="6"/>' +
+    '<rect x="0" y="7" width="6" height="6"/><rect x="7" y="7" width="6" height="6"/></svg>';
+  return w;
+}
 
 // ---- provider setup: every way to authenticate each family ----------------
 // One card per family; opening one reveals its methods as selectable rows.
@@ -4330,36 +4371,84 @@ function placeAuthPanel(box, card, pan) {
   }
   pan.style.top = top + "px";
 }
-// The pixel dither. Deterministic — the same card draws the same pattern on
-// every render, so nothing shimmers on refresh — and hard-edged: integer
-// blocks on an integer pitch with crispEdges, which is what keeps it looking
-// drawn on a pixel grid rather than like a rounded decoration.
-const MOT_BLK = 3, MOT_PITCH = 4;
-function pixMotif(reach, rows) {
-  const w = reach * MOT_PITCH, h = rows * MOT_PITCH;
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+// The pixel dither, spread across the whole card.
+//
+// Which columns carry a block is decided by an integer irrational-rotation
+// test — c * 6183 mod 10000, 0.6183 being a hair off the golden ratio. That
+// sequence is equidistributed: the kept columns come out evenly spaced in a
+// non-repeating 3/5 rhythm, with no clumps and no visible period. Hashing or
+// a random draw at this density gives clusters and holes, which reads as
+// noise; this reads as texture somebody laid down on purpose. The second row
+// is the same sequence turned half a revolution, so the two rows never stack
+// into vertical pairs. It is arithmetic on integers, so it is exactly
+// reproducible — the same card draws the same field on every repaint.
+//
+// The band is as wide as the card, and a card's width is only known after
+// layout, so pixMotif builds an EMPTY svg carrying its two parameters and
+// paintMotif fills it once it has a box. Sizes stay integers on an integer
+// pitch with crispEdges — that, not the geometry, is what keeps every block a
+// hard square at 1x and 2x. There is no viewBox on purpose: one user unit is
+// then one CSS pixel whatever width the element ends up, so nothing scales.
+const MOT_BLK = 3, MOT_PITCH = 8, MOT_ROW = 4;
+const MOT_STEP = 6183, MOT_TURN = 5000, MOT_MOD = 10000;
+const MOT_NS = "http://www.w3.org/2000/svg";
+function pixMotif(rows, fill) {
+  const svg = document.createElementNS(MOT_NS, "svg");
   svg.setAttribute("class", "ac-mot");
-  svg.setAttribute("width", w); svg.setAttribute("height", h);
-  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  svg.setAttribute("height", rows * MOT_ROW - (MOT_ROW - MOT_BLK));
+  svg.dataset.rows = rows;
+  svg.dataset.fill = fill;
   svg.setAttribute("shape-rendering", "crispEdges");
   svg.setAttribute("aria-hidden", "true");
-  for (let c = 0; c < reach; c++) {
-    // density falls off from solid at the anchored edge to nothing at the tip
-    const dens = 1 - c / reach;
+  watchMotif(svg);
+  return svg;
+}
+// Current is two rows at a quarter fill; Ready is one row at a seventh. Both
+// span the same width, so the difference is density and depth — about three
+// and a half times the blocks, in twice the rows — and it survives greyscale.
+const curMotif = () => pixMotif(2, 2500);
+const rdyMotif = () => pixMotif(1, 1400);
+// Fill one motif from its measured box. Cheap and idempotent: it redraws only
+// when the width it was last drawn at has actually changed.
+function paintMotif(svg) {
+  const w = Math.floor(svg.getBoundingClientRect().width);
+  if (w < MOT_PITCH * 4) return;              // not laid out yet, or hidden
+  if (svg.dataset.w === String(w)) return;
+  svg.dataset.w = String(w);
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const rows = +svg.dataset.rows, fill = +svg.dataset.fill;
+  const cols = Math.floor((w - MOT_BLK) / MOT_PITCH) + 1;
+  for (let c = 0; c < cols; c++) {
     for (let r = 0; r < rows; r++) {
-      if (((c * 3 + r * 5) % 10) / 10 >= dens) continue;
-      const b = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_PITCH);
+      if ((c * MOT_STEP + r * MOT_TURN) % MOT_MOD >= fill) continue;
+      const b = document.createElementNS(MOT_NS, "rect");
+      b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_ROW);
       b.setAttribute("width", MOT_BLK); b.setAttribute("height", MOT_BLK);
       svg.append(b);
     }
   }
-  return svg;
 }
-// Current is dense and long; Ready is short and thin. The difference is the
-// pattern itself, so it holds with no colour at all.
-const curMotif = () => pixMotif(22, 2);
-const rdyMotif = () => pixMotif(8, 1);
+// A ResizeObserver is the right instrument here and a frame callback is not:
+// it fires the moment the element first HAS a box and again every time that
+// box changes, whatever built the card and whenever it landed. Watching for a
+// frame instead loses the race against a grid that is still being filled in
+// from a fetch. An observer whose target has left the page stops being
+// watched, so re-rendering a grid does not accumulate them.
+const MOT_RO = typeof ResizeObserver === "function"
+  ? new ResizeObserver(es => es.forEach(e => {
+      if (!e.target.isConnected) { MOT_RO.unobserve(e.target); return; }
+      paintMotif(e.target);
+    }))
+  : null;
+function watchMotif(svg) {
+  if (MOT_RO) MOT_RO.observe(svg); else scheduleMotifs();
+}
+// The fallback for an engine without ResizeObserver: one pass for the whole
+// page on the next frame, and again whenever the window resizes.
+let motPass = 0;
+function paintMotifs() { motPass = 0; document.querySelectorAll(".ac-mot").forEach(paintMotif); }
+function scheduleMotifs() { if (!motPass) motPass = requestAnimationFrame(paintMotifs); }
+if (!MOT_RO) addEventListener("resize", scheduleMotifs);
 // Two shapes from one description: the 63px card that lives in the grid, and
 // — with `panel` — the same card expanded, which is drawn ABOVE the grid so
 // opening one never moves another. The grid's geometry is fixed for good.
@@ -4369,9 +4458,13 @@ function authCard(e, panel) {
   const open = AUTH.open === e.key;
   const card = el("div","acard " + st8.cls + (panel ? " open ac-panel" : open ? " ac-under" : ""));
   card.id = (panel ? "authp-" : "auth-") + e.key.replace("/", "-");
-  // Current wears the accent pixel ring; Ready wears the same ring held far
-  // back. Idle and not-connected wear none — the badge alone speaks.
-  if (st8.cls === "cur") card.append(curMotif());
+  // Current wears the accent dither; Ready wears the same field held far back.
+  // Idle and not-connected wear none — the badge alone speaks. The opened
+  // card is a form, not a card in the grid: its own head carries the badge,
+  // and a band pinned to the bottom of a scrolling panel would land on the
+  // body, so the marker belongs to the collapsed shape only.
+  if (panel) { /* the panel states itself in its head */ }
+  else if (st8.cls === "cur") card.append(curMotif());
   else if (st8.cls === "rdy") card.append(rdyMotif());
 
   const head = el("div","ac-h");
@@ -4821,14 +4914,19 @@ async function loadModels() {
     const tabs = [{ id: "all", label: "All", n: allModels.length }];
     famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
       const n = allModels.filter(a => a.fam === fid).length;
-      if (n) tabs.push({ id: fid, label: TAB_LABEL[fid] || famLabel[fid] || fid, n });
+      if (n) tabs.push({ id: fid, label: TAB_LABEL[fid] || famLabel[fid] || fid, n, logo: famLogo[fid] });
     });
     const nLocal = allModels.filter(a => a.local).length;
-    if (nLocal) tabs.push({ id: "local", label: "Local", n: nLocal });
+    // Local IS Ollama, so here the llama is the honest mark
+    if (nLocal) tabs.push({ id: "local", label: "Local", n: nLocal, logo: "ollama" });
     if (!tabs.some(t => t.id === MODEL_TAB)) MODEL_TAB = "all";
     const tabRow = el("div","mtabs");
     tabs.forEach(t => {
-      const c = el("button","fchip" + (t.id === MODEL_TAB ? " on" : ""), t.label);
+      const c = el("button","fchip" + (t.id === MODEL_TAB ? " on" : ""));
+      // All is every family at once, so it wears no mark — the same choice
+      // the Deploy page's All pill makes
+      if (t.id !== "all") c.append(famMark(t.id, t.logo, t.label));
+      c.append(el("span", null, t.label));
       c.append(el("span","tn2", String(t.n)));
       c.onclick = () => {
         MODEL_TAB = t.id;
@@ -4867,7 +4965,7 @@ async function loadModels() {
       const rows = allModels.filter(a => a.fam === fid);
       if (!rows.length) return;
       const fh = el("div","mm-glabel"); fh.dataset.fam = fid;
-      fh.append(providerMark(famLogo[fid] || fid, famLabel[fid] || fid));
+      fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));
       fh.append(document.createTextNode(famLabel[fid] || fid));
       fh.append(el("span","mm-gn", rows.length + " model" + (rows.length===1?"":"s")));
       const grid = el("div","mm-grid"); grid.dataset.fam = fid;
