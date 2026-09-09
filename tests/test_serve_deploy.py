@@ -911,7 +911,7 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    for marker in ('data-v="deploy">Deploy</button>', 'id="deploypad"', "loadDeploy",
+    for marker in ('data-v="deploy"><i class="ic" data-i="deploy"></i>', 'id="deploypad"', "loadDeploy",
                    "renderDpProviders", "openCredSheet", "renderDpPicker", "renderModelRows", "renderFit", "fitTable",
                    "confirmDeploy", "openJobSheet", "renderDeployDone", "useDeployment", "renderDeployments",
                    "openLogs", "confirmTeardown", 'd: "deploy"', '"12345678"', "dp-grid", "dp-fit", "dp-deps",

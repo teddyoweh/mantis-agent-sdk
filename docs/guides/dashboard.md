@@ -21,22 +21,47 @@ dependencies, no build step, one self-contained HTML page with every asset
 
 ## The shell
 
-One slim top bar: the lowercase **mantis** wordmark, the eight page tabs —
-**Overview · My models · Sessions · Activity · Deploy · MCP · Skills · Config**
-— as one tight group of pills (the active one is green-tinted), then on the
-right
-the **current model** with a live dot and the provider it's reached through,
-a **search or jump… ⌘K** button that opens the command palette, a **theme**
-toggle (system → dark → light, remembered in the browser) and a **local** /
-**lan · token** pill that says how the server is bound. Pages are
-full-width with a centred column; the sessions page is three resizable
-columns that each scroll on their own.
+A **left rail** and a slim bar over the page.
+
+The rail is the only surface on screen everywhere, so it carries the things
+you navigate by. At the top, the mantis mark, the wordmark and the directory
+this dashboard was started in. Then the eight pages, grouped and each with
+its own drawn mark — **Workspace**: Overview · **Models**: My models, Deploy ·
+**Work**: Sessions, Activity · **Extend**: MCP, Skills · **System**: Config.
+A page carries a **count** when there is something in it (sessions on the
+machine, families ready, MCP servers, skills) and a green live count when
+something is running right now; zero is never printed. The active page is a
+green-tinted row, and under it the rail opens the rows you were about to
+click anyway — the five families under **My models** (with their vendor
+marks and a ready dot), your recent projects under **Sessions**, what is live
+under **Deploy**. Only the page you are on expands, and its caret folds the
+rows away. At the foot: the **current model** with a live dot and the
+provider it is reached through (clicking goes to the page that would change
+it), the **theme** toggle (system → dark → light, remembered), the version,
+and a **local** / **lan · token** pill that says how the server is bound.
+
+The rail folds to marks only with the chevron or **⌘\** — remembered per
+browser — and folds itself on a phone-width window without spending that
+preference.
+
+The bar above the page says where you are: the page's own mark and name,
+then what it is over ("184 sessions · 42 projects", the project you picked),
+with **search or jump… ⌘K** on the right. Pages are full-width with a centred
+column; the sessions page is three columns that each scroll on their own.
+
+Every page mark is drawn on one 24-unit grid at one stroke weight in
+`currentColor`, so a row colours its icon and its label together, and a
+folded rail is still navigable. They are literal about what this program
+does: a model is a chip with pins, a deployment is a card in a rack with its
+power light on, MCP is two tools handed across a dashed link.
 
 Surfaces are neutral — near-black in dark mode, a soft grey in light — and
 there are **no lines**: no borders, no dividers, no shadows. Elevation is a
 background step (page → panel → panel-2 → fill), so a card is a filled
 rounded surface, hover is one step lighter, and the selected or active
-thing is a green-tinted fill with green text. Inputs are filled, tables are
+thing is a green-tinted fill with green text. The rail sits on `panel` and
+the content on the page ground, which is the same step every card uses — the
+split between them needs no rule either. Inputs are filled, tables are
 rows with hover fills, section headers are a normal-weight title-case label
 with its count ("Providers · 3/5 ready", "GPU providers · 1/3 configured"),
 and page captions are one short line. All-caps mono is reserved for tiny
@@ -63,19 +88,42 @@ can't connect; both pause while the tab is hidden.
 
 ### Overview
 
-The landing page. Reading top to bottom, in words:
+The landing page: four readings across the top, then instruments down the
+left and state you can act on down the right.
 
-- **Providers · N/5 ready** — five cards, one per family the SDK speaks:
+**The four readings.** Messages, tool calls, spend and your streak, each as a
+level, what it moved since the window before it, and the shape of the run-up
+under it — a line for a level, columns for a count per day, blocks for the
+days you worked. The **window is chosen by the data and named in the label**:
+`· 7d` if you worked this week, `· 30d` if you did not, `· all time` if the
+machine has been quiet for a month. A dashboard that reports four zeroes
+because you took a holiday has told you nothing, and one that says "7d" over
+a month of numbers is lying; naming the window does both jobs. A move under
+one percent is drawn in neutral ink rather than tinted green or red.
+
+**Down the left, series over time:** the **trace** (26 weeks of daily volume
+as a faint envelope with a 7-day mean over it, the peak annotated, and the
+sessions / messages-per-session / active-days / you-vs-agent read-out under
+it), **spend & usage**, and the **projects** ledger.
+
+**Down the right, state right now:** the five provider families, **what ran**
+(the last few jobs and workflow runs, with anything still running counted in
+the header — the card is absent until something has run), **when you work**
+and **what it reaches for**.
+
+- **Providers · N/5 ready** — one row per family the SDK speaks:
   **OpenAI**, **Claude (Anthropic)**, **Gemini (Google)**, **Grok (xAI)** and
   **open source** (Ollama, vLLM, Together, Fireworks, Groq, OpenRouter, …).
-  Each card shows the vendor's mark, how that family is authenticated
-  (*key saved* on this machine, *key from env*, *OAuth token* for a Claude
-  subscription, or *no key*), the last model you used from it, and a
-  **test** button that performs one `GET /models` against the endpoint with
-  the credential mantis would use and reports latency and model count. The
-  open-source card also says whether a local Ollama is answering and how
-  many models it has loaded. Clicking a card lands in that provider's setup
-  on the models page.
+  Each row is the vendor's mark, the family, the model you last ran from it
+  (or, before you ever have, where it points), and on the right how it is
+  authenticated — *key saved* on this machine, *key from env*, *OAuth token*
+  for a Claude subscription, *no key* — with a dot for ready. Hover and that
+  right edge becomes the one action that changes it: **test**, which performs
+  one `GET /models` against the endpoint with the credential mantis would use
+  and reports latency and model count in place. The open-source row says
+  whether a local Ollama is answering and how many models it has loaded.
+  Clicking a row lands in that family's setup on the models page; the card's
+  last line goes to the models page whole.
 - **Spend & usage** — a bar per day for the last 7 or 30 days. **Hatched**
   bars are *estimated*: transcripts store messages, not the provider's usage
   record, so session tokens are estimated from transcript size (≈4 characters
@@ -86,9 +134,11 @@ The landing page. Reading top to bottom, in words:
   row *estimated* or *recorded*. When the current model has no row in the
   price table the page shows tokens and leaves dollars blank rather than
   guessing.
-- **Activity · last 26 weeks** — the message trace, the weekday×hour
-  punchcard, the tool spectrum and the projects ledger (now with estimated
-  tokens per project).
+- **When you work** — the weekday×hour punchcard, one dot per hour sized by
+  volume, because by-hour and by-weekday separately cannot tell you about
+  Sunday nights.
+- **What it reaches for** — the tool spectrum: one bar split by tool, then
+  the ranked list with counts and shares.
 
 ### Activity
 
@@ -324,8 +374,8 @@ GPUs fit and what they cost, deploy with one click, watch it come up, then
 Reading top to bottom:
 
 - **Header** — the page count is the number of live deployments; the
-  provider section's label carries "N/M configured"; the top bar counts
-  deployments.
+  provider section's label carries "N/M configured"; the rail counts live
+  deployments and lists them under **Deploy**.
 - **GPU providers** — one card per adapter (RunPod, Hugging Face Inference
   Endpoints, Modal, DeepInfra, Baseten, Vast.ai, …): the vendor's mark in a
   square tinted with its own colour, the name over a one-line descriptor
@@ -452,7 +502,8 @@ the effective settings with the layer each value came from.
 | Keys | Action |
 |---|---|
 | `⌘K` / `ctrl+K` | the command palette (below) |
-| `1` … `8` | jump to a page (the ⌘K palette lists each page's keys) |
+| `⌘\` / `ctrl+\` | fold the rail to marks only |
+| `1` … `8` | jump to a page, in rail order (the ⌘K palette lists each page's keys) |
 | `g` then `o` / `m` / `s` / `a` / `d` | overview / my models / sessions / activity / deploy |
 | `g` then `p` / `k` / `c` | mcp / skills / config |
 | `/` | focus the current page's search (models filter, sessions filter, …) |
@@ -461,7 +512,7 @@ the effective settings with the layer each value came from.
 
 ## Command palette
 
-`⌘K` (or `ctrl+K`, or the search button in the top bar) opens a palette
+`⌘K` (or `ctrl+K`, or the search button in the bar) opens a palette
 over the page. Type to filter; `↑` `↓` move, `↵` runs, `esc` closes. It
 lists, in groups: the eight **pages** (with their `g` chord), every
 **project** known to the sessions page, the **sessions** of the project
@@ -484,13 +535,13 @@ trace for *nothing has run*, and a magnifier for *nothing matches*.
 
 ## Theme and layout
 
-The page follows `prefers-color-scheme` and the toggle in the top bar
-overrides it (`data-theme` on the root, remembered in the browser;
+The page follows `prefers-color-scheme` and the toggle at the foot of the
+rail overrides it (`data-theme` on the root, remembered in the browser;
 `?theme=dark|light` in the URL forces one for screenshots). Both palettes
 are neutral — dark: `#0a0b0d` background, `#111316` panels, white-at-8%
 borders, `#ededed` / `#9a9ea6` text; light: `#fafafa`, `#fff`, black-at-8%,
 `#111` — with the mantis green as the single accent. Below about 900px the
-tabs scroll horizontally and the sessions view shows one column at a time.
+rail folds to marks only and the sessions view shows one column at a time.
 
 ## API
 

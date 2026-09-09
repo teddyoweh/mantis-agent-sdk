@@ -332,7 +332,9 @@ def test_family_tabs_carry_their_vendor_marks():
     assert 'add("all", "All", null, models.length);' in js
     # one rule for what a family looks like, used by the tab AND by the group
     # label it scrolls to, so the two can never disagree
-    assert js.count("famMark(") == 3        # the definition, the tab, the label
+    # the definition, the tab, the group label it scrolls to, the rail's row
+    # under My models, and the Overview's provider row
+    assert js.count("famMark(") == 5
     assert 'fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));' in js
     fm = js[js.index("function famMark("):js.index("function anyMark()")]
     assert 'fid === "oss" ? anyMark() : providerMark(logo || fid, label)' in fm
@@ -562,7 +564,8 @@ def test_no_signal_path_and_short_captions():
     assert "signalPath" not in js and "──▶" not in js
     for m in re.finditer(r'pageHead\(pad, "([^"]+)", [^,]+,\s*"([^"]*)"', js):
         assert len(m.group(2)) <= 70, (m.group(1), m.group(2))
-    assert 'section(pad, "Providers · " + readyN' in js and 'section(pad, "GPU providers · "' in js
+    assert 'cardHead(pcard, "key", "Providers", readyN + "/" + fams.length + " ready"' in js
+    assert 'section(pad, "GPU providers · "' in js
     # section labels are normal-weight title case now — the all-caps mono style is gone
     sec = css.split(".sec-t {")[1].split("}")[0]
     assert "uppercase" not in sec and "var(--mono)" not in sec
@@ -572,18 +575,19 @@ def test_no_signal_path_and_short_captions():
 
 
 def test_nav_order_rename_and_hash_alias():
-    """My models sits right after Overview; the number keys follow the nav
-    order; the `g` chords and the #models hash keep working."""
+    """The rail reads Overview, then the two model pages, then the two work
+    pages; the number keys follow that order; the `g` chords and the #models
+    hash keep working."""
     import re as _re
 
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
-    tabs = _re.findall(r'data-v="(\w+)"[^>]*>([^<]+)</button>', INDEX_HTML)
-    assert tabs == [("home", "Overview"), ("models", "My models"), ("sessions", "Sessions"),
-                    ("activity", "Activity"), ("deploy", "Deploy"), ("mcp", "MCP"),
+    tabs = _re.findall(r'data-v="(\w+)"[^>]*>.*?<span class="nl">([^<]+)</span>', INDEX_HTML)
+    assert tabs == [("home", "Overview"), ("models", "My models"), ("deploy", "Deploy"),
+                    ("sessions", "Sessions"), ("activity", "Activity"), ("mcp", "MCP"),
                     ("skills", "Skills"), ("config", "Config")]
-    assert 'const VIEWS = ["home","models","sessions","activity","deploy","mcp","skills","config"];' in js
+    assert 'const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","config"];' in js
     assert '"12345678".indexOf(e.key)' in js and "showTab(VIEWS[i])" in js
     # the chords still address pages by name, and #models still resolves
     assert 'm: "models"' in js and 'o: "home"' in js and 's: "sessions"' in js
@@ -591,7 +595,7 @@ def test_nav_order_rename_and_hash_alias():
     assert 'tabFromHash' in js and 't === "models"' in js
 
 
-def test_nav_tabs_and_segmented_controls_are_pills():
+def test_nav_rows_and_segmented_controls_are_pills():
     from mantis_agent.serve_ui import INDEX_HTML
 
     css = _css()
@@ -602,9 +606,12 @@ def test_nav_tabs_and_segmented_controls_are_pills():
     chip_on = css.split(".fchip.on {")[1].split("}")[0]
     assert "background: var(--accent-soft)" in chip_on
     base = css.split("  #nav button {")[1].split("}")[0]
-    assert "padding: 6px 10px" in base and "border-radius: 6px" in base and "transition: background var(--t)" in base
+    assert "padding: 6px 10px" in base and "border-radius: 7px" in base and "transition: background var(--t)" in base
+    # the active row changes colour and fill only — never weight, so the rail
+    # never reflows under the cursor
     assert "font-weight" not in nav_on and 'class="k"' not in INDEX_HTML and "#nav button .k" not in css
-    assert "gap: 3px" in css.split("  #nav {")[1].split("}")[0]
+    # the icon is coloured by the row it sits in, not by a rule of its own
+    assert "#nav button.on .ic { color: var(--accent); }" in css
     assert ".sec-t::after" not in css                      # no rule after section labels
     zero = css.split(".zero {")[1].split("}")[0]
     assert "dashed" not in zero and "background: var(--panel-2)" in zero
@@ -634,8 +641,11 @@ def test_page_carries_the_shell_cards_transcript_and_palette(home):
         httpd.shutdown()
         httpd.server_close()
     for marker in ('<header id="top">', 'id="cmdk"', 'id="themebtn"', 'id="lanind"', 'id="palette"', 'id="palin"',
-                   'data-v="home" class="on">Overview', 'data-v="config">Config</button>',
-                   'data-v="activity">Activity</button>', 'data-v="mcp">MCP</button>', 'id="activitypad"', "loadActivity", "renderActivityPage",
+                   'data-v="home" class="on"><i class="ic" data-i="home"></i><span class="nl">Overview</span>',
+                   'data-v="config"><i class="ic" data-i="config"></i><span class="nl">Config</span>',
+                   'data-v="activity"><i class="ic" data-i="activity"></i>', 'data-v="mcp"><i class="ic" data-i="mcp"></i>',
+                   'id="rail"', 'id="railtog"', 'id="crumb"', 'id="sub-models"', 'id="n-sessions"',
+                   'id="activitypad"', "loadActivity", "renderActivityPage",
                    "counts_7d", "ACT_FILTERS", 'a: "activity"', '"12345678"', "xrow", "Load more",
                    "function patchList", "function skeleton", "function md(", "function splitMeta", "function ctxToggle",
                    "function toolCall", "META_RE", "system-reminder", "show context (",
@@ -647,6 +657,124 @@ def test_page_carries_the_shell_cards_transcript_and_palette(home):
         assert marker in page, marker
     for gone in ("live-act", "renderActivitySummary", "act-sum", "see all"):
         assert gone not in page, gone
-    assert "cdn." not in page and "googleapis" not in page and "<aside" not in page
+    assert "cdn." not in page and "googleapis" not in page
     for marker in ("dp-mgrid", "mcard", "bigMark", "providerDescriptor", "gcard", "color-mix(in srgb", "VRAM_CAP_GB", "dp-glabel"):
         assert marker in page, marker
+
+
+# ==========================================================================
+# The rail redesign: eight pages, each with its own mark, counts that say
+# whether a page has anything in it, and sub-rows under the page you are on.
+# ==========================================================================
+def test_every_page_in_the_rail_carries_a_mark():
+    """A collapsed rail is marks only, so every page needs one — drawn on the
+    same 24-unit grid at the same stroke, in currentColor so the row colours
+    it."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    views = re.search(r"const VIEWS = \[([^\]]+)\]", js).group(1).replace('"', "").split(",")
+    icons = js[js.index("const ICONS = {"):js.index("// One helper, three sizes")]
+    for v in views:
+        assert ('data-i="%s"' % v) in INDEX_HTML, v          # the row asks for it
+        assert ("\n  %s:" % v) in icons, v                   # the set defines it
+    # one drawing style, stated once and inherited by every glyph
+    assert 'stroke="currentColor" stroke-width="1.7"' in js and 'viewBox="0 0 24 24"' in js
+    assert js.count("const IC0 = ") == 1
+    # the readings and card heads draw from the same set
+    for name in ("msg", "tool", "spend", "streak", "key", "clock", "folder", "trace"):
+        assert ("\n  %s:" % name) in icons, name
+    # the marks are painted into the served markup, never hand-inlined per row
+    assert 'i.ic[data-i]' in js and "function paintIcons(root)" in js
+
+
+def test_sub_rows_open_only_under_the_page_you_are_on():
+    """The rail expands one section — the page you are on — and only when it
+    has rows. Everything else stays a list of pages."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    sub = js[js.index("function subRows(v)"):js.index("// The bar says where you are")]
+    assert "const rows = v === curView ? subRows(v) : [];" in sub
+    assert "const open = rows.length > 0 && SUB_OPEN;" in sub
+    # the three pages that have something worth listing
+    for v in ('v === "models"', 'v === "sessions"', 'v === "deploy"'):
+        assert v in sub, v
+    for v in ("models", "deploy", "sessions"):
+        assert ('id="sub-%s"' % v) in INDEX_HTML, v
+    # a caret exists only on an open page that has rows, and it folds them
+    assert ".ncar { display: none;" in css and "#nav button.has-sub .ncar { display: block; }" in css
+    assert 'if (b.dataset.v === curView && e.target.closest(".ncar")) { SUB_OPEN = !SUB_OPEN; paintSubs(); return; }' in js
+    # rows repaint from data the pages already fetched — no request to open one
+    assert js.count("paintSubs()") >= 5
+
+
+def test_the_rail_folds_and_remembers():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    assert 'const RAIL_KEY = "mantis-rail";' in js and 'localStorage.setItem(RAIL_KEY' in js
+    assert '(e.metaKey || e.ctrlKey) && e.key === "\\\\"' in js and "toggleRail()" in js
+    # a narrow window folds it without spending the saved preference
+    assert 'NARROW = window.matchMedia("(max-width: 900px)")' in js
+    assert "applyRail(NARROW.matches || railPref(), false)" in js
+    # folded, the words go and the marks stay
+    folded = css.split('body[data-rail="min"] .nl,')[1].split("}")[0]
+    assert "display: none" in folded
+    assert 'body[data-rail="min"] { --rail-w: 60px; }' in css
+
+
+def test_overview_is_four_readings_then_two_columns():
+    """Four tiles across the top, then a column of instruments and a column of
+    state. The tile window is named by the data, so an empty week never reads
+    as an empty machine."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    home = js[js.index("async function loadHome()"):js.index("// ====", js.index("async function loadHome()"))]
+    assert 'const WIN = sumWin(7, 0, "msgs") ? 7 : sumWin(30, 0, "msgs") ? 30 : 0;' in home
+    assert 'const wlab = WIN ? " · " + WIN + "d" : " · all time";' in home
+    for label in ('"Messages" + wlab', '"Tool calls" + wlab', '"Spend"', '"Trace"', '"Projects"', '"Providers"',
+                  '"When you work"', '"What it reaches for"', '"What ran"'):
+        assert label in home, label
+    # instruments left, state right — never mixed
+    assert 'const L = el("div","ov-c"), R = el("div","ov-c");' in home
+    assert "grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr)" in css
+    assert ".tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr))" in css
+    # one grammar for the three micro-charts, all drawn edge to edge
+    for fn in ("function sparkLine(", "function sparkBars(", "function dayBlocks("):
+        assert fn in js, fn
+    assert js.count('preserveAspectRatio="none"') >= 3
+    # a move under a point is noise, and noise is not tinted
+    dlt = js[js.index("function deltaEl("):js.index("function tile(")]
+    assert 'const cls = pc >= 1 ? "up" : pc <= -1 ? "dn" : "";' in dlt and "if (!prev) return null;" in dlt
+
+
+def test_the_five_families_are_rows_not_cards():
+    """On the Overview the families read as standings — one row each, state on
+    the right until you hover, when it becomes the probe that changes it."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    fam = css.split("  .fam {")[1].split("}")[0]
+    assert "grid-template-columns: 26px minmax(0, 1fr) auto" in fam
+    # every cell is placed: an item with a definite row is laid out before the
+    # auto ones, which is what put the name last when they were not
+    for cell in (".fam .mark2 { grid-column: 1;", "  .fam .fn { grid-column: 2; grid-row: 1;",
+                 "  .fam .fm { grid-column: 2; grid-row: 2;", "  .fam .fr { grid-column: 3;"):
+        assert cell in css, cell
+    assert ".fam:hover .ff, .fam:focus-within .ff { display: flex; }" in css
+    assert ".fam:hover .fst, .fam:focus-within .fst { display: none; }" in css
+    # the row is no longer its own filled surface — the card it sits in is
+    assert ".card, .card2, .dpc, .setup," in css and ".fam, .dpc" not in css
+    assert 'const grid = el("div","provs"); grid.id = "fam-grid";' in js
+
+
+def test_the_bar_says_where_you_are():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    assert 'function setCrumb(extra)' in js and "c.append(icon(curView));" in js
+    assert 'c.append(el("b", null, PAGE_NAMES[curView] || curView));' in js
+    assert js.count("const PAGE_NAMES = ") == 1        # the rail and the palette share one list
+    assert 'setCrumb(fmt(o.session_count) + " sessions · " + fmt(o.project_count) + " projects")' in js

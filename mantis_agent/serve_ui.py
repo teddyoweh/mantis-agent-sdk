@@ -68,7 +68,8 @@ INDEX_HTML = r"""<!doctype html>
   body {
     font-family: var(--sans); background: var(--bg); color: var(--ink);
     font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
-    display: grid; grid-template-rows: 50px 1fr; height: 100vh; overflow: hidden;
+    display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); grid-template-rows: 100%;
+    height: 100vh; overflow: hidden;
   }
   a { color: var(--accent); text-decoration: none; }
   :focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); border-radius: 6px; }
@@ -77,24 +78,121 @@ INDEX_HTML = r"""<!doctype html>
     * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
   }
 
-  /* ---- shell: one slim top bar, tabs as pills ---- */
-  #top { display: flex; align-items: center; gap: 20px; padding: 0 16px; background: var(--panel); min-width: 0; }
-  .brand { display: flex; align-items: center; gap: 8px; flex: none; }
-  .brand img { width: 22px; height: 22px; display: block; }
-  .brand span { font-weight: 700; font-size: 13.5px; letter-spacing: -.02em; }
-  #nav { display: flex; align-items: center; gap: 3px; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  /* ==========================================================================
+     THE SHELL — a rail that names the machine, a bar that says where you are.
+
+     The rail is the only surface that is on screen on every page, so it
+     carries the things you navigate BY: the eight pages, each with its own
+     mark; the count that says whether a page has anything in it; and, under
+     whichever page you are on, the rows you were going to click next anyway
+     — the five families under My models, your recent projects under Sessions,
+     what is live under Deploy. Nothing about a page is hidden behind a menu
+     that the rail could have said out loud.
+     It sits on --panel while the content sits on --bg, which is the same
+     background step every card on this page already uses: the split reads
+     without a rule, exactly like the cards do. Collapsed (⌘\ or the chevron)
+     the rail keeps the marks and drops the words; the choice is remembered.
+     ========================================================================== */
+  :root { --rail-w: 236px; }
+  body[data-rail="min"] { --rail-w: 60px; }
+  #rail { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; background: var(--panel); }
+  .rail-h { display: flex; align-items: center; gap: 10px; padding: 13px 12px 8px; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+  .brand img { width: 27px; height: 27px; flex: none; display: block; padding: 3px; border-radius: 8px; background: var(--fill); }
+  .brand .bt { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+  .brand .bn { font-weight: 700; font-size: 13.5px; letter-spacing: -.02em; }
+  /* the machine, not the product: which box's sessions you are looking at */
+  .brand .bs { font-family: var(--mono); font-size: 10px; color: var(--ink-3); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .railtog { flex: none; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 13px; cursor: pointer;
+    transition: background var(--t), color var(--t); }
+  .railtog:hover { background: var(--fill); color: var(--ink); }
+
+  /* ---- the pages ---- */
+  #nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 12px; overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: none; min-height: 0; }
   #nav::-webkit-scrollbar { display: none; }
-  #nav button { display: inline-flex; align-items: center; font: inherit; font-size: 13px; font-weight: 500; margin: 0;
-    padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-2); cursor: pointer;
-    white-space: nowrap; flex: none; transition: background var(--t), color var(--t); }
+  .ng { padding: 13px 10px 5px; font-size: 10px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--ink-3); white-space: nowrap; }
+  #nav button { display: flex; align-items: center; gap: 10px; width: 100%; height: 31px; font: inherit; font-size: 13px;
+    font-weight: 500; margin: 0; padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2);
+    cursor: pointer; white-space: nowrap; text-align: left; transition: background var(--t), color var(--t); }
   #nav button:hover { background: var(--fill); color: var(--ink); }
   /* active = colour + fill only; the weight never changes, so the group never shifts */
   #nav button.on { background: var(--accent-soft); color: var(--accent); }
-  .topr { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
-  .railfoot { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); min-width: 0; max-width: 34vw; }
-  .rf-v { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden;
+  /* Every page has a mark, and the mark is the only thing left when the rail
+     is collapsed — so it has to carry the page on its own. They are drawn on
+     one 24-unit grid at one stroke weight, in currentColor, so a row's icon
+     and its label always change colour together. */
+  .ic { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px;
+    color: var(--ink-3); transition: color var(--t); }
+  .ic svg { width: 18px; height: 18px; display: block; }
+  #nav button:hover .ic { color: var(--ink-2); }
+  #nav button.on .ic { color: var(--accent); }
+  .nl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* the count is a reading, not a badge: mono, tabular, no chrome — until it
+     is something that is happening RIGHT NOW, which gets the live tint */
+  .nc { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; }
+  #nav button.on .nc { color: var(--accent); }
+  .nc.hot { color: var(--ok); font-weight: 600; }
+  .nc.dot { display: inline-flex; align-items: center; gap: 5px; }
+  /* the caret only exists on a page that has sub-rows, and only when it is
+     the page you are on — a rail full of carets is a filing cabinet */
+  .ncar { display: none; flex: none; width: 12px; color: var(--ink-3); font-size: 8px; text-align: right;
+    transition: transform var(--t); }
+  #nav button.has-sub .ncar { display: block; }
+  #nav button.sub-open .ncar { transform: rotate(90deg); }
+
+  /* ---- the sub-rows: what you would have clicked next ---- */
+  .nsub { display: none; flex-direction: column; gap: 1px; margin: 1px 0 4px; }
+  .nsub.on { display: flex; animation: drawer .16s ease-out; }
+  .nsr { display: flex; align-items: center; gap: 9px; width: 100%; height: 27px; padding: 0 10px 0 20px; border: 0;
+    border-radius: 7px; background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+    text-align: left; white-space: nowrap; transition: background var(--t), color var(--t); }
+  .nsr:hover { background: var(--fill); color: var(--ink); }
+  .nsr.on { color: var(--accent); }
+  .nsr .nl { font-size: 12.5px; }
+  .nsr .mark2 { width: 17px; height: 17px; border-radius: 5px; background: none; flex: none; }
+  .nsr .mark2 svg { width: 13px; height: 13px; }
+  .nsr .ic { width: 15px; height: 15px; } .nsr .ic svg { width: 15px; height: 15px; }
+  .nsr .dot2 { width: 6px; height: 6px; }
+  .nsr .nc { font-size: 10px; }
+
+  /* ---- the foot: what this dashboard is pointed at right now ---- */
+  .rail-f { padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .railfoot { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 9px; background: var(--panel-2);
+    cursor: pointer; min-width: 0; transition: background var(--t); }
+  .railfoot:hover { background: var(--fill); }
+  .rf-t { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.3; }
+  .rf-v { font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--ink); overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
-  .rf-s { color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rf-s { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rail-b { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
+  .rail-b .lan { margin-left: auto; }
+  .ver { font-family: var(--mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; }
+
+  /* ---- collapsed: marks only, and the rail stops being a list of words ---- */
+  body[data-rail="min"] .nl, body[data-rail="min"] .nc, body[data-rail="min"] .ncar,
+  body[data-rail="min"] .ng, body[data-rail="min"] .nsub, body[data-rail="min"] .brand .bt,
+  body[data-rail="min"] .rf-t, body[data-rail="min"] .rail-b .ver, body[data-rail="min"] .rail-b .lan { display: none; }
+  body[data-rail="min"] #nav button { justify-content: center; padding: 6px; }
+  body[data-rail="min"] .rail-h { padding: 13px 0 8px; justify-content: center; }
+  body[data-rail="min"] .brand { justify-content: center; flex: none; }
+  body[data-rail="min"] .railtog { position: absolute; opacity: 0; pointer-events: none; }
+  body[data-rail="min"] .railfoot { justify-content: center; padding: 9px 0; }
+  body[data-rail="min"] .rail-b { justify-content: center; }
+  body[data-rail="min"] .ng { display: block; height: 9px; padding: 0; font-size: 0; }
+
+  /* ---- the bar: where you are, and the two controls that are always live ---- */
+  #shell { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; overflow: hidden; }
+  #top { display: flex; align-items: center; gap: 12px; padding: 0 22px; min-width: 0; }
+  .crumb { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+  .crumb .ic { width: 16px; height: 16px; color: var(--ink-3); } .crumb .ic svg { width: 16px; height: 16px; }
+  .crumb b { font-weight: 600; color: var(--ink); letter-spacing: -.01em; }
+  .crumb .sep { color: var(--ink-3); font-size: 11px; }
+  .crumb .cs { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topr { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
   .rf-c, .rf-l, .kbd { display: none; }
   .tb { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; font: inherit; font-size: 12.5px;
     color: var(--ink-2); background: var(--fill); border: 0; border-radius: 8px; cursor: pointer; white-space: nowrap;
@@ -114,7 +212,7 @@ INDEX_HTML = r"""<!doctype html>
   .view { display: none; height: 100%; }
   .view.on { display: block; }
   .scroll { overflow-y: auto; height: 100%; }
-  .page { max-width: 1280px; margin: 0 auto; padding: 26px 24px 70px; }
+  .page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 70px; }
   .page.wide { max-width: 1560px; }
 
   /* ---- page furniture ---- */
@@ -129,6 +227,7 @@ INDEX_HTML = r"""<!doctype html>
   .sec { margin-top: 28px; }
   .sec-t { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 10px; display: flex; align-items: center;
     gap: 10px; flex-wrap: wrap; row-gap: 8px; }
+  .sec-t .ic { width: 16px; height: 16px; } .sec-t .ic svg { width: 16px; height: 16px; }
   @media (max-width: 1200px) {
     /* the provider toggle and the token state drop to their own line */
     .sec-t .dp-ptoggle { order: 3; flex-basis: 100%; margin-left: 0; }
@@ -138,7 +237,7 @@ INDEX_HTML = r"""<!doctype html>
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- cards & lists: filled surfaces; hover one step; selected = accent tint ---- */
-  .card, .card2, .fam, .dpc, .setup, .trace, .ctxbox, .hero, .host, .selfhost-card, .comp, details.layer,
+  .card, .card2, .dpc, .setup, .trace, .ctxbox, .hero, .host, .selfhost-card, .comp, details.layer,
   .cfg, .list, .browse, .mcard, .gcard { background: var(--panel); border-radius: var(--radius); }
   .card { padding: 15px 16px; display: flex; flex-direction: column; gap: 10px; }
   .card2 { padding: 14px 16px 16px; }
@@ -151,7 +250,7 @@ INDEX_HTML = r"""<!doctype html>
   .card .name { font-weight: 600; font-size: 13.5px; }
   .card .url { font-family: var(--mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .note { font-size: 12px; color: var(--ink-3); line-height: 1.45; }
-  .card.cur, .fam.cur, .dpc.cur { background: var(--accent-soft); }
+  .card.cur, .dpc.cur { background: var(--accent-soft); }
   .card.flash, .lrow.flash, .msg.flash { box-shadow: 0 0 0 2px var(--accent); }
   .list { padding: 4px; }
   .lrow { border-radius: var(--r-sm); }
@@ -872,6 +971,126 @@ INDEX_HTML = r"""<!doctype html>
   /* ==========================================================================
      OVERVIEW — readouts, the trace, the punchcard, the spectrum, the ledgers.
      ========================================================================== */
+  /* ---- the four readings, across the top -----------------------------------
+     A tile is one number you would otherwise have to go and compute: the
+     seven days you just had, what moved since the seven before it, and the
+     shape of the fortnight under it. The chart is not decoration — the number
+     is a level and the chart is what got it there, so they are always drawn
+     from the same series. It bleeds to both card edges because a sparkline
+     with side padding reads as a small chart in a big box; flush, it reads as
+     the floor of the tile. */
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 2px 0 16px; }
+  .tile { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
+    padding: 13px 15px 0; display: flex; flex-direction: column; min-width: 0; min-height: 124px; }
+  .tile-h { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+  .tile-h .ic { width: 15px; height: 15px; } .tile-h .ic svg { width: 15px; height: 15px; }
+  .tile-h .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile-v { font-size: 27px; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums;
+    line-height: 1.15; margin-top: 7px; }
+  .tile-v small { font-size: 15px; font-weight: 600; color: var(--ink-3); letter-spacing: -.02em; margin-left: 3px; }
+  .tile-s { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* a delta is a direction first and a number second: the arrow is the read,
+     the percentage is the detail. Neutral when the move is under a point —
+     tinting noise green is how a dashboard starts lying. */
+  .dlt { display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; }
+  .dlt.up { color: var(--ok); } .dlt.dn { color: var(--bad); }
+  .tile-c { margin: auto -15px 0; height: 38px; display: block; }
+  .tile-c svg { display: block; width: 100%; height: 38px; }
+  .tile-c .ln { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round;
+    vector-effect: non-scaling-stroke; }
+  .tile-c .ar { fill: var(--accent); opacity: .12; }
+  .tile-c .br { fill: var(--accent); opacity: .55; }
+  .tile-c .br.hi { opacity: 1; }
+  .tile-c .fl { fill: var(--fill-2); }
+  /* the streak tile draws the fortnight on the card motif's own grid — a day
+     you worked is a block, a day you didn't is the ghost of one */
+  .tile-c .blk { fill: var(--accent); } .tile-c .blk.off { fill: var(--fill-2); }
+  @media (max-width: 1240px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 620px) { .tiles { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---- the two columns: instruments on the left, standings on the right ----
+     Everything on the left is a series over time (the trace, spend, the
+     projects ledger). Everything on the right is a state right now (which
+     families are ready, when you work, what the agent reaches for). Reading
+     down one column never changes the question you are asking. */
+  .ov { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  .ov-c { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  @media (max-width: 1180px) { .ov { grid-template-columns: minmax(0, 1fr); } }
+  /* a card that owns its own header, so a section label is not spent on it */
+  .c-h { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; min-width: 0; }
+  .c-h .ic { width: 16px; height: 16px; } .c-h .ic svg { width: 16px; height: 16px; }
+  .c-h h3 { font-size: 13px; font-weight: 600; color: var(--ink); margin: 0; white-space: nowrap; }
+  .c-h .cn { font-family: var(--mono); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .c-h .sp { flex: 1; }
+  .c-h .fchips { flex: none; }
+  /* ---- the five families, as a standings list rather than five squat cards -- */
+  .provs { display: flex; flex-direction: column; gap: 1px; margin: 0 -6px -4px; }
+  .fam { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 1px 10px;
+    align-items: center; padding: 8px 10px; border-radius: 9px; cursor: pointer; min-width: 0; position: relative;
+    background: transparent; transition: background var(--t); }
+  .fam:hover { background: var(--panel-2); }
+  .fam.cur { background: var(--accent-soft); }
+  .fam.cur:hover { background: var(--accent-soft-2); }
+  .fam .mark2 { grid-column: 1; grid-row: 1 / 3; width: 26px; height: 26px; }
+  .fam .mark2 svg { width: 16px; height: 16px; }
+  .fam .fn { grid-column: 2; grid-row: 1; font-weight: 600; font-size: 12.5px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .fam.cur .fn { color: var(--accent); }
+  .fam .fm { grid-column: 2; grid-row: 2; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fam .fm.none { font-family: var(--sans); font-style: italic; }
+  /* the right edge of the row is one thing at a time: the state, until you
+     hover, when it becomes the action that changes the state */
+  .fam .fr { grid-column: 3; grid-row: 1 / 3; display: flex; align-items: center; justify-content: flex-end;
+    gap: 7px; flex: none; }
+  .fam .ff { display: none; align-items: center; gap: 6px; }
+  .fam:hover .ff, .fam:focus-within .ff { display: flex; }
+  .fam:hover .fst, .fam:focus-within .fst { display: none; }
+  .fam .ff .b { padding: 3px 9px; font-size: 11px; }
+  .fam .fst { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
+  .fam .fst .t2 { font-size: 9.5px; padding: 2px 5px; }
+  .fam .pr { font-family: var(--mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; max-width: 96px;
+    overflow: hidden; text-overflow: ellipsis; }
+  .fam .pr.ok { color: var(--ok); } .fam .pr.bad { color: var(--bad); }
+  /* a run, at a glance: state, what it was, how long ago. The full ledger
+     is one click away, so this row says the least that still identifies it. */
+  .arow { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    font-size: 12.5px; min-width: 0; transition: background var(--t); }
+  .arow:hover { background: var(--panel-2); }
+  .arow .an { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .arow .aa { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); flex: none; }
+  /* ---- the ledger, on the Activity page: one line per run or job ----------
+     Nine columns on one grid so the header and every row line up by
+     construction, and the numeric ones are mono and right-aligned: a column
+     of durations you cannot compare down the page is a list, not a ledger. */
+  .xlist { display: flex; flex-direction: column; gap: 1px; }
+  .xrow { display: grid; grid-template-columns: 8px 76px minmax(0, 1fr) 58px 78px 66px 62px 84px 62px;
+    gap: 10px; align-items: center; padding: 8px 11px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
+    min-width: 0; transition: background var(--t); }
+  .xrow:hover { background: var(--panel); }
+  .xrow.head { padding: 2px 11px 6px; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-3); cursor: default; }
+  .xrow.head:hover { background: transparent; }
+  .xrow.head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xrow.head span:nth-child(n+4) { text-align: right; }
+  .xk { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .xv { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .xs { text-align: right; } .xs .t2 { font-size: 9.5px; }
+  .xa { font-family: var(--mono); font-size: 11px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+  .xmore { margin-top: 12px; }
+  @media (max-width: 1200px) {
+    .xrow { grid-template-columns: 8px 70px minmax(0, 1fr) 78px 84px 62px; }
+    .xrow .xag, .xrow .xtok, .xrow .xusd, .xrow.head span:nth-child(4),
+    .xrow.head span:nth-child(6), .xrow.head span:nth-child(7) { display: none; }
+  }
+  /* the one way out of a card, in the card's own bottom padding */
+  .c-more { display: block; width: 100%; margin: 6px 0 -4px; padding: 7px 10px; border: 0; border-radius: 8px;
+    background: transparent; font: inherit; font-size: 12px; color: var(--ink-3); text-align: left; cursor: pointer;
+    transition: background var(--t), color var(--t); }
+  .c-more:hover { background: var(--panel-2); color: var(--accent); }
   .lcd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 22px; font-size: 12px; color: var(--ink-3); margin: 0 0 18px; }
   .lcd i { font-style: normal; color: var(--ink); font-weight: 600; font-size: 15px; letter-spacing: -.02em; font-variant-numeric: tabular-nums;
     margin-right: 5px; font-family: var(--mono); }
@@ -920,27 +1139,6 @@ INDEX_HTML = r"""<!doctype html>
   .prow .pf { position: relative; } .prow .pf .mark2 { width: 18px; height: 18px; border-radius: 5px; }
   .prow .pf .mark2 svg { width: 11px; height: 11px; }
   .prow .t2 { position: relative; }
-  .fam-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 12px; }
-  .fam { padding: 13px 14px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; position: relative; cursor: pointer;
-    transition: background var(--t); }
-  .fam:hover { background: var(--panel-2); }
-  .fam.cur:hover { background: var(--accent-soft-2); }
-  .fam .fh { display: flex; align-items: center; gap: 8px; }
-  .fam .mark2 { width: 26px; height: 26px; } .fam .mark2 svg { width: 16px; height: 16px; }
-  .fam .fn { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fam.cur .fn { color: var(--accent); }
-  .fam .fa { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; }
-  .fam .fm { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fam .fm.none { color: var(--ink-3); font-style: italic; font-family: var(--sans); }
-  .fam .ff { display: flex; align-items: center; gap: 6px; margin-top: auto; }
-  .fam .ff .b { padding: 5px 10px; font-size: 11.5px; }
-  .fam .ff .pr { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 5px;
-    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .fam .ff .pr.ok { color: var(--ok); } .fam .ff .pr.bad { color: var(--bad); }
-  .fam .sub2 { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .spend-h { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
-  .spend-h h3 { margin: 0; }
-  .spend-h .fchips { margin-left: auto; }
   .bars { width: 100%; height: auto; display: block; margin: 6px 0 4px; }
   .bars .est { fill: url(#hatch); }
   .bars .rec { fill: var(--accent); }
@@ -1266,8 +1464,9 @@ INDEX_HTML = r"""<!doctype html>
     #sessions.on { grid-template-columns: 240px 280px minmax(0,1fr); }
   }
   @media (max-width: 900px) {
-    .railfoot { display: none; }
     .tb span { display: none; }
+    #top { padding: 0 14px; }
+    .crumb .cs, .crumb .sep { display: none; }
     .page { padding: 18px 14px 60px; }
     #sessions.on { grid-template-columns: 1fr; }
     .col { display: none; } .col.mobile-on { display: block; }
@@ -1280,23 +1479,44 @@ INDEX_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<header id="top">
-  <div class="brand"><img src="/mantis.svg" alt=""> <span>mantis</span></div>
+<aside id="rail">
+  <div class="rail-h">
+    <div class="brand"><img src="/mantis.svg" alt="">
+      <span class="bt"><span class="bn">mantis</span><span class="bs" id="railhost">local</span></span></div>
+    <button class="railtog" id="railtog" title="collapse the rail  (⌘\)" aria-label="collapse the rail">&#171;</button>
+  </div>
   <nav id="nav">
-    <button data-v="home" class="on">Overview</button>
-    <button data-v="models">My models</button>
-    <button data-v="sessions">Sessions</button>
-    <button data-v="activity">Activity</button>
-    <button data-v="deploy">Deploy</button>
-    <button data-v="mcp">MCP</button>
-    <button data-v="skills">Skills</button>
-    <button data-v="config">Config</button>
+    <div class="ng">Workspace</div>
+    <button data-v="home" class="on"><i class="ic" data-i="home"></i><span class="nl">Overview</span></button>
+    <div class="ng">Models</div>
+    <button data-v="models"><i class="ic" data-i="models"></i><span class="nl">My models</span><span class="nc" id="n-models"></span><span class="ncar">&#9656;</span></button>
+    <div class="nsub" id="sub-models"></div>
+    <button data-v="deploy"><i class="ic" data-i="deploy"></i><span class="nl">Deploy</span><span class="nc" id="n-deploy"></span><span class="ncar">&#9656;</span></button>
+    <div class="nsub" id="sub-deploy"></div>
+    <div class="ng">Work</div>
+    <button data-v="sessions"><i class="ic" data-i="sessions"></i><span class="nl">Sessions</span><span class="nc" id="n-sessions"></span><span class="ncar">&#9656;</span></button>
+    <div class="nsub" id="sub-sessions"></div>
+    <button data-v="activity"><i class="ic" data-i="activity"></i><span class="nl">Activity</span><span class="nc" id="n-activity"></span></button>
+    <div class="ng">Extend</div>
+    <button data-v="mcp"><i class="ic" data-i="mcp"></i><span class="nl">MCP</span><span class="nc" id="n-mcp"></span></button>
+    <button data-v="skills"><i class="ic" data-i="skills"></i><span class="nl">Skills</span><span class="nc" id="n-skills"></span></button>
+    <div class="ng">System</div>
+    <button data-v="config"><i class="ic" data-i="config"></i><span class="nl">Config</span><span class="nc" id="n-config"></span></button>
   </nav>
-  <div class="topr">
+  <div class="rail-f">
     <div class="railfoot" id="railfoot"></div>
+    <div class="rail-b">
+      <button class="tb icon" id="themebtn" title="theme">&#9680;</button>
+      <span class="ver" id="railver"></span>
+      <span class="lan" id="lanind">local</span>
+    </div>
+  </div>
+</aside>
+<div id="shell">
+<header id="top">
+  <div class="crumb" id="crumb"></div>
+  <div class="topr">
     <button class="tb" id="cmdk" title="command palette"><span>search or jump…</span><kbd>⌘K</kbd></button>
-    <button class="tb icon" id="themebtn" title="theme">◐</button>
-    <span class="lan" id="lanind">local</span>
   </div>
 </header>
 <main>
@@ -1315,6 +1535,7 @@ INDEX_HTML = r"""<!doctype html>
   <section id="deploy" class="view"><div class="scroll"><div class="page wide" id="deploypad"></div></div></section>
   <section id="config" class="view"><div class="scroll"><div class="page" id="configpad"></div></div></section>
 </main>
+</div>
 <div id="modal"><div class="sheet"><button class="x" onclick="hideModal()">✕</button><div id="sheet"></div></div></div>
 <div id="palette"><div class="pal"><input id="palin" placeholder="Jump to a page, project, session, deployment — or run an action…" autocomplete="off">
   <div class="pal-list" id="pallist"></div>
@@ -1345,6 +1566,65 @@ function toast(msg, err) {
   clearTimeout(toastT); toastT = setTimeout(() => (t.className = ""), 3000);
 }
 const el = (t, c, txt) => { const e = document.createElement(t); if (c) e.className = c; if (txt != null) e.textContent = txt; return e; };
+// ==========================================================================
+// THE MARKS — one icon system for the whole dashboard.
+//
+// Every glyph is drawn on the SAME 24-unit grid at the SAME 1.7 stroke, in
+// currentColor with no fills except where a fill is the point (a live dot, a
+// pixel block). That is what lets an icon sit in a 31px rail row, a 15px tile
+// header and a 16px section label without ever being redrawn: the row sets a
+// colour and a box, the glyph inherits both.
+// They are literal about what this program does rather than generic — a model
+// is a chip with pins, a deployment is a card in a rack with its power light
+// on, MCP is two tools handed across a dashed link. A rail collapsed to marks
+// only is still navigable, which is the test each one had to pass.
+// ==========================================================================
+const IC0 = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+const ICONS = {
+  // OVERVIEW — the instrument panel itself: four readings, one of them live
+  home: IC0 + '<rect x="3" y="3" width="8" height="8.5" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/>' +
+    '<rect x="13" y="10" width="8" height="11" rx="2"/><rect x="3" y="13.5" width="8" height="7.5" rx="2"/>' +
+    '<rect x="5.5" y="6" width="3" height="3" rx=".7" fill="currentColor" stroke="none"/></svg>',
+  // MY MODELS — a chip with pins: the thing you seat in the socket
+  models: IC0 + '<rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>' +
+    '<rect x="10.2" y="10.2" width="3.6" height="3.6" rx="1" fill="currentColor" stroke="none"/>' +
+    '<path d="M9.5 3v3.5M14.5 3v3.5M9.5 17.5V21M14.5 17.5V21M3 9.5h3.5M3 14.5h3.5M17.5 9.5H21M17.5 14.5H21"/></svg>',
+  // DEPLOY — a rented card in its rack, power light lit
+  deploy: IC0 + '<rect x="2.5" y="6.5" width="19" height="11" rx="2.5"/><path d="M6.5 10.5h6M6.5 13.5h4"/>' +
+    '<circle cx="17.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M7 17.5V20M17 17.5V20"/></svg>',
+  // SESSIONS — a transcript: your turn, then its turn
+  sessions: IC0 + '<rect x="2.5" y="4" width="13" height="8" rx="3"/><path d="M6 8h6"/>' +
+    '<rect x="8.5" y="14" width="13" height="7" rx="3"/></svg>',
+  // ACTIVITY — a trace with something happening on it
+  activity: IC0 + '<path d="M2.5 13h3.6l2.4-7 3.4 13 2.4-8 1.5 2h6.3"/></svg>',
+  // MCP — a server handing tools across a dashed link
+  mcp: IC0 + '<rect x="2.5" y="7.5" width="8" height="9" rx="2"/><path d="M5.2 10.5h2.6M5.2 13.5h2"/>' +
+    '<path d="M10.5 12h3.4" stroke-dasharray="2 2.4"/><circle cx="18" cy="8.4" r="2.7"/><circle cx="18" cy="15.6" r="2.7"/>' +
+    '<path d="M13.9 12l1.9-2.1M13.9 12l1.9 2.1"/></svg>',
+  // SKILLS — a playbook the agent opens when the task matches
+  skills: IC0 + '<path d="M12 7.2C9.9 5.6 7.3 5 4.8 5.4v12.2c2.5-.4 5.1.2 7.2 1.8 2.1-1.6 4.7-2.2 7.2-1.8V5.4C16.7 5 14.1 5.6 12 7.2z"/>' +
+    '<path d="M12 7.2v12.2"/></svg>',
+  // CONFIG — the layers, each with its own setting
+  config: IC0 + '<path d="M3 7.5h8M15.5 7.5H21M3 16.5h4.5M12 16.5h9"/><circle cx="13" cy="7.5" r="2.5"/><circle cx="9.5" cy="16.5" r="2.5"/></svg>',
+  // ---- readings and card headers ----
+  msg: IC0 + '<path d="M20.5 15.5a2.5 2.5 0 0 1-2.5 2.5H8l-4.5 3.5V5.5A2.5 2.5 0 0 1 6 3h12a2.5 2.5 0 0 1 2.5 2.5z"/><path d="M8 8.5h8M8 12.5h5"/></svg>',
+  tool: IC0 + '<path d="M14.8 6.4a4.2 4.2 0 0 0-5.6 5.6L3.5 17.7V20.5H6.3l5.7-5.7a4.2 4.2 0 0 0 5.6-5.6l-2.6 2.6-2.2-2.2z"/></svg>',
+  spend: IC0 + '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v9M9.9 9.7c0-1 .9-1.8 2.1-1.8s2.1.8 2.1 1.8c0 2.4-4.2 1.4-4.2 3.9 0 1.1 1 1.9 2.1 1.9s2.1-.8 2.1-1.9"/></svg>',
+  streak: IC0 + '<rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 9.8h18M8 2.8v4M16 2.8v4"/>' +
+    '<rect x="7" y="13" width="3" height="3" rx=".7" fill="currentColor" stroke="none"/>' +
+    '<rect x="14" y="13" width="3" height="3" rx=".7" fill="currentColor" stroke="none"/></svg>',
+  key: IC0 + '<circle cx="8" cy="12" r="4.5"/><path d="M12.5 12H21M18 12v3.5M15.5 12v2.5"/></svg>',
+  clock: IC0 + '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.3l3.4 2"/></svg>',
+  folder: IC0 + '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2.6h8.8A1.5 1.5 0 0 1 21 9.1v9.4a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>',
+  trace: IC0 + '<path d="M3.5 3.5v17h17"/><path d="M6.5 15.5l4-5 3 3 5.5-7.5"/></svg>',
+};
+// One helper, three sizes handled by CSS: never inline a width here.
+function icon(name, cls) { const i = el("i", "ic" + (cls ? " " + cls : "")); i.innerHTML = ICONS[name] || ""; return i; }
+// The rail's marks are in the served markup (so the shell is legible without
+// running any of this); this is what fills them in.
+function paintIcons(root) {
+  (root || document).querySelectorAll("i.ic[data-i]").forEach(n => { if (!n.firstChild) n.innerHTML = ICONS[n.dataset.i] || ""; });
+}
 // ---- theme: system by default, a toggle that remembers, ?theme= for tests ----
 const THEME_KEY = "mantis-theme";
 const getTheme = () => { try { return localStorage.getItem(THEME_KEY) || ""; } catch (e) { return ""; } };
@@ -1662,29 +1942,31 @@ function renderFamilies(box, g) {
     const provs = f.providers || [];
     const target = provs.find(x => x.enabled) || provs[0];
     card = card || el("div"); card.innerHTML = ""; card.className = "fam" + (f.is_current ? " cur" : "");
-    const fh = el("div","fh");
-    fh.append(providerMark(f.logo, f.label));
-    fh.append(el("span","fn", f.label));
-    const sp = el("span"); sp.style.flex = "1"; fh.append(sp);
-    const d = el("span","dot2 " + (f.ready ? "ok" : "")); d.title = f.ready ? "ready to run" : "not set up"; fh.append(d);
-    card.append(fh);
-    const fa = el("div","fa");
+    card.append(famMark(f.id, f.logo, f.label));
+    card.append(el("div","fn", f.label));
+    // the second line is the most specific true thing about this family: the
+    // model you last ran from it, or — before you ever have — where it points
+    const sub = f.last_model ? f.last_model
+      : f.id === "oss" && f.local && f.local.reachable
+        ? f.local.model_count + " local model" + (f.local.model_count === 1 ? "" : "s") + " · " + f.local.loaded_count + " loaded"
+      : target ? (target.base_url || "").replace(/^https?:\/\//, "")
+      : "not in catalog";
+    const sl = el("div","fm" + (f.last_model ? "" : " none"), sub); sl.title = sub;
+    card.append(sl);
+    const fr = el("div","fr");
+    // state, until you hover — then the one action that changes the state
+    const st = el("div","fst");
     if (f.id === "oss") {
       const loc = f.local || {};
-      fa.append(el("span","t2 " + (loc.reachable ? "acc" : ""), loc.reachable ? "ollama up" : "ollama off"));
-      fa.append(document.createTextNode(provs.filter(p => p.enabled).length + "/" + provs.length + " hosted keys"));
+      st.append(el("span","t2 " + (loc.reachable ? "acc" : ""), loc.reachable ? "ollama up" : "ollama off"));
     } else if (!provs.length) {
-      fa.append(el("span","t2 amb","not in catalog"));
+      st.append(el("span","t2 amb","no catalog"));
     } else {
-      fa.append(el("span","t2 " + (AUTH_CLS[target.auth] || ""), AUTH_LABEL[target.auth] || target.auth));
-      if (target.key_masked) fa.append(el("span","mono", target.key_masked));
+      st.append(el("span","t2 " + (AUTH_CLS[target.auth] || ""), AUTH_LABEL[target.auth] || target.auth));
     }
-    card.append(fa);
-    card.append(el("div","fm" + (f.last_model ? "" : " none"), f.last_model || "no model used yet"));
-    if (f.id === "oss" && f.local && f.local.reachable)
-      card.append(el("div","sub2", f.local.model_count + " local model" + (f.local.model_count===1?"":"s") + " · " + f.local.loaded_count + " loaded"));
-    else if (f.id === "oss") card.append(el("div","sub2", provs.slice(0, 3).map(p => p.label).join(" · ")));
-    else if (provs.length) card.append(el("div","sub2", (target.base_url || "").replace(/^https?:\/\//, "")));
+    const d = el("span","dot2 " + (f.ready ? "ok" : "")); d.title = f.ready ? "ready to run" : "not set up";
+    st.append(d);
+    fr.append(st);
     const ff = el("div","ff");
     const pr = el("span","pr");
     const tb = btn("test", "", async (e) => {
@@ -1705,11 +1987,16 @@ function renderFamilies(box, g) {
       finally { tb.disabled = false; }
     });
     tb.title = "GET /models with the key mantis would use";
-    ff.append(tb, pr); card.append(ff);
+    ff.append(pr, tb); fr.append(ff);
+    card.append(fr);
+    card.title = f.label + (f.is_current ? " · the family you are running" : "") +
+      (target && target.key_masked ? " · " + target.key_masked : "");
     card.onclick = () => unlockFamily(f.id);
     return card;
   });
+  paintSubs();
 }
+
 async function testProviderQuick(target) {
   toast("reaching " + (target.label || target.id) + "…");
   try {
@@ -1724,7 +2011,7 @@ async function testProviderQuick(target) {
 // tokens are an estimate from size (≈4 chars/token, context re-billed each
 // turn) priced at the current model. Workflow runs record real usage. The
 // two are drawn differently on purpose: hatched is a guess, solid is a reading.
-let SPEND_WIN = 7;
+let SPEND_WIN = 7, SPEND_TOUCHED = false;
 function spendBars(days) {
   const W = 1000, H = 150, PL = 6, PR = 6, PT = 12, PB = 18, n = days.length;
   const iw = W-PL-PR, ih = H-PT-PB, bw = iw/Math.max(1, n);
@@ -1752,15 +2039,13 @@ function renderSpend(box, sp, win) {
   box.innerHTML = "";
   win = win || SPEND_WIN;
   const t = (sp.totals || {})[String(win)] || {};
-  const h = el("div","spend-h");
-  h.append(el("h3", null, "Spend · last " + win + " days"));
   const chips = el("div","fchips");
   [7, 30].forEach(n => {
     const c = el("button","fchip" + (n === win ? " on" : ""), n + "d");
-    c.onclick = () => { SPEND_WIN = n; renderSpend(box, sp, n); };
+    c.onclick = () => { SPEND_WIN = n; SPEND_TOUCHED = true; renderSpend(box, sp, n); };
     chips.append(c);
   });
-  h.append(chips); box.append(h);
+  cardHead(box, "spend", "Spend & usage", "last " + win + " days", [chips]);
   const pr = sp.pricing || {};
   const n2 = el("div","note2");
   n2.innerHTML = pr.known
@@ -1960,14 +2245,97 @@ async function jumpToSession(cwd, sid) {
 }
 
 let homeReq = 0;
+// ---- the four readings ----------------------------------------------------
+// Three helpers, one grammar: a level over time is a line, a count per day is
+// a column, and a yes/no per day is a block. All three are drawn edge to edge
+// on a 100-unit box with preserveAspectRatio="none", so a tile can be any
+// width and the shape still lands on the card's own padding.
+function sparkLine(vals) {
+  const n = vals.length, max = Math.max(1, ...vals), W = 100, H = 38, PB = 3;
+  const X = i => (n === 1 ? W / 2 : i / (n - 1) * W);
+  const Y = v => H - PB - v / max * (H - PB - 3);
+  const d = vals.map((v, i) => X(i).toFixed(2) + "," + Y(v).toFixed(2)).join(" L");
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+    '<path class="ar" d="M' + d + ' L' + W + ',' + H + ' L0,' + H + ' Z"/><path class="ln" d="M' + d + '"/></svg>';
+}
+function sparkBars(vals) {
+  const n = vals.length, max = Math.max(1, ...vals), W = 100, H = 38, bw = W / n;
+  let out = "";
+  vals.forEach((v, i) => {
+    const h = Math.max(v > 0 ? 1.5 : 0.8, v / max * (H - 4));
+    out += '<rect class="br' + (i === n - 1 ? " hi" : "") + (v ? "" : " fl") + '" x="' + (i * bw + bw * 0.16).toFixed(2) +
+      '" y="' + (H - h).toFixed(2) + '" width="' + (bw * 0.68).toFixed(2) + '" height="' + h.toFixed(2) + '" rx=".6"/>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + out + '</svg>';
+}
+// a day you worked is a block, a day you didn't is the ghost of one — the
+// same pixel grid the provider cards are marked on, read as a fortnight
+function dayBlocks(vals) {
+  const n = vals.length, W = 100, H = 38, bw = W / n;
+  let out = "";
+  vals.forEach((v, i) => {
+    out += '<rect class="blk' + (v ? "" : " off") + '" x="' + (i * bw + bw * 0.18).toFixed(2) +
+      '" y="' + (v ? 12 : 20) + '" width="' + (bw * 0.64).toFixed(2) + '" height="' + (v ? 18 : 10) + '" rx="1"/>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + out + '</svg>';
+}
+// A delta is only a delta if there was a previous window to compare with, and
+// only a direction if the move clears a point. Anything under that is noise
+// and gets the neutral ink — a dashboard that tints noise is lying quietly.
+function deltaEl(cur, prev, unit) {
+  if (!prev) return null;
+  const pc = (cur - prev) / prev * 100;
+  const cls = pc >= 1 ? "up" : pc <= -1 ? "dn" : "";
+  const d = el("span","dlt" + (cls ? " " + cls : ""));
+  d.append(document.createTextNode((pc >= 1 ? "↗" : pc <= -1 ? "↘" : "→") + " " + Math.abs(pc).toFixed(pc < 10 ? 1 : 0) + "%"));
+  d.title = "vs the " + (unit || "7 days") + " before";
+  return d;
+}
+function tile(box, iconName, label, value, small, sub, chart, dlt) {
+  const t = el("div","tile");
+  const h = el("div","tile-h");
+  h.append(icon(iconName)); h.append(el("span","nm", label));
+  if (dlt) { const sp = el("span"); sp.style.flex = "1"; h.append(sp); h.append(dlt); }
+  t.append(h);
+  const v = el("div","tile-v", value);
+  if (small) v.append(el("small", null, small));
+  t.append(v);
+  if (sub) { const sb = el("div","tile-s", sub); sb.title = sub; t.append(sb); }
+  const c = el("div","tile-c"); c.innerHTML = chart; t.append(c);
+  box.append(t);
+  return t;
+}
+function cardHead(card, iconName, title, note, right) {
+  const h = el("div","c-h");
+  if (iconName) h.append(icon(iconName));
+  h.append(el("h3", null, title));
+  if (note) h.append(el("span","cn", note));
+  h.append(el("span","sp"));
+  (right || []).forEach(x => h.append(x));
+  card.append(h);
+  return h;
+}
+const sumOf = (days, k) => days.reduce((a, d) => a + (d[k] || 0), 0);
+
+// ==========================================================================
+// OVERVIEW — four readings, then instruments on the left and standings on
+// the right.
+//
+// The question the page answers, in order: what has this machine been doing
+// this week (the tiles), what does that look like over six months (the
+// trace), what did it cost (spend), where did it happen (projects) — and, on
+// the right, the state you could change right now: which families are ready,
+// when you actually work, what the agent reaches for.
+// ==========================================================================
 async function loadHome() {
   const pad = document.getElementById("homepad");
   const my = ++homeReq;
   if (!pad.childElementCount) skeleton(pad);
-  const [a, g, sp] = await Promise.all([
+  const [a, g, sp, act] = await Promise.all([
     api("/api/analytics"),
     api("/api/providers").catch(() => ({ families: [] })),
     api("/api/spend").catch(() => null),
+    api("/api/activity?" + q({ limit: 12 })).catch(() => null),
   ]);
   if (my !== homeReq) return;
   pad.innerHTML = "";
@@ -1975,87 +2343,96 @@ async function loadHome() {
   const ref = el("span","refresh"); ref.id = "refresh-ind";
   ref.append(el("span","live"), document.createTextNode(EVENTS_OK ? "live" : "live · 15s"));
   ref.title = "re-renders when something on disk changes (long-poll), 15s timer as fallback";
-  pageHead(pad, "Overview", null, null, [ref]);
   const fams = g.families || [];
   const readyN = fams.filter(f => f.ready).length;
-  const s7 = (sp && sp.totals && sp.totals["7"]) || {};
-  const curModel = g.current && g.current.model;
-  const famSec = section(pad, "Providers · " + readyN + "/" + fams.length + " ready", "~/.mantis-agent/models.json");
-  const grid = el("div","fam-grid"); grid.id = "fam-grid"; renderFamilies(grid, g); famSec.append(grid);
+  const since = t.first_seen ? new Date(t.first_seen * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : null;
+  pageHead(pad, "Overview", null, null, [ref]);
+  pad.append(el("p","page-d", t.messages
+    ? fmt(t.sessions) + " sessions across " + fmt(t.projects || (a.top_projects || []).length) + " projects" +
+      (since ? ", since " + since : "") + " — every number here is read off this machine's own transcripts."
+    : "Nothing has run on this machine yet. Set up a family below, run mantis in a project, and this page fills itself in."));
 
-  if (sp) {
-    const spSec = section(pad, "Spend & usage");
-    const card = el("div","card2"); card.id = "spend-card"; renderSpend(card, sp); spSec.append(card);
-  }
-
-  const actSec = section(pad, "Activity · last 26 weeks");
-  if (!t.messages) {
-    actSec.append(zero("Nothing recorded yet",
-      "Run mantis in a project and come back — every session is logged locally, and this section " +
-      "turns into your trace, your working hours, and the tools the agent actually reaches for."));
-    return;
-  }
-
-  // the trace
+  // ---- the four readings ----
+  // The window is chosen by the data, and the label always says which one it
+  // is: a week if you worked this week, a month if you didn't, all time if
+  // this machine has been quiet for a month. A dashboard that reports four
+  // zeroes because you took a holiday has told you nothing; one that says
+  // "7d" over a month of numbers is lying. Naming the window does both jobs.
+  const dayOf = k => a.daily[k] || {};
+  const sumWin = (n, off, key) => sumOf(dailySeries(a.daily, n + off).slice(0, n).map(d => dayOf(d.date)), key);
+  const WIN = sumWin(7, 0, "msgs") ? 7 : sumWin(30, 0, "msgs") ? 30 : 0;
+  const wlab = WIN ? " · " + WIN + "d" : " · all time";
+  const span = WIN || 30;
+  const recent = dailySeries(a.daily, span).map(d => dayOf(d.date));
+  const msgsN = WIN ? sumWin(WIN, 0, "msgs") : t.messages;
+  const msgsP = WIN ? sumWin(WIN, WIN, "msgs") : 0;
+  const toolsN = WIN ? sumWin(WIN, 0, "tools") : t.tool_calls;
+  const toolsP = WIN ? sumWin(WIN, WIN, "tools") : 0;
   const streak = calcStreak(a.daily);
-  const series = dailySeries(a.daily, 182);
-  const box = el("div","trace");
-  const th = el("div","trace-h");
-  th.append(el("span","trace-t", "Trace · last 26 weeks"));
-  const pk = el("div","trace-pk"); th.append(pk);
-  box.append(th);
-  const svgWrap = el("div");
-  box.append(svgWrap);
-  pad.append(box);
-  const info = traceSVG(series, svgWrap);
-  pk.innerHTML = info.peakVal
-    ? "peak <b>" + fmt(info.peakVal) + "</b> messages · " + series[info.peakIdx].date
-    : "";
+  const lastSeen = t.last_seen ? ago(t.last_seen) : null;
+  const quiet = WIN === 0 && lastSeen ? "quiet for a month · last run " + lastSeen : null;
+  const tiles = el("div","tiles"); tiles.id = "ov-tiles";
+  tile(tiles, "msg", "Messages" + wlab, fmt(msgsN), null,
+    quiet || (WIN ? fmt(t.messages) + " all time · " + t.avg_msgs_per_session + " per session"
+                  : t.avg_msgs_per_session + " per session across " + fmt(t.sessions) + " sessions"),
+    sparkLine(recent.map(d => d.msgs || 0)), deltaEl(msgsN, msgsP, WIN + " days"));
+  tile(tiles, "tool", "Tool calls" + wlab, fmt(toolsN), null,
+    t.unique_tools + " distinct tools · " + fmt(t.tool_calls) + " all time",
+    sparkBars(recent.map(d => d.tools || 0)), deltaEl(toolsN, toolsP, WIN + " days"));
+  if (sp) {
+    const days = sp.days || [];
+    const cut = days.slice(-span), prevCut = days.slice(-2 * span, -span);
+    const usd = ds => ds.reduce((x, d) => x + (d.est_usd || 0) + (d.rec_usd || 0), 0);
+    const tok = d => (d.est_in || 0) + (d.est_out || 0) + (d.rec_in || 0) + (d.rec_out || 0);
+    const priced = (sp.pricing || {}).known;
+    const toks = cut.reduce((x, d) => x + tok(d), 0);
+    tile(tiles, "spend", "Spend" + (WIN ? wlab : " · " + span + "d"), priced ? "≈" + fmtUsd(usd(cut)) : fmtTok(toks),
+      priced ? null : " tok",
+      priced ? fmtTok(toks) + " tokens at " + ((sp.pricing || {}).model || "current") + " rates"
+             : "no price row for this model — tokens only",
+      sparkBars(cut.map(tok)), priced ? deltaEl(usd(cut), usd(prevCut), span + " days") : null);
+    if (!SPEND_TOUCHED) SPEND_WIN = WIN === 7 ? 7 : 30;
+  }
+  tile(tiles, "streak", streak ? "Streak" : "Active days", streak ? String(streak) : String(t.active_days),
+    streak ? (streak === 1 ? " day" : " days") : " days",
+    t.busiest_day ? "busiest " + t.busiest_day + " · " + fmt(t.busiest_day_msgs) + " messages" : fmt(t.active_days) + " days with work",
+    dayBlocks(dailySeries(a.daily, span).map(d => (dayOf(d.date).msgs || 0) > 0 ? 1 : 0)));
+  pad.append(tiles);
 
-  // the read-out strip
-  const lcd = el("div","lcd");
-  const cell = (v, label, hot) => {
-    const d = el("div", hot ? "hot" : null);
-    d.append(el("i", null, v)); d.append(document.createTextNode(label));
-    lcd.append(d);
-  };
-  cell(fmt(t.sessions), "sessions");
-  cell(t.avg_msgs_per_session, "msgs / session");
-  cell(fmt(t.active_days), "active days");
-  if (streak) cell(streak, "day streak", true);
-  cell(Math.round(t.user_messages / Math.max(1, t.messages) * 100) + "%", "you, " +
-    (100 - Math.round(t.user_messages / Math.max(1, t.messages) * 100)) + "% agent");
-  cell(t.unique_tools, "distinct tools");
-  pad.append(lcd);
+  // ---- instruments left, standings right ----
+  const ov = el("div","ov");
+  const L = el("div","ov-c"), R = el("div","ov-c");
+  ov.append(L, R); pad.append(ov);
 
-  // when · what
-  const duo = el("div","duo");
-  const when = el("div","card2");
-  when.append(el("h3", null, "When you work"));
-  const ph = a.by_hour.indexOf(Math.max(...a.by_hour));
-  const pw = a.by_weekday.indexOf(Math.max(...a.by_weekday));
-  const n2 = el("div","note2");
-  n2.innerHTML = "Busiest at <b>" + ph + ":00</b> on <b>" + WD[pw] + "</b> · one dot per hour, sized by volume";
-  when.append(n2);
-  const pw2 = el("div"); pw2.innerHTML = punchSVG(a.punchcard || [[]]); when.append(pw2);
-  duo.append(when);
+  // THE TRACE — six months of daily volume, with the read-out under it
+  if (t.messages) {
+    const box = el("div","trace");
+    const pk = el("span","cn");
+    cardHead(box, "trace", "Trace", "last 26 weeks", [pk]);
+    const svgWrap = el("div"); box.append(svgWrap);
+    const info = traceSVG(dailySeries(a.daily, 182), svgWrap);
+    const series = dailySeries(a.daily, 182);
+    pk.innerHTML = info.peakVal ? "peak <b>" + fmt(info.peakVal) + "</b> · " + series[info.peakIdx].date : "";
+    const lcd = el("div","lcd tight"); lcd.style.margin = "10px 0 0";
+    lcdCell(lcd, fmt(t.sessions), "sessions");
+    lcdCell(lcd, String(t.avg_msgs_per_session), "msgs / session", "dim");
+    lcdCell(lcd, fmt(t.active_days), "active days", "dim");
+    lcdCell(lcd, Math.round(t.user_messages / Math.max(1, t.messages) * 100) + "%",
+      "you, " + (100 - Math.round(t.user_messages / Math.max(1, t.messages) * 100)) + "% agent", "dim");
+    box.append(lcd);
+    L.append(box);
+  }
 
-  const what = el("div","card2");
-  what.append(el("h3", null, "What it reaches for"));
-  const n3 = el("div","note2");
-  n3.innerHTML = "<b>" + fmt(t.tool_calls) + "</b> tool calls across <b>" + t.unique_tools + "</b> tools";
-  what.append(n3);
-  loadHomeSpectrum(what, a.top_tools || [], t.tool_total || t.tool_calls || 1);
-  duo.append(what);
-  pad.append(duo);
+  // SPEND — estimated sessions against recorded runs
+  if (sp) { const card = el("div","card2"); card.id = "spend-card"; renderSpend(card, sp); L.append(card); }
 
-  // projects ledger
+  // PROJECTS — where the work actually happened
   if ((a.top_projects || []).length) {
-    const sec = section(pad, "Projects · by volume");
     const card = el("div","card2");
+    cardHead(card, "folder", "Projects", "by volume");
     const maxM = Math.max(1, ...a.top_projects.map(p => p.msgs));
     const list = el("div","plist");
-    a.top_projects.forEach(p => {
+    a.top_projects.slice(0, 8).forEach(p => {
       const row = el("div","prow");
       const f = el("div","fillbar"); f.style.width = (p.msgs/maxM*100).toFixed(1) + "%"; row.append(f);
       row.append(el("span","pn", p.name));
@@ -2065,8 +2442,65 @@ async function loadHome() {
       list.append(row);
     });
     card.append(list);
-    sec.append(card);
+    L.append(card);
   }
+
+  // THE FIVE FAMILIES — the one thing on this page you can act on
+  const pcard = el("div","card2");
+  cardHead(pcard, "key", "Providers", readyN + "/" + fams.length + " ready",
+    [extLink("cn", "~/.mantis-agent/models.json")]);
+  const grid = el("div","provs"); grid.id = "fam-grid"; renderFamilies(grid, g); pcard.append(grid);
+  const more = el("button","c-more", readyN < fams.length ? "Set up another family →" : "Manage keys and models →");
+  more.onclick = () => showTab("models"); pcard.append(more);
+  R.append(pcard);
+
+  // WHAT RAN — only if anything has. An empty ledger card teaches nothing the
+  // Activity page's own empty state doesn't say better.
+  const rows = act ? activityRows(act) : [];
+  if (rows.length) {
+    const acard = el("div","card2");
+    const running = rows.filter(r => statusClass(r.status, r.active) === "run").length;
+    cardHead(acard, "activity", "What ran", running ? running + " running now" : "last " + Math.min(6, rows.length));
+    rows.slice(0, 6).forEach(r => {
+      const row = el("div","arow");
+      row.append(el("span","dot2 " + statusClass(r.status, r.active)));
+      const n = el("span","an", r.desc); n.title = r.err || r.extra || r.desc; row.append(n);
+      row.append(el("span","aa", r.ts ? ago(r.ts) : ""));
+      row.onclick = r.open;
+      acard.append(row);
+    });
+    const am = el("button","c-more", "The whole ledger →");
+    am.onclick = () => showTab("activity"); acard.append(am);
+    R.append(acard);
+  }
+
+  if (!t.messages) {
+    L.append(emptyState("activity", "Nothing recorded yet",
+      "Run mantis in a project and come back — every session is logged locally, and this page turns into " +
+      "your trace, your working hours, and the tools the agent actually reaches for."));
+    return;
+  }
+
+  // WHEN — the joint distribution, because by-hour and by-weekday separately
+  // cannot tell you about Sunday nights
+  const when = el("div","card2");
+  cardHead(when, "clock", "When you work");
+  const ph = a.by_hour.indexOf(Math.max(...a.by_hour));
+  const pw = a.by_weekday.indexOf(Math.max(...a.by_weekday));
+  const n2 = el("div","note2");
+  n2.innerHTML = "Busiest at <b>" + ph + ":00</b> on <b>" + WD[pw] + "</b> · one dot per hour, sized by volume";
+  when.append(n2);
+  const pw2 = el("div"); pw2.innerHTML = punchSVG(a.punchcard || [[]]); when.append(pw2);
+  R.append(when);
+
+  // WHAT — the tool spectrum
+  const what = el("div","card2");
+  cardHead(what, "tool", "What it reaches for");
+  const n3 = el("div","note2");
+  n3.innerHTML = "<b>" + fmt(t.tool_calls) + "</b> tool calls across <b>" + t.unique_tools + "</b> tools";
+  what.append(n3);
+  loadHomeSpectrum(what, a.top_tools || [], t.tool_total || t.tool_calls || 1);
+  R.append(what);
 }
 
 
@@ -3512,6 +3946,7 @@ async function refreshDeployments(refresh) {
 }
 function renderDeployments(tbl) {
   const deps = DEPLOY.deployments;
+  paintSubs();
   if (!deps.length) {
     tbl.innerHTML = "";
     tbl.append(emptyState("deploy", "No deployments yet",
@@ -3622,33 +4057,145 @@ function confirmTeardown(d) {
 // wired to right now" — the model it will use, how that model is reached, and
 // how much is plugged in. Every number is a link to the page that changes it.
 let OVERVIEW = {};
+// The rail's foot is the one line that is true on every page: which model
+// this dashboard is pointed at, who is serving it, and whether anything is
+// running right now. It is a target, not a label — clicking it goes to the
+// page that would change the answer.
 function renderTopStatus(o) {
   const f = document.getElementById("railfoot");
   const cur = (o.current && o.current.model) ? o.current.model : "no model set";
   const h = o.hosting || {};
+  const live = (o.active_jobs || 0) + (o.active_runs || 0);
   f.innerHTML = "";
   f.append(el("span","live" + (h.label || h.kind === "selfhost" ? "" : " off")));
-  const v = el("span","rf-v", cur); v.title = "current model · click for models"; f.append(v);
-  const s = el("span","rf-s", "via " + (h.label || (h.kind === "selfhost" ? "your server" : "no provider")) +
+  const t = el("span","rf-t");
+  const v = el("span","rf-v", cur); t.append(v);
+  t.append(el("span","rf-s", "via " + (h.label || (h.kind === "selfhost" ? "your server" : "no provider")) +
     (o.deployments_live ? " · " + o.deployments_live + " deployed" : "") +
-    ((o.active_jobs || 0) + (o.active_runs || 0) ? " · " + ((o.active_jobs||0) + (o.active_runs||0)) + " running" : ""));
-  f.append(s);
-  f.style.cursor = "pointer"; f.onclick = () => showTab(o.deployments_live && !h.label ? "deploy" : "models");
+    (live ? " · " + live + " running" : "")));
+  f.append(t);
+  f.title = cur + " · via " + (h.label || "no provider") + " — click for models";
+  f.onclick = () => showTab(o.deployments_live && !h.label ? "deploy" : "models");
+  const hostEl = document.getElementById("railhost");
+  if (hostEl && o.home) hostEl.textContent = (o.cwd || o.home).replace(/^\/Users\/[^/]+/, "~").split("/").pop() || "local";
+  if (hostEl) hostEl.title = o.cwd || o.home || "";
+  if (curView === "home") setCrumb(fmt(o.session_count) + " sessions · " + fmt(o.project_count) + " projects");
+  const ver = document.getElementById("railver");
+  if (ver && o.version) { ver.textContent = "v" + o.version; ver.title = "mantis " + o.version; }
+  railCounts(o);
+}
+// A count in the rail answers "is there anything in there" before you click.
+// Zero is not printed: an empty page says so once you open it, and a column
+// of dashes is noise. What is happening NOW gets the live tint and a dot.
+function railCounts(o) {
+  const set = (v, txt, cls) => {
+    const n = document.getElementById("n-" + v); if (!n) return;
+    n.innerHTML = ""; n.className = "nc" + (cls ? " " + cls : "");
+    if (txt) n.append(document.createTextNode(txt));
+  };
+  const fams = Object.keys(o.families_ready || {}).length;
+  set("models", fams ? o.family_ready_count + "/" + fams : "");
+  set("deploy", o.deployments_live ? String(o.deployments_live) : "", o.deployments_live ? "hot" : "");
+  set("sessions", o.session_count ? fmt(o.session_count) : "");
+  const live = (o.active_jobs || 0) + (o.active_runs || 0);
+  const act = document.getElementById("n-activity");
+  if (act) {
+    act.innerHTML = ""; act.className = "nc" + (live ? " hot dot" : "");
+    if (live) { act.append(el("span","live")); act.append(document.createTextNode(String(live))); }
+  }
+  set("mcp", o.mcp_count ? String(o.mcp_count) : "");
+  set("skills", o.skill_count ? String(o.skill_count) : "");
+  paintSubs();
 }
 async function loadOverview() {
   const o = await api("/api/overview");
   OVERVIEW = o;
   renderTopStatus(o);
 }
-const VIEWS = ["home","models","sessions","activity","deploy","mcp","skills","config"];
-let curView = "home";
+// ==========================================================================
+// THE RAIL — eight pages, and under the page you are on, the rows you were
+// about to click anyway.
+//
+// Sub-rows are drawn ONLY under the active page. A rail that expands every
+// section at once is a filing cabinet: you read all of it to find one thing.
+// One open section is a breadcrumb you can click sideways — the five
+// families while you are in Models, your recent projects while you are in
+// Sessions, what is live while you are in Deploy. They are painted from data
+// the pages already fetched, so opening the rail costs no request.
+// ==========================================================================
+const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","config"];
+const PAGE_NAMES = { home: "Overview", models: "My models", deploy: "Deploy", sessions: "Sessions",
+                     activity: "Activity", mcp: "MCP", skills: "Skills", config: "Config" };
+let curView = "home", SUB_OPEN = true;
+// what each expandable page has under it, if it has anything yet
+function subRows(v) {
+  if (v === "models") return (FAMS || []).map(f => ({
+    key: f.id, label: f.label, mark: famMark(f.id, f.logo, f.label),
+    dot: f.ready ? "ok" : "", cur: f.is_current, go: () => openFamily(f.id) }));
+  if (v === "sessions") return (PROJECTS || []).slice(0, 5).map(p => ({
+    // the directory is what you recognise a project by; a prompt-derived
+    // title is the fallback for the ones that are only a session folder
+    key: p.digest, label: (p.name && !UUIDISH.test(p.name) ? p.name : p.title) || p.digest.slice(0, 8),
+    icon: "folder", count: p.session_count, cur: curProject && curProject.digest === p.digest,
+    go: () => { showTab("sessions"); selectProject(p.digest); } }));
+  if (v === "deploy") return (DEPLOY.deployments || []).filter(d => d.is_live).slice(0, 5).map(d => ({
+    key: d.id, label: d.name || d.model || d.id, icon: "deploy", dot: "run",
+    go: () => showTab("deploy") }));
+  return [];
+}
+let railFamReq = false;
+function paintSubs() {
+  if (curView === "models" && !(FAMS || []).length && !railFamReq) {
+    railFamReq = true;
+    api("/api/providers").then(g => { FAMS = g.families || []; paintSubs(); })
+      .catch(() => { railFamReq = false; });
+  }
+  VIEWS.forEach(v => {
+    const box = document.getElementById("sub-" + v); if (!box) return;
+    const btn = document.querySelector('#nav button[data-v="' + v + '"]');
+    const rows = v === curView ? subRows(v) : [];
+    const open = rows.length > 0 && SUB_OPEN;
+    box.classList.toggle("on", open);
+    if (btn) { btn.classList.toggle("sub-open", open); btn.classList.toggle("has-sub", v === curView && rows.length > 0); }
+    if (!open) { box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    rows.forEach(r => {
+      const b = el("button","nsr" + (r.cur ? " on" : ""));
+      if (r.mark) b.append(r.mark); else if (r.icon) b.append(icon(r.icon));
+      b.append(el("span","nl", r.label));
+      if (r.count != null) b.append(el("span","nc", String(r.count)));
+      if (r.dot) b.append(el("span","dot2 " + r.dot));
+      b.title = r.label;
+      b.onclick = r.go;
+      box.append(b);
+    });
+  });
+}
+// The bar says where you are in the same words the rail does, plus whatever
+// the page has narrowed to — the project you picked, the family you filtered.
+function setCrumb(extra) {
+  const c = document.getElementById("crumb"); if (!c) return;
+  c.innerHTML = "";
+  c.append(icon(curView));
+  c.append(el("b", null, PAGE_NAMES[curView] || curView));
+  if (extra) { c.append(el("span","sep","/")); c.append(el("span","cs", extra)); }
+}
+function openFamily(id) {
+  const want = "models" + (id === "all" ? "" : "/" + (TAB_SLUG[id] || id));
+  MODEL_TAB = id;
+  if (location.hash !== "#" + want) location.hash = want;
+  showTab("models");
+}
 function showTab(name) {
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
   if (!b) return;
+  const same = curView === name;
   curView = name;
+  if (!same) SUB_OPEN = true;        // moving to a page opens its rows
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === name));
   hideModal();                       // a sheet must never outlive its page
+  setCrumb(); paintSubs();
   // a sub-route (#models/claude) survives a re-selection of its own tab
   const base = location.hash.slice(1).split("/")[0];
   if (base !== name) location.hash = name;  // fires hashchange; guarded below
@@ -3661,9 +4208,38 @@ function showTab(name) {
   if (name === "config") loadConfig();
 }
 document.getElementById("nav").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
+  const b = e.target.closest("button"); if (!b || !b.dataset.v) return;
+  // the caret on the page you are already on folds its rows away instead of
+  // reloading the page under you
+  if (b.dataset.v === curView && e.target.closest(".ncar")) { SUB_OPEN = !SUB_OPEN; paintSubs(); return; }
   showTab(b.dataset.v);
 });
+// ---- collapse: marks only. Remembered, because it is a size preference for
+// this screen, not a mode you should have to re-choose every visit. ----
+const RAIL_KEY = "mantis-rail";
+const NARROW = window.matchMedia("(max-width: 900px)");
+function applyRail(min, remember) {
+  document.body.dataset.rail = min ? "min" : "";
+  const t = document.getElementById("railtog");
+  if (t) { t.innerHTML = min ? "&#187;" : "&#171;"; t.title = (min ? "expand" : "collapse") + " the rail  (⌘\\)"; }
+  if (remember !== false) { try { localStorage.setItem(RAIL_KEY, min ? "min" : ""); } catch (e) { /* private window */ } }
+}
+const railPref = () => { try { return localStorage.getItem(RAIL_KEY) === "min"; } catch (e) { return false; } };
+// A phone-width window folds the rail whatever you chose on a wide one, and
+// gives the choice back the moment there is room for it again.
+function railFit() { applyRail(NARROW.matches || railPref(), false); }
+if (NARROW.addEventListener) NARROW.addEventListener("change", railFit);
+function toggleRail() {
+  const min = document.body.dataset.rail !== "min";
+  applyRail(min, true);
+}
+document.getElementById("railtog").onclick = toggleRail;
+document.getElementById("rail").addEventListener("click", e => {
+  // collapsed, the brand is the only thing wide enough to click back open
+  if (document.body.dataset.rail === "min" && e.target.closest(".brand")) toggleRail();
+});
+railFit();
+paintIcons();
 // Keyboard: 1–8 jump between pages (the tabs show each key), `g` then a
 // letter does the same by name (g o · g s · g a · g m · g d · g p · g k · g c), `/`
 // drops into whatever search the current page has, ⌘K opens the palette.
@@ -3679,6 +4255,7 @@ function focusSearch() {
 }
 window.addEventListener("keydown", e => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); toggleRail(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
@@ -3743,7 +4320,6 @@ let PAL = { idx: 0, items: [] };
 function paletteItems(qs) {
   const items = [];
   const chordFor = v => { const k = Object.keys(CHORDS).find(k => CHORDS[k] === v); const n = VIEWS.indexOf(v) + 1; return (n ? n + " · " : "") + (k ? "g " + k : ""); };
-  const PAGE_NAMES = { home: "Overview", models: "My models", sessions: "Sessions", activity: "Activity", deploy: "Deploy", mcp: "MCP", skills: "Skills", config: "Config" };
   VIEWS.forEach(v => items.push({ g: "Pages", t: PAGE_NAMES[v] || v, k: chordFor(v), run: () => showTab(v) }));
   (PROJECTS || []).forEach(p => items.push({ g: "Projects", t: p.title || p.name, s: p.session_count + " session" + (p.session_count===1?"":"s"),
     run: () => { showTab("sessions"); setTimeout(() => selectProject(p.digest), 60); } }));
@@ -3821,6 +4397,7 @@ const pill = (v, label, cls) => { const p = el("span","pill" + (cls ? " " + cls 
 async function loadProjects() {
   const { projects } = await api("/api/projects");
   PROJECTS = projects;
+  paintSubs();
   const c = document.getElementById("projcards");
   document.querySelector("#projects .col-head").textContent = "Projects · " + projects.length;
   if (!projects.length) {
@@ -3848,6 +4425,7 @@ async function loadProjects() {
 function selectProject(digest) {
   const pr = PROJECTS.find(p => p.digest === digest); if (!pr) return;
   curProject = pr; curSession = null;
+  paintSubs();
   document.querySelectorAll("#projcards .pcard").forEach(x => x.classList.toggle("on", x.dataset.key === digest));
   document.querySelectorAll(".col").forEach(x => x.classList.remove("mobile-on")); document.getElementById("sessionlist").classList.add("mobile-on");
   loadSessions(pr);
@@ -5819,7 +6397,7 @@ loadProjects().catch(e => document.getElementById("projects").append(el("div","e
     jumpToSession(qs.get("cwd"), qs.get("session"));
   }
   else if (["sessions","activity","models","deploy","skills","mcp","config"].includes(t.split("/")[0])) showTab(t.split("/")[0]);
-  else loadHome();   // default landing
+  else { setCrumb(); loadHome(); }   // default landing
 }
 </script>
 </body>
