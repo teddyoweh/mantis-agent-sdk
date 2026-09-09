@@ -615,10 +615,11 @@ def _blocks(cols, rows, fill):
                if (c * 6183 + r * 5000) % 10000 < fill)
 
 
-def test_one_motif_across_all_three_card_kinds(fake):
-    """The provider card, the GPU provider card and the current model's card
-    are marked the same way, by the same function — and on the two cards whose
-    height is not fixed the motif is LAID OUT beside the action rather than
+def test_one_motif_across_every_card_kind(fake):
+    """The provider card, the GPU provider card, the current model's card in
+    the grid and the hero that says what you are running are all marked the
+    same way, by the same function — and on the cards whose height is not
+    fixed the motif is LAID OUT beside the action rather than
     pinned over it, because a card that grows or wraps would otherwise close
     the gap."""
     from mantis_agent.serve_ui import INDEX_HTML
@@ -626,12 +627,16 @@ def test_one_motif_across_all_three_card_kinds(fake):
     js = INDEX_HTML.split("<script>")[1]
     css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
 
-    # one builder, three callers
+    # one builder, four callers
     assert js.count("const curMotif = () => pixMotif(") == 1
-    assert js.count("card.append(curMotif());") == 2      # deploy card + model card
+    assert js.count("card.append(curMotif());") == 3      # provider card, GPU card, hero
     assert 'if (st8.cls === "cur") card.append(curMotif());' in js
     assert "if (p.configured && ready) card.append(curMotif());" in js
-    assert "foot.append(curMotif());" in js
+    assert "foot.append(curMotif());" in js               # the model card's foot
+    # the hero is the current model, so it wears the band too
+    hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
+    assert "card.append(curMotif());" in hero
+    assert "  .nowcard > .ac-mot { left: 18px; width: calc(100% - 36px); bottom: 6px; }" in css
 
     # the fixed-height provider card pins it inside its own bottom padding
     assert "position: absolute" in css.split("  .ac-mot {")[1].split("}")[0]
@@ -660,11 +665,13 @@ def test_a_band_is_filled_as_soon_as_its_cards_are_in_the_page(fake):
 
     # one synchronous pass, called by each of the three grids that draw bands
     assert "function paintMotifsNow() { paintMotifs(); }" in js
-    assert js.count("paintMotifsNow();") == 3        # the three grids that draw bands
+    assert js.count("paintMotifsNow();") == 4        # three grids, plus every re-sort
     # ...the provider grid, once its cards are in the box and measurable
     auth = js[js.index("function renderAuthCards(box, r) {"):js.index("// the panel is a sibling of the grids")]
     assert "AUTH.group = now;" in auth and "paintMotifsNow();" in auth
     assert auth.index("box.append(grid);") < auth.index("paintMotifsNow();")
+    # and a re-sort moves cards between grids, so it repaints what it moved
+    assert "apply();\n      paintMotifsNow();" in js
     # a view built while it was display:none has no box either
     assert "  scheduleMotifs();          // a view built while hidden had no box to measure" in js
 

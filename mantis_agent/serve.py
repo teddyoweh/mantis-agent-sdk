@@ -600,8 +600,17 @@ def models_state() -> dict[str, Any]:
         if m["name"] not in info:
             info[m["name"]] = _model_info(m["name"], "ollama", oll.get("base_url"))
 
+    # What you switched to before this one. The catalog already keeps it; the
+    # page had no way to get at it, so switching back meant finding the card
+    # again. Only ids — whether each one is still reachable is decided by the
+    # same provider data as everything else on the page.
+    try:
+        recent = [m for m in catalog.get_recent_models() if m != last.get("model")]
+    except Exception:  # noqa: BLE001 — a shortcut is never worth a 500
+        recent = []
     return {
         "current": last,
+        "recent": recent[:6],
         "providers": provs,
         "families": [{"id": f[0], "label": f[1], "logo": f[2]} for f in FAMILIES],
         "model_info": info,

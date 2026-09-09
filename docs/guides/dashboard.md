@@ -260,6 +260,55 @@ query strings.
 
 ### My models
 
+The page answers two questions, in that order: **what am I running**, and
+**what else could I run**.
+
+**What you are running** is the first thing on it — the id at hero size, the
+route in (who serves it, how mantis authenticates there, the endpoint), the
+context window, the price in and out, the capability tags, and the pixel band
+that marks the current thing everywhere else on this dashboard. A model the
+SDK's capability table has never heard of says *no capability row* rather than
+showing nothing. With no model set, the card says so instead of rendering
+blank.
+
+**Reachability is the one claim that is not free.** A saved key is not an
+answering endpoint, so until something checks, the card says *reachability not
+checked this session* and offers the check. Only after a real
+`validate_method` does it claim **Answering** or **Did not answer**, with the
+latency and how long ago it was checked. For a local runtime there is no
+credential to validate, so what it reports is whether the Ollama daemon
+answered — which the page already asked.
+
+**Setup folds away.** Thirteen rows of *Not connected* above the models made
+the page lead with what you had not done. The provider grid — with all three
+groups, the overlay expansion and the marks intact — sits behind a strip that
+names what *is* connected and opens on demand. It opens itself when nothing is
+connected (setup is then the job), when `?openprov=` names a provider, or when
+`?prov=open` asks for it. The strip is written by the grid it summarises, from
+that grid's own predicate, so the two can never disagree.
+
+**Recently used** puts the models you switched between one click away, drawn
+from the catalog's own history and never including the one you are already on.
+One that has since lost its key is still listed, but says so and goes to setup
+rather than pretending.
+
+**Sorting is asking the grid a question**: *By family*, *Cheapest*, *Biggest
+context*. Those three are computable from tables this machine actually has.
+There is no *fastest*, because nothing here measures speed. Unknowns sort last
+and are labelled — an unpriced model is not a free one. Sorting moves the
+cards between grids rather than rebuilding them, so a card keeps its band, its
+tag and its handlers.
+
+**Compare** holds up to three models side by side: pin them from the card (the
+same hover-revealed control the Deploy card uses for its verb), then the tray
+opens a sheet with one column per model and one row per fact — served by,
+context, price in, price out, tool calling, effort, reasoning, readiness — plus
+a way to use or unlock each. Nothing in it is scored or ranked: it lays the
+same facts out in the same order and lets you do the comparing, because a
+"best model" number is one this machine has no way to compute. Three is the
+cap; a fourth says so rather than being dropped.
+
+
 The page opens with **Providers** — the one and only way to connect one.
 A progress line states how many of your providers are connected and reminds
 you that keys live in `~/.mantis-agent` (chmod 600) and are only ever shown

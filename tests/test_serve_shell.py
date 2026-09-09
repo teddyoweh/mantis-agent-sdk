@@ -226,12 +226,18 @@ def test_stylesheet_has_no_elevation_shadows():
             if re.match(r"^inset 0 0 0 \dpx var\(--[a-z0-9-]+\)$", v):
                 continue
             raised.append(line.strip())
-    # exactly one raised surface in the whole stylesheet, and it is the panel
-    assert len(raised) == 1, raised
-    assert "var(--dim)" in raised[0], "the raise takes the theme's own dim"
+    # A raise is earned only by a surface that genuinely floats over the page.
+    # There are exactly two: the provider panel, and the compare tray that
+    # sticks to the bottom while the grid scrolls under it.
+    assert len(raised) == 2, raised
+    assert all("var(--dim)" in r for r in raised), "the raise takes the theme's own dim"
     panel = css.split("  .ac-panel {")[1].split("}")[0]
-    assert "box-shadow" in panel, "the one raise belongs to the floating panel"
-    assert "position: absolute" in panel, "and only a layered surface earns it"
+    assert "box-shadow" in panel and "position: absolute" in panel
+    tray = css.split("  .cmp-bar {")[1].split("}")[0]
+    assert "box-shadow" in tray and "position: sticky" in tray
+    # ...and nothing flat has one
+    for flat in ("  .acard {", "  .mcard {", "  .tile {", "  .nowcard {"):
+        assert "box-shadow" not in css.split(flat)[1].split("}")[0], flat
 
 
 def test_stylesheet_has_no_lines_at_all():
@@ -275,7 +281,7 @@ def test_models_page_has_family_tabs_and_no_route_strip():
     # the URL says the name people use, the code keeps the family id
     assert 'anthropic: "claude"' in js and 'xai: "grok"' in js
     # gone: the route strip, its chips, its CSS, and the data that fed it
-    for gone in ("Test this route", "routeBtn", "routeBar", "hero-lbl", "m.recent"):
+    for gone in ("Test this route", "routeBtn", "routeBar", "hero-lbl"):
         assert gone not in js, gone
     for gone in (".recent {", ".hero-lbl"):
         assert gone not in css, gone
@@ -394,12 +400,14 @@ def test_the_motif_and_the_action_cannot_collide_on_a_model_card():
     assert "display: flex" in foot and "align-items: center" in foot
     assert "margin-top: auto" in foot                      # the foot is always last
     act = css.split("  .mm-act {")[1].split("}")[0]
-    assert "margin-left: auto" in act                      # ...and the action is always right
+    assert "margin-left: 10px" in act                      # the pin carries the auto margin now
     # inside the foot the motif is a laid-out sibling, not an absolute overlay,
     # and it takes the rest of the row so the band spans the card
     foot_mot = css.split("  .mm-foot .ac-mot {")[1].split("}")[0]
     assert "position: static" in foot_mot and "flex: 1 1 0" in foot_mot
     assert "align-self: flex-end" in foot_mot and "margin-bottom: 4px" in foot_mot
+    # the pin sits between them and takes the free space
+    assert "  .mm-pin { flex: none; margin-left: auto;" in css
     # the head gives its 70px reservation back unless something sits top-right
     assert "  .mmcard .mh { padding-right: 0; }" in css
     assert "  .mmcard.on .mh { padding-right: 84px; }" in css
@@ -420,11 +428,161 @@ def test_a_free_model_is_not_a_price_of_zero():
     assert 'pill("\u2014", " / 1M")' in fn and "no row in the price table" in fn
 
 
-def test_models_state_no_longer_ships_the_recent_list(home):
-    from mantis_agent import serve
+def test_my_models_leads_with_what_you_are_running():
+    """The question this page exists to answer is "what am I running". That was
+    a word in the third of three stat tiles; it is now the first thing on the
+    page, with the route, the window, the price and the capabilities beside it."""
+    from mantis_agent.serve_ui import INDEX_HTML
 
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
+    # the id at a size you read without meaning to
+    assert 'el("div","now-id", cur)' in hero
+    assert "  .now-id { font-family: var(--mono); font-size: 21px;" in css
+    # the route in, said once
+    assert r'via.push("local \u00b7 Ollama")' in hero
+    assert 'via.push("via " + (prov.label || prov.id))' in hero
+    assert 'prov.auth === "oauth" ? "subscription"' in hero
+    # the same pills the cards use, so a fact looks the same everywhere
+    assert 'pill(fmtCtx(info.ctx), " context")' in hero and "facts.append(pricePill(price));" in hero
+    for cap in ('"cap","tools"', '"cap","effort"', '"cap","thinks"'):
+        assert cap in hero, cap
+    # a model the capability table has never heard of says so
+    assert "no capability row" in hero
+    # nothing is set yet is its own state, not a blank hero
+    assert "No model is set on this machine yet." in hero
+    # and one way out to the grid
+    assert 'btn("Switch", "gho"' in hero and 'document.getElementById("mm-grid-top")' in hero
+
+
+def test_the_hero_never_claims_a_check_it_did_not_run():
+    """A saved key is not an answering endpoint. Until something checks, the
+    page says it has not been checked and offers the check."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    row = js[js.index("function reachRow(cur, prov, local) {"):js.index("async function checkReach(")]
+    assert "Reachability not checked this session." in row
+    assert 'btn("Check now", "gho"' in row
+    # only after a check does it make a claim, and it says when and how fast
+    assert 'r.ok ? "Answering" : "Did not answer"' in row
+    assert 'bits.push("checked " + ago(r.at));' in row
+    assert 'if (r.ok && r.ms != null) bits.push(r.ms + "ms");' in row
+
+    chk = js[js.index("async function checkReach(cur, prov, local) {"):js.index("// ---- compare ---")]
+    # a local runtime has no credential to validate; what it has is a daemon
+    assert "if (local) {" in chk and "Ollama is not answering" in chk
+    # ...and with nothing connected there is nothing to check, which it says
+    assert '"no connected method to check"' in chk
+    assert 'post("/api/auth/validate", { family: fam.id, method: meth.id, model: cur })' in chk
+
+
+def test_setup_folds_away_but_opens_itself_when_it_is_the_job():
+    """Thirteen rows of "Not connected" above the models made the page lead
+    with what you had not done. It folds — and opens when nothing is connected,
+    when a deep link named a provider, or when a link asked for it."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    assert "  .provbox { display: none; margin-top: 10px; }" in css
+    assert "  .provbox.on { display: block; }" in css
+    assert 'const authBox = el("div","provbox"); authBox.id = "auth-cards";' in js
+    assert 'sum.setAttribute("aria-controls", "auth-cards");' in js
+    assert 'sum.setAttribute("aria-expanded", on ? "true" : "false");' in js
+    # the strip is written by the grid, so summary and grid cannot disagree
+    grid = js[js.index('ph.append(el("span","setup-n"'):]
+    assert 'sum.innerHTML = "";' in grid[:900]
+    assert 'connected ? String(connected) + " connected" : "Nothing connected yet"' in js
+    # the three things that open it
+    assert "const forced = !connected || !!AUTH.open || qp.get(\"prov\") === \"open\";" in js
+    # everything the grid had is still inside it
+    for kept in ('el("div","auth-glabel", label)', 'el("div","auth-grid")', "ac-panel"):
+        assert kept in js, kept
+
+
+def test_the_grid_can_be_asked_a_question_it_can_answer():
+    """Family, cheapest, biggest context — three orderings computable from
+    tables this machine has. Nothing offers "fastest", because nothing here
+    measures speed."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    assert '[["family", "By family"], ["cheap", "Cheapest"], ["ctx", "Biggest context"]]' in js
+    sorts = js[js.index("const SORTS = ["):js.index("sec.append(sortBar);")]
+    assert "fastest" not in sorts.lower(), "nothing here measures speed" 
+    # unknowns sort last rather than pretending to be zero
+    keys = js[js.index("const keyOf = a =>"):js.index("const byId = {};")]
+    assert ": Infinity;" in keys and "unpriced sorts last" in keys
+    assert "-(a.info.ctx || 0)" in keys and "unknown sorts last" in keys
+    # the ordering names itself, and says what it ordered by
+    assert 'MODEL_SORT === "cheap" ? "Cheapest first" : "Biggest context first"' in js
+    assert "by $ in + $ out per 1M" in js
+    # cards are MOVED between grids, never rebuilt, so a card keeps its state
+    assert "rows.forEach(c => flat.append(c));" in js
+    assert "  .mm-off { display: none !important; }" in css
+    # the family tabs, filter pills and search all still drive the same apply()
+    assert "applyModelFilter = apply;" in js and "find.input.oninput = apply;" in js
+
+
+def test_recently_used_is_one_click_and_never_lies_about_reach():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    i = js.index('const recents = (m.recent || [])')
+    blk = js[i:js.index("// ---- the question you are asking", i)]
+    # only models this page actually knows about
+    assert "map(id => allModels.find(a => a.model === id)).filter(Boolean)" in blk
+    # one that needs a key says so and goes to setup instead of pretending
+    assert 'b.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam);' in blk
+    assert '"mm-rec" + (a.enabled ? "" : " locked")' in blk
+    assert "  .mm-rec.locked { color: var(--ink-3); }" in css
+
+
+def test_compare_holds_the_numbers_side_by_side_and_ranks_nothing():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    assert "const CMP = { pins: [], max: 3, rows: [] };" in js
+    # three at most, and it says why rather than silently ignoring the fourth
+    assert r'toast("three at a time \u2014 unpin one first", true)' in js
+    # the pin is the Deploy card's own hover-revealed treatment
+    pin = css.split("  .mm-pin {")[1].split("}")[0]
+    assert "opacity: 0" in pin and "margin-left: auto" in pin
+    assert ".mmcard:hover .mm-pin, .mm-pin:focus-visible, .mm-pin.on { opacity: 1; }" in css
+    assert 'pin.setAttribute("aria-pressed"' in js
+
+    cmp = js[js.index("function showCompare() {"):js.index("// ---- one model, as a card ---")]
+    # the same facts in the same order for each, and no score anywhere
+    for row in ('line("Served by"', 'line("Context"', 'line("$ / 1M in"', 'line("$ / 1M out"',
+                '"Tool calling", "tools"', '"Effort control", "effort"', '"Emits reasoning", "thinking"',
+                'line("Ready to use"'):
+        assert row in cmp, row
+    assert "Nothing here is ranked." in cmp
+    # ...and nothing computes one. (The sentence that PROMISES nothing is
+    # ranked is allowed to contain the word.)
+    body = cmp.replace("Nothing here is ranked.", "")
+    for invented in ("score", "rank", "best for", "recommended", "winner"):
+        assert invented not in body.lower(), invented
+    # a missing fact is named, never zeroed
+    assert 'txt("not recorded", "dim")' in cmp and 'txt("no price row", "dim")' in cmp
+    # and the sheet is a way out, not a dead end
+    assert '(a.enabled ? "Use " : "Unlock ") + a.model' in cmp
+
+
+def test_models_state_ships_a_bounded_recent_list(home):
+    """Switching back should be one click, so the page gets the catalog's own
+    switching history — bounded, and never including the model you are already
+    on, which would be a shortcut to where you already are."""
+    from mantis_agent import catalog, serve
+
+    for mid in ("claude-sonnet-5", "gpt-5.4-mini", "gpt-5.4"):
+        catalog.push_recent_model(mid)
+    catalog.set_last_model("gpt-5.4", "https://api.openai.com/v1")
     m = serve.models_state()
-    assert "recent" not in m and {"current", "providers", "families", "model_info", "ollama"} <= set(m)
+    assert {"current", "recent", "providers", "families", "model_info", "ollama"} <= set(m)
+    assert isinstance(m["recent"], list) and len(m["recent"]) <= 6
+    assert "gpt-5.4" not in m["recent"], "the current model is not a shortcut"
+    assert "gpt-5.4-mini" in m["recent"]
 
 
 def test_model_picker_filters_by_company_and_shows_recency():
@@ -714,12 +872,13 @@ def test_every_page_shaped_view_leads_with_a_stat_row():
     assert "if (chart) { const c = el(\"div\",\"tile-c\"); c.innerHTML = chart; t.append(c); }" in js
     assert 't.classList.add("flat");' in js
 
-    # the three page-shaped views each state their situation
-    assert js.count("statRow(pad, [") == 3
-    for probe in ('label: "Connected providers"', 'label: "Models available"', 'label: "Current model"',
-                  'label: "Running"', 'label: "Done"', 'label: "Failed"',
+    # Activity and Deploy state their situation with it. My models does not:
+    # it leads with the one model you are actually running, at hero size.
+    assert js.count("statRow(pad, [") == 2
+    for probe in ('label: "Running"', 'label: "Done"', 'label: "Failed"',
                   'label: "Live deployments"', 'label: "Hourly burn"', 'label: "Providers ready"'):
         assert probe in js, probe
+    assert "nowRunning(pad, m);" in js
 
 
 def test_a_stat_never_invents_a_trend_or_a_second_opinion():
@@ -730,21 +889,18 @@ def test_a_stat_never_invents_a_trend_or_a_second_opinion():
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
-    for name, end in (("My models", "// Providers first"),
-                      ("Activity", "const bar = el(\"div\",\"filters\")"),
-                      ("Deploy", "if (pv.ok === false)")):
-        i = js.index("statRow(pad, [")
-        while name == "Activity" and 'label: "Running"' not in js[i:js.index(end, i)]:
-            i = js.index("statRow(pad, [", i + 1)
+    i = 0
+    for _ in range(2):
+        i = js.index("statRow(pad, [", i)
         block = js[i:js.index("]);", i)]
-        assert "delta:" not in block, name
-        assert "chart:" not in block, name
+        assert "delta:" not in block
+        assert "chart:" not in block
+        i += 1
 
-    # the connected tally has one owner
-    assert 'label: "Connected providers", value: "\u2014", id: "stat-conn"' in js
-    assert 'const st = document.getElementById("stat-conn");' in js
+    # the folded provider strip is written by the grid it summarises
     grid = js[js.index('ph.append(el("span","setup-n"'):]
-    assert 'document.getElementById("stat-conn")' in grid[:600]
+    assert 'document.getElementById("provsum")' in grid[:400]
+    assert "AUTH.setProv" in grid[:1400]
     # an unpriced endpoint is never counted as free
     assert "unpriced — this is the rest" in js
 

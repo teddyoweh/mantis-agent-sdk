@@ -1287,10 +1287,126 @@ INDEX_HTML = r"""<!doctype html>
   .kh-l { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
   .kh-v { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
   .kh-n { font-size: 11px; color: var(--ink-3); }
+  /* WHAT YOU ARE RUNNING — the hero of this page.
+     The question this page exists to answer is "what am I running, and what
+     else could I run". The answer to the first half was a word in the third
+     of three stat tiles; it is now the first thing on the page, at a size you
+     read without meaning to, with everything you would otherwise have gone
+     looking for beside it: the route in, the window, the price, what it can
+     do, and whether anyone has actually checked that it answers. */
+  .nowcard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
+    padding: 16px 18px 14px; margin: 2px 0 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .now-top { display: flex; align-items: center; gap: 13px; min-width: 0; }
+  .now-top .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex;
+    align-items: center; justify-content: center; background: var(--fill); overflow: hidden; }
+  .now-top .bigmark svg { width: 40px; height: 40px; display: block; }
+  .now-t { min-width: 0; flex: 1; }
+  .now-id { font-family: var(--mono); font-size: 21px; font-weight: 600; letter-spacing: -.02em;
+    line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .now-via { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .now-a { flex: none; display: flex; align-items: center; gap: 8px; }
+  .now-facts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  /* Reachability is a claim, so it is only made when something checked. Until
+     then it says so and offers the check — a page that shows a green dot for
+     "a key is saved" is telling you something it does not know. */
+  .now-reach { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3);
+    flex-wrap: wrap; }
+  .now-reach b { font-weight: 600; color: var(--ink-2); }
+  .now-reach.ok b { color: var(--ok); }
+  .now-reach.bad b { color: var(--bad); }
+  .now-none { font-size: 13px; color: var(--ink-2); }
+  /* the band says "this is the one", the same way it does on every card */
+  .nowcard > .ac-mot { left: 18px; width: calc(100% - 36px); bottom: 6px; }
+
+  /* SETUP, ONE CLICK AWAY — the provider grid is the same subject at a lower
+     altitude, and 13 rows of "Not connected" above the models made the page
+     lead with what you have not done. It folds to a strip that names what IS
+     connected and opens on demand — and it starts open when nothing is
+     connected, because then setup IS the job. */
+  .provsum { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; width: 100%; margin: 0;
+    padding: 11px 14px; border: 0; border-radius: var(--radius); background: var(--panel); color: var(--ink-2);
+    font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background var(--t); }
+  .provsum:hover { background: var(--panel-2); }
+  .provsum b { font-weight: 600; color: var(--ink); }
+  .provsum-m { display: flex; align-items: center; gap: 5px; flex: none; }
+  .provsum-m .mark2 { width: 20px; height: 20px; border-radius: 5px; background: none; }
+  .provsum-m .mark2 svg { width: 16px; height: 16px; }
+  .provsum-x { margin-left: auto; flex: none; font-size: 12.5px; color: var(--ink-3); }
+  .provsum:hover .provsum-x { color: var(--accent); }
+  .provbox { display: none; margin-top: 10px; }
+  .provbox.on { display: block; }
+
   /* MY MODELS — the same card the Deploy picker draws, filled with what the
      SDK knows about a model you can already reach. One component, two pages:
      .mcard, .mh, .omark, .mt, .mo, .mp2 and .pill are shared outright, so the
      two model surfaces cannot drift into two design eras. */
+  /* COMPARE — picking between two models means holding their numbers next to
+     each other, which the grid cannot do: they are three cards apart and the
+     facts are in different places on each. Pin up to three and they are laid
+     out as one table. The pin lives in the card's foot, revealed on hover the
+     same way the Deploy card reveals its verb, so a grid at rest is unchanged. */
+  .mm-pin { flex: none; margin-left: auto; padding: 0 8px; height: 20px; border: 0; border-radius: 6px;
+    background: var(--fill); font: inherit; font-size: 11px; font-weight: 600; color: var(--ink-3);
+    cursor: pointer; opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
+  .mmcard:hover .mm-pin, .mm-pin:focus-visible, .mm-pin.on { opacity: 1; }
+  .mm-pin:hover { color: var(--ink); }
+  .mm-pin.on { background: var(--accent); color: var(--accent-ink); }
+  .mmcard.on .mm-pin { background: var(--panel); }
+  .mmcard.on .mm-pin.on { background: var(--accent); color: var(--accent-ink); }
+  /* the tray: what is pinned, and the one thing to do with it */
+  .cmp-bar { position: sticky; bottom: 14px; z-index: 30; display: none; align-items: center; gap: 10px;
+    margin: 14px 0 0; padding: 10px 14px; border-radius: var(--radius); background: var(--panel-2);
+    box-shadow: 0 12px 32px -8px var(--dim); }
+  .cmp-bar.on { display: flex; }
+  .cmp-bar .cmp-n { font-size: 12.5px; color: var(--ink-2); flex: none; }
+  .cmp-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1; }
+  .cmp-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 9px;
+    border-radius: 7px; background: var(--fill); font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+  .cmp-x { border: 0; background: none; padding: 0 4px; font: inherit; font-size: 13px; line-height: 1;
+    color: var(--ink-3); cursor: pointer; border-radius: 5px; }
+  .cmp-x:hover { color: var(--ink); background: var(--panel); }
+  /* the table: one column per model, one row per fact, differences left to
+     the reader — nothing here scores or ranks, because nothing here can */
+  .cmp-grid { display: grid; gap: 1px; background: none; margin-top: 4px; }
+  .cmp-r { display: grid; grid-template-columns: var(--cmp-cols); gap: 10px; align-items: center;
+    padding: 8px 10px; border-radius: 7px; }
+  .cmp-r:nth-child(odd) { background: var(--panel-2); }
+  .cmp-k { font-size: 11.5px; color: var(--ink-3); }
+  .cmp-v { font-size: 12.5px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cmp-v.mono { font-family: var(--mono); }
+  .cmp-v.dim { color: var(--ink-3); }
+  .cmp-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .cmp-h .omark { width: 22px; height: 22px; border-radius: 6px; background: none; flex: none; }
+  .cmp-h .omark svg { width: 18px; height: 18px; }
+  .cmp-h b { font-family: var(--mono); font-size: 12.5px; font-weight: 600; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Sorting is asking the grid a question. Three of them are answerable from
+     data this machine actually has — the family, the price table, the context
+     table — so those are the three offered. "Fastest" is not on the list
+     because nothing here measures speed, and a ranking nobody computed is a
+     ranking nobody should be shown. */
+  .mm-sortbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  .mm-sortl { font-size: 11.5px; color: var(--ink-3); }
+  .mm-flat { display: none; }
+  .mm-flat.on { display: block; }
+  /* a group the SORT has put away, as opposed to one a filter has emptied */
+  .mm-off { display: none !important; }
+  /* what you had before this one: switching back should not need the grid */
+  .mm-recent { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0 0 12px; }
+  .mm-recl { font-size: 11.5px; color: var(--ink-3); flex: none; }
+  .mm-rec { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 8px;
+    border: 0; border-radius: 8px; background: var(--panel); font: inherit; font-size: 12.5px;
+    font-family: var(--mono); color: var(--ink-2); cursor: pointer; max-width: 240px;
+    transition: background var(--t), color var(--t); }
+  .mm-rec:hover { background: var(--panel-2); color: var(--ink); }
+  .mm-rec .omark { width: 18px; height: 18px; border-radius: 5px; background: none; flex: none; }
+  .mm-rec .omark svg { width: 15px; height: 15px; }
+  .mm-rec span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mm-rec.locked { color: var(--ink-3); }
+
   /* a labelled grid per source */
   .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 12.5px;
     font-weight: 600; color: var(--ink-2); }
@@ -1319,7 +1435,7 @@ INDEX_HTML = r"""<!doctype html>
      blocks off half pixels however tall the row's text turns out to be */
   .mm-foot .ac-mot { position: static; flex: 1 1 0; min-width: 0;
     align-self: flex-end; margin-bottom: 4px; }
-  .mm-act { margin-left: auto; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  .mm-act { margin-left: 10px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
   .mmcard:hover .mm-act { color: var(--accent); }
   .mmcard.locked .mm-act { color: var(--warn); }
   /* the same slanted Current tag the provider cards wear, pinned where the
@@ -5107,13 +5223,33 @@ function renderAuthCards(box, r) {
   const prog = el("div","setup");
   const ph = el("div","setup-h");
   ph.append(el("span","setup-n", connected + " of " + entries.length + " connected"));
-  // the page's own stat row says this number too; it is set from here so the
-  // two can never drift apart
-  const st = document.getElementById("stat-conn");
-  if (st) {
-    const v = st.querySelector(".tile-v");
-    if (v) { v.innerHTML = ""; v.append(document.createTextNode(String(connected)));
-      v.append(el("small", null, "/ " + entries.length)); }
+  // The folded strip is written from HERE, by the same predicate that draws
+  // the grid, so the summary and the thing it summarises can never disagree.
+  // It also decides its own initial state: nothing connected means setup is
+  // the job, so it opens itself.
+  const sum = document.getElementById("provsum");
+  if (sum) {
+    sum.innerHTML = "";
+    const marks = el("span","provsum-m");
+    conn.slice(0, 6).forEach(e => { const mk = providerMark(e.logo || e.family, e.label); mk.title = e.label; marks.append(mk); });
+    if (connected) sum.append(marks);
+    const txt = el("span");
+    txt.append(el("b", null, connected ? String(connected) + " connected" : "Nothing connected yet"));
+    txt.append(document.createTextNode(connected
+      ? " \u00b7 " + conn.slice(0, 3).map(e => e.label).join(", ") +
+        (connected > 3 ? " and " + (connected - 3) + " more" : "")
+      : " \u00b7 add a key and this machine can run models"));
+    sum.append(txt);
+    sum.append(el("span","provsum-x", "Manage providers \u2192"));
+    if (AUTH.setProv) {
+      // Setup opens itself when it IS the job (nothing connected), when a
+      // deep link asked for a particular provider — a ?openprov= that landed
+      // inside a folded section would silently do nothing — or when ?prov=open
+      // asks for the section itself. Otherwise it keeps whatever you set.
+      const qp = new URLSearchParams(location.search);
+      const forced = !connected || !!AUTH.open || qp.get("prov") === "open";
+      AUTH.setProv(forced || document.getElementById("auth-cards").classList.contains("on"));
+    }
   }
   ph.append(el("span","setup-s", connected
     ? "Add another to switch between them mid-session."
@@ -5670,7 +5806,242 @@ const TAB_LABEL_FOR = { openai: "OpenAI", anthropic: "Claude", google: "Gemini",
 const TAB_FAM = Object.fromEntries(Object.entries(TAB_SLUG).map(([k, v]) => [v, k]));
 const tabFromHash = () => { const [t, sub] = location.hash.slice(1).split("/"); return t === "models" && sub ? (TAB_FAM[sub] || sub) : "all"; };
 let MODEL_TAB = tabFromHash();
+// Which question the grid is answering. "family" is whose it is; the other
+// two are orderings computed from tables this machine actually has.
+let MODEL_SORT = "family";
 let applyModelFilter = null;
+let resort = () => {};
+
+// ---- what you are running ------------------------------------------------
+// The first thing on the page, because it is the first thing you came to find
+// out. Everything here is read off state this machine already has: the id and
+// the endpoint from the catalog, the window / price / capabilities from the
+// SDK's own tables, the route from the provider that serves it.
+//
+// Reachability is the one claim that is NOT free. A saved key is not an
+// answering endpoint, and a green dot for "configured" is a lie the moment
+// the key expires — so until something actually checks, this says it has not
+// been checked and offers the check.
+const REACH = {};                       // model id -> what the last check found
+function nowRunning(pad, m) {
+  const cur = (m.current || {}).model;
+  const card = el("div","nowcard"); card.id = "nowcard";
+  if (!cur) {
+    card.append(el("div","now-none",
+      "No model is set on this machine yet. Pick one below and it becomes the one mantis runs."));
+    pad.append(card);
+    return card;
+  }
+  const provs = m.providers || [];
+  const prov = provs.find(pv => (pv.models || []).includes(cur));
+  const oll = m.ollama || {};
+  const local = ((oll.models || []).some(o => o.name === cur));
+  const info = (m.model_info || {})[cur] || {};
+  const price = info.price || (prov ? (prov.prices || {})[cur] : null);
+
+  card.append(curMotif());
+  const top = el("div","now-top");
+  top.append(fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
+  const t = el("div","now-t");
+  const id = el("div","now-id", cur); id.title = cur; t.append(id);
+  // the route in, said once: who serves it and how mantis authenticates there
+  const via = [];
+  if (local) via.push("local \u00b7 Ollama");
+  else if (prov) via.push("via " + (prov.label || prov.id));
+  if (prov && !local) {
+    const how = prov.auth === "oauth" ? "subscription" : prov.auth === "env" ? "API key"
+              : prov.key_source === "cli" ? "detected credentials"
+              : prov.key_source ? "API key" : null;
+    if (how) via.push(how);
+  }
+  const ep = (m.current || {}).backend;
+  if (ep) via.push(String(ep).replace(/^https?:\/\//, ""));
+  const v = el("div","now-via", via.join(" \u00b7 ")); v.title = v.textContent; t.append(v);
+  top.append(t);
+  const acts = el("div","now-a");
+  const st = el("span","ac-st cur");
+  st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
+  st.title = "the model mantis runs right now";
+  acts.append(st);
+  acts.append(btn("Switch", "gho", () => {
+    const g = document.getElementById("mm-grid-top");
+    if (g) g.scrollIntoView({ behavior: "smooth", block: "start" });
+    const i = document.querySelector("#modelspad .filters .find input");
+    if (i) setTimeout(() => i.focus(), 220);
+  }));
+  top.append(acts);
+  card.append(top);
+
+  // the facts, in the same pills the model cards use
+  const facts = el("div","now-facts");
+  if (info.ctx) {
+    const c = pill(fmtCtx(info.ctx), " context");
+    if (info.ctx_learned) { c.title = "ceiling learned from the endpoint: " + fmtCtx(info.ctx_learned);
+      c.querySelector("b").textContent += "*"; }
+    facts.append(c);
+  }
+  facts.append(pricePill(price));
+  if (info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; facts.append(c); }
+  if (info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; facts.append(c); }
+  if (info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; facts.append(c); }
+  if (!info.ctx && !info.tools && !info.effort && !info.thinking) {
+    const q = pill("no capability row", "");
+    q.title = "this id is not in the SDK's capability table — mantis will still call it";
+    facts.append(q);
+  }
+  card.append(facts);
+  card.append(reachRow(cur, prov, local));
+  pad.append(card);
+  return card;
+}
+// Says only what is known. Three states: never checked (and here is the
+// button), checked and answering (with how long ago and how fast), checked
+// and it did not (with what came back).
+function reachRow(cur, prov, local) {
+  const row = el("div","now-reach"); row.id = "now-reach";
+  const r = REACH[cur];
+  if (!r) {
+    row.append(el("span", null, "Reachability not checked this session."));
+    const b = btn("Check now", "gho", () => checkReach(cur, prov, local));
+    b.id = "now-check";
+    row.append(b);
+    return row;
+  }
+  if (r.pending) { row.append(el("span", null, "Checking\u2026")); return row; }
+  row.classList.add(r.ok ? "ok" : "bad");
+  row.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
+  row.append(el("b", null, r.ok ? "Answering" : "Did not answer"));
+  const bits = [];
+  if (r.ok && r.ms != null) bits.push(r.ms + "ms");
+  bits.push("checked " + ago(r.at));
+  row.append(el("span", null, "\u00b7 " + bits.join(" \u00b7 ")));
+  if (!r.ok && r.error) { const e = el("span", null, "\u00b7 " + r.error); e.title = r.error; row.append(e); }
+  const b = btn("Check again", "gho", () => checkReach(cur, prov, local));
+  row.append(b);
+  return row;
+}
+async function checkReach(cur, prov, local) {
+  const paint = () => {
+    const old = document.getElementById("now-reach");
+    if (old) old.replaceWith(reachRow(cur, prov, local));
+  };
+  // A local runtime has no credential to validate: what "reachable" means
+  // there is whether the daemon answered, which the page already asked.
+  if (local) {
+    const oll = (MSTATE || {}).ollama || {};
+    REACH[cur] = { ok: !!oll.reachable, at: Date.now() / 1000,
+                   error: oll.reachable ? null : "Ollama is not answering" };
+    paint(); return;
+  }
+  const fam = (AUTH.families || []).find(f => (f.providers || []).some(x => x.id === (prov || {}).id))
+           || (AUTH.families || []).find(f => f.id === (prov || {}).family);
+  const meth = fam && (fam.methods || []).find(x => x.id === fam.active);
+  if (!fam || !meth) {
+    REACH[cur] = { ok: false, at: Date.now() / 1000, error: "no connected method to check" };
+    paint(); return;
+  }
+  REACH[cur] = { pending: true }; paint();
+  let r;
+  try { r = await post("/api/auth/validate", { family: fam.id, method: meth.id, model: cur }); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  REACH[cur] = { ok: !!r.ok, at: Date.now() / 1000, ms: r.latency_ms != null ? r.latency_ms : null,
+                 error: r.ok ? null : errText(r) };
+  paint();
+}
+
+// ---- compare ---------------------------------------------------------------
+// Three at most: past that the columns stop being readable and the question
+// stops being "which of these", which is what this is for. Nothing here
+// scores or ranks — it lays the same facts out in the same order for each one
+// and lets the reader compare, because a "best model" number is one this
+// machine has no way to compute.
+const CMP = { pins: [], max: 3, rows: [] };
+function togglePin(key) {
+  const i = CMP.pins.indexOf(key);
+  if (i >= 0) CMP.pins.splice(i, 1);
+  else if (CMP.pins.length >= CMP.max) { toast("three at a time \u2014 unpin one first", true); return; }
+  else CMP.pins.push(key);
+  paintPins();
+}
+const cmpKey = a => a.model + "\u0000" + a.pid;
+const cmpRow = key => (CMP.rows || []).find(a => cmpKey(a) === key);
+function paintPins() {
+  document.querySelectorAll("#modelspad .mmcard").forEach(c => {
+    const k = c.dataset.model + "\u0000" + c.dataset.pid;
+    const b = c.querySelector(".mm-pin");
+    if (!b) return;
+    const on = CMP.pins.includes(k);
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.textContent = on ? "Pinned" : "Compare";
+  });
+  const bar = document.getElementById("cmp-bar"); if (!bar) return;
+  bar.classList.toggle("on", CMP.pins.length > 0);
+  bar.innerHTML = "";
+  if (!CMP.pins.length) return;
+  bar.append(el("span","cmp-n", CMP.pins.length + " pinned"));
+  const chips = el("div","cmp-chips");
+  CMP.pins.forEach(k => {
+    const a = cmpRow(k); if (!a) return;
+    const c = el("span","cmp-chip");
+    c.append(document.createTextNode(a.model));
+    const x = el("button","cmp-x", "\u00d7");
+    x.title = "unpin " + a.model;
+    x.setAttribute("aria-label", "unpin " + a.model);
+    x.onclick = () => togglePin(k);
+    c.append(x);
+    chips.append(c);
+  });
+  bar.append(chips);
+  bar.append(btn("Compare", "pri", showCompare));
+  bar.append(btn("Clear", "gho", () => { CMP.pins = []; paintPins(); }));
+}
+function showCompare() {
+  const rows = CMP.pins.map(cmpRow).filter(Boolean);
+  if (!rows.length) return;
+  const sh = document.getElementById("sheet"); sh.innerHTML = "";
+  const head = el("div","cs-h");
+  const ht = el("div","ft");
+  ht.append(el("div","fn", "Compare " + rows.length + " model" + (rows.length === 1 ? "" : "s")));
+  ht.append(el("div","fd sans", "The same facts in the same order for each. Nothing here is ranked."));
+  head.append(ht);
+  sh.append(head);
+  const grid = el("div","cmp-grid");
+  grid.style.setProperty("--cmp-cols", "132px repeat(" + rows.length + ", minmax(0, 1fr))");
+  const txt = (v, cls) => el("div","cmp-v" + (cls ? " " + cls : ""), v);
+  const line = (k, cells) => {
+    const r = el("div","cmp-r");
+    r.append(el("div","cmp-k", k));
+    cells.forEach(c => r.append(c));
+    grid.append(r);
+  };
+  const h = el("div","cmp-r");
+  h.append(el("div","cmp-k", ""));
+  rows.forEach(a => {
+    const c = el("div","cmp-h");
+    c.append(fillMark(el("span","omark"), a.pid, a.label));
+    const b = el("b", null, a.model); b.title = a.model; c.append(b);
+    h.append(c);
+  });
+  grid.append(h);
+  line("Served by", rows.map(a => txt(a.label)));
+  line("Context", rows.map(a => a.info.ctx ? txt(fmtCtx(a.info.ctx), "mono") : txt("not recorded", "dim")));
+  line("$ / 1M in", rows.map(a => a.price ? (a.price.free ? txt("free", "mono") : txt("$" + price2(a.price.in), "mono"))
+                                          : txt("no price row", "dim")));
+  line("$ / 1M out", rows.map(a => a.price ? (a.price.free ? txt("free", "mono") : txt("$" + price2(a.price.out), "mono"))
+                                           : txt("no price row", "dim")));
+  [["Tool calling", "tools"], ["Effort control", "effort"], ["Emits reasoning", "thinking"]].forEach(([lab, k]) =>
+    line(lab, rows.map(a => a.info[k] ? txt("yes") : txt("\u2014", "dim"))));
+  line("Ready to use", rows.map(a => a.enabled ? txt("yes") : txt("needs a key", "dim")));
+  sh.append(grid);
+  const foot = el("div","cs-foot");
+  rows.forEach(a => foot.append(btn((a.enabled ? "Use " : "Unlock ") + a.model, "gho", () => {
+    hideModal();
+    if (a.enabled) useModel(a.model, a.backend); else unlockFamily(a.fam);
+  })));
+  sh.append(foot);
+  showModal(true);
+}
 
 // ---- one model, as a card -------------------------------------------------
 // The SAME component the Deploy picker draws — .mcard with its mark square,
@@ -5694,6 +6065,8 @@ function myModelCard(a, fid, cur, famName) {
   const card = el("div","mcard mmcard" + (on ? " on" : "") + (a.enabled ? "" : " locked"));
   const pr = a.price;
   card.dataset.fam = fid;
+  card.dataset.model = a.model;
+  card.dataset.pid = a.pid;
   card.dataset.state = a.enabled ? "ready" : "locked";
   if (a.local) card.dataset.local = "1";
   card.dataset.free = (pr && pr.free) || a.local ? "1" : "";
@@ -5731,9 +6104,16 @@ function myModelCard(a, fid, cur, famName) {
   if (a.local && a.local.loaded) { const c = el("span","cap ok","loaded"); c.title = "in memory now"; caps.append(c); }
   if (caps.childElementCount) card.append(caps);
 
-  // the foot: the pixel motif on the left, the one action on the right
+  // the foot: the pixel motif on the left, the pin, then the one action
   const foot = el("div","mm-foot");
   if (on) foot.append(curMotif());
+  const key = a.model + "\u0000" + a.pid;
+  const pin = el("button","mm-pin" + (CMP.pins.includes(key) ? " on" : ""),
+                 CMP.pins.includes(key) ? "Pinned" : "Compare");
+  pin.setAttribute("aria-pressed", CMP.pins.includes(key) ? "true" : "false");
+  pin.title = "hold this one next to another";
+  pin.onclick = ev => { ev.stopPropagation(); togglePin(key); };
+  foot.append(pin);
   if (!on) foot.append(el("span","mm-act", a.enabled ? "use →" : "unlock →"));
   card.append(foot);
   // the current model wears the same slanted tag the provider cards wear, so
@@ -5763,41 +6143,33 @@ async function loadModels() {
   // Reachability is a per-provider action on the provider's own card below —
   // a page-level "test this route" strip said less and sat in the way.
   pageHead(pad, "My models", null,
-    "Every provider mantis can talk to, and the models they serve. " +
+    "What you are running, and everything else you could switch to. " +
     "Connect a family once and its models are one click away.");
 
-  // What this page is about, before the detail: how much of it is switched on,
-  // how much it puts within reach, and which one is answering right now. None
-  // of the three is a series — a count of providers has no yesterday — so none
-  // of them draws a chart or claims a trend.
-  {
-    const provs = m.providers || [];
-    const served = new Set();
-    provs.forEach(pv => (pv.models || []).forEach(x => served.add(x)));
-    ((m.ollama || {}).models || []).forEach(o => served.add(o.name));
-    const famN = new Set(provs.filter(pv => pv.enabled).map(pv => pv.family)).size;
-    const curM = (m.current || {}).model;
-    const curP = curM ? (provs.find(pv => (pv.models || []).includes(curM)) || {}).label : null;
-    statRow(pad, [
-      // filled in by renderAuthCards below, from the SAME predicate that
-      // draws the grid's tally — two numbers for one fact is how a dashboard
-      // starts disagreeing with itself
-      { icon: "key", label: "Connected providers", value: "—", id: "stat-conn",
-        sub: famN ? famN + " famil" + (famN === 1 ? "y" : "ies") + " of models ready to use"
-                  : "connect one below and its models light up" },
-      { icon: "models", label: "Models available", value: fmt(served.size),
-        sub: "across " + (m.families || []).length + " families, including anything Ollama has pulled" },
-      { icon: "spend", label: "Current model", value: curM || "—",
-        sub: curM ? (curP ? "served by " + curP : "set on this machine") : "pick one below to set it" },
-    ]);
-  }
-
-  // Providers first: a model list means nothing until one is connected. This
-  // is the ONLY way to connect a provider — every auth type each family
-  // offers, not just an API key.
   MSTATE = m;
+  // ---- what you are running ----------------------------------------------
+  nowRunning(pad, m);
+
+  // ---- setup, folded ------------------------------------------------------
+  // The provider grid is this page's other altitude: it answers "why can't I
+  // use that one", which is a question you ask after the models, not before
+  // them. It keeps every part it had — the three groups, the overlay panel,
+  // the motif — inside a strip that opens, and it opens itself when nothing
+  // is connected, because then setup IS the job.
   const authSec = section(pad, "Providers");
-  const authBox = el("div"); authBox.id = "auth-cards"; authSec.append(authBox);
+  const sum = el("button","provsum"); sum.id = "provsum";
+  const authBox = el("div","provbox"); authBox.id = "auth-cards";
+  const setProv = on => {
+    authBox.classList.toggle("on", on);
+    sum.setAttribute("aria-expanded", on ? "true" : "false");
+    const x = sum.querySelector(".provsum-x");
+    if (x) x.textContent = on ? "Hide setup" : "Manage providers \u2192";
+  };
+  sum.onclick = () => setProv(!authBox.classList.contains("on"));
+  AUTH.setProv = setProv;
+  setProv(false);
+  sum.setAttribute("aria-controls", "auth-cards");
+  authSec.append(sum, authBox);
   loadAuthFamilies(authBox);
 
   // ---- the model table ------------------------------------------------
@@ -5877,9 +6249,46 @@ async function loadModels() {
     bar.append(chips);
     sec.append(bar);
 
+    // ---- what you had before this one ----
+    // Switching back should not mean finding the card again. The catalog
+    // already keeps the order; a model it no longer knows how to reach is
+    // still listed, but says so rather than pretending it is one click away.
+    const recents = (m.recent || []).map(id => allModels.find(a => a.model === id)).filter(Boolean).slice(0, 5);
+    if (recents.length) {
+      const rr = el("div","mm-recent");
+      rr.append(el("span","mm-recl", "Recently used"));
+      recents.forEach(a => {
+        const b = el("button","mm-rec" + (a.enabled ? "" : " locked"));
+        b.append(fillMark(el("span","omark"), a.pid, a.label));
+        b.append(el("span", null, a.model));
+        b.title = a.enabled ? "switch to " + a.model + " \u00b7 " + a.label
+                            : a.model + " \u00b7 " + a.label + " needs a key";
+        b.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam);
+        rr.append(b);
+      });
+      sec.append(rr);
+    }
+
+    // ---- the question you are asking of the grid ----
+    const SORTS = [["family", "By family"], ["cheap", "Cheapest"], ["ctx", "Biggest context"]];
+    const sortBar = el("div","mm-sortbar");
+    sortBar.append(el("span","mm-sortl", "Sort"));
+    const sortChips = el("div","fchips");
+    SORTS.forEach(([k, lab]) => {
+      const c = el("button","fchip" + (k === MODEL_SORT ? " on" : ""), lab);
+      c.onclick = () => {
+        MODEL_SORT = k;
+        sortChips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
+        resort();
+      };
+      sortChips.append(c);
+    });
+    sortBar.append(sortChips);
+    sec.append(sortBar);
+
     // One labelled card grid per source, so "Open models · 34 models" reads
     // as a heading over its own cards rather than a stripe in a table.
-    const list = el("div","mm-list");
+    const list = el("div","mm-list"); list.id = "mm-grid-top";
     const groups = [];
     famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
       const rows = allModels.filter(a => a.fam === fid);
@@ -5893,7 +6302,52 @@ async function loadModels() {
       list.append(fh, grid);
       groups.push([fh, grid]);
     });
+    // The same cards, in one grid, when the question is not "whose is it".
+    // They are MOVED, never rebuilt, so a card keeps its band, its tag and
+    // its handlers whichever ordering it is under.
+    const flatH = el("div","mm-glabel mm-flat"); flatH.id = "mm-flath";
+    const flat = el("div","mm-grid mm-flat"); flat.id = "mm-flat";
+    list.append(flatH, flat);
+    const cards = [];
+    groups.forEach(([, g]) => [...g.children].forEach(c => cards.push(c)));
+    const keyOf = a => {
+      const pr = a.price;
+      if (MODEL_SORT === "cheap") return (pr && pr.free) ? 0
+        : (pr && pr.in != null) ? pr.in + pr.out : Infinity;      // unpriced sorts last
+      if (MODEL_SORT === "ctx") return -(a.info.ctx || 0);        // unknown sorts last
+      return 0;
+    };
+    const byId = {};
+    allModels.forEach(a => { byId[a.model + "\u0000" + a.pid] = a; });
+    resort = () => {
+      const flatOn = MODEL_SORT !== "family";
+      groups.forEach(([fh, g]) => { fh.classList.toggle("mm-off", flatOn); g.classList.toggle("mm-off", flatOn); });
+      flatH.classList.toggle("on", flatOn); flat.classList.toggle("on", flatOn);
+      if (!flatOn) {
+        groups.forEach(([, g]) => {
+          cards.forEach(c => { if (c.dataset.fam === g.dataset.fam) g.append(c); });
+        });
+      } else {
+        const rows = cards.slice().sort((x, y) => {
+          const a = byId[x.dataset.model + "\u0000" + x.dataset.pid];
+          const b = byId[y.dataset.model + "\u0000" + y.dataset.pid];
+          const d = keyOf(a) - keyOf(b);
+          return d || x.dataset.model.localeCompare(y.dataset.model);
+        });
+        rows.forEach(c => flat.append(c));
+        flatH.innerHTML = "";
+        flatH.append(document.createTextNode(
+          MODEL_SORT === "cheap" ? "Cheapest first" : "Biggest context first"));
+        flatH.append(el("span","mm-gn", MODEL_SORT === "cheap"
+          ? "by $ in + $ out per 1M \u00b7 free and local first, unpriced last"
+          : "by the window the SDK records \u00b7 unknown last"));
+      }
+      apply();
+      paintMotifsNow();
+    };
     sec.append(list);
+    CMP.rows = allModels;
+    const cmpBar = el("div","cmp-bar"); cmpBar.id = "cmp-bar"; sec.append(cmpBar);
     paintMotifsNow();
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
@@ -5916,6 +6370,9 @@ async function loadModels() {
         fh.style.display = (MODEL_TAB === "all" && n) ? "" : "none";
         grid.style.display = n ? "" : "none";
       });
+      // a flat ordering has no families to label
+      const fh2 = document.getElementById("mm-flath");
+      if (fh2) fh2.style.display = (MODEL_SORT !== "family" && shown) ? "" : "none";
       let e = list.querySelector(".find-none");
       if (!shown) { if (!e) { e = emptyState("search", "No model matches",
         "Try another family tab, clear the filter, or self-host something that isn't listed.");
@@ -5924,7 +6381,8 @@ async function loadModels() {
     };
     applyModelFilter = apply;
     find.input.oninput = apply;
-    apply();
+    resort();                 // lays the cards out, then filters them
+    paintPins();
     // Keyboard: / focuses (global handler), ↑↓ walk the visible cards, Enter switches to one.
     let kbi = -1;
     const visible = () => [...list.querySelectorAll(".mmcard")].filter(r => r.style.display !== "none");
