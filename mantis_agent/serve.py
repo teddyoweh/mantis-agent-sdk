@@ -1422,8 +1422,10 @@ def overview() -> dict[str, Any]:
     try:
         act = activity(limit=20)
         active_jobs, active_runs = act["active_jobs"], act["active_runs"]
+        act_counts = act.get("counts_7d") or {}
     except Exception:  # noqa: BLE001
         active_jobs = active_runs = 0
+        act_counts = {}
     try:
         sp = spend()
         spend_7 = sp["totals"]["7"]
@@ -1445,6 +1447,10 @@ def overview() -> dict[str, Any]:
         "family_ready_count": sum(1 for v in fam_ready.values() if v),
         "active_jobs": active_jobs,
         "active_runs": active_runs,
+        # the rail badges what you are meant to act on; it is a real count or
+        # it is nothing, never a placeholder
+        "counts_7d": act_counts,
+        "failed_7d": int(act_counts.get("error") or 0),
         "spend_7d": spend_7,
         "deployments_live": deployments_live_count(),
     }

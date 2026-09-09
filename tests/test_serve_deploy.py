@@ -856,7 +856,10 @@ def test_the_fit_step_waits_in_the_shape_of_its_answer(fake):
     # the same pieces the loaded shape has: header, six spec cells, GPU rows
     assert 'el("div","card2")' in sk and 'el("div","dp-mh")' in sk
     assert 'el("div","lcd tight")' in sk and "i < 6" in sk
-    assert 'el("div","card2 dp-fitbox")' in sk and "i < 3" in sk
+    # one row per GPU the fit table is about to draw: three left the waiting
+    # shape 140px short of the answer once the rail took a column out of the
+    # page, and the render gate caught the step jumping again
+    assert 'el("div","card2 dp-fitbox")' in sk and "i < 6" in sk
     # each placeholder is sized to the thing it stands in for
     for cls in (".sk-tag", ".sk-num", ".sk-lbl", ".sk-mark", ".sk-name", ".sk-row"):
         assert cls in css, cls

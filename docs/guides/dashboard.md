@@ -35,7 +35,29 @@ green-tinted row, and under it the rail opens the rows you were about to
 click anyway — the five families under **My models** (with their vendor
 marks and a ready dot), your recent projects under **Sessions**, what is live
 under **Deploy**. Only the page you are on expands, and its caret folds the
-rows away. At the foot: the **current model** with a live dot and the
+rows away, and **Activity** opens the states its own filter has — Running,
+Done, Failed — listing only the ones with something in them, because an empty
+row promises something to look at that isn't there. A child is joined to its
+parent by a **branch**: this sheet draws no lines, so it is a run of 1px
+blocks on a 3px pitch (the card motif's material at its finest grain) with a
+stub across to each row, and the accent on the row you are on.
+
+Each **group heading is a control**: it folds its own section away and the
+choice is remembered, because which sections you care about is a property of
+how you work rather than of this visit. The chevron stays invisible until you
+hover or focus the heading — five headings that all look like buttons read as
+a filing cabinet — and shows itself while a group is folded. Navigating to a
+page always opens the group it lives in, so a page can never be hidden by a
+fold you made last week.
+
+Counts are quiet mono readings. The **one** count that gets a surface is a
+filled badge on **Activity** when runs have failed in the last seven days:
+that is the reading you are meant to go and act on, and it only replaces the
+live count when nothing is running, because two numbers on one row is a row
+nobody reads. It is a real number off the activity ledger (`failed_7d`) or it
+is nothing.
+
+At the foot: the **current model** with a live dot and the
 provider it is reached through (clicking goes to the page that would change
 it), the **theme** toggle (system → dark → light, remembered), the version,
 and a **local** / **lan · token** pill that says how the server is bound.
@@ -83,6 +105,55 @@ placeholders on first load; actions (test a provider, use a deployment,
 tear one down) update the page optimistically and roll back if the
 request fails. A 15-second timer stays as the fallback when the long-poll
 can't connect; both pause while the tab is hidden.
+
+### Narrow, and the rail becomes a drawer
+
+Below **1000px** the rail leaves the flow entirely and slides over the page
+behind a scrim, opened by the one control the bar grows for it — a drawn
+hamburger on the same 24-unit grid as every other mark, with an
+`aria-expanded` state. Picking a page closes it; so does the scrim. It is
+never the 60px strip of wordless marks there: a folded rail sliding over the
+content is the worst of both, so the folded preference simply does not apply
+below the breakpoint and is handed back the moment there is a column to fold
+again. The render gate measures the rail at 900, 1000, 1200 and 1440 — off
+the page when shut, flush and full width when open, no sideways scroll in
+either state, every row still carrying its words and reachable by Tab.
+
+Tab reaches every row (they are buttons, and the sheet has exactly one focus
+ring); **up and down** then walk the rail, skipping anything folded away.
+
+### The page header
+
+Every page-shaped view opens the same way: the bar carries a **breadcrumb**,
+and the page carries a title, a line saying what it is for, and a **stat
+row**.
+
+The breadcrumb is a trail you can walk back up. A page on its own is one
+word; a page you have narrowed reads `My models › Claude`, and the chevron to
+its left drops the step you took to get there. Only a narrowing that can
+actually be undone becomes a level — the family tab, the activity filter, the
+project and session you picked — because a back button that does nothing is
+furniture. Intermediate steps are clickable; the step you are on is text.
+
+The stat row is the **same reading tile the Overview uses**, so a figure means
+the same thing wherever you meet it: a label with its mark, the figure, and a
+line of context. Two rules keep it honest. A tile draws its inline chart only
+when there is a real series behind it — none of these endpoints has one, so
+they render flat rather than reserving a chart's worth of empty height. And a
+tile carries a delta only when there is a previous period to compare with;
+none of these has one, so none of them claims a trend. Per page: **My
+models** — connected providers, models available, current model · **Activity**
+— running, done, failed · **Deploy** — live deployments, hourly burn,
+providers ready. The burn is summed from the rates providers actually quote
+for endpoints that are actually up, and an endpoint with no rate is reported
+as unpriced rather than counted as zero. The connected-providers figure is
+filled by the Providers grid below it, from that grid's own predicate, so the
+two can never disagree.
+
+Three tiles stay three across until there is only room for one; four fold to
+two. **Sessions** is the one view with no stat row: it is a three-pane
+browser filling the viewport rather than a scrolling page, and a header band
+would come out of the panes' height.
 
 ## What it shows
 

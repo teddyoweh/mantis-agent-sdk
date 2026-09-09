@@ -648,6 +648,36 @@ def test_one_motif_across_all_three_card_kinds(fake):
     assert "  .dpc .ff { display: flex; align-items: center; gap: 6px; margin-top: auto;" in css
 
 
+def test_a_band_is_filled_as_soon_as_its_cards_are_in_the_page(fake):
+    """The bands are drawn from the card's measured width, so they cannot be
+    drawn until the card has one. Leaving that entirely to the observer left
+    the provider grid — which arrives from a fetch — showing empty bands on a
+    slow render. Every grid therefore fills its own bands the moment it has
+    inserted them, and the observer only handles what changes afterwards."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+
+    # one synchronous pass, called by each of the three grids that draw bands
+    assert "function paintMotifsNow() { paintMotifs(); }" in js
+    assert js.count("paintMotifsNow();") == 3        # the three grids that draw bands
+    # ...the provider grid, once its cards are in the box and measurable
+    auth = js[js.index("function renderAuthCards(box, r) {"):js.index("// the panel is a sibling of the grids")]
+    assert "AUTH.group = now;" in auth and "paintMotifsNow();" in auth
+    assert auth.index("box.append(grid);") < auth.index("paintMotifsNow();")
+    # a view built while it was display:none has no box either
+    assert "  scheduleMotifs();          // a view built while hidden had no box to measure" in js
+
+    # The first observer delivery can arrive before a freshly built card has
+    # been inserted, so a not-yet-connected motif must NOT be dropped — only
+    # one that has already been painted, i.e. a card that has been replaced.
+    ro = js[js.index("const MOT_RO ="):js.index("function watchMotif(svg)")]
+    assert "if (e.target.isConnected) { paintMotif(e.target); return; }" in ro
+    assert "if (e.target.dataset.w) MOT_RO.unobserve(e.target);" in ro
+    # a resize still repaints even where the observer is doing the watching
+    assert 'addEventListener("resize", scheduleMotifs);' in js
+
+
 def test_current_is_the_only_slanted_badge(fake):
     """Current is a tag pinned to the card, not a word in the row — and it is
     the only slanted one, so it differs from the rest in shape as well as
