@@ -397,6 +397,20 @@ class OpenAICompatProvider(HTTPProviderMixin):
         """
 
         cap = model_capability or self._default_model_capability
+        bare_model = model.lower().rsplit("/", 1)[-1]
+        if tools and bare_model.startswith("gpt-6-astra") and not self._azure:
+            async for event in self._stream_responses(
+                model=model,
+                messages=messages,
+                system=system,
+                tools=tools,
+                max_tokens=max_tokens,
+                extra=extra,
+                thinking=thinking,
+                model_capability=cap,
+            ):
+                yield event
+            return
         # Without tools the path doesn't matter, but we keep Path A semantics
         # so the (text-only) translator runs the simpler hot loop.
         path: ToolUsePath = (
@@ -511,6 +525,39 @@ class OpenAICompatProvider(HTTPProviderMixin):
                     ):
                         yield ev
                 return
+
+    async def _stream_responses(
+        self,
+        *,
+        model: str,
+        messages: Iterable[Message],
+        system: str | None,
+        tools: list[dict[str, Any]],
+        max_tokens: int,
+        extra: dict[str, Any] | None,
+        thinking: dict[str, Any] | None,
+        model_capability: ModelCapability | None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Use OpenAI Responses for Astra's reasoning-compatible native tools."""
+        payload = _build_responses_payload(
+            model=model,
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=max_tokens,
+            extra=extra,
+            thinking=thinking,
+            model_capability=model_capability,
+        )
+        response = await self.client.post(
+            "/responses",
+            headers=self._per_request_headers() or None,
+            content=_PAYLOAD_ENCODER.encode(payload),
+        )
+        raise_for_status(response)
+        data = response.json()
+        for event in _translate_responses(data, model):
+            yield event
 
     def _chat_endpoint(self, model: str) -> tuple[str, dict[str, str]]:
         """``(path, query)`` for the chat-completions call.
@@ -826,6 +873,126 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
             out[k] = v
     return out
 
+
+
+def _build_responses_payload(
+    *,
+    model: str,
+    messages: Iterable[Message],
+    system: str | None,
+    tools: list[dict[str, Any]],
+    max_tokens: int,
+    extra: dict[str, Any] | None,
+    thinking: dict[str, Any] | None,
+    model_capability: ModelCapability | None,
+) -> dict[str, Any]:
+    """Translate universal history into the OpenAI Responses input format."""
+    msg_list = list(messages)
+    pulled_system, body = _split_system(msg_list)
+    instructions = "\n\n".join(p for p in (system, pulled_system) if p)
+    items: list[dict[str, Any]] = []
+    for message in body:
+        if isinstance(message, UserMessage):
+            if isinstance(message.content, str):
+                items.append({"role": "user", "content": message.content})
+                continue
+            text: list[str] = []
+            content: list[dict[str, Any]] = []
+            for block in message.content:
+                if isinstance(block, ToolResultBlock):
+                    items.append({
+                        "type": "function_call_output",
+                        "call_id": block.tool_use_id,
+                        "output": _tool_result_content_to_string(block.content),
+                    })
+                elif isinstance(block, TextBlock):
+                    text.append(block.text)
+                elif hasattr(block, "source"):
+                    image = _image_block_to_openai_part(block)["image_url"]["url"]
+                    content.append({"type": "input_image", "image_url": image})
+            if text:
+                content.insert(0, {"type": "input_text", "text": "\n".join(text)})
+            if content:
+                items.append({"role": "user", "content": content})
+        elif isinstance(message, AssistantMessage):
+            text = "\n".join(b.text for b in message.content if isinstance(b, TextBlock))
+            if text:
+                items.append({"role": "assistant", "content": text})
+            for block in message.content:
+                if isinstance(block, ToolUseBlock):
+                    items.append({
+                        "type": "function_call",
+                        "call_id": block.id,
+                        "name": block.name,
+                        "arguments": json.dumps(block.input, separators=(",", ":")),
+                    })
+
+    response_tools: list[dict[str, Any]] = []
+    for tool in _normalize_tool_defs(tools):
+        function = tool["function"]
+        response_tools.append({
+            "type": "function",
+            "name": function["name"],
+            "description": function.get("description", ""),
+            "parameters": function.get("parameters", {}),
+        })
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": items,
+        "tools": response_tools,
+        "max_output_tokens": max_tokens,
+    }
+    if instructions:
+        payload["instructions"] = instructions
+    raw_effort = (extra or {}).get("reasoning_effort") or (extra or {}).get("effort")
+    explicit = _normalize_effort(raw_effort, "openai", model.lower().rsplit("/", 1)[-1]) if raw_effort else None
+    if explicit:
+        payload["reasoning"] = {"effort": explicit}
+    elif thinking and thinking.get("type") != "disabled":
+        payload["reasoning"] = {"effort": "medium"}
+    elif model_capability and model_capability.reasoning_mode == "always_on":
+        payload["reasoning"] = {"effort": "low"}
+    return payload
+
+
+def _translate_responses(data: dict[str, Any], requested_model: str) -> Iterable[StreamEvent]:
+    """Translate one completed Responses object to normalized stream events."""
+    yield MessageStart(
+        message_id=data.get("id") or f"resp-{uuid4().hex[:12]}",
+        model=data.get("model") or requested_model,
+    )
+    index = 0
+    has_tool = False
+    for item in data.get("output") or []:
+        item_type = item.get("type")
+        if item_type == "message":
+            for part in item.get("content") or []:
+                if part.get("type") not in {"output_text", "text"}:
+                    continue
+                text = part.get("text") or ""
+                yield ContentBlockStart(index=index, block=TextBlock(text=""))
+                if text:
+                    yield ContentBlockDelta(index=index, delta=TextDelta(text=text))
+                yield ContentBlockStop(index=index)
+                index += 1
+        elif item_type == "function_call":
+            has_tool = True
+            call_id = item.get("call_id") or item.get("id") or f"call_{uuid4().hex[:12]}"
+            name = item.get("name") or "unknown_tool"
+            arguments = item.get("arguments") or "{}"
+            yield ContentBlockStart(
+                index=index, block=ToolUseBlock(id=call_id, name=name, input={})
+            )
+            yield ContentBlockDelta(index=index, delta=InputJsonDelta(partial_json=arguments))
+            yield ContentBlockStop(index=index)
+            index += 1
+    usage_data = data.get("usage") or {}
+    usage = Usage(
+        input_tokens=int(usage_data.get("input_tokens") or 0),
+        output_tokens=int(usage_data.get("output_tokens") or 0),
+    )
+    yield MessageDelta(stop_reason="tool_use" if has_tool else "end_turn", usage=usage)
+    yield MessageStop()
 
 # ---------------------------------------------------------------------------
 # Message encoding (universal -> OpenAI chat shape)

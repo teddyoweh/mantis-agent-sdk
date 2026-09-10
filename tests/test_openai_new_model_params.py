@@ -45,6 +45,45 @@ def test_gpt56_tools_set_reasoning_effort_none() -> None:
     assert pl.get("reasoning_effort") == "none"
 
 
+def test_astra_tools_use_responses_api() -> None:
+    import anyio
+    import httpx
+
+    from mantis_agent.events import ContentBlockStart
+    from mantis_agent.types import ToolUseBlock
+
+    calls: list[dict] = []
+    tool = {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        calls.append(json.loads(request.content))
+        assert request.url.path.endswith("/responses")
+        return httpx.Response(200, json={
+            "id": "resp_1", "model": "gpt-6-astra",
+            "output": [{"type": "function_call", "call_id": "call_1",
+                        "name": "read_file", "arguments": '{"path":"AGENTS.md"}'}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })
+
+    p = OpenAICompatProvider(base_url="https://api.openai.com/v1", api_key="x")
+    p.client = httpx.AsyncClient(base_url="https://api.openai.com/v1",
+                                 transport=httpx.MockTransport(handler))
+
+    async def go() -> list:
+        return [ev async for ev in p.stream(model="gpt-6-astra",
+                                            messages=[UserMessage(content="read")],
+                                            tools=[tool], max_tokens=100)]
+
+    events = anyio.run(go)
+    starts = [ev for ev in events if isinstance(ev, ContentBlockStart)]
+    assert isinstance(starts[0].block, ToolUseBlock)
+    assert starts[0].block.name == "read_file"
+    assert calls[0]["tools"][0]["name"] == "read_file"
+    assert calls[0]["max_output_tokens"] == 100
+
+
 def test_stream_retries_with_max_completion_tokens_on_param_error() -> None:
     # A recent model our name-detection misses (e.g. the bare "chat-latest" alias)
     # 400s on max_tokens; the provider must swap the field and retry, not fail.
