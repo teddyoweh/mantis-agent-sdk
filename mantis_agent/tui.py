@@ -2850,6 +2850,61 @@ class MantisTUI:
             extra["reasoning_mode"] = self.reasoning_mode
         return extra
 
+    def _harness_state(self) -> tuple[Any, Any]:
+        """Terminal-only durable stores, keyed by the *current* transcript.
+
+        Create the transcript here: both terminal frontends can build an agent
+        before their usual transcript setup. Never use an adhoc/shared state file.
+        Loading errors deliberately propagate, preserving corrupt files for repair.
+        """
+        from .artifacts import ArtifactStore  # noqa: PLC0415
+        from .paths import get_project_dir, sanitize_session_id  # noqa: PLC0415
+        from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
+        from .task_state import TaskState  # noqa: PLC0415
+
+        if self.transcript is None:
+            self.transcript = SessionTranscript(new_session_id())
+        root = get_project_dir()
+        path = root / "task-state" / f"{sanitize_session_id(self.transcript.session_id)}.json"
+        cached = getattr(self, "_harness_cache", None)
+        if cached is not None and cached[0] == path:
+            return cached[1], cached[2]
+        try:
+            state = TaskState(path)
+            artifacts = ArtifactStore(root / "artifacts")
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(
+                f"Cannot load terminal task state {path}: {exc}. "
+                "Repair or explicitly move aside the persisted file before retrying; "
+                "it has not been reset."
+            ) from exc
+        self._harness_cache = (path, artifacts, state)
+        return artifacts, state
+
+    def _bind_harness_state(self) -> None:
+        """Call immediately before run_iter, including in the fullscreen UI.
+
+        Resume/branch can replace the transcript without rebuilding the Agent.
+        Replace only its local bound tool; delegation kits must never inherit the
+        parent's mutable task state. On a failed load no turn should be started.
+        """
+        if (self.agent is None or is_small_model(self.model)
+                or not hasattr(self.agent, "task_state")):
+            return
+        from .artifacts import make_artifact_tool  # noqa: PLC0415
+        from .task_state import make_task_state_tool  # noqa: PLC0415
+
+        artifacts, state = self._harness_state()
+        if self.agent.task_state is state and self.agent.artifact_store is artifacts:
+            return
+        self.agent.task_state = state
+        self.agent.artifact_store = artifacts
+        # Agent owns this registry (copied when harness stores were configured).
+        self.agent.tools._by_name["task_state"] = make_task_state_tool(state)
+        self.agent.tools._by_name["read_artifact"] = make_artifact_tool(artifacts)
+        if getattr(self.agent, "_compactor", None) is not None:
+            self.agent._compactor._artifact_store = artifacts
+
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
         from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
@@ -3001,8 +3056,18 @@ class MantisTUI:
         # doesn't touch.
         self._deferred_note = self._apply_tool_deferral(registry)
 
+        artifacts, task_state = (None, None) if slim else self._harness_state()
+        harness_note = "" if slim else (
+            "\n\nFor complex tasks, use task_state to track the objective, checks, "
+            "and hypotheses across turns and compaction. Passing checks require "
+            "evidence from actual tool call IDs observed in this session; never "
+            "invent IDs or treat a plan as verification. Simple tasks need not "
+            "create checks. Use read_artifact to inspect preserved output."
+        )
         return Agent(
             model=self.model,
+            artifact_store=artifacts,
+            task_state=task_state,
             provider=provider,
             # The terminal is the surface where a user's own SKILL.md files are
             # the point, so it opts in explicitly. The SDK default is off — a
@@ -3014,7 +3079,8 @@ class MantisTUI:
             system=(self.system or (self._default_system_slim() if slim
                                     else self._default_system()))
             + _deferred_section(registry)
-            + _advisor_section(self._advisor),
+            + _advisor_section(self._advisor)
+            + harness_note,
             tools=registry,
             permissions=permissions,
             max_tokens=self.max_tokens,
@@ -4074,7 +4140,9 @@ class MantisTUI:
         # they are what lets a workflow's agents, a task's subagent and the
         # shell job it started read as one piece of work.
         self._begin_activity_turn()
+        _stream = None
         try:
+            self._bind_harness_state()
             _stream = self.agent.run_iter(self.messages)
             async for msg in _stream:
                 await thinking.stop()
@@ -4125,7 +4193,8 @@ class MantisTUI:
             # task group open across its yields, so letting the event loop
             # finalize it later raises "exit cancel scope in a different task".
             from .agent import aclose_stream  # noqa: PLC0415
-            await aclose_stream(_stream)
+            if _stream is not None:
+                await aclose_stream(_stream)
             reset_bash_output_sink(_bash_token)
             self._bash_stream_finish()
             self._turn_active = False
@@ -6151,7 +6220,11 @@ class MantisTUI:
         if cmd == "/clear":
             # Blank the screen (and scrollback) and redraw the banner — a clean
             # fresh start, like relaunching mantis.
+            from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
+            self.transcript = SessionTranscript(new_session_id())
             self.messages = []
+            self.todos.clear()
+            self._title_done = False
             try:
                 sys.stdout.write("\033[2J\033[3J\033[H")
                 sys.stdout.flush()

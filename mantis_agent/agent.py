@@ -992,6 +992,9 @@ class Agent:
     # context window, summarizing older turns so long sessions don't 413.
     compactor: Compactor | None = None
     auto_compact: bool = True
+    # Opt-in durable evidence; the terminal supplies project-scoped stores.
+    artifact_store: Any = None
+    task_state: Any = None
     # Parent span — set when this agent is being run as a sub-agent so its
     # ``agent.run`` span nests under the parent's ``tool.call`` span. Users
     # rarely set this directly; the sub-agent runner wires it.
@@ -1015,6 +1018,7 @@ class Agent:
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
     _surfaced: set[str] = field(default_factory=set, init=False)
+    _recall_text: str = field(default="", init=False)
     # Path-scoped conditional rules already injected this session (dedup by path).
     _rules_surfaced: set[str] = field(default_factory=set, init=False)
     # Auto-loaded skill bodies already injected this session (dedup by skill name).
@@ -1205,7 +1209,23 @@ class Agent:
         if self.compactor is not None:
             self._compactor = self.compactor
         elif self.auto_compact:
-            self._compactor = SimpleCompactor(self._summarize)
+            self._compactor = SimpleCompactor(
+                self._summarize, artifact_store=self.artifact_store
+            )
+
+        if self.artifact_store is not None or self.task_state is not None:
+            # Bound tools belong to this agent, not a caller's shared registry.
+            self.tools = ToolRegistry({t.name: t for t in self.tools})
+        if self.artifact_store is not None:
+            from .artifacts import make_artifact_tool
+            if self.tools.resolve("read_artifact") is not None:
+                raise ValueError("read_artifact is reserved when artifact_store is configured")
+            self.tools.add(make_artifact_tool(self.artifact_store))
+        if self.task_state is not None:
+            from .task_state import make_task_state_tool
+            if self.tools.resolve("task_state") is not None:
+                raise ValueError("task_state is reserved when task_state is configured")
+            self.tools.add(make_task_state_tool(self.task_state))
 
         # AbortSignal-like cancellation event. Fires when ``Agent.cancel()``
         # is called. Surfaces on ``ToolPermissionContext.signal`` so
@@ -1285,6 +1305,10 @@ class Agent:
         the number of completed todos. A run with no todos has a constant 0,
         which is exactly why a no-todo natural stop is never continued (the
         unfinished-work gate returns False first)."""
+        if self.task_state is not None and (
+            self.task_state.progress_count or self.task_state.has_unfinished_work
+        ):
+            return self.task_state.progress_count
         return sum(
             1 for t in (self.todos or [])
             if str(t.get("status", "pending")) == "completed"
@@ -1295,6 +1319,8 @@ class Agent:
         spend FLOOR (``Budget.target_*``) the run hasn't reached yet. This is
         the hard precondition for continuing a natural stop — no signal means
         the model's final answer is the end, exactly as before persistence."""
+        if self.task_state is not None and self.task_state.has_unfinished_work:
+            return True
         if self.todos and any(
             str(t.get("status", "pending")) != "completed" for t in self.todos
         ):
@@ -1767,14 +1793,34 @@ class Agent:
         # the cached head), deduped across the session. Appended after the user
         # message so it's the freshest context the model sees before replying.
         query = self._latest_user_text(messages)
+        self._recall_text = ""
         if self.include_recall and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
             if query:
                 try:
                     from .memory_recall import recall_block
+                    # Historical exposure isn't active context: compaction may
+                    # have evicted a recalled note since the previous turn.
+                    active_paths = {
+                        path for path in self._surfaced
+                        if any(
+                            isinstance(m, UserMessage) and m.isMeta
+                            and isinstance(m.content, str) and path in m.content
+                            and "Memory" in m.content
+                            for m in messages[1:]
+                        )
+                    }
+                    self._surfaced.intersection_update(active_paths)
+                    for m in reversed(messages):
+                        if (isinstance(m, UserMessage) and m.isMeta
+                                and isinstance(m.content, str)
+                                and any(path in m.content for path in active_paths)):
+                            self._recall_text = m.content[:12000]
+                            break
                     text, paths = recall_block(
-                        query, already_surfaced=frozenset(self._surfaced)
+                        query, already_surfaced=frozenset(active_paths)
                     )
                     if text:
+                        self._recall_text = text
                         self._surfaced.update(paths)
                         reminder = UserMessage(content=text, isMeta=True)
                         messages.append(reminder)
@@ -2071,6 +2117,20 @@ class Agent:
                             if len(compacted) < before_len:
                                 messages[:] = compacted
                                 compactions += 1
+
+                if self.task_state is not None:
+                    messages[:] = [
+                        m for m in messages
+                        if not (isinstance(m, UserMessage) and m.isMeta
+                                and isinstance(m.content, str)
+                                and m.content.startswith("[Current task evidence]"))
+                    ]
+                    state_msg = UserMessage(
+                        content="[Current task evidence]\n" + self.task_state.render(),
+                        isMeta=True,
+                    )
+                    messages.append(state_msg)
+                    yield state_msg
 
                 # Per-turn span — nests under agent.run when tracing is on.
                 turn_span = maybe_start_span(
@@ -2402,6 +2462,8 @@ class Agent:
 
                 tool_result_msg = UserMessage(content=list(results_in_order))
                 messages.append(tool_result_msg)
+                if self.task_state is not None:
+                    self.task_state.observe(executor.executed_calls, executor_results)
                 yield tool_result_msg
 
                 # Escalation rung 3: after a sustained tool-error streak, persist
@@ -3053,6 +3115,25 @@ class Agent:
 
     def _provider_stream(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
         provider_messages = _repair_tool_call_history(messages)
+        # Overflow recovery can compact inside the retry loop. Reassemble these
+        # bounded projections for every request, not only at outer turn boundaries.
+        if self.task_state is not None:
+            provider_messages = [
+                m for m in provider_messages
+                if not (isinstance(m, UserMessage) and m.isMeta
+                        and isinstance(m.content, str)
+                        and m.content.startswith("[Current task evidence]"))
+            ]
+            provider_messages.append(UserMessage(
+                content="[Current task evidence]\n" + self.task_state.render(), isMeta=True
+            ))
+        if self.include_recall and self._recall_text and not any(
+            isinstance(m, UserMessage) and m.isMeta and m.content == self._recall_text
+            for m in provider_messages
+        ):
+            provider_messages = [*provider_messages, UserMessage(
+                content=self._recall_text, isMeta=True
+            )]
         # The repair makes this hold by construction; a violation here is an
         # engine bug and must read as one, not as a provider 400.
         _assert_message_invariants(provider_messages)

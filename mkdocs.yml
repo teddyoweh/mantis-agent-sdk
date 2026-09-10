@@ -123,3 +123,4 @@ nav:
       - development/plan-v1.md
       - development/upstream-comparison.md
       - Parity roadmap: internals/PARITY_ROADMAP.md
+      - Evidence-aware harness: internals/HARNESS_EVIDENCE.md

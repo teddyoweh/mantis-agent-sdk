@@ -33,6 +33,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import msgspec
 
+from .artifacts import ArtifactStore
 from .hooks import HookContext, HookDispatcher
 from .types import (
     AssistantMessage,
@@ -238,8 +239,20 @@ _CLEARED_TOOL_RESULT = "[old tool result cleared to save context]"
 _CLEARED_IMAGE = "[old image cleared to save context]"
 
 
+def _artifact_hint(id: str) -> str:
+    return f'[artifact:{id}; recover with read_artifact(id="{id}", offset=0, limit=4000)]'
+
+
+def _is_cleared_result(content: Any) -> bool:
+    return isinstance(content, str) and (
+        content == _CLEARED_TOOL_RESULT
+        or content.startswith(_CLEARED_TOOL_RESULT + " [artifact:")
+    )
+
+
 def _strip_heavy_blocks(
-    msg: Message, min_chars: int, *, images_only: bool = False
+    msg: Message, min_chars: int, *, images_only: bool = False,
+    artifact_store: ArtifactStore | None = None,
 ) -> Message | None:
     """Return ``msg`` with oversized payloads replaced by placeholders, or None
     if nothing was heavy enough to clear.
@@ -257,17 +270,33 @@ def _strip_heavy_blocks(
     touched = False
     for b in content:
         if isinstance(b, ImageBlock) and _block_token_estimate(b) * 4 > min_chars:
-            new_blocks.append(TextBlock(text=_CLEARED_IMAGE))
+            placeholder = _CLEARED_IMAGE
+            if artifact_store is not None:
+                try:
+                    placeholder += " " + _artifact_hint(artifact_store.put_json(b))
+                except (OSError, ValueError, TypeError):
+                    new_blocks.append(b)
+                    continue
+            new_blocks.append(TextBlock(text=placeholder))
             touched = True
             continue
         if (
             not images_only
             and isinstance(b, ToolResultBlock)
-            and b.content != _CLEARED_TOOL_RESULT
+            and not _is_cleared_result(b.content)
             and isinstance(b.content, (str, list))
             and _block_token_estimate(b) * 4 > min_chars
         ):
-            new_blocks.append(msgspec.structs.replace(b, content=_CLEARED_TOOL_RESULT))
+            placeholder = _CLEARED_TOOL_RESULT
+            if artifact_store is not None:
+                try:
+                    id = (artifact_store.put_text(b.content) if isinstance(b.content, str)
+                          else artifact_store.put_json(b.content))
+                    placeholder += " " + _artifact_hint(id)
+                except (OSError, ValueError, TypeError):
+                    new_blocks.append(b)
+                    continue
+            new_blocks.append(msgspec.structs.replace(b, content=placeholder))
             touched = True
             continue
         new_blocks.append(b)
@@ -307,6 +336,11 @@ class SimpleCompactor:
         replaced turns fires the non-blocking ``PostCompact`` hook with the new
         message list. Left ``None`` the compactor is hook-free and behaves
         exactly as before — no import-time or per-call cost.
+    artifact_store:
+        Optional durable evidence store. Replaced payloads and summarized messages
+        are archived first, with read_artifact references in their replacements.
+        Failed archive writes retain the original evidence. None preserves the
+        legacy standalone (lossy) behavior.
     trigger:
         Label reported to ``PostCompact`` hooks so they can tell an automatic
         threshold compaction ("auto") from an explicit ``/compact`` ("manual").
@@ -323,6 +357,7 @@ class SimpleCompactor:
         "_summary_token_budget",
         "_dispatcher",
         "_trigger",
+        "_artifact_store",
     )
 
     def __init__(
@@ -338,6 +373,7 @@ class SimpleCompactor:
         summary_token_budget: int = 2048,
         dispatcher: "HookDispatcher | None" = None,
         trigger: str = "auto",
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")
@@ -365,6 +401,7 @@ class SimpleCompactor:
         # construction is still honoured on the next compaction.
         self._dispatcher = dispatcher
         self._trigger = trigger
+        self._artifact_store = artifact_store
 
     @staticmethod
     def _used(messages: list[Message], usage: Usage) -> int:
@@ -403,7 +440,9 @@ class SimpleCompactor:
         cutoff = tr_idx[-self._micro_keep]
         changed = False
         for i in tr_idx[: -self._micro_keep]:
-            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars)
+            stripped = _strip_heavy_blocks(
+                messages[i], self._micro_min_chars, artifact_store=self._artifact_store
+            )
             if stripped is not None:
                 messages[i] = stripped
                 changed = True
@@ -414,7 +453,10 @@ class SimpleCompactor:
         for i in range(cutoff):
             if _is_tool_result_message(messages[i]):
                 continue
-            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars, images_only=True)
+            stripped = _strip_heavy_blocks(
+                messages[i], self._micro_min_chars, images_only=True,
+                artifact_store=self._artifact_store,
+            )
             if stripped is not None:
                 messages[i] = stripped
                 changed = True
@@ -437,7 +479,9 @@ class SimpleCompactor:
         for i in range(len(messages)):
             if i in keep:
                 continue
-            stripped = _strip_heavy_blocks(messages[i], self._micro_min_chars)
+            stripped = _strip_heavy_blocks(
+                messages[i], self._micro_min_chars, artifact_store=self._artifact_store
+            )
             if stripped is not None:
                 messages[i] = stripped
                 changed = True
@@ -536,6 +580,15 @@ class SimpleCompactor:
             # them to compress, so leave history untouched.
             return messages
 
+        artifact_reference = ""
+        if self._artifact_store is not None:
+            try:
+                artifact_reference = "\n\nOriginal evidence: " + _artifact_hint(
+                    self._artifact_store.put_json(to_summarize)
+                )
+            except (OSError, ValueError, TypeError):
+                return messages  # no durable copy: never destroy original evidence
+
         prompt = _build_summarization_prompt(to_summarize)
         try:
             summary = await self._summarizer(prompt)
@@ -550,7 +603,7 @@ class SimpleCompactor:
                 "[Earlier conversation compacted to save context. "
                 f"{len(to_summarize)} messages summarized below. "
                 f"Summary capped at ~{self._summary_token_budget} tokens to keep context headroom.]\n\n"
-                f"{summary}"
+                f"{summary}{artifact_reference}"
             )
         )
         out = [*head, *anchor, summary_msg, *recent]

@@ -62,6 +62,8 @@ import math
 import os
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import nullcontext
+from copy import deepcopy
 from typing import Any, Optional
 
 try:
@@ -326,6 +328,7 @@ class StreamingToolExecutor:
         "_sem",
         "_serial_lock",
         "_calls",
+        "_executed_calls",
         "_results",
         "_pending",
         "_idle_event",
@@ -372,6 +375,7 @@ class StreamingToolExecutor:
         self._serial_lock = anyio.Lock()
         # Track calls in insertion order.
         self._calls: list[ToolUseBlock] = []
+        self._executed_calls: list[ToolUseBlock] = []
         self._results: list[ToolResultBlock | None] = []
         # Number of dispatched-but-not-yet-finished tasks. ``wait_all`` blocks
         # on ``_idle_event`` until this reaches zero. Reset whenever a new
@@ -716,6 +720,16 @@ class StreamingToolExecutor:
         return tuple(self._calls)
 
     @property
+    def executed_calls(self) -> list[ToolUseBlock]:
+        """Detached snapshot of invocations in start order, not dispatch order.
+
+        Names are canonical and inputs are captured after coercion/filtering,
+        before tool code can mutate them. Includes calls that fail or time out,
+        but excludes unknown, denied, and cancelled-before-invocation calls.
+        """
+        return deepcopy(self._executed_calls)
+
+    @property
     def pending(self) -> int:
         """How many dispatched tools are still in flight. Reaches 0
         when every tool has either completed or short-circuited."""
@@ -862,10 +876,12 @@ class StreamingToolExecutor:
         coerced = _coerce_to_schema(block.input, getattr(tool, "input_schema", None))
         call_input = _filter_tool_input(tool.fn, coerced)
         try:
-            if timeout is not None:
-                with anyio.fail_after(timeout):
-                    out = await tool.fn(**call_input)
-            else:
+            with anyio.fail_after(timeout) if timeout is not None else nullcontext():
+                # Record only after timeout setup succeeds, immediately before
+                # invocation; synthetic results are not execution evidence.
+                self._executed_calls.append(
+                    ToolUseBlock(id=block.id, name=tool.name, input=deepcopy(call_input))
+                )
                 out = await tool.fn(**call_input)
         except TimeoutError:
             self._record_result(

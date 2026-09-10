@@ -2955,7 +2955,9 @@ async def run_fullscreen(tui: Any) -> int:
         tui._flush_job_context_backlog()
         tui._turn_active = True
         get_app().invalidate()
+        _stream = None
         try:
+            tui._bind_harness_state()
             _stream = tui.agent.run_iter(tui.messages)
             async for msg in _stream:
                 if isinstance(msg, AssistantMessage):
@@ -3020,7 +3022,8 @@ async def run_fullscreen(tui: Any) -> int:
             # task group open across its yields, so letting the event loop
             # finalize it later raises "exit cancel scope in a different task".
             from .agent import aclose_stream  # noqa: PLC0415
-            await aclose_stream(_stream)
+            if _stream is not None:
+                await aclose_stream(_stream)
             state["tool_inflight"] = None
             if state.get("bash_tail") is not None:   # interrupted mid-command
                 await _print(_bash_tail_finish)
@@ -3409,7 +3412,11 @@ async def run_fullscreen(tui: Any) -> int:
             get_app().exit(result=0)
             return True
         if cmd == "/clear":
+            from .session_tree import SessionTranscript, new_session_id  # noqa: PLC0415
             tui.messages = []
+            tui.todos.clear()
+            tui.transcript = SessionTranscript(new_session_id())
+            tui._title_done = False
             tui._todos_shown = []
 
             def _c() -> None:

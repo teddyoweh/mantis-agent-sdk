@@ -140,8 +140,8 @@ class AgentRun:
     usage: ModelUsage = field(default_factory=ModelUsage)
     tool_count: int = 0
     recent_activities: list[str] = field(default_factory=list)
-    summary: str = ""
-    result: str = ""
+    summary: str = ""  # Clipped UI preview, never a downstream report.
+    result: str = ""  # Full latest textual answer; status determines completion.
     error: str | None = None
     cost_usd: float = 0.0
     turns: int = 0
@@ -500,7 +500,7 @@ def _extract_text(msg: Any) -> str:
         text = getattr(block, "text", None)
         if isinstance(text, str):
             parts.append(text)
-    return "".join(parts).strip()
+    return "".join(parts)
 
 
 class Workflow:
@@ -867,10 +867,11 @@ class Workflow:
         else:
             ar.status = "done"
         ar.ended = self._clock()
-        ar.result = ar.summary
         self._finalize(ar, tracker)
         self._emit()
-        return ar.result
+        # Keep partial output inspectable, but do not return it as a completed
+        # report when the runner was cancelled.
+        return ar.result if ar.status == "done" else ""
 
     def _ingest(self, ar: AgentRun, msg: Any, tracker: BudgetTracker) -> None:
         """Fold one streamed Message into the AgentRun + trackers."""
@@ -905,7 +906,11 @@ class Workflow:
                         self.registry, self._agent_node(ar), activity
                     )
             text = _extract_text(msg)
-            if text:
+            if text.strip():
+                # Replace, rather than append: earlier assistant messages may
+                # be commentary, not part of the final answer. Non-text turns
+                # must not erase the latest textual report.
+                ar.result = text
                 ar.summary = text if len(text) <= 200 else text[:197] + "…"
 
     def _finalize(self, ar: AgentRun, tracker: BudgetTracker) -> None:

@@ -8,6 +8,20 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+### Added
+
+- Evidence-aware harness: opt-in SDK artifact/task-state stores and full-model terminal
+  integration. Compacted payloads remain retrievable, structured acceptance checks
+  reference observed tool executions, and session-scoped state survives restart.
+- Bounded, body-aware memory retrieval finds older relevant notes and permits recall
+  after context eviction. See [harness evidence](docs/internals/HARNESS_EVIDENCE.md)
+  for configuration, verification semantics, and remaining architectural work.
+
+### Fixed
+
+- Workflow handoffs now return and persist complete worker answers rather than
+  their 200-character activity previews, preserving trailing evidence and verdicts.
+
 ## [2.63.0] - 2026-09-04
 
 ### Added — five provider families, first-class
