@@ -448,7 +448,11 @@ def wrap_runner_with_progress(base: AgentRunner, on_progress: Any, counter: Any)
                     if isinstance(msg, AssistantMessage):
                         for block in getattr(msg, "content", None) or []:
                             if isinstance(block, ToolUseBlock):
-                                _emit({"id": rid, "phase": "tool", "tool": block.name})
+                                from .tool_preview import tool_arg_preview  # noqa: PLC0415
+
+                                _emit({"id": rid, "phase": "tool", "tool": block.name,
+                                       "arg": tool_arg_preview(block.name, block.input),
+                                       "args": block.input})
                         if getattr(msg, "usage", None) is not None:
                             acc = accumulate_usage(acc, msg.usage)
                             _emit({"id": rid, "phase": "turn", "model": model,
@@ -892,10 +896,13 @@ class Workflow:
                 )
             for block in getattr(msg, "content", []) or []:
                 if isinstance(block, ToolUseBlock):
+                    from .tool_preview import tool_call_preview  # noqa: PLC0415
+
                     ar.tool_count += 1
-                    ar.push_activity(block.name)
+                    activity = tool_call_preview(block.name, block.input)
+                    ar.push_activity(activity)
                     emit.node_activity(
-                        self.registry, self._agent_node(ar), block.name
+                        self.registry, self._agent_node(ar), activity
                     )
             text = _extract_text(msg)
             if text:

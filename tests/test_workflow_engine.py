@@ -16,6 +16,7 @@ from mantis_agent.workflow import (
     Workflow,
     WorkflowError,
     WorkflowRun,
+    wrap_runner_with_progress,
 )
 from mantis_agent import workflow_view as wv
 
@@ -43,6 +44,41 @@ def make_static_runner(*, out_tokens=10, in_tokens=100, text="done", tools=()):
         )
 
     return runner
+
+
+def test_workflow_activity_includes_tool_target():
+    async def runner(prompt, *, model, agent_type, schema=None):
+        yield AssistantMessage(content=[
+            ToolUseBlock(id="t1", name="grep", input={"pattern": "ToolUseBlock"}),
+            TextBlock(text="done"),
+        ])
+
+    async def exercise():
+        wf = Workflow("wf", agent_runner=runner)
+        await wf.agent("inspect", label="reader")
+        return wf.run.phases[0].agents[0]
+
+    agent_run = anyio.run(exercise)
+    assert agent_run.recent_activities == ["Search ToolUseBlock"]
+
+
+def test_progress_wrapper_includes_tool_target():
+    events = []
+
+    async def runner(prompt, *, model, agent_type, schema=None):
+        yield AssistantMessage(content=[
+            ToolUseBlock(id="t1", name="read_file", input={"path": "mantis_agent/workflow.py"}),
+        ])
+
+    async def exercise():
+        wrapped = wrap_runner_with_progress(runner, events.append, iter([7]))
+        async for _ in wrapped("inspect", model="m", agent_type="explore"):
+            pass
+
+    anyio.run(exercise)
+    tool_event = next(e for e in events if e["phase"] == "tool")
+    assert tool_event["arg"] == "mantis_agent/workflow.py"
+    assert tool_event["args"] == {"path": "mantis_agent/workflow.py"}
 
 
 # ---------------------------------------------------------------------------
