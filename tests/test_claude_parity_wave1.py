@@ -427,6 +427,21 @@ def test_build_user_content_attaches_dragged_image_path(tmp_path) -> None:
     assert str(png) in next(b for b in out if isinstance(b, TextBlock)).text
 
 
+def test_staged_dragged_image_is_not_sent_twice(tmp_path) -> None:
+    import base64
+
+    from mantis_agent.types import ImageBlock
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+        "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+    t = _tui()
+    placeholder = t._attach_file(png)
+    out = t._build_user_content(f"describe {png} {placeholder}")
+    assert sum(isinstance(b, ImageBlock) for b in out) == 1
+
+
 def test_build_user_content_leaves_non_image_paths_alone(tmp_path) -> None:
     f = tmp_path / "notes.txt"
     f.write_text("hi")

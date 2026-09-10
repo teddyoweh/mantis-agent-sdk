@@ -3969,8 +3969,11 @@ class MantisTUI:
             return [TextBlock(text=text), *dragged] if dragged else text
 
         blocks: list[Any] = self._strip_placeholders_to_text(text)
-        blocks.extend(dragged)
-        blocks.extend(block for _, block in self.pending_attachments)
+        staged = [block for _, block in self.pending_attachments]
+        blocks.extend(staged)
+        # A staged image pasted as a path is also discovered in the input text;
+        # do not send the same bytes twice.
+        blocks.extend(block for block in dragged if block not in staged)
         self.pending_attachments = []
         return blocks or [TextBlock(text=text)]
 

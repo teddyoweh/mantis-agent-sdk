@@ -2878,7 +2878,7 @@ async def run_fullscreen(tui: Any) -> int:
 
         # ``!cmd`` → run the shell command NOW, print its output, and inject it
         # into context as a meta message (Claude Code's ! prefix). No model turn.
-        if text.startswith("!") and len(text) > 1:
+        if text.startswith("!") and len(text) > 1 and not tui.pending_attachments:
             from rich.markup import escape as _resc  # noqa: PLC0415
 
             from .tui import bang_context_block, run_bang_command  # noqa: PLC0415
@@ -2890,17 +2890,17 @@ async def run_fullscreen(tui: Any) -> int:
             get_app().invalidate()
             return
         # ``# note`` → quick-save to persistent memory (Claude Code's # prefix).
-        if text.startswith("#") and text.lstrip("#").strip():
+        if text.startswith("#") and text.lstrip("#").strip() and not tui.pending_attachments:
             from .tui import quick_memory_note  # noqa: PLC0415
             p = quick_memory_note(text.lstrip("#").strip())
             await _announce(f"saved to memory → {p.name}")
             return
 
         from .tui import expand_slash_prompt  # noqa: PLC0415
-        expanded = expand_slash_prompt(text)
+        expanded = expand_slash_prompt(text) if not tui.pending_attachments else None
         if expanded is not None:
             text = expanded  # e.g. /init → canned prompt; runs as a normal turn
-        elif text.startswith("/") and state["working"] and text.split(maxsplit=1)[0] in {
+        elif text.startswith("/") and not tui.pending_attachments and state["working"] and text.split(maxsplit=1)[0] in {
                 "/agents", "/jobs", "/job", "/cost", "/status", "/effort", "/workflows"}:
             if text.split(maxsplit=1)[0] == "/agents" and "live" in text.split()[1:2]:
                 _open_agent_inspector()
@@ -2913,7 +2913,7 @@ async def run_fullscreen(tui: Any) -> int:
             if handled:
                 get_app().invalidate()
                 return
-        elif text.startswith("/"):
+        elif text.startswith("/") and not tui.pending_attachments:
             # A command that throws (e.g. /twin with the network down) must end
             # in ONE clean error line + hint — never a raw traceback screen.
             try:
@@ -4990,6 +4990,12 @@ async def run_fullscreen(tui: Any) -> int:
             working=bool(state["working"]),
             has_input=bool(input_buffer.text),
         )
+        if (action == "clear_input" and not input_buffer.text
+                and getattr(tui, "pending_attachments", None)):
+            tui.pending_attachments = []
+            state["clip"] = None
+            event.app.invalidate()
+            return
         if action == "cancel_key":
             ak = state.get("awaiting_key") or {}
             fut = ak.get("future")
