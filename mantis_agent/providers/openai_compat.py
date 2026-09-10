@@ -404,6 +404,11 @@ class OpenAICompatProvider(HTTPProviderMixin):
             if (cap is not None and tools)
             else "A"
         )
+        # Astra's Chat Completions endpoint rejects function tools whenever
+        # reasoning is active, while also rejecting the GPT-5 ``none`` value.
+        # Use the prompt-engineered tool protocol until Responses is supported.
+        if tools and model.lower().rsplit("/", 1)[-1].startswith("gpt-6-astra"):
+            path = "B"
         # Path C promises grammar-constrained sampling (server-enforced JSON),
         # but this adapter does not build/inject a guided_json/GBNF grammar for
         # the ``<tool_call>`` protocol — and it can't safely, since guided_json
