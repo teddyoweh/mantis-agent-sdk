@@ -469,9 +469,10 @@ _HOSTED_TABLE: dict[str, ModelCapability] = {
     "claude-haiku-4-5": _hosted("claude-haiku-4-5", "claude", ctx=200_000, out=64_000,
                                 thinking_blocks=True),
     # --- OpenAI -------------------------------------------------------------
-    # gpt-5 family: 400k window, 128k output, request-side reasoning_effort.
+    # GPT-6 Astra: 1.05M window, 128k output. GPT-5: 400k / 128k.
     # o-series: 200k window, 100k output. gpt-4.1: 1M window, no reasoning knob.
     # gpt-4o: 128k, no reasoning knob.
+    "gpt-6-astra": _hosted("gpt-6-astra", "openai", ctx=1_050_000, out=128_000),
     "gpt-5": _hosted("gpt-5", "openai", ctx=400_000, out=128_000),
     "o1": _hosted("o1", "openai", ctx=200_000, out=100_000),
     "o3": _hosted("o3", "openai", ctx=200_000, out=100_000),

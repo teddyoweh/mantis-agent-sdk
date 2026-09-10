@@ -891,7 +891,7 @@ def _ping_chat_model(base_url: str, model: str, key: str, *, timeout: float = 10
     # max_completion_tokens) — mirror the provider so validating those models in
     # setup doesn't 400 on a valid model. (temperature isn't sent, so no clash.)
     bare = model.split("/")[-1].lower()
-    token_field = "max_completion_tokens" if bare.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens"
+    token_field = "max_completion_tokens" if bare.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")) else "max_tokens"
     payload = {"model": model, "messages": [{"role": "user", "content": "hi"}], token_field: 1}
     try:
         r = httpx.post(f"{base_url.rstrip('/')}/chat/completions",

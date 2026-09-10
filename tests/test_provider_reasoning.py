@@ -242,6 +242,7 @@ class TestHostedTables:
             ("anthropic", "claude-sonnet-5", 2.00, 10.00),
             ("anthropic", "claude-haiku-4-5", 1.00, 5.00),
             ("anthropic", "claude-fable-5-1", 10.00, 50.00),
+            ("openai", "gpt-6-astra", 10.00, 50.00),
             ("openai", "gpt-5", 1.25, 10.00),
             ("openai", "gpt-5-mini", 0.25, 2.00),
             ("openai", "o3", 2.00, 8.00),
@@ -281,7 +282,7 @@ class TestHostedTables:
 
 
 class TestOpenAIReasoningShape:
-    @pytest.mark.parametrize("model", ["gpt-5", "gpt-5.4", "gpt-5-mini", "o1", "o3", "o4-mini", "o3-pro"])
+    @pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-5", "gpt-5.4", "gpt-5-mini", "o1", "o3", "o4-mini", "o3-pro"])
     def test_reasoning_models_use_max_completion_tokens_and_no_temperature(self, model: str) -> None:
         pl = _payload(OPENAI_DEFAULT, model, thinking={"type": "enabled", "budget_tokens": 4096})
         assert pl["max_completion_tokens"] == 100

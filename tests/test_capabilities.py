@@ -67,6 +67,7 @@ class TestLookupModel:
         [
             ("claude-opus-5", "claude", 1_000_000),
             ("claude-haiku-4-5", "claude", 200_000),
+            ("gpt-6-astra", "openai", 1_050_000),
             ("gpt-5.4-mini", "openai", 400_000),
             ("o4-mini", "openai", 200_000),
             ("gemini-2.5-flash", "gemini", 1_048_576),

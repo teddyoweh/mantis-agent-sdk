@@ -577,7 +577,7 @@ class OpenAICompatProvider(HTTPProviderMixin):
         for m in body_msgs:
             wire_messages.extend(_encode_message(m, path=path))
 
-        # OpenAI's GPT-5 / o-series reject the legacy ``max_tokens`` (they want
+        # OpenAI's GPT-5/GPT-6 / o-series reject legacy ``max_tokens`` (they want
         # ``max_completion_tokens``) and only accept the default temperature.
         # Other OpenAI-compat backends (vLLM, Groq, Together, …) never serve
         # these ids, so keying off the model name is safe and self-contained.
@@ -672,9 +672,9 @@ _HOSTED_REASONING_STYLES: frozenset[str] = frozenset({"openai", "gemini", "xai"}
 
 
 def _is_openai_reasoning_model(bare: str) -> bool:
-    """gpt-5.x and the o-series: ``max_completion_tokens``, no temperature,
+    """GPT-5/GPT-6 and o-series: ``max_completion_tokens``, no temperature,
     request-side ``reasoning_effort``."""
-    return bare.startswith(("gpt-5", "o1", "o3", "o4"))
+    return bare.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4"))
 
 
 def _reasoning_style(model: str, backend: BackendCapability | None) -> str:
@@ -1645,7 +1645,7 @@ def _supports_request_reasoning(
     """
 
     bare = model.lower().rsplit("/", 1)[-1]
-    if bare.startswith(("gpt-5", "o1", "o3", "o4")):
+    if bare.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
         return True
     return bool(cap and cap.supports_reasoning_effort)
 

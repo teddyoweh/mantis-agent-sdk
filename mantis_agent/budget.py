@@ -191,9 +191,10 @@ PRICING_TABLE: Final[dict[tuple[str, str], Pricing]] = {
     ("anthropic", "claude-sonnet-4"): Pricing(3.00, 15.00, 0.30, 3.75),
     ("anthropic", "claude-haiku-4-5"): Pricing(1.00, 5.00, 0.10, 1.25),
     ("anthropic", "claude-haiku-3-5"): Pricing(0.80, 4.00, 0.08, 1.00),
-    # OpenAI — gpt-5 family and o-series (cached input at 10%). The 5.x point
+    # OpenAI — GPT-5/GPT-6 and o-series (cached input at 10%). The 5.x point
     # releases are billed at the gpt-5 rate unless a distinct rate is known;
     # treat the 5.4 rows as approximate.
+    ("openai", "gpt-6-astra"): Pricing(10.00, 50.00, 1.00, 12.50),
     ("openai", "gpt-5-mini"): Pricing(0.25, 2.00, 0.025),
     ("openai", "gpt-5-nano"): Pricing(0.05, 0.40, 0.005),
     ("openai", "gpt-5.4-mini"): Pricing(0.25, 2.00, 0.025),  # approximate

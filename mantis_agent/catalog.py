@@ -78,7 +78,7 @@ class Provider:
     key_env_aliases: tuple[str, ...] = ()  # alternate env var names also honored
 
 
-# Model ids verified against provider docs, June 2026. Hosted endpoints are
+# Model ids verified against provider docs, September 2026. Hosted endpoints are
 # OpenAI-compatible; when a provider is enabled the selector also fetches its
 # live /v1/models, so these flagship lists are a starting menu, not a ceiling.
 CATALOG: tuple[Provider, ...] = (
@@ -113,8 +113,8 @@ CATALOG: tuple[Provider, ...] = (
     ),
     Provider(
         "openai", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY",
-        ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro"),
-        "platform.openai.com · GPT-5.6", 
+        ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro"),
+        "platform.openai.com · GPT-6 Astra",
     ),
     Provider(
         "gemini", "Gemini",
