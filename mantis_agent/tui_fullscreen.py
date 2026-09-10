@@ -482,7 +482,7 @@ async def run_fullscreen(tui: Any) -> int:
         "working": False, "started": 0.0, "word": "", "frame": 0, "task": None,
         "slash_sel": 0, "pending_perm": None, "picking_model": None,
         "awaiting_key": None, "picking_effort": None, "picking_auth": None,
-        "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0,
+        "pending_question": None, "ctx_tokens": 0, "session_cost": 0.0, "queue": [],
         "tokens_in": 0, "tokens_out": 0, "tool_inflight": None, "dash_live": None,
         "bash_tail": None, "bash_painter": None,
         "agent_inspector": None, "workflows": None, "mcp_view": None,
@@ -3034,9 +3034,10 @@ async def run_fullscreen(tui: Any) -> int:
             # Session title after the first completed turn (cheap, background).
             get_app().create_background_task(tui._maybe_autotitle())
             # Fire the next queued message, if any (one at a time, in order).
-            q = state.get("queue") or []
+            q = state["queue"]
             if q:
-                nxt = q.pop(0)
+                nxt, attachments = q.pop(0)
+                tui.pending_attachments = attachments
                 _spawn_handle(nxt)
             elif state.get("goal"):
                 _advance_goal()
@@ -3058,11 +3059,11 @@ async def run_fullscreen(tui: Any) -> int:
         t = text.strip()
         if not t:
             return False
-        if t.startswith("!") and len(t) > 1:
+        if t.startswith("!") and len(t) > 1 and not tui.pending_attachments:
             return False
-        if t.startswith("#") and t.lstrip("#").strip():
+        if t.startswith("#") and t.lstrip("#").strip() and not tui.pending_attachments:
             return False
-        if t.startswith("/"):
+        if t.startswith("/") and not tui.pending_attachments:
             # Most slash commands are pure UI (no model turn), but some EXPAND
             # into a canned prompt that runs as a turn (/init, /learn, custom
             # .mantis/commands/*, skill commands). Those must claim the slot
@@ -4891,8 +4892,10 @@ async def run_fullscreen(tui: Any) -> int:
                 return
             # A turn is running: QUEUE the message (Claude Code behavior) —
             # it fires the moment this turn finishes. Esc-interrupt clears it.
-            q = state.setdefault("queue", [])
-            q.append(text)
+            q = state["queue"]
+            attachments = list(tui.pending_attachments)
+            tui.pending_attachments = []
+            q.append((text, attachments))
             event.app.create_background_task(_announce(
                 f"⧉ queued ({len(q)}) — sends when this turn finishes · esc clears"))
             return
