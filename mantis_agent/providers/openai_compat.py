@@ -950,7 +950,7 @@ def _build_responses_payload(
         payload["reasoning"] = {"effort": explicit}
     elif thinking and thinking.get("type") != "disabled":
         payload["reasoning"] = {"effort": "medium"}
-    elif model_capability and model_capability.reasoning_mode == "always_on":
+    elif model_capability and model_capability.supports_reasoning_effort:
         payload["reasoning"] = {"effort": "low"}
     return payload
 
