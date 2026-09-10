@@ -303,6 +303,7 @@ class TestOpenAIReasoningShape:
             assert "reasoning_effort" not in _payload(OPENAI_DEFAULT, model, thinking={"type": "disabled"})
 
     def test_effort_words_normalize(self) -> None:
+        assert "reasoning_effort" not in _payload(OPENAI_DEFAULT, "gpt-6-astra", extra={"effort": "none"})
         assert _payload(OPENAI_DEFAULT, "gpt-5.4", extra={"effort": "ultra"})["reasoning_effort"] == "high"
         assert _payload(OPENAI_DEFAULT, "gpt-5.4", extra={"effort": "max"})["reasoning_effort"] == "high"
         assert _payload(OPENAI_DEFAULT, "gpt-5.4", extra={"effort": "minimal"})["reasoning_effort"] == "low"

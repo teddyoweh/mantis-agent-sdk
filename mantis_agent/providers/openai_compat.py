@@ -722,8 +722,9 @@ def _normalize_effort(effort: str, style: str, bare: str) -> str | None:
     * ``ultra`` / ``max`` → ``high``: ultra is a multi-agent orchestration
       mode and ``max`` needs the Responses API — neither is a valid Chat
       Completions value (400 with no recovery), so clamp to the ceiling.
-    * ``xhigh`` is a real gpt-5.x value and is kept for OpenAI; Gemini and
+    * ``xhigh`` is a real GPT-5/GPT-6 value and is kept for OpenAI; Gemini and
       Grok don't know it, so it clamps to ``high``.
+    * GPT-6 Astra rejects ``none``; omit the field and use its default effort.
     * Grok: only grok-3-mini takes the field, and only ``low``/``high``;
       every other Grok model reasons at a fixed level and 400s on it.
     """
@@ -733,6 +734,8 @@ def _normalize_effort(effort: str, style: str, bare: str) -> str | None:
         e = "low"
     if e in ("ultra", "max"):
         e = "high"
+    if bare.startswith("gpt-6-astra") and e in ("none", "off"):
+        return None
     if style == "xai":
         if not _grok_accepts_effort(bare):
             return None
