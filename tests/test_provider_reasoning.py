@@ -296,10 +296,11 @@ class TestOpenAIReasoningShape:
         assert pl["temperature"] == 0.7
         assert "reasoning_effort" not in pl
 
-    def test_disabled_is_none_on_gpt5_but_omitted_on_o_series(self) -> None:
+    def test_disabled_is_none_on_gpt5_but_omitted_when_unsupported(self) -> None:
         assert _payload(OPENAI_DEFAULT, "gpt-5.4", thinking={"type": "disabled"})["reasoning_effort"] == "none"
-        # The o-series cannot switch reasoning off and rejects "none".
-        assert "reasoning_effort" not in _payload(OPENAI_DEFAULT, "o3", thinking={"type": "disabled"})
+        # GPT-6 Astra and the o-series cannot switch reasoning off and reject "none".
+        for model in ("gpt-6-astra", "o3"):
+            assert "reasoning_effort" not in _payload(OPENAI_DEFAULT, model, thinking={"type": "disabled"})
 
     def test_effort_words_normalize(self) -> None:
         assert _payload(OPENAI_DEFAULT, "gpt-5.4", extra={"effort": "ultra"})["reasoning_effort"] == "high"

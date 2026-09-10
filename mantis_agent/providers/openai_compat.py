@@ -794,9 +794,9 @@ def _apply_thinking(
     if not _supports_request_reasoning(model, model_capability):
         return
     if ttype == "disabled":
-        # ``none`` is a gpt-5.x value; the o-series can't switch reasoning off
-        # and rejects it, so leave the field out there.
-        if not bare.startswith(("o1", "o3", "o4")):
+        # ``none`` is a GPT-5 value; GPT-6 Astra and the o-series reject it,
+        # so leave the field out and let those models use their default effort.
+        if not bare.startswith(("gpt-6", "o1", "o3", "o4")):
             payload["reasoning_effort"] = "none"
         return
     # ``budget_tokens`` is deliberately dropped: Chat Completions has no
