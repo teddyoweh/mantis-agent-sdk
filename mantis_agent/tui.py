@@ -2688,7 +2688,7 @@ class MantisTUI:
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.max_turns = max_turns
-        self.effort = effort
+        self.effort = self._compatible_effort(self.model, effort)
         self.verbosity = verbosity
         self.reasoning_mode = reasoning_mode
         self.mode_idx = 0
@@ -2831,6 +2831,14 @@ class MantisTUI:
             return False
         self.mode_idx = [m[0] for m in MODES].index(label)
         return True
+
+    @staticmethod
+    def _compatible_effort(model: str, effort: str | None) -> str | None:
+        """Drop effort values the selected model rejects at the API boundary."""
+        if (model or "").lower().rsplit("/", 1)[-1].startswith("gpt-6-astra") \
+                and (effort or "").lower() in {"none", "off"}:
+            return None
+        return effort
 
     def _model_extra(self) -> dict[str, Any]:
         extra: dict[str, Any] = {}
@@ -6739,7 +6747,8 @@ class MantisTUI:
                     if value not in allowed_effort:
                         c.print("[ansired]effort must be none/minimal/low/medium/high/xhigh/max/ultra/off[/]")
                         return
-                    self.effort = None if value == "off" else value
+                    requested = None if value == "off" else value
+                    self.effort = self._compatible_effort(self.model, requested)
                 elif key in {"verbosity", "verb"}:
                     if value not in allowed_verbosity:
                         c.print("[ansired]verbosity must be low/medium/high/off[/]")
@@ -7654,6 +7663,7 @@ class MantisTUI:
         # Same sanitation as the constructor — a runtime self-host URL / pasted key
         # can carry whitespace or a full-endpoint path.
         self.model = model.strip() if model else model
+        self.effort = self._compatible_effort(self.model, self.effort)
         self.backend = _paths.normalize_base_url(backend) if backend else backend
         self.api_key = api_key.strip() if api_key else api_key
         if self.agent is not None:

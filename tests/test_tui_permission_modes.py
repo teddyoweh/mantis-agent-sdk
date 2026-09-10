@@ -180,6 +180,21 @@ def test_tui_model_knobs_flow_to_agent_extra() -> None:
     assert agent.extra == tui._model_extra()
 
 
+def test_astra_drops_unsupported_none_effort() -> None:
+    tui = MantisTUI(
+        model="gpt-6-astra",
+        backend="https://api.openai.com/v1",
+        api_key="k",
+        system=None,
+        max_tokens=1,
+        temperature=None,
+        max_turns=1,
+        effort="none",
+    )
+    assert tui.effort is None
+    assert tui._model_extra() == {}
+
+
 def test_tui_knobs_command_updates_agent_extra() -> None:
     tui = _tui()
     tui._cmd_knobs("effort=xhigh verbosity=high reasoning=pro")
