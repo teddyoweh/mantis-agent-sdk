@@ -481,7 +481,10 @@ class OpenAICompatProvider(HTTPProviderMixin):
                     if (not _disabled_reasoning_effort
                             and "tools" in payload and b"reasoning_effort" in body
                             and b"none" in body):
-                        payload["reasoning_effort"] = "none"
+                        if model.lower().rsplit("/", 1)[-1].startswith("gpt-6"):
+                            payload.pop("reasoning_effort", None)
+                        else:
+                            payload["reasoning_effort"] = "none"
                         _disabled_reasoning_effort = True
                         retry = True
                     if retry:
