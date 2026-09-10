@@ -522,167 +522,33 @@ def _rules(css, sel):
             if sel in [x.strip() for x in head.split(",")]]
 
 
-def test_the_current_card_is_marked_by_a_pixel_dither_on_its_surface(fake):
-    """The active marker sits ON the card and spans it: hard 3px blocks on an
-    8px column pitch, spread from the left padding to the right one so the
-    card is textured rather than trimmed or decorated in one corner. Current
-    and Ready differ in ROW COUNT and DENSITY — they cover the same width, so
-    reach cannot carry the difference — which keeps the pair readable in
-    greyscale."""
+def test_the_current_card_is_marked_by_its_badge_and_nothing_else(fake):
+    """A ring of pixel blocks, a dither across the card, an edge rail, a colour
+    wash: each was tried and each was the same mistake — decorating a card to
+    say what one word already says. The badge IS the marker now, and nothing
+    else on the card surface changes with state."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
     css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
 
-    box = css.split("  .ac-mot {")[1].split("}")[0]
-    # it is painted over the card, costs no layout, and eats no clicks
-    assert "position: absolute" in box and "pointer-events: none" in box
-    # anchored to the ONE left edge the card already has — the mark's — on an
-    # INTEGER offset, and stated wide enough to reach the opposite padding.
-    # An <svg> is a replaced element, so left+right would be ignored in favour
-    # of its intrinsic 300px: the width has to be spelled out.
-    assert "left: 14px" in box and "bottom: 2px" in box
-    assert "width: calc(100% - 28px)" in box
-    assert "right:" not in box, "left+right does not size a replaced element"
-    for banned in ("border", "outline", "stroke"):
-        assert banned not in box, banned
-    assert "  .ac-mot rect { fill: var(--accent); }" in css
-    # Ready is the same field held back: neutral and half-strength
-    rdy = css.split("  .acard.rdy .ac-mot rect {")[1].split("}")[0]
-    assert "fill: var(--ink-3)" in rdy and "opacity: .5" in rdy
-    # the two quiet states carry nothing at all
-    for quiet in (".acard.idle .ac-mot", ".acard.off .ac-mot"):
-        assert quiet not in css, quiet
-    # a dither does not march: animating it reads as noise, not as life
-    assert ".ac-mot" not in css.split("@media (prefers-reduced-motion: no-preference) {")[1][:400]
+    # every trace of the marker is gone — sheet, script and generator alike
+    for dead in ("ac-mot", "pixMotif", "curMotif", "rdyMotif", "paintMotif", "scheduleMotifs",
+                 "watchMotif", "MOT_BLK", "MOT_PITCH", "MOT_RO", "ac-pix", "pixMarker", "pixmarch"):
+        assert dead not in css and dead not in js, dead
+    # ...and so is every earlier attempt at the same job
+    for dead in (".acard::before", ".ac-rail", ".acard.use"):
+        assert dead not in css, dead
 
-    mk = js[js.index("const MOT_BLK"):js.index("// Current is two rows")]
-    # integer block on an integer pitch, and antialiasing off at every scale
-    assert "const MOT_BLK = 3, MOT_PITCH = 8, MOT_ROW = 4;" in mk
-    assert 'setAttribute("shape-rendering", "crispEdges")' in mk
-    assert 'setAttribute("aria-hidden", "true")' in mk
-    # no viewBox: one user unit is one CSS pixel at any width, so a band that
-    # spans a wider card draws bigger gaps, never bigger blocks
-    assert "viewBox" not in mk
-    assert 'svg.setAttribute("width"' not in mk, "the width comes from the card, not the markup"
-
-    paint = js[js.index("function paintMotif(svg) {"):js.index("// A ResizeObserver is the right")]
-    # every block is placed on the pitch — never a fractional coordinate
-    assert 'b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_ROW);' in paint
-    assert 'b.setAttribute("width", MOT_BLK); b.setAttribute("height", MOT_BLK);' in paint
-    # the column count comes from the measured box, so the band spans the card
-    assert "const cols = Math.floor((w - MOT_BLK) / MOT_PITCH) + 1;" in paint
-    # deterministic: the same card draws the same field on every repaint
-    assert "Math.random" not in paint
-    assert "(c * MOT_STEP + r * MOT_TURN) % MOT_MOD >= fill" in paint
-    # ...and it is only redrawn when the width it was drawn at actually moved
-    assert 'if (svg.dataset.w === String(w)) return;' in paint
-    # a width is only known after layout, and changes when the grid reflows
-    assert "new ResizeObserver(" in js and "MOT_RO.unobserve(e.target)" in js
-
-    # Current is deeper and denser than Ready — the whole difference, since
-    # both now span the same width
-    cur_rows, cur_fill = _motif_args(js, "curMotif")
-    rdy_rows, rdy_fill = _motif_args(js, "rdyMotif")
-    assert cur_rows > rdy_rows and cur_fill > rdy_fill
-    # measured on a 400px card: the numbers the design was picked at
-    cur_n, rdy_n = _blocks(50, cur_rows, cur_fill), _blocks(50, rdy_rows, rdy_fill)
-    assert 20 <= cur_n <= 30, cur_n            # spread thin, not a heavier band
-    assert cur_n > 3 * rdy_n, (cur_n, rdy_n)   # readable without colour
-
-    # the band lives in the 12px strip below the 39px head, so it cannot reach
-    # the mark, the name, the badge or the action — and the height is untouched
-    assert ".acard:not(.open) { height: 63px; }" in css
-    assert ".acard .ac-h { height: 39px; }" in css
-    assert 2 + cur_rows * 4 <= 12, "the band must stay inside the bottom padding"
-
-    # Current and Ready wear it; nothing else does, and an opened card — a
-    # form in a scrolling panel — wears none at all
-    assert 'if (panel) { /* the panel states itself in its head */ }' in js
-    assert 'else if (st8.cls === "cur") card.append(curMotif());' in js
-    assert 'else if (st8.cls === "rdy") card.append(rdyMotif());' in js
-
-
-def _motif_args(js, name):
-    call = js.split("const %s = () => pixMotif(" % name)[1].split(")")[0]
-    rows, fill = [int(x) for x in call.split(",")]
-    return rows, fill
-
-
-def _blocks(cols, rows, fill):
-    """The field the page draws, counted here from the same integer rule."""
-    return sum(1 for c in range(cols) for r in range(rows)
-               if (c * 6183 + r * 5000) % 10000 < fill)
-
-
-def test_one_motif_across_every_card_kind(fake):
-    """The provider card, the GPU provider card, the current model's card in
-    the grid and the hero that says what you are running are all marked the
-    same way, by the same function — and on the cards whose height is not
-    fixed the motif is LAID OUT beside the action rather than
-    pinned over it, because a card that grows or wraps would otherwise close
-    the gap."""
-    from mantis_agent.serve_ui import INDEX_HTML
-
-    js = INDEX_HTML.split("<script>")[1]
-    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
-
-    # one builder, four callers
-    assert js.count("const curMotif = () => pixMotif(") == 1
-    assert js.count("card.append(curMotif());") == 3      # provider card, GPU card, hero
-    assert 'if (st8.cls === "cur") card.append(curMotif());' in js
-    assert "if (p.configured && ready) card.append(curMotif());" in js
-    assert "foot.append(curMotif());" in js               # the model card's foot
-    # the hero is the current model, so it wears the band too
-    hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
-    assert "card.append(curMotif());" in hero
-    assert "  .nowcard > .ac-mot { left: 18px; width: calc(100% - 36px); bottom: 6px; }" in css
-
-    # the fixed-height provider card pins it inside its own bottom padding
-    assert "position: absolute" in css.split("  .ac-mot {")[1].split("}")[0]
-    # the two variable-height cards lay it out instead — and each states a
-    # width, because a band that does not span its card is a decoration
-    assert "  .dpc .ac-mot { position: static; width: 100%; }" in css
-    foot = css.split("  .mm-foot .ac-mot {")[1].split("}")[0]
-    assert "position: static" in foot and "flex: 1 1 0" in foot
-    # ...and on the GPU card it comes after the engine chips, before the
-    # bottom-pinned action row, so no card height can bring the two together
-    dpc = js[js.index('const chips = el("div","chips");\n    (p.engines'):]
-    dpc = dpc[:dpc.index('const ff = el("div","ff");')]
-    assert "card.append(chips);" in dpc and "curMotif()" in dpc
-    assert "  .dpc .ff { display: flex; align-items: center; gap: 6px; margin-top: auto;" in css
-
-
-def test_a_band_is_filled_as_soon_as_its_cards_are_in_the_page(fake):
-    """The bands are drawn from the card's measured width, so they cannot be
-    drawn until the card has one. Leaving that entirely to the observer left
-    the provider grid — which arrives from a fetch — showing empty bands on a
-    slow render. Every grid therefore fills its own bands the moment it has
-    inserted them, and the observer only handles what changes afterwards."""
-    from mantis_agent.serve_ui import INDEX_HTML
-
-    js = INDEX_HTML.split("<script>")[1]
-
-    # one synchronous pass, called by each of the three grids that draw bands
-    assert "function paintMotifsNow() { paintMotifs(); }" in js
-    assert js.count("paintMotifsNow();") == 4        # three grids, plus every re-sort
-    # ...the provider grid, once its cards are in the box and measurable
-    auth = js[js.index("function renderAuthCards(box, r) {"):js.index("// the panel is a sibling of the grids")]
-    assert "AUTH.group = now;" in auth and "paintMotifsNow();" in auth
-    assert auth.index("box.append(grid);") < auth.index("paintMotifsNow();")
-    # and a re-sort moves cards between grids, so it repaints what it moved
-    assert "apply();\n      paintMotifsNow();" in js
-    # a view built while it was display:none has no box either
-    assert "  scheduleMotifs();          // a view built while hidden had no box to measure" in js
-
-    # The first observer delivery can arrive before a freshly built card has
-    # been inserted, so a not-yet-connected motif must NOT be dropped — only
-    # one that has already been painted, i.e. a card that has been replaced.
-    ro = js[js.index("const MOT_RO ="):js.index("function watchMotif(svg)")]
-    assert "if (e.target.isConnected) { paintMotif(e.target); return; }" in ro
-    assert "if (e.target.dataset.w) MOT_RO.unobserve(e.target);" in ro
-    # a resize still repaints even where the observer is doing the watching
-    assert 'addEventListener("resize", scheduleMotifs);' in js
+    # the provider card's surface is the same in all four states
+    for state in ("cur", "rdy", "idle", "off"):
+        assert ".acard.%s {" % state not in css, state
+    # the ONE card that used to wear an accent wash for "in use" no longer does
+    assert "  .mcard.mmcard.on { background: var(--panel); }" in css
+    # a card builds a head and a body; nothing appends a marker to it
+    card = js[js.index("function authCard(e, panel) {"):js.index("function metaBit(")]
+    assert "card.append(head);" in card
+    assert ".append(" in card and "Motif" not in card
 
 
 def test_current_is_the_only_slanted_badge(fake):

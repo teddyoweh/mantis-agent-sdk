@@ -227,14 +227,17 @@ def test_stylesheet_has_no_elevation_shadows():
                 continue
             raised.append(line.strip())
     # A raise is earned only by a surface that genuinely floats over the page.
-    # There are exactly two: the provider panel, and the compare tray that
-    # sticks to the bottom while the grid scrolls under it.
-    assert len(raised) == 2, raised
+    # There are exactly three: the provider panel, the compare tray that sticks
+    # to the bottom while the grid scrolls under it, and the menu a control
+    # opens over the content.
+    assert len(raised) == 3, raised
     assert all("var(--dim)" in r for r in raised), "the raise takes the theme's own dim"
     panel = css.split("  .ac-panel {")[1].split("}")[0]
     assert "box-shadow" in panel and "position: absolute" in panel
     tray = css.split("  .cmp-bar {")[1].split("}")[0]
     assert "box-shadow" in tray and "position: sticky" in tray
+    menu = css.split("  .pmenu {")[1].split("}")[0]
+    assert "box-shadow" in menu and "position: absolute" in menu
     # ...and nothing flat has one
     for flat in ("  .acard {", "  .mcard {", "  .tile {", "  .nowcard {"):
         assert "box-shadow" not in css.split(flat)[1].split("}")[0], flat
@@ -359,6 +362,48 @@ def test_family_tabs_carry_their_vendor_marks():
     assert "  .mm-anymark svg { fill: currentColor; }" in css
 
 
+def test_the_current_tag_is_a_corner_tag_by_one_rule():
+    """It sits in the card's top-right corner, keeps its slant, rounds its
+    top-right to the card's own radius so it follows the curve, and bleeds a
+    little past the edge where the card clips it flat. One rule covers the
+    hero and the model cards.
+
+    It is NOT applied to the provider card: that card's height is fixed at
+    63px and its action starts at y17, so a 22px corner tag would sit 5px on
+    top of it. Measured, not guessed — see measure_tag.py. Its four state
+    badges therefore all stay inline together, so the indicator never moves
+    depending on which state it is in.
+    """
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    tag = css.split("  .cornertag {")[1].split("}")[0]
+    assert "position: absolute" in tag and "top: 0" in tag
+    assert "right: -4px" in tag, "the bleed is what makes the slant read as deliberate"
+    assert "border-radius: 0 var(--radius) 0 9px" in tag, "it follows the card's own corner"
+    assert "margin-right: 0" in tag, "the inline pill's margin would push it off the corner"
+    # the slant and its counter-skewed label survive
+    assert "transform: skewX(-8deg)" in css.split("  .ac-st.cur {")[1].split("}")[0]
+    assert ".ac-st.cur > * { transform: skewX(8deg); }" in css
+    # the cards that carry it clip the bleed
+    assert "  .mmcard, .nowcard { overflow: hidden; }" in css
+    # ...and keep their content out from under it
+    assert "  .mmcard.on .mh { padding-right: 84px; }" in css
+    assert "  .nowcard.hastag .now-top { padding-right: 104px; }" in css
+
+    # exactly the two card kinds that have room for it
+    assert js.count('"ac-st cur cornertag"') == 2
+    hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
+    assert 'card.append(st);' in hero and 'card.classList.add("hastag");' in hero
+    # Switch stays in the action lane and is the only thing in it
+    assert 'const acts = el("div","now-a");' in hero
+    assert hero.index("card.append(st);") < hero.index('const acts = el("div","now-a");')
+    # the provider card's badge is untouched: still inline, still all four
+    auth = js[js.index("function authCard(e, panel) {"):js.index("function metaBit(")]
+    assert 'el("span","ac-st " + st8.cls)' in auth and "cornertag" not in auth
+    assert "head.append(stw);" in auth
+
+
 def test_a_model_card_says_each_fact_once():
     """Title, caption, the pills, one action — and readiness only where it is
     not ready, because a grid of "ready" pills would drown the one card that
@@ -383,40 +428,37 @@ def test_a_model_card_says_each_fact_once():
     # ONE action, and the current card has none: its tag already says so
     assert card.count('"mm-act"') == 1
     assert 'if (!on) foot.append(el("span","mm-act", a.enabled ? "use \u2192" : "unlock \u2192"));' in card
-    # the same slanted Current tag the provider cards wear, and the same motif
-    assert 'el("span","ac-st cur")' in card and 'el("span","ac-stl", "Current")' in card
-    assert "foot.append(curMotif());" in card
+    # the same slanted Current tag the provider cards wear — and that alone
+    assert 'el("span","ac-st cur cornertag")' in card and 'el("span","ac-stl", "Current")' in card
+    assert "Motif" not in card and "ac-mot" not in card
     # unlock still deep-links into that family's setup
     assert "unlockFamily(fid)" in card and "useModel(a.model, a.backend)" in card
     # the local size is said in the caption, "loaded" only as a tag
     assert '"local \u00b7 " + fmtBytes(om.size),' in js and '" \u00b7 loaded"' not in js
 
 
-def test_the_motif_and_the_action_cannot_collide_on_a_model_card():
-    """They are laid out side by side in the card's foot, not stacked on top
-    of each other — so no width can bring them together."""
+def test_the_model_cards_foot_holds_the_pin_and_the_one_action():
+    """The foot is laid out, not stacked: the compare pin and the action are
+    flex siblings, so no width can bring them together."""
     css = _css()
     foot = css.split("  .mm-foot {")[1].split("}")[0]
     assert "display: flex" in foot and "align-items: center" in foot
-    assert "margin-top: auto" in foot                      # the foot is always last
-    act = css.split("  .mm-act {")[1].split("}")[0]
-    assert "margin-left: 10px" in act                      # the pin carries the auto margin now
-    # inside the foot the motif is a laid-out sibling, not an absolute overlay,
-    # and it takes the rest of the row so the band spans the card
-    foot_mot = css.split("  .mm-foot .ac-mot {")[1].split("}")[0]
-    assert "position: static" in foot_mot and "flex: 1 1 0" in foot_mot
-    assert "align-self: flex-end" in foot_mot and "margin-bottom: 4px" in foot_mot
-    # the pin sits between them and takes the free space
+    assert "margin-top: auto" in foot                       # the foot is always last
+    # the pin takes the free space; the action follows it
     assert "  .mm-pin { flex: none; margin-left: auto;" in css
+    act = css.split("  .mm-act {")[1].split("}")[0]
+    assert "margin-left: 10px" in act
+    # nothing is painted into the foot any more
+    assert "ac-mot" not in css
     # the head gives its 70px reservation back unless something sits top-right
     assert "  .mmcard .mh { padding-right: 0; }" in css
     assert "  .mmcard.on .mh { padding-right: 84px; }" in css
-    assert "  .mmcard > .ac-st.cur { position: absolute; top: 12px; right: 13px; }" in css
+    # the tag is a corner tag now, by one rule shared with the hero
+    assert "  .mmcard, .nowcard { overflow: hidden; }" in css
     # keyboard focus is a background step, like every other state on the page
     assert "  .mmcard.kb { background: var(--fill); }" in css
     for banned in ("border", "outline", "box-shadow"):
         assert banned not in css.split("  .mmcard.kb {")[1].split("}")[0], banned
-
 
 def test_a_free_model_is_not_a_price_of_zero():
     from mantis_agent.serve_ui import INDEX_HTML
@@ -451,8 +493,10 @@ def test_my_models_leads_with_what_you_are_running():
     assert "no capability row" in hero
     # nothing is set yet is its own state, not a blank hero
     assert "No model is set on this machine yet." in hero
-    # and one way out to the grid
-    assert 'btn("Switch", "gho"' in hero and 'document.getElementById("mm-grid-top")' in hero
+    # Switch is where "go back to what I was running" belongs, so it is a menu
+    # of recents with a way out to the grid — not a permanent row over it
+    assert 'popMenu("Switch"' in hero and 'document.getElementById("mm-grid-top")' in hero
+    assert '{ head: "Recently used" }' in hero and '"Browse all models"' in hero
 
 
 def test_the_hero_never_claims_a_check_it_did_not_run():
@@ -508,8 +552,16 @@ def test_the_grid_can_be_asked_a_question_it_can_answer():
 
     css, js = _css(), INDEX_HTML.split("<script>")[1]
     assert '[["family", "By family"], ["cheap", "Cheapest"], ["ctx", "Biggest context"]]' in js
-    sorts = js[js.index("const SORTS = ["):js.index("sec.append(sortBar);")]
-    assert "fastest" not in sorts.lower(), "nothing here measures speed" 
+    sorts = js[js.index("const SORTS = ["):js.index("sec.append(bar);")]
+    assert "fastest" not in sorts.lower(), "nothing here measures speed"
+    # it is a labelled menu, and the label states the current ordering so the
+    # answer is readable without opening it
+    assert "const sortLabel = () => (SORTS.find(([k]) => k === MODEL_SORT) || SORTS[0])[1];" in js
+    assert 'popMenu(sortLabel,' in js and 'prefix: "Sort:"' in js
+    # ...and it lives in the search row, not in a row of its own
+    assert "bar.append(sortBtn);" in js
+    for dead in (".mm-sortbar", ".mm-recent", ".mm-rec ", "el(\"div\",\"mm-sortbar\")"):
+        assert dead not in css and dead not in js, dead
     # unknowns sort last rather than pretending to be zero
     keys = js[js.index("const keyOf = a =>"):js.index("const byId = {};")]
     assert ": Infinity;" in keys and "unpriced sorts last" in keys
@@ -524,18 +576,99 @@ def test_the_grid_can_be_asked_a_question_it_can_answer():
     assert "applyModelFilter = apply;" in js and "find.input.oninput = apply;" in js
 
 
-def test_recently_used_is_one_click_and_never_lies_about_reach():
+def test_a_page_states_its_situation_as_readings_not_a_paragraph():
+    """A wrapped sentence carrying four facts reads as filler. The facts become
+    discrete value-and-label readings on one line that never wraps, at most one
+    short clause of prose survives, and the honesty note rides as a footnote
+    rather than as half the paragraph."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     css, js = _css(), INDEX_HTML.split("<script>")[1]
-    i = js.index('const recents = (m.recent || [])')
-    blk = js[i:js.index("// ---- the question you are asking", i)]
+    assert "function pageReads(pad, reads, clause, note)" in js
+    row = css.split("  .page-r {")[1].split("}")[0]
+    assert "flex-wrap: nowrap" in row and "overflow: hidden" in row
+    rd = css.split("  .page-rd {")[1].split("}")[0]
+    assert "white-space: nowrap" in rd
+    # it degrades by dropping the least important reading, never by breaking
+    # a sentence in half
+    assert "@media (max-width: 1200px) { .page-rd.opt2 { display: none; } }" in css
+    assert "@media (max-width: 1000px) { .page-rd.opt1, .page-rc { display: none; } }" in css
+    # the note is a tooltip on a mark, not prose
+    assert r'el("span","page-rn", "\u24d8")' in js and "n.title = note;" in js
+
+    # every page states itself this way
+    assert js.count("pageReads(pad, [") >= 6
+    for probe in ('k: "sessions"', 'k: "projects"', 'k: "first run"',
+                  'k: "running"', 'k: "done"', 'k: "failed"',
+                  'k: "live"', 'k: "providers keyed"',
+                  'k: "models"', 'k: "families"',
+                  'k: "always loaded"', 'k: "on demand"',
+                  'k: "local"', 'k: "remote"', 'k: "settings"'):
+        assert probe in js, probe
+    # the sentence that used to wrap is gone
+    assert "every number here is read off this machine's own transcripts." not in js
+    assert "Every number on this page is read off this machine's own transcripts." in js
+
+
+def test_the_control_stack_is_two_rows_and_search_comes_first():
+    """Four stacked rows before the first model — families, search, recents,
+    sort — is a lot to read past. Search is the primary act and the family
+    filter narrows what it returns, so the search row is first and the families
+    sit under it; sort folds into the search row; recents move to the hero,
+    where "go back to what I was running" belongs."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    css, js = _css(), INDEX_HTML.split("<script>")[1]
+    body = js[js.index('const tabRow = el("div","mtabs");'):js.index("// One labelled card grid per source")]
+    # exactly two control rows reach the section, in this order
+    assert body.count("sec.append(") == 2, body.count("sec.append(")
+    assert body.index("sec.append(bar);") < body.index("sec.append(tabRow);")
+    # the rows that used to be there are gone entirely
+    for dead in ("mm-recent", "mm-sortbar", "Recently used\")"):
+        assert dead not in body, dead
+    # ...and the search row carries the readiness chips and the sort menu
+    assert "bar.append(chips);" in body and "bar.append(sortBtn);" in body
+    for c in (".mm-recent", ".mm-sortbar"):
+        assert c not in css, c
+
+
+def test_a_menu_hands_focus_back_and_says_what_is_chosen():
+    """A control whose options would otherwise be a permanent row of pills. It
+    has to be operable without a mouse, and it must not swallow focus."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    fn = js[js.index("function popMenu(label, items, opts) {"):js.index("// ---- compare ---")]
+    # the trigger states the choice without being opened
+    assert "lab.append(el(\"b\", null, typeof label === \"function\" ? label() : label));" in fn
+    assert 'b.setAttribute("aria-haspopup", "menu");' in fn
+    assert 'b.setAttribute("aria-expanded", "false");' in fn
+    assert 'b.setAttribute("aria-expanded", "true");' in fn
+    assert 'menu.setAttribute("role", "menu");' in fn
+    assert 'mi.setAttribute("role", "menuitem");' in fn
+    # open with the keyboard, walk it, close it, and get focus back
+    assert 'if (ev.key === "ArrowDown") { ev.preventDefault(); open(); }' in fn
+    assert 'if (ev.key === "Escape") { ev.stopPropagation(); close(true); return; }' in fn
+    assert 'ev.key !== "ArrowDown" && ev.key !== "ArrowUp"' in fn
+    assert "if (refocus) b.focus();" in fn
+    assert "if (rows[0]) rows[0].focus();" in fn
+    # a click outside closes it, and the listener does not outlive the menu
+    assert 'document.addEventListener("mousedown", away, true);' in fn
+    assert 'document.removeEventListener("mousedown", away, true);' in fn
+    # the surface is a menu, not a dialog: no focus trap, no scrim
+    assert "scrim" not in fn and "trap" not in fn
+
+
+def test_recently_used_lives_on_the_hero_and_never_lies_about_reach():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
     # only models this page actually knows about
-    assert "map(id => allModels.find(a => a.model === id)).filter(Boolean)" in blk
+    assert "(MM_ROWS || []).find(a => a.model === id)).filter(Boolean).slice(0, 5)" in hero
     # one that needs a key says so and goes to setup instead of pretending
-    assert 'b.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam);' in blk
-    assert '"mm-rec" + (a.enabled ? "" : " locked")' in blk
-    assert "  .mm-rec.locked { color: var(--ink-3); }" in css
+    assert "run: () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam)," in hero
+    assert 'side: a.enabled ? null : "needs a key"' in hero
 
 
 def test_compare_holds_the_numbers_side_by_side_and_ranks_nothing():

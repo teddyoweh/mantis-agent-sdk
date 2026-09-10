@@ -290,6 +290,25 @@ INDEX_HTML = r"""<!doctype html>
   .count { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink-2); background: var(--fill);
     padding: 1px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
   .page-d { color: var(--ink-2); font-size: 13px; line-height: 1.55; max-width: 72ch; margin: 0 0 18px; }
+  /* A page states its situation as READINGS, not as a sentence. The facts a
+     paragraph was carrying — 184 sessions, 42 projects, since Jul 2026 — are
+     each their own value-and-label, on one line, and the line never wraps: it
+     is nowrap with the overflow clipped, and the readings that matter least
+     are the ones that leave when there is no room. What is left of the prose
+     is at most one short clause. */
+  .page-r { display: flex; align-items: baseline; gap: 16px; flex-wrap: nowrap; overflow: hidden;
+    margin: 0 0 16px; min-width: 0; }
+  .page-rd { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; flex: none; }
+  .page-rd b { font-weight: 600; font-size: 13.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .page-rd span { font-size: 12px; color: var(--ink-3); }
+  /* the one clause of prose that survives, if any */
+  .page-rc { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+  /* an honesty note is a footnote on the readings, not half the paragraph */
+  .page-rn { font-size: 12px; color: var(--ink-3); flex: none; cursor: help; }
+  /* what goes first when the line runs out */
+  @media (max-width: 1200px) { .page-rd.opt2 { display: none; } }
+  @media (max-width: 1000px) { .page-rd.opt1, .page-rc { display: none; } }
   .page-d code, .mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: var(--fill);
     padding: 1px 5px; border-radius: 4px; }
   .page-a { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
@@ -511,34 +530,12 @@ INDEX_HTML = r"""<!doctype html>
      state it's in, and the one action that changes that. The surface is the
      same neutral panel in every state — never a wash, never a rail, never an
      outline. Everything else waits until it's opened. */
-  /* THE ACTIVE MARKER — a sparse pixel DITHER spread across the card's whole
-     inner width, not a ring around its edge and not a clump in one corner. An
-     outline, however it is drawn, reads as a border; a short dense run reads
-     as a decoration stuck under the mark. Spread thin from padding to padding
-     it reads as a property OF the card — the surface is textured, not
-     trimmed.
-       block 3px · column pitch 8px · row pitch 4px · left padding → right
-     The band lives in the card's empty bottom strip and spans it end to end.
-     Its column count therefore depends on the card's width, which is only
-     known after layout, so the blocks are painted from the measured box and
-     repainted when the grid reflows (see paintMotif). The field is
-     deterministic, so a repaint draws exactly the same pattern.
-     Current and Ready differ in ROW COUNT and DENSITY — both span the same
-     width now, so reach can no longer carry the difference — which keeps the
-     pair readable in greyscale.
-     Picked over three other placements rendered side by side at true 1x and
-     2x in both themes: a corner cluster reads as dust at Ready's density, a
-     run under the name reads as a text underline, and a bleed from the left
-     edge brings back the rail this design already threw out.
-     No animation: a marching dither reads as noise, not as life. */
-  /* calc, not left+right: an <svg> is a REPLACED element, so an absolutely
-     positioned one with both edges set ignores `right` and falls back to its
-     intrinsic 300px — which quietly made the band a fixed width again on
-     every card. A stated width is the only thing that tracks the card. */
-  .ac-mot { position: absolute; left: 14px; width: calc(100% - 28px); bottom: 2px;
-    pointer-events: none; z-index: 1; display: block; }
-  .ac-mot rect { fill: var(--accent); }
-  .acard.rdy .ac-mot rect { fill: var(--ink-3); opacity: .5; }
+  /* THE ACTIVE MARKER — the badge, and nothing else.
+     A ring of pixel blocks, a dither spread across the card, an edge rail, a
+     colour wash: each was tried and each was the same mistake, which is
+     decorating a card to say something one word already says. The state badge
+     on the head row names the state outright, in four shapes as well as four
+     colours. That is the marker. */
   .acard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
     padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
     transition: background var(--t); }
@@ -614,6 +611,15 @@ INDEX_HTML = r"""<!doctype html>
   .ac-st.cur { background: var(--accent); color: var(--accent-ink);
     transform: skewX(-8deg); padding: 0 9px; margin-right: 2px; }
   .ac-st.cur > * { transform: skewX(8deg); }
+  /* THE CORNER TAG — one rule, every card that carries a Current tag.
+     Pinned to the card's top-right, it keeps the 8deg slant and rounds its
+     top-right to the card's own radius so it follows the curve instead of
+     looking pasted on. It bleeds 4px past the edge and the card's overflow
+     clips it flat: the slant then reads as deliberate rather than as a pill
+     that drifted into the corner. Picked over a tucked pill and a flush tag
+     with no overhang, rendered side by side at 1x and 2x in both themes. */
+  .cornertag { position: absolute; top: 0; right: -4px; z-index: 2; height: 22px;
+    padding: 0 13px 0 11px; margin-right: 0; border-radius: 0 var(--radius) 0 9px; }
   .ac-st.cur .ac-stg { background: currentColor; }
   .ac-st.rdy { background: var(--ok-soft); color: var(--ok); }
   .ac-st.rdy .ac-stg { border: 1.5px solid currentColor; }
@@ -1294,7 +1300,7 @@ INDEX_HTML = r"""<!doctype html>
      read without meaning to, with everything you would otherwise have gone
      looking for beside it: the route in, the window, the price, what it can
      do, and whether anyone has actually checked that it answers. */
-  .nowcard { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
+  .nowcard { position: relative; background: var(--panel); border-radius: var(--radius);
     padding: 16px 18px 14px; margin: 2px 0 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .now-top { display: flex; align-items: center; gap: 13px; min-width: 0; }
   .now-top .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex;
@@ -1316,8 +1322,6 @@ INDEX_HTML = r"""<!doctype html>
   .now-reach.ok b { color: var(--ok); }
   .now-reach.bad b { color: var(--bad); }
   .now-none { font-size: 13px; color: var(--ink-2); }
-  /* the band says "this is the one", the same way it does on every card */
-  .nowcard > .ac-mot { left: 18px; width: calc(100% - 36px); bottom: 6px; }
 
   /* SETUP, ONE CLICK AWAY — the provider grid is the same subject at a lower
      altitude, and 13 rows of "Not connected" above the models made the page
@@ -1341,6 +1345,34 @@ INDEX_HTML = r"""<!doctype html>
      SDK knows about a model you can already reach. One component, two pages:
      .mcard, .mh, .omark, .mt, .mo, .mp2 and .pill are shared outright, so the
      two model surfaces cannot drift into two design eras. */
+  /* A MENU — one small floating list, used by the controls that would
+     otherwise be a row of pills each. It is the third and last surface on
+     this page that genuinely floats over the content, so it is the third that
+     earns a raise; everything flat still gets its depth from a background
+     step. */
+  .pmenu-w { position: relative; flex: none; }
+  .pmenu-b { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px; border: 0;
+    border-radius: 8px; background: var(--fill); font: inherit; font-size: 12.5px; color: var(--ink-2);
+    cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
+  .pmenu-b:hover { background: var(--fill-2); color: var(--ink); }
+  .pmenu-b i { font-style: normal; font-size: 8px; color: var(--ink-3); }
+  .pmenu-b b { font-weight: 600; color: var(--ink); }
+  .pmenu { position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; min-width: 190px; padding: 5px;
+    border-radius: 10px; background: var(--panel-2); box-shadow: 0 12px 32px -8px var(--dim);
+    display: flex; flex-direction: column; gap: 1px; }
+  .pmenu.left { right: auto; left: 0; }
+  .pmenu-i { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: 0;
+    border-radius: 7px; background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-2);
+    text-align: left; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
+  .pmenu-i:hover { background: var(--fill); color: var(--ink); }
+  .pmenu-i.on { color: var(--accent); }
+  .pmenu-i .pmenu-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pmenu-i .pmenu-s { font-size: 11px; color: var(--ink-3); flex: none; }
+  .pmenu-i .omark { width: 18px; height: 18px; border-radius: 5px; background: none; flex: none; }
+  .pmenu-i .omark svg { width: 15px; height: 15px; }
+  .pmenu-h { padding: 6px 9px 3px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--ink-3); }
+
   /* COMPARE — picking between two models means holding their numbers next to
      each other, which the grid cannot do: they are three cards apart and the
      facts are in different places on each. Pin up to three and they are laid
@@ -1383,29 +1415,10 @@ INDEX_HTML = r"""<!doctype html>
   .cmp-h b { font-family: var(--mono); font-size: 12.5px; font-weight: 600; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
 
-  /* Sorting is asking the grid a question. Three of them are answerable from
-     data this machine actually has — the family, the price table, the context
-     table — so those are the three offered. "Fastest" is not on the list
-     because nothing here measures speed, and a ranking nobody computed is a
-     ranking nobody should be shown. */
-  .mm-sortbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
-  .mm-sortl { font-size: 11.5px; color: var(--ink-3); }
   .mm-flat { display: none; }
   .mm-flat.on { display: block; }
   /* a group the SORT has put away, as opposed to one a filter has emptied */
   .mm-off { display: none !important; }
-  /* what you had before this one: switching back should not need the grid */
-  .mm-recent { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0 0 12px; }
-  .mm-recl { font-size: 11.5px; color: var(--ink-3); flex: none; }
-  .mm-rec { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 8px;
-    border: 0; border-radius: 8px; background: var(--panel); font: inherit; font-size: 12.5px;
-    font-family: var(--mono); color: var(--ink-2); cursor: pointer; max-width: 240px;
-    transition: background var(--t), color var(--t); }
-  .mm-rec:hover { background: var(--panel-2); color: var(--ink); }
-  .mm-rec .omark { width: 18px; height: 18px; border-radius: 5px; background: none; flex: none; }
-  .mm-rec .omark svg { width: 15px; height: 15px; }
-  .mm-rec span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mm-rec.locked { color: var(--ink-3); }
 
   /* a labelled grid per source */
   .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 12.5px;
@@ -1422,25 +1435,28 @@ INDEX_HTML = r"""<!doctype html>
      for no reason. */
   .mmcard .mh { padding-right: 0; }
   .mmcard.on .mh { padding-right: 84px; }
+  /* THE CURRENT MODEL'S CARD — the badge, and nothing else.
+     .mcard.on carries an accent wash on the Deploy picker, where it means
+     "the one you just clicked". Here it would mean "the one you are running",
+     and a tinted card is exactly the decoration this page kept being told to
+     stop adding: the slanted Current tag already says it in a word. So the
+     card keeps the neutral surface its neighbours have. */
+  .mcard.mmcard.on { background: var(--panel); }
+  .mcard.mmcard.on:hover { background: var(--panel-2); }
+  .mcard.mmcard.on .pill, .mcard.mmcard.on .cap,
+  .mcard.mmcard.on .mm-pin { background: var(--fill); }
   /* keyboard focus is a background step, like every other state on the page */
   .mmcard.kb { background: var(--fill); }
   .mmcard.locked .mt { color: var(--ink-2); }
-  /* The foot: the motif on the left, the one action on the right, laid out
-     rather than stacked, so neither can ever reach the other at any width.
-     16px and not 15: an even row centres the 8px motif on a whole pixel, so
-     its blocks land on the device grid instead of straddling it. */
+  /* The foot: the compare pin, and the one action. */
   .mm-foot { display: flex; align-items: center; gap: 10px; min-height: 16px; margin-top: auto; }
-  /* the motif takes the rest of the row, so it spans the card and stops one
-     gap short of the action; flex-end plus a whole-pixel margin keeps its
-     blocks off half pixels however tall the row's text turns out to be */
-  .mm-foot .ac-mot { position: static; flex: 1 1 0; min-width: 0;
-    align-self: flex-end; margin-bottom: 4px; }
   .mm-act { margin-left: 10px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
   .mmcard:hover .mm-act { color: var(--accent); }
   .mmcard.locked .mm-act { color: var(--warn); }
-  /* the same slanted Current tag the provider cards wear, pinned where the
-     Deploy card puts its hover verb */
-  .mmcard > .ac-st.cur { position: absolute; top: 12px; right: 13px; }
+  /* the tag is clipped by the card it sits on */
+  .mmcard, .nowcard { overflow: hidden; }
+  /* the head keeps clear of it; so does the hero's whole top row */
+  .nowcard.hastag .now-top { padding-right: 104px; }
   .cap { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; padding: 2px 6px; border-radius: 4px;
     background: var(--fill); color: var(--ink-3); }
   .cap.ok { background: var(--ok-soft); color: var(--ok); }
@@ -1488,18 +1504,11 @@ INDEX_HTML = r"""<!doctype html>
   .dp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 12px; }
   .dpc { padding: 16px 16px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; position: relative; transition: background var(--t); }
   .dpc:hover { background: var(--panel-2); }
-  /* One system: a connected GPU provider is marked the same way a connected
-     model provider is — the pixel dither — not with an accent wash. The wash
-     was the last surface on the pre-redesign system. */
+  /* A connected GPU provider is marked the way every other connected thing
+     on this dashboard is: by what its own status line says, not by a wash. */
   .dpc { position: relative; }
   .dpc.on { background: var(--panel); }
   .dpc.on:hover { background: var(--panel-2); }
-  /* This card is a column with a bottom-pinned action row that can wrap to
-     two lines, so the motif is a LAID-OUT item in that column rather than an
-     overlay pinned to the bottom: no card height can bring it and the buttons
-     together. It sits at the padding edge, under the engine chips, in line
-     with the mark above it. */
-  .dpc .ac-mot { position: static; width: 100%; }
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
@@ -2347,8 +2356,13 @@ async function loadActivity(refreshOnly) {
   pad.innerHTML = "";
   const ref = el("span","refresh"); ref.append(el("span","live"), document.createTextNode(EVENTS_OK ? "live" : "live · 15s"));
   const c7 = act.counts_7d || {};
-  pageHead(pad, "Activity", (act.jobs || []).length + (act.runs || []).length || null,
-    (c7.running || 0) + " running · " + (c7.done || 0) + " done · " + (c7.error || 0) + " error · last 7 days", [ref]);
+  pageHead(pad, "Activity", (act.jobs || []).length + (act.runs || []).length || null, null, [ref]);
+  pageReads(pad, [
+    { v: c7.running || 0, k: "running" },
+    { v: c7.done || 0, k: "done" },
+    { v: c7.error || 0, k: "failed" },
+    { v: "7 days", k: "window", opt: 2 },
+  ], null, "Jobs and workflow runs this machine recorded, newest first.");
   // The three states the ledger sorts into, counted over the same seven days
   // the caption names. There is no previous week on this endpoint, so there is
   // no delta: a trend nobody can compute is a trend nobody should be shown.
@@ -2590,10 +2604,17 @@ async function loadHome() {
   const readyN = fams.filter(f => f.ready).length;
   const since = t.first_seen ? new Date(t.first_seen * 1000).toLocaleDateString([], { month: "short", year: "numeric" }) : null;
   pageHead(pad, "Overview", null, null, [ref]);
-  pad.append(el("p","page-d", t.messages
-    ? fmt(t.sessions) + " sessions across " + fmt(t.projects || (a.top_projects || []).length) + " projects" +
-      (since ? ", since " + since : "") + " — every number here is read off this machine's own transcripts."
-    : "Nothing has run on this machine yet. Set up a family below, run mantis in a project, and this page fills itself in."));
+  if (t.messages) {
+    pageReads(pad, [
+      { v: fmt(t.sessions), k: "sessions" },
+      { v: fmt(t.projects || (a.top_projects || []).length), k: "projects" },
+      { v: since, k: "first run", opt: 2 },
+      { v: fmt(t.messages), k: "messages", opt: 1 },
+    ], null, "Every number on this page is read off this machine's own transcripts.");
+  } else {
+    pad.append(el("p","page-d",
+      "Nothing has run on this machine yet. Set up a family below, run mantis in a project, and this page fills itself in."));
+  }
 
   // ---- the four readings ----
   // The window is chosen by the data, and the label always says which one it
@@ -2949,7 +2970,12 @@ async function loadDeploy() {
   const configured = DEPLOY.providers.filter(p => p.configured);
   const ref = el("span","refresh"); ref.append(el("span","live"), document.createTextNode("live · 15s"));
   ref.title = "deployments refresh every 15s while this tab is visible";
-  pageHead(pad, "Deploy", live.length || null, "Add a GPU key, pick a model, deploy — then use it.", [ref]);
+  pageHead(pad, "Deploy", live.length || null, null, [ref]);
+  pageReads(pad, [
+    { v: live.length, k: "live" },
+    { v: configured.length + " of " + DEPLOY.providers.length, k: "providers keyed" },
+  ], "Add a GPU key, pick a model, deploy.",
+     "Rates are the providers' own list prices; nothing here is billed by mantis.");
   // What this page costs you right now. The burn is summed from the rates the
   // providers actually quote for the endpoints that are actually up — an
   // endpoint whose provider gives no rate is counted as unpriced rather than
@@ -3076,10 +3102,6 @@ function renderDpProviders(box) {
     const chips = el("div","chips");
     (p.engines || []).forEach(e => chips.append(el("span","chip", e)));
     card.append(chips);
-    // the same marker a connected model provider wears, so the two pages read
-    // as one app rather than two design eras — laid out in the column, above
-    // the action row, never floating over it
-    if (p.configured && ready) card.append(curMotif());
     const ff = el("div","ff");
     // the key form is a sheet, never an in-card panel: a card that grew to
     // fit a guide stretched its whole grid row and hollowed out its neighbours
@@ -3108,7 +3130,6 @@ function renderDpProviders(box) {
       setTimeout(() => openCredSheet(p), 40);
     return card;
   });
-  paintMotifsNow();
 }
 // What to run, and a way to prove it worked without leaving the page. The
 // server never runs pip — this is a copyable command and a re-check.
@@ -4526,7 +4547,6 @@ function openFamily(id) {
   showTab("models");
 }
 function showTab(name) {
-  scheduleMotifs();          // a view built while hidden had no box to measure
   revealGroup(name);         // never leave the page you asked for folded away
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
   if (!b) return;
@@ -5283,11 +5303,6 @@ function renderAuthCards(box, r) {
     box.append(grid);
   });
   AUTH.group = now;
-  // the cards are in the page now, so their bands can be measured and filled
-  // here rather than on some later frame — this grid arrives from a fetch,
-  // and waiting for the observer left it blank on a slow render
-  paintMotifsNow();
-
   // the panel is a sibling of the grids, positioned against its own card
   const oe = entries.find(x => x.key === AUTH.open);
   if (!oe) return;
@@ -5387,93 +5402,6 @@ function placeAuthPanel(box, card, pan) {
   }
   pan.style.top = top + "px";
 }
-// The pixel dither, spread across the whole card.
-//
-// Which columns carry a block is decided by an integer irrational-rotation
-// test — c * 6183 mod 10000, 0.6183 being a hair off the golden ratio. That
-// sequence is equidistributed: the kept columns come out evenly spaced in a
-// non-repeating 3/5 rhythm, with no clumps and no visible period. Hashing or
-// a random draw at this density gives clusters and holes, which reads as
-// noise; this reads as texture somebody laid down on purpose. The second row
-// is the same sequence turned half a revolution, so the two rows never stack
-// into vertical pairs. It is arithmetic on integers, so it is exactly
-// reproducible — the same card draws the same field on every repaint.
-//
-// The band is as wide as the card, and a card's width is only known after
-// layout, so pixMotif builds an EMPTY svg carrying its two parameters and
-// paintMotif fills it once it has a box. Sizes stay integers on an integer
-// pitch with crispEdges — that, not the geometry, is what keeps every block a
-// hard square at 1x and 2x. There is no viewBox on purpose: one user unit is
-// then one CSS pixel whatever width the element ends up, so nothing scales.
-const MOT_BLK = 3, MOT_PITCH = 8, MOT_ROW = 4;
-const MOT_STEP = 6183, MOT_TURN = 5000, MOT_MOD = 10000;
-const MOT_NS = "http://www.w3.org/2000/svg";
-function pixMotif(rows, fill) {
-  const svg = document.createElementNS(MOT_NS, "svg");
-  svg.setAttribute("class", "ac-mot");
-  svg.setAttribute("height", rows * MOT_ROW - (MOT_ROW - MOT_BLK));
-  svg.dataset.rows = rows;
-  svg.dataset.fill = fill;
-  svg.setAttribute("shape-rendering", "crispEdges");
-  svg.setAttribute("aria-hidden", "true");
-  watchMotif(svg);
-  return svg;
-}
-// Current is two rows at a quarter fill; Ready is one row at a seventh. Both
-// span the same width, so the difference is density and depth — about three
-// and a half times the blocks, in twice the rows — and it survives greyscale.
-const curMotif = () => pixMotif(2, 2500);
-const rdyMotif = () => pixMotif(1, 1400);
-// Fill one motif from its measured box. Cheap and idempotent: it redraws only
-// when the width it was last drawn at has actually changed.
-function paintMotif(svg) {
-  const w = Math.floor(svg.getBoundingClientRect().width);
-  if (w < MOT_PITCH * 4) return;              // not laid out yet, or hidden
-  if (svg.dataset.w === String(w)) return;
-  svg.dataset.w = String(w);
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
-  const rows = +svg.dataset.rows, fill = +svg.dataset.fill;
-  const cols = Math.floor((w - MOT_BLK) / MOT_PITCH) + 1;
-  for (let c = 0; c < cols; c++) {
-    for (let r = 0; r < rows; r++) {
-      if ((c * MOT_STEP + r * MOT_TURN) % MOT_MOD >= fill) continue;
-      const b = document.createElementNS(MOT_NS, "rect");
-      b.setAttribute("x", c * MOT_PITCH); b.setAttribute("y", r * MOT_ROW);
-      b.setAttribute("width", MOT_BLK); b.setAttribute("height", MOT_BLK);
-      svg.append(b);
-    }
-  }
-}
-// A ResizeObserver is the right instrument here and a frame callback is not:
-// it fires the moment the element first HAS a box and again every time that
-// box changes, whatever built the card and whenever it landed. Watching for a
-// frame instead loses the race against a grid that is still being filled in
-// from a fetch. An observer whose target has left the page stops being
-// watched, so re-rendering a grid does not accumulate them.
-const MOT_RO = typeof ResizeObserver === "function"
-  ? new ResizeObserver(es => es.forEach(e => {
-      if (e.target.isConnected) { paintMotif(e.target); return; }
-      // A card is built detached and inserted after, so the FIRST delivery can
-      // arrive before the motif is in the page. Dropping the watch there is
-      // how the provider grid ended up with empty bands: only stop watching a
-      // motif that has actually been painted once, i.e. a replaced card.
-      if (e.target.dataset.w) MOT_RO.unobserve(e.target);
-    }))
-  : null;
-function watchMotif(svg) {
-  if (MOT_RO) MOT_RO.observe(svg); else scheduleMotifs();
-}
-// The fallback for an engine without ResizeObserver: one pass for the whole
-// page on the next frame, and again whenever the window resizes.
-let motPass = 0;
-function paintMotifs() { motPass = 0; document.querySelectorAll(".ac-mot").forEach(paintMotif); }
-function scheduleMotifs() { if (!motPass) motPass = requestAnimationFrame(paintMotifs); }
-// Call this the moment a grid of cards has been inserted. Waiting for the
-// observer or a frame is what left the provider grid with empty bands on a
-// slow render: the cards are in the page and measurable HERE, so fill them
-// here and let the observer handle only what changes afterwards.
-function paintMotifsNow() { paintMotifs(); }
-addEventListener("resize", scheduleMotifs);
 // Two shapes from one description: the 63px card that lives in the grid, and
 // — with `panel` — the same card expanded, which is drawn ABOVE the grid so
 // opening one never moves another. The grid's geometry is fixed for good.
@@ -5483,15 +5411,6 @@ function authCard(e, panel) {
   const open = AUTH.open === e.key;
   const card = el("div","acard " + st8.cls + (panel ? " open ac-panel" : open ? " ac-under" : ""));
   card.id = (panel ? "authp-" : "auth-") + e.key.replace("/", "-");
-  // Current wears the accent dither; Ready wears the same field held far back.
-  // Idle and not-connected wear none — the badge alone speaks. The opened
-  // card is a form, not a card in the grid: its own head carries the badge,
-  // and a band pinned to the bottom of a scrolling panel would land on the
-  // body, so the marker belongs to the collapsed shape only.
-  if (panel) { /* the panel states itself in its head */ }
-  else if (st8.cls === "cur") card.append(curMotif());
-  else if (st8.cls === "rdy") card.append(rdyMotif());
-
   const head = el("div","ac-h");
   head.append(bigMark(e.logo || e.family, e.label));
   const ht = el("div","ft");
@@ -5839,7 +5758,6 @@ function nowRunning(pad, m) {
   const info = (m.model_info || {})[cur] || {};
   const price = info.price || (prov ? (prov.prices || {})[cur] : null);
 
-  card.append(curMotif());
   const top = el("div","now-top");
   top.append(fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
   const t = el("div","now-t");
@@ -5858,17 +5776,39 @@ function nowRunning(pad, m) {
   if (ep) via.push(String(ep).replace(/^https?:\/\//, ""));
   const v = el("div","now-via", via.join(" \u00b7 ")); v.title = v.textContent; t.append(v);
   top.append(t);
-  const acts = el("div","now-a");
-  const st = el("span","ac-st cur");
+  // the tag is a corner tag on the card, not an item in the action lane
+  const st = el("span","ac-st cur cornertag");
   st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
   st.title = "the model mantis runs right now";
-  acts.append(st);
-  acts.append(btn("Switch", "gho", () => {
+  card.append(st);
+  card.classList.add("hastag");
+  const acts = el("div","now-a");
+  // Switching back to what you were running a minute ago is the commonest
+  // switch there is, and it belongs HERE — beside what you are running — not
+  // as a permanent row of pills over the grid competing with the filters.
+  const browse = () => {
     const g = document.getElementById("mm-grid-top");
     if (g) g.scrollIntoView({ behavior: "smooth", block: "start" });
     const i = document.querySelector("#modelspad .filters .find input");
     if (i) setTimeout(() => i.focus(), 220);
-  }));
+  };
+  acts.append(popMenu("Switch", () => {
+    const out = [];
+    const recents = (m.recent || [])
+      .map(id => (MM_ROWS || []).find(a => a.model === id)).filter(Boolean).slice(0, 5);
+    if (recents.length) {
+      out.push({ head: "Recently used" });
+      recents.forEach(a => out.push({
+        label: a.model, mark: fillMark(el("span","omark"), a.pid, a.label),
+        side: a.enabled ? null : "needs a key",
+        title: a.enabled ? "switch to " + a.model + " \u00b7 " + a.label : a.label + " needs a key",
+        run: () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam),
+      }));
+      out.push({ head: "Everything else" });
+    }
+    out.push({ label: "Browse all models", run: browse });
+    return out;
+  }, { title: "switch back, or browse everything" }));
   top.append(acts);
   card.append(top);
 
@@ -5949,6 +5889,74 @@ async function checkReach(cur, prov, local) {
   paint();
 }
 
+// ---- a small menu ----------------------------------------------------------
+// A control whose options would otherwise be a permanent row of pills. The
+// trigger states the current choice, so the answer is readable without
+// opening it, and the list is fully keyboard-driven: Enter or Space opens it,
+// the arrows walk it, Escape closes it and hands focus back to where it came
+// from — a menu that swallows focus is worse than the row it replaced.
+function popMenu(label, items, opts) {
+  opts = opts || {};
+  const w = el("div","pmenu-w");
+  const b = el("button","pmenu-b");
+  const lab = el("span");
+  const paintLabel = () => {
+    lab.innerHTML = "";
+    if (opts.prefix) lab.append(document.createTextNode(opts.prefix + " "));
+    lab.append(el("b", null, typeof label === "function" ? label() : label));
+  };
+  b.append(lab, el("i", null, "\u25be"));
+  b.setAttribute("aria-haspopup", "menu");
+  b.setAttribute("aria-expanded", "false");
+  if (opts.title) b.title = opts.title;
+  paintLabel();
+  w.append(b);
+  let menu = null;
+  const close = (refocus) => {
+    if (!menu) return;
+    menu.remove(); menu = null;
+    b.setAttribute("aria-expanded", "false");
+    document.removeEventListener("mousedown", away, true);
+    if (refocus) b.focus();
+  };
+  const away = ev => { if (!w.contains(ev.target)) close(false); };
+  const open = () => {
+    if (menu) { close(true); return; }
+    menu = el("div","pmenu" + (opts.align === "left" ? " left" : ""));
+    menu.setAttribute("role", "menu");
+    const rows = [];
+    (typeof items === "function" ? items() : items).forEach(it => {
+      if (it.head) { menu.append(el("div","pmenu-h", it.head)); return; }
+      const mi = el("button","pmenu-i" + (it.on ? " on" : ""));
+      mi.setAttribute("role", "menuitem");
+      if (it.mark) mi.append(it.mark);
+      mi.append(el("span","pmenu-t", it.label));
+      if (it.side) mi.append(el("span","pmenu-s", it.side));
+      if (it.title) mi.title = it.title;
+      mi.onclick = () => { close(true); if (it.run) it.run(); paintLabel(); };
+      menu.append(mi); rows.push(mi);
+    });
+    menu.addEventListener("keydown", ev => {
+      if (ev.key === "Escape") { ev.stopPropagation(); close(true); return; }
+      if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+      const i = rows.indexOf(document.activeElement);
+      const n = rows[Math.max(0, Math.min(rows.length - 1, (i < 0 ? 0 : i + (ev.key === "ArrowDown" ? 1 : -1))))];
+      if (n) { n.focus(); ev.preventDefault(); }
+    });
+    w.append(menu);
+    b.setAttribute("aria-expanded", "true");
+    document.addEventListener("mousedown", away, true);
+    if (rows[0]) rows[0].focus();
+  };
+  b.onclick = open;
+  b.onkeydown = ev => {
+    if (ev.key === "ArrowDown") { ev.preventDefault(); open(); }
+    if (ev.key === "Escape") close(false);
+  };
+  w.repaint = paintLabel;
+  return w;
+}
+
 // ---- compare ---------------------------------------------------------------
 // Three at most: past that the columns stop being readable and the question
 // stops being "which of these", which is what this is for. Nothing here
@@ -5956,6 +5964,9 @@ async function checkReach(cur, prov, local) {
 // and lets the reader compare, because a "best model" number is one this
 // machine has no way to compute.
 const CMP = { pins: [], max: 3, rows: [] };
+// Every model this page knows about, so the hero can offer them without
+// rebuilding the list it already built.
+let MM_ROWS = [];
 function togglePin(key) {
   const i = CMP.pins.indexOf(key);
   if (i >= 0) CMP.pins.splice(i, 1);
@@ -6106,7 +6117,6 @@ function myModelCard(a, fid, cur, famName) {
 
   // the foot: the pixel motif on the left, the pin, then the one action
   const foot = el("div","mm-foot");
-  if (on) foot.append(curMotif());
   const key = a.model + "\u0000" + a.pid;
   const pin = el("button","mm-pin" + (CMP.pins.includes(key) ? " on" : ""),
                  CMP.pins.includes(key) ? "Pinned" : "Compare");
@@ -6119,7 +6129,7 @@ function myModelCard(a, fid, cur, famName) {
   // the current model wears the same slanted tag the provider cards wear, so
   // the two pages mark "in use" in one language
   if (on) {
-    const st = el("span","ac-st cur");
+    const st = el("span","ac-st cur cornertag");
     st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
     st.title = "the model mantis is using right now";
     card.append(st);
@@ -6142,9 +6152,17 @@ async function loadModels() {
 
   // Reachability is a per-provider action on the provider's own card below —
   // a page-level "test this route" strip said less and sat in the way.
-  pageHead(pad, "My models", null,
-    "What you are running, and everything else you could switch to. " +
-    "Connect a family once and its models are one click away.");
+  pageHead(pad, "My models", null, null);
+  {
+    const served = new Set();
+    (m.providers || []).forEach(pv => (pv.models || []).forEach(x => served.add(x)));
+    ((m.ollama || {}).models || []).forEach(o => served.add(o.name));
+    pageReads(pad, [
+      { v: fmt(served.size), k: "models" },
+      { v: (m.families || []).length, k: "families", opt: 2 },
+    ], "What you are running, and what else you could.",
+       "Windows and prices come from the SDK's own tables, not from the provider.");
+  }
 
   MSTATE = m;
   // ---- what you are running ----------------------------------------------
@@ -6212,6 +6230,9 @@ async function loadModels() {
     // Local IS Ollama, so here the llama is the honest mark
     if (nLocal) tabs.push({ id: "local", label: "Local", n: nLocal, logo: "ollama" });
     if (!tabs.some(t => t.id === MODEL_TAB)) MODEL_TAB = "all";
+    // Search is the primary act and the family filter narrows what it returns,
+    // so the search row is built first and the families sit under it — the
+    // same order the Deploy picker already uses.
     const tabRow = el("div","mtabs");
     tabs.forEach(t => {
       const c = el("button","fchip" + (t.id === MODEL_TAB ? " on" : ""));
@@ -6229,7 +6250,6 @@ async function loadModels() {
       };
       tabRow.append(c);
     });
-    sec.append(tabRow);
     const bar = el("div","filters");
     const find = findBox("Filter — gpt, claude, grok, 200k, free, local…  ( / )");
     find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1";
@@ -6247,44 +6267,20 @@ async function loadModels() {
       chips.append(c);
     });
     bar.append(chips);
-    sec.append(bar);
-
-    // ---- what you had before this one ----
-    // Switching back should not mean finding the card again. The catalog
-    // already keeps the order; a model it no longer knows how to reach is
-    // still listed, but says so rather than pretending it is one click away.
-    const recents = (m.recent || []).map(id => allModels.find(a => a.model === id)).filter(Boolean).slice(0, 5);
-    if (recents.length) {
-      const rr = el("div","mm-recent");
-      rr.append(el("span","mm-recl", "Recently used"));
-      recents.forEach(a => {
-        const b = el("button","mm-rec" + (a.enabled ? "" : " locked"));
-        b.append(fillMark(el("span","omark"), a.pid, a.label));
-        b.append(el("span", null, a.model));
-        b.title = a.enabled ? "switch to " + a.model + " \u00b7 " + a.label
-                            : a.model + " \u00b7 " + a.label + " needs a key";
-        b.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam);
-        rr.append(b);
-      });
-      sec.append(rr);
-    }
-
-    // ---- the question you are asking of the grid ----
+    // Sort: a labelled control that says the current ordering without being
+    // opened, rather than three pills that are always on screen to answer a
+    // question most people ask once.
     const SORTS = [["family", "By family"], ["cheap", "Cheapest"], ["ctx", "Biggest context"]];
-    const sortBar = el("div","mm-sortbar");
-    sortBar.append(el("span","mm-sortl", "Sort"));
-    const sortChips = el("div","fchips");
-    SORTS.forEach(([k, lab]) => {
-      const c = el("button","fchip" + (k === MODEL_SORT ? " on" : ""), lab);
-      c.onclick = () => {
-        MODEL_SORT = k;
-        sortChips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
-        resort();
-      };
-      sortChips.append(c);
-    });
-    sortBar.append(sortChips);
-    sec.append(sortBar);
+    const sortLabel = () => (SORTS.find(([k]) => k === MODEL_SORT) || SORTS[0])[1];
+    const sortBtn = popMenu(sortLabel, () => SORTS.map(([k, lab]) => ({
+      label: lab, on: k === MODEL_SORT,
+      side: k === "cheap" ? "$ in + out" : k === "ctx" ? "window" : null,
+      run: () => { MODEL_SORT = k; resort(); sortBtn.repaint(); },
+    })), { prefix: "Sort:", title: "how the grid is ordered" });
+    sortBtn.id = "mm-sort";
+    bar.append(sortBtn);
+    sec.append(bar);
+    sec.append(tabRow);
 
     // One labelled card grid per source, so "Open models · 34 models" reads
     // as a heading over its own cards rather than a stripe in a table.
@@ -6343,12 +6339,11 @@ async function loadModels() {
           : "by the window the SDK records \u00b7 unknown last"));
       }
       apply();
-      paintMotifsNow();
     };
     sec.append(list);
     CMP.rows = allModels;
+    MM_ROWS = allModels;      // the hero's Switch menu reads these too
     const cmpBar = el("div","cmp-bar"); cmpBar.id = "cmp-bar"; sec.append(cmpBar);
-    paintMotifsNow();
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
       let shown = 0;
@@ -6479,6 +6474,25 @@ function pageHead(pad, title, count, desc, actions) {
   if (actions && actions.length) { const a = el("div","page-a"); actions.forEach(x => a.append(x)); h.append(a); }
   pad.append(h);
   if (desc) { const d = el("p","page-d"); if (desc.nodeType) d.append(desc); else d.innerHTML = desc; pad.append(d); }
+}
+// The readings line: what a page's description used to say in prose, as
+// discrete values. `reads` is [{v, k, opt}] — value, label, and how early it
+// leaves when the line runs out (1 goes at 1000px, 2 at 1200px, absent means
+// it never goes). `clause` is the single short piece of prose allowed, and
+// `note` is an honesty footnote that rides as a tooltip rather than as text.
+function pageReads(pad, reads, clause, note) {
+  const r = el("div","page-r");
+  (reads || []).filter(x => x && x.v != null && x.v !== "").forEach(x => {
+    const d = el("span","page-rd" + (x.opt ? " opt" + x.opt : ""));
+    d.append(el("b", null, String(x.v)));
+    if (x.k) d.append(el("span", null, x.k));
+    if (x.title) d.title = x.title;
+    r.append(d);
+  });
+  if (clause) { const c = el("span","page-rc", clause); c.title = clause; r.append(c); }
+  if (note) { const n = el("span","page-rn", "\u24d8"); n.title = note; r.append(n); }
+  if (r.childElementCount) pad.append(r);
+  return r;
 }
 function section(pad, title, filePath) {
   const s = el("div","sec");
@@ -6683,8 +6697,13 @@ async function loadSkills() {
   SKILLS.dirs = { global: sk.global_dir, project: sk.project_dir };
   const c = sk.counts || { total: SKILLS.all.length, always: 0, on_demand: 0, global: 0, project: 0 };
 
-  pageHead(pad, "Skills", c.total || null, "Playbooks the agent opens when a task matches.",
+  pageHead(pad, "Skills", c.total || null, null,
     [btn("New skill", "pri", () => openSkillEditor(null, "global", reload))]);
+  pageReads(pad, [
+    { v: c.always || 0, k: "always loaded" },
+    { v: c.on_demand || 0, k: "on demand" },
+  ], "Playbooks the agent opens when a task matches.",
+     "Always-loaded skills go into every prompt; on-demand ones are opened by name.");
   const pills = el("div","sk-state");
   pills.append(pill(c.always, " always loaded", c.always ? "acc" : ""));
   pills.append(pill(c.on_demand, " on demand"));
@@ -7066,8 +7085,13 @@ async function loadMcp() {
   // the header's copy stays quiet rather than shouting the same thing twice
   const addBtn = btn("Add server", mc.servers.length ? "pri" : "gho", openComposer);
   const stdioN = mc.servers.filter(s => s.transport === "stdio").length;
-  pageHead(pad, "MCP servers", mc.servers.length, mc.servers.length
-    ? stdioN + " local · " + (mc.servers.length - stdioN) + " remote" : null, [addBtn]);
+  pageHead(pad, "MCP servers", mc.servers.length, null, [addBtn]);
+  if (mc.servers.length) {
+    pageReads(pad, [
+      { v: stdioN, k: "local" },
+      { v: mc.servers.length - stdioN, k: "remote" },
+    ], null, "A project's .mcp.json is attacker-controlled data until you trust it.");
+  }
   pad.append(composer);
 
   // Project .mcp.json is attacker-controlled data — offer the trust gate here
@@ -7154,7 +7178,9 @@ async function loadConfig() {
 
   const lc = (src) => Object.keys((c.layers || {})[src] || {}).length;
   // the per-layer counts are stated once, on the layers themselves
-  pageHead(pad, "Config", keys.length, "The settings mantis runs with · secrets redacted");
+  pageHead(pad, "Config", keys.length, null);
+  pageReads(pad, [{ v: keys.length, k: "settings" }],
+    "What mantis runs with.", "Every value that looks like a secret is masked before it leaves the machine.");
   if (!keys.length) {
     pad.append(zero("Running on defaults",
       "No settings files found — mantis is using its built-in defaults. Anything you set in " +

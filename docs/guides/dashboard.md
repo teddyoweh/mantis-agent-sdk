@@ -39,7 +39,7 @@ rows away, and **Activity** opens the states its own filter has — Running,
 Done, Failed — listing only the ones with something in them, because an empty
 row promises something to look at that isn't there. A child is joined to its
 parent by a **branch**: this sheet draws no lines, so it is a run of 1px
-blocks on a 3px pitch (the card motif's material at its finest grain) with a
+blocks on a 3px pitch, at the sheet's finest grain, with a
 stub across to each row, and the accent on the row you are on.
 
 Each **group heading is a control**: it folds its own section away and the
@@ -125,8 +125,20 @@ ring); **up and down** then walk the rail, skipping anything folded away.
 ### The page header
 
 Every page-shaped view opens the same way: the bar carries a **breadcrumb**,
-and the page carries a title, a line saying what it is for, and a **stat
-row**.
+and the page carries a title, a line of **readings**, and (where it earns one)
+a **stat row**.
+
+A page states its situation as readings, not as a paragraph. What used to be a
+sentence carrying four facts — *"184 sessions across 42 projects, since Jul
+2026 — every number here is read off this machine's own transcripts"*, wrapping
+over two lines and reading as filler — is now `184 sessions · 42 projects ·
+Jul 2026 first run`, each a value with its own label, on one line that **never
+wraps**: it is `nowrap` with the overflow clipped. At most one short clause of
+prose survives beside them, and the honesty note rides as a tooltip on an ⓘ
+rather than as half the paragraph. When the line runs out it degrades by
+**dropping the least important reading** — readings are marked with how early
+they go (1200px, then 1000px, where the prose clause goes too) — never by
+breaking a sentence in half.
 
 The breadcrumb is a trail you can walk back up. A page on its own is one
 word; a page you have narrowed reads `My models › Claude`, and the chevron to
@@ -265,8 +277,7 @@ The page answers two questions, in that order: **what am I running**, and
 
 **What you are running** is the first thing on it — the id at hero size, the
 route in (who serves it, how mantis authenticates there, the endpoint), the
-context window, the price in and out, the capability tags, and the pixel band
-that marks the current thing everywhere else on this dashboard. A model the
+context window, the price in and out, and the capability tags. A model the
 SDK's capability table has never heard of says *no capability row* rather than
 showing nothing. With no model set, the card says so instead of rendering
 blank.
@@ -287,19 +298,34 @@ connected (setup is then the job), when `?openprov=` names a provider, or when
 `?prov=open` asks for it. The strip is written by the grid it summarises, from
 that grid's own predicate, so the two can never disagree.
 
-**Recently used** puts the models you switched between one click away, drawn
-from the catalog's own history and never including the one you are already on.
-One that has since lost its key is still listed, but says so and goes to setup
-rather than pretending.
+**Recently used** lives on the hero's **Switch** control, which is where "go
+back to what I was running" actually belongs — beside what you are running, not
+as a permanent row over the grid competing with the filters. It is drawn from
+the catalog's own history and never includes the one you are already on; one
+that has since lost its key is still listed, but says *needs a key* and goes to
+setup rather than pretending. The same menu's last item is **Browse all
+models**, which drops you into the search.
+
+**Two rows of controls, and search comes first.** Search is the primary act
+and the family filter narrows what it returns, so the search row leads — with
+the readiness chips and the sort control on its right — and the family tabs sit
+under it, the same order the Deploy picker uses. That is the whole stack; it
+was four rows.
 
 **Sorting is asking the grid a question**: *By family*, *Cheapest*, *Biggest
-context*. Those three are computable from tables this machine actually has.
-There is no *fastest*, because nothing here measures speed. Unknowns sort last
-and are labelled — an unpriced model is not a free one. Sorting moves the
-cards between grids rather than rebuilding them, so a card keeps its band, its
-tag and its handlers.
+context*. It is a labelled menu (`Sort: By family ▾`) rather than three pills
+that live on screen permanently to answer a question most people ask once — the
+trigger states the current ordering, so it is readable without opening. The
+menu opens on Enter, Space or ↓, the arrows walk it, Escape closes it and hands
+focus back to the trigger. Those three orderings are computable from tables this
+machine actually has; there is no *fastest*, because nothing here measures
+speed. Unknowns sort last and are labelled — an unpriced model is not a free
+one. Sorting moves the cards between grids rather than rebuilding them, so a
+card keeps its band, its tag and its handlers.
 
-**Compare** holds up to three models side by side: pin them from the card (the
+**Compare** stays invisible until it is wanted: the pin appears on a card only
+on hover or focus, and the tray only exists once something is pinned. It holds
+up to three models side by side — pin them from the card (the
 same hover-revealed control the Deploy card uses for its verb), then the tray
 opens a sheet with one column per model and one row per fact — served by,
 context, price in, price out, tool calling, effort, reasoning, readiness — plus
@@ -335,55 +361,38 @@ is also the only **slanted** badge: an 8° tag with its label counter-skewed
 back upright, so it differs from the rest in shape before you read a word.
 
 The card surface stays the same neutral panel in every state; there is no
-colour wash, no edge rail and **no outline of any kind** — an earlier ring of
-pixel blocks around the card read as a dashed border at real size, and with
-every connected card wearing one the grid became a field of dotted rectangles.
-The current provider is marked instead by a **sparse pixel dither spread
-across the card's whole inner width**: 3px accent blocks on an 8px column
-pitch and a 4px row pitch, two rows deep in the empty strip below the head,
-running from the left padding to the right one. Spread thin it reads as a
-property *of* the card — the surface is textured, not trimmed and not
-decorated in one corner.
+colour wash, no edge rail and **no outline of any kind**. Nor is there a marker
+drawn on the card. Several were tried and each was the same mistake — a ring of
+pixel blocks read as a dashed border; spreading those blocks across the card as
+a dither turned the grid into texture; an edge rail read as a rendering fault
+on the cards that lacked one; an accent wash was the last surface of the old
+system. All of it was decorating a card to say something one word already says.
 
-Which columns carry a block is decided by an integer irrational-rotation test
-(`c × 6183 mod 10000`, 0.6183 being a hair off the golden ratio). That
-sequence is equidistributed, so the kept columns come out evenly spaced in a
-non-repeating 3/5 rhythm with no clumps and no visible period — hashing or a
-random draw at this density gives clusters and holes, which reads as noise;
-this reads as texture somebody laid down on purpose. The second row is the
-same sequence turned half a revolution, so the rows never stack into vertical
-pairs. Being integer arithmetic it is exactly reproducible: the same card
-draws the same field on every repaint. There is no `viewBox`, so one user unit
-is one CSS pixel however wide the card ends up — a wider card gets bigger
-gaps, never bigger blocks — and `shape-rendering="crispEdges"` keeps every
-block a hard square at 1x and 2x. It does not animate, because a marching
-dither reads as noise rather than as life.
+**The badge is the marker.** It names the state outright, and the four states
+differ in shape as well as hue — a filled dot, a hollow ring, an amber diamond,
+a faint pip — so the set survives a colour-blind or greyscale reading with no
+second channel needed. Current is additionally the only **slanted** one. The
+same rule holds on the deploy page's GPU provider cards: what marks them is
+what they say, not what is painted on them.
 
-The band is as wide as the card, and a card's width is only known after
-layout, so the SVG is created empty and filled from its measured box by a
-**ResizeObserver** — which fires the moment the element first has a box and
-again whenever the grid reflows. (A frame callback loses the race against a
-grid still being filled in from a fetch.) On the provider card — whose 63px
-height is fixed — the band is pinned inside the card's own bottom padding with
-a stated `width: calc(100% - 28px)`, because an `<svg>` is a replaced element
-and setting `left` and `right` together would be ignored in favour of its
-intrinsic 300px. On the two cards whose height is not fixed (the GPU provider
-card and the model card) it is a laid-out item beside the action rather than
-an overlay above it, so no card height, wrap or width can bring the two
-together.
+Where a card carries a **Current** tag and has room for it — the hero and the
+model cards — the tag is a **corner tag**: pinned to the card's top-right, it
+keeps the 8° slant, rounds its top-right to the card's own 12px radius so it
+follows the curve instead of looking pasted on, and bleeds 4px past the edge
+where the card's overflow clips it flat. That clipped edge is what makes the
+slant read as deliberate; it was picked over a tucked pill and a flush tag with
+no overhang, rendered side by side at 1x and 2x in both themes. One rule
+(`.cornertag`) covers both cards. Switch stays in the hero's action lane and is
+the only thing in it.
 
-A connected-but-idle card wears the same field at **one row instead of two and
-a seventh fill instead of a quarter** — about 7 blocks where Current has 24 on
-the same card, a third of the density in half the depth — in neutral ink.
-Since both now span the same width, the whole difference is carried by density
-and row count, so it survives a greyscale or colour-blind reading. The render
-gate measures every band at 900, 1200 and 1440: it must span its card, keep a
-≥4px gap from everything else, sit on the pitch, and stop within two of its own
-typical gaps of the right inset. The deploy page's GPU provider cards and the
-current model's card in *Choose a model* wear the same motif, so the three
-surfaces read as one app. An **opened** provider card wears none: it is a form
-in a scrolling panel, its own head already carries the badge, and a band pinned
-to the bottom of a scroll box lands on the body.
+The **provider card** does not get the corner treatment, and this is measured
+rather than assumed: its height is fixed at 63px and its action starts at y17,
+so a 22px corner tag would sit **5px on top of it**. Its four state badges
+therefore all stay inline together, so the indicator never moves depending on
+which state it is in. `measure_tag.py` measures every corner tag at 900, 1200
+and 1440 — in the corner, clipped by its card, and clear of the mark, the id,
+the caption and Switch by a real gap (currently 50.5px on the hero, 27.5px on
+a model card).
 
 ### Three groups, and one tally
 
@@ -450,7 +459,7 @@ the vendor's own colour on a bare pill — *All* is every family at once and
 carries none, and **Open models** is not a vendor at all, so rather than borrow
 Ollama's llama (which is what the catalogue lists as the family's logo, right
 for a runtime and wrong for a family of thirty vendors) it gets a neutral
-four-block glyph drawn on the same pixel grid as the card motif. *Local* is
+four-block glyph drawn at the same 13px of ink as every real mark. *Local* is
 Ollama, so there the llama is honest. The same rule draws the mark on each
 group heading, so a tab and the heading it scrolls to can never disagree. The
 choice lives in the URL (`#models/claude`), so a refresh or a pasted link lands
@@ -469,8 +478,9 @@ tags — *tools · effort · thinks*, plus *loaded* for an Ollama model that is 
 memory right now. Readiness is printed **only when it is not ready**: a card
 that needs a key says so in amber, and every other card says it is usable by
 offering *use →*. The card's foot carries that one action; the current model's
-card carries the slanted **Current** tag and the pixel motif instead, and no
-action at all, because there is nothing left to do to it. *unlock →*
+card carries the slanted **Current** tag instead, and no action at all, because
+there is nothing left to do to it — and it keeps the same neutral surface as
+its neighbours, because the tag is enough. *unlock →*
 deep-links into that family's setup panel with the recommended method
 preselected. Filter chips: all, ready to use, needs a key, free / local.
 
