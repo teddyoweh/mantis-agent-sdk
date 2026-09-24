@@ -8,6 +8,15 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.64.1] - 2026-09-23
+
+### Changed
+
+- **Dashboard dark theme.** A cooler near-black: `#0b0d0e` page, `#151719`
+  sidebar and cards, with fills, borders and text retuned to match. Every text
+  color meets 4.5:1 contrast on every surface; the Deploy usage chart colors
+  re-validated on the new card color.
+
 ## [2.64.0] - 2026-09-23
 
 ### Added — the dashboard (`mantis serve`)

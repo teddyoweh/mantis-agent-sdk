@@ -1204,7 +1204,8 @@ def test_theme_tokens_are_neutral_and_defined_for_both_schemes():
     css = _css()
     assert "prefers-color-scheme: dark" in css and ':root[data-theme="dark"]' in css and ':root:not([data-theme="light"])' in css
     dark = css.split(':root[data-theme="dark"]')[1].split("}")[0]
-    for tok in ("--bg: #191919", "--panel: #202020", "--line: rgba(255,255,255,.08)", "--ink: #e6e6e4", "--ink-2: #a5a5a2"):
+    # the requested near-black: #0b0d0e page, #151719 sidebar and cards
+    for tok in ("--bg: #0b0d0e", "--panel: #151719", "--line: rgba(255,255,255,.07)", "--ink: #e8eaec", "--ink-2: #a3a8ae"):
         assert tok in dark, tok
     light = css.split(":root {")[1].split("}")[0]
     for tok in ("--bg: #f3f4f6", "--panel: #ffffff", "--panel-2: #f8f9fa", "--ink: #0e0f11", "--ok:", "--warn:", "--bad:", "--info:"):

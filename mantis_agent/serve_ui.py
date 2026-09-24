@@ -40,30 +40,30 @@ INDEX_HTML = r"""<!doctype html>
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #191919; --panel: #202020; --panel-2: #262626; --fill: #2c2c2c; --hover: #262626; --fill-2: #373737;
-      --line: rgba(255,255,255,.08);
-      --ink: #e6e6e4; --ink-2: #a5a5a2; --ink-3: #8a8a87;
+      --bg: #0b0d0e; --panel: #151719; --panel-2: #1a1d20; --fill: #202326; --hover: #1a1d20; --fill-2: #2a2e32;
+      --line: rgba(255,255,255,.07);
+      --ink: #e8eaec; --ink-2: #a3a8ae; --ink-3: #878d95;
       --accent: #5cb982; --accent-ink: #08130a; --accent-soft: rgba(92,185,130,.12); --accent-soft-2: rgba(92,185,130,.20);
       --ok: #5cb982; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
-      --s1: #48a870; --s2: #648ce6; --seg-on: #3a3a3a;
+      --s1: #48a870; --s2: #648ce6; --seg-on: #2e3236;
       --ok-soft: rgba(92,185,130,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
       --info-soft: rgba(110,162,255,.14);
       --user: #6ea2ff; --tool: #9a9ea6; --err: #ee6a5e; --caution: #e0a24a; --caution-soft: rgba(224,162,74,.15);
-      --dim: rgba(0,0,0,.45);
+      --dim: rgba(0,0,0,.6);
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #191919; --panel: #202020; --panel-2: #262626; --fill: #2c2c2c; --hover: #262626; --fill-2: #373737;
-    --line: rgba(255,255,255,.08);
-    --ink: #e6e6e4; --ink-2: #a5a5a2; --ink-3: #8a8a87;
+    --bg: #0b0d0e; --panel: #151719; --panel-2: #1a1d20; --fill: #202326; --hover: #1a1d20; --fill-2: #2a2e32;
+    --line: rgba(255,255,255,.07);
+    --ink: #e8eaec; --ink-2: #a3a8ae; --ink-3: #878d95;
     --accent: #5cb982; --accent-ink: #08130a; --accent-soft: rgba(92,185,130,.12); --accent-soft-2: rgba(92,185,130,.20);
     --ok: #5cb982; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
-    --s1: #48a870; --s2: #648ce6; --seg-on: #3a3a3a;
+    --s1: #48a870; --s2: #648ce6; --seg-on: #2e3236;
     --ok-soft: rgba(92,185,130,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
     --info-soft: rgba(110,162,255,.14);
     --user: #6ea2ff; --tool: #9a9ea6; --err: #ee6a5e; --caution: #e0a24a; --caution-soft: rgba(224,162,74,.15);
-    --dim: rgba(0,0,0,.45);
+    --dim: rgba(0,0,0,.6);
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
