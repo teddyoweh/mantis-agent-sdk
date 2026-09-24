@@ -43,7 +43,12 @@ from uuid import uuid4
 import httpx
 import msgspec
 
-from ..capabilities import HOSTED_PROFILES, BackendCapability, ModelCapability
+from ..capabilities import (
+    HOSTED_PROFILES,
+    BackendCapability,
+    ModelCapability,
+    lookup_model,
+)
 from ..errors import ProviderError, StreamProtocolError
 from ..events import (
     ContentBlockDelta,
@@ -76,13 +81,37 @@ from ..types import (
     SystemMessage,
     TextBlock,
     ThinkingBlock,
+    ToolResultBlock,
     ToolUseBlock,
     UserMessage,
     Usage,
 )
-from .base import HTTPProviderMixin, normalize_messages, strip_control_keys
+from .base import (
+    HTTPProviderMixin,
+    current_turn_start,
+    normalize_messages,
+    strip_control_keys,
+)
 
 DEFAULT_BASE_URL = "http://localhost:11434"
+
+# Context window (``options.num_ctx``). Ollama's own default is 2k-4k depending
+# on the version, and a prompt past it is truncated from the FRONT, silently —
+# the system prompt and tool definitions are the first casualties. We send the
+# window the engine plans against, capped: the KV cache grows linearly with
+# num_ctx, and a 128k window OOMs most consumer GPUs. 32k fits a 7-8B model on
+# a 16-24 GB card; raise the cap (or pin num_ctx) when you have the memory.
+DEFAULT_MAX_NUM_CTX = 32768
+_NUM_CTX_ENV = "MANTIS_OLLAMA_NUM_CTX"
+_MAX_NUM_CTX_ENV = "MANTIS_OLLAMA_MAX_NUM_CTX"
+_KEEP_ALIVE_ENV = "MANTIS_OLLAMA_KEEP_ALIVE"
+# Ollama unloads a model after 5 idle minutes; an agent pausing for a human
+# (permission prompt, reading a diff) pays a full cold reload on the next turn.
+DEFAULT_KEEP_ALIVE = "30m"
+_SHOW_TIMEOUT_S = 3.0
+# A failed /api/show (daemon still starting, transient 5xx) is retried once.
+_PROBE_ATTEMPTS = 2
+_OFF = ("", "off", "none", "default", "false")
 
 # NOTE: we render with simple ``%`` substitution rather than ``.format()``
 # because the literal example below contains JSON braces — ``str.format``
@@ -115,7 +144,18 @@ class OllamaProvider(HTTPProviderMixin):
         api_key: str | None = None,
         base_url: str | None = None,
         default_headers: dict[str, str] | None = None,
+        num_ctx: int | None = None,
+        max_num_ctx: int | None = None,
+        keep_alive: str | int | None = None,
+        probe_model_info: bool | None = None,
     ) -> None:
+        """``num_ctx`` pins the context window (``0`` = never send one);
+        ``max_num_ctx`` caps the automatic one; ``keep_alive`` is sent as-is
+        (``"30m"``, ``-1`` = forever, ``0`` = unload now). Each falls back to
+        its ``MANTIS_OLLAMA_*`` variable. ``probe_model_info`` asks
+        ``/api/show`` once per model for its trained context length (default
+        on, off under ``MANTIS_AGENT_MOCK=1``)."""
+
         base = base_url or os.environ.get("OLLAMA_HOST") or DEFAULT_BASE_URL
         headers = {"content-type": "application/json", "accept": "application/x-ndjson"}
         # Local Ollama doesn't require auth but remote/proxied deploys may.
@@ -126,6 +166,213 @@ class OllamaProvider(HTTPProviderMixin):
             headers.update(default_headers)
         self.client = make_client(base_url=base, headers=headers)
         self.backend_capability: BackendCapability = HOSTED_PROFILES["ollama"]
+        self._num_ctx_arg = num_ctx
+        self._max_num_ctx_arg = max_num_ctx
+        self.keep_alive = _resolve_keep_alive(keep_alive)
+        if probe_model_info is None:
+            probe_model_info = os.environ.get("MANTIS_AGENT_MOCK") != "1"
+        self._probe_model_info = probe_model_info
+        # Per model, computed once: a different num_ctx on the next request
+        # makes Ollama reload the model, so the value must not drift in-session.
+        self._num_ctx: dict[str, int | None] = {}
+        self._planned: dict[str, int | None] = {}
+        self._model_max_ctx: dict[str, int | None] = {}
+        self._probe_attempts: dict[str, int] = {}
+
+    # ------------------------------------------------------------------
+    # Context window / residency
+    # ------------------------------------------------------------------
+
+    def model_context_length(self, model: str) -> int | None:
+        """The model's trained context length from ``/api/show``, if probed."""
+
+        return self._model_max_ctx.get(model)
+
+    def num_ctx_for(self, model: str) -> int | None:
+        """The ``num_ctx`` this provider sends for ``model`` (``None`` = none,
+        the server decides). Only known after the first request."""
+
+        return self._num_ctx.get(model)
+
+    def _is_cloud(self, model: str) -> bool:
+        """Ollama Cloud: a ``*-cloud`` / ``*:cloud`` tag (proxied by the local
+        daemon) or ollama.com itself. The window is the provider's, not a KV
+        cache on the user's GPU — no ``num_ctx``, no VRAM ceiling."""
+
+        m = model.lower()
+        if m.endswith("-cloud") or m.endswith(":cloud"):
+            return True
+        host = (self.client.base_url.host or "").lower()
+        return host == "ollama.com" or host.endswith(".ollama.com")
+
+    def _sync_plan(
+        self, model: str, model_capability: ModelCapability | None
+    ) -> tuple[int | None, int | None]:
+        """``(num_ctx to send, window to plan against)`` from settings alone —
+        no network. :meth:`_resolve_num_ctx` refines it with the probes."""
+
+        explicit = self._num_ctx_arg
+        if explicit is None:
+            explicit = _env_int(_NUM_CTX_ENV)
+        if explicit is not None:
+            # 0 = "respect the server": send nothing, plan against the table.
+            if explicit > 0:
+                return explicit, explicit
+            cap = model_capability or lookup_model(model)
+            return None, (getattr(cap, "context_window", 0) or None)
+        cap = model_capability or lookup_model(model)
+        declared = getattr(cap, "context_window", 0) or 0
+        if self._is_cloud(model):
+            return None, (declared or None)
+        server_len = _env_int("OLLAMA_CONTEXT_LENGTH")
+        if server_len:
+            # The user configured the daemon; overriding it per request would
+            # both ignore their choice and reload the model. Plan against it
+            # (it describes the server only when that server is local).
+            return None, server_len
+        ceiling = self._ceiling()
+        value = min(declared, ceiling) if declared > 0 else ceiling
+        return value, value
+
+    def _ceiling(self) -> int:
+        return self._max_num_ctx_arg or _env_int(_MAX_NUM_CTX_ENV) or DEFAULT_MAX_NUM_CTX
+
+    def planned_context_window(
+        self, model: str, model_capability: ModelCapability | None = None
+    ) -> int | None:
+        """The window the engine should plan against, available BEFORE the
+        first request (the agent sizes compaction and ``max_tokens`` first).
+
+        Synchronous: settings only, announced to :mod:`..context_limits`. The
+        first :meth:`stream` may then refine it from ``/api/show`` /
+        ``/api/ps`` and re-announce the final value."""
+
+        if model in self._planned:
+            return self._planned[model]
+        _value, planned = self._sync_plan(model, model_capability)
+        self._note(model, planned)
+        return planned
+
+    def _note(self, model: str, planned: int | None) -> None:
+        if not planned:
+            return
+        try:
+            from ..context_limits import note_runtime_limit  # noqa: PLC0415
+            note_runtime_limit(model, planned, str(self.client.base_url))
+        except Exception:  # noqa: BLE001 — planning hint only
+            pass
+
+    async def _probe_context_length(self, model: str) -> int | None:
+        """``POST /api/show``; the ``<general.architecture>.context_length``
+        entry of ``model_info`` (any ``*.context_length`` as a fallback).
+
+        A definitive answer — found, or a clean body without the key — is
+        cached. A failed call (unreachable, 4xx/5xx, bad body) is not: it is
+        retried on the next request, up to :data:`_PROBE_ATTEMPTS` in all.
+        Failure is a quiet ``None``; this is a clamp, never a reason for a
+        turn to fail."""
+
+        if model in self._model_max_ctx:
+            return self._model_max_ctx[model]
+        self._probe_attempts[model] = self._probe_attempts.get(model, 0) + 1
+        try:
+            resp = await self.client.post(
+                "/api/show",
+                content=_JSON_ENCODER.encode({"model": model}),
+                timeout=_SHOW_TIMEOUT_S,
+            )
+            if resp.status_code >= 400:
+                return None
+            info = (_JSON_DECODER.decode(resp.content) or {}).get("model_info") or {}
+        except Exception:  # noqa: BLE001 — unreachable, old server, odd body
+            return None
+        found = _context_length_from_info(info)
+        self._model_max_ctx[model] = found
+        return found
+
+    async def _probe_loaded_context(self, model: str) -> int | None:
+        """The window the daemon has ``model`` loaded with, from ``GET
+        /api/ps`` (newer Ollama reports ``context_length``). ``None`` when not
+        loaded, not reported, or unreachable. Not cached: residency changes."""
+
+        try:
+            resp = await self.client.get("/api/ps", timeout=_SHOW_TIMEOUT_S)
+            if resp.status_code >= 400:
+                return None
+            body = _JSON_DECODER.decode(resp.content) or {}
+        except Exception:  # noqa: BLE001
+            return None
+        want = _norm_tag(model)
+        for entry in body.get("models") or []:
+            if not isinstance(entry, dict):
+                continue
+            names = {_norm_tag(str(entry.get(k) or "")) for k in ("name", "model")}
+            if want in names:
+                ctx = entry.get("context_length")
+                return ctx if isinstance(ctx, int) and ctx > 0 else None
+        return None
+
+    async def _resolve_num_ctx(
+        self, model: str, model_capability: ModelCapability | None
+    ) -> int | None:
+        """Decide ``options.num_ctx`` for ``model`` — once, then cached.
+
+        Precedence: constructor ``num_ctx`` > ``MANTIS_OLLAMA_NUM_CTX`` (``0``
+        = send none, respect the server) > Ollama Cloud (send none) > a
+        server-side ``OLLAMA_CONTEXT_LENGTH`` in this environment (send none)
+        > the capability window capped at ``max_num_ctx`` /
+        ``MANTIS_OLLAMA_MAX_NUM_CTX`` / 32768.
+
+        The automatic value is then refined: a model the table does not know
+        uses its ``/api/show`` trained length (capped) instead of the 8k
+        guess; a model already loaded by the daemon with at least that window
+        (``/api/ps``) keeps the loaded one, so a larger server-side
+        ``OLLAMA_CONTEXT_LENGTH`` is not overridden and no reload happens.
+        Everything is clamped to the trained length and announced to
+        :mod:`..context_limits` so compaction plans against the real window.
+        """
+
+        if model in self._num_ctx:
+            return self._num_ctx[model]
+
+        value, planned = self._sync_plan(model, model_capability)
+        explicit = self._num_ctx_arg is not None or _env_int(_NUM_CTX_ENV) is not None
+        cloud = self._is_cloud(model)
+        automatic = value is not None and not explicit
+
+        probe_failed = False
+        if self._probe_model_info and planned is not None:
+            trained = await self._probe_context_length(model)
+            probe_failed = trained is None and model not in self._model_max_ctx
+            if trained:
+                cap = model_capability or lookup_model(model)
+                if cloud and not explicit:
+                    # The provider's window, not our GPU's: trust the model.
+                    planned = trained
+                elif automatic and getattr(cap, "family", "") == "unknown":
+                    value = planned = min(trained, self._ceiling())
+                if value is not None:
+                    value = min(value, trained)
+                planned = min(planned, trained)
+            if automatic or (value is None and not cloud):
+                loaded = await self._probe_loaded_context(model)
+                if loaded and trained:
+                    loaded = min(loaded, trained)
+                if loaded and automatic and loaded >= value:
+                    value = planned = loaded
+                elif loaded and not automatic:
+                    # Respecting the server: plan against what it really runs.
+                    planned = loaded
+
+        self._planned[model] = planned
+        if probe_failed and self._probe_attempts.get(model, 0) < _PROBE_ATTEMPTS:
+            # Retry the probe next request; the value may still be refined
+            # once (one reload at worst) rather than pinned to a guess.
+            self._note(model, planned)
+            return value
+        self._num_ctx[model] = value
+        self._note(model, planned)
+        return value
 
     # ------------------------------------------------------------------
     # Message serialization
@@ -133,20 +380,35 @@ class OllamaProvider(HTTPProviderMixin):
 
     @staticmethod
     def _encode_messages(
-        messages: Iterable[Message], system: str | None
+        messages: Iterable[Message],
+        system: str | None,
+        *,
+        native_tools: bool = False,
     ) -> list[dict[str, Any]]:
         """Flatten our typed messages into Ollama's ``messages`` list.
 
-        Ollama accepts a list of ``{role, content, tool_calls?, tool_call_id?}``.
-        Content blocks collapse to a single string by concatenating text blocks
-        and rendering tool_results as ``<tool_result>...</tool_result>``.
+        ``native_tools`` (Path A) sends each tool result as its own
+        ``{"role": "tool", "tool_name", "tool_call_id", "content"}`` message
+        right after the requesting assistant message — the shape the models'
+        chat templates were trained on. Anything else riding in that user
+        message (text, reminders, images, images nested in results) follows
+        in one user message. The prompt-engineered path keeps the tagged
+        ``<tool_result …>`` text the Hermes prompt describes.
+
+        Reasoning goes back in the assistant ``thinking`` field only within
+        the current agentic turn (see :func:`current_turn_start`).
         """
 
         out: list[dict[str, Any]] = []
         if system is not None:
             out.append({"role": "system", "content": system})
 
-        for m in normalize_messages(messages):
+        msgs = normalize_messages(messages)
+        turn_start = current_turn_start(msgs)
+        # tool_use_id -> (name, call position) of the latest assistant calls.
+        calls: dict[str, tuple[str, int]] = {}
+
+        for i, m in enumerate(msgs):
             if isinstance(m, SystemMessage):
                 content = m.content if isinstance(m.content, str) else _join_text(m.content)
                 out.append({"role": "system", "content": content})
@@ -154,6 +416,9 @@ class OllamaProvider(HTTPProviderMixin):
             if isinstance(m, UserMessage):
                 if isinstance(m.content, str):
                     out.append({"role": "user", "content": m.content})
+                    continue
+                if native_tools:
+                    out.extend(_encode_user_native(m.content, calls))
                     continue
                 # Multi-block user message — may include tool_result + image
                 # blocks. Ollama's vision models read images from a per-message
@@ -171,6 +436,9 @@ class OllamaProvider(HTTPProviderMixin):
                     else:
                         # tool_result, etc. — collapse to a tagged string.
                         text_buf.append(_render_block_as_text(blk))
+                        # MCP results nest images; use the same native images
+                        # array as read_file, retaining the tagged result/id.
+                        images.extend(_nested_images(blk))
                 umsg: dict[str, Any] = {"role": "user", "content": "\n".join(text_buf)}
                 if images:
                     umsg["images"] = images
@@ -178,10 +446,14 @@ class OllamaProvider(HTTPProviderMixin):
                 continue
             if isinstance(m, AssistantMessage):
                 texts: list[str] = []
+                thinking: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
+                calls = {}
                 for blk in m.content:
                     if isinstance(blk, TextBlock):
                         texts.append(blk.text)
+                    elif isinstance(blk, ThinkingBlock):
+                        thinking.append(blk.thinking)
                     elif isinstance(blk, ToolUseBlock):
                         # Drop null argument values — a cut-off tool call can
                         # carry ``content: null``, which Ollama rejects with
@@ -190,10 +462,21 @@ class OllamaProvider(HTTPProviderMixin):
                         args = {
                             k: v for k, v in (blk.input or {}).items() if v is not None
                         }
-                        tool_calls.append(
-                            {"function": {"name": blk.name, "arguments": args}}
-                        )
+                        call: dict[str, Any] = {
+                            "function": {"name": blk.name, "arguments": args}
+                        }
+                        # ``id`` pairs with the tool message's ``tool_call_id``
+                        # on newer servers; older ones ignore unknown fields.
+                        if native_tools and blk.id:
+                            call["id"] = blk.id
+                        tool_calls.append(call)
+                        calls[blk.id] = (blk.name, len(calls))
                 msg: dict[str, Any] = {"role": "assistant", "content": "\n".join(texts)}
+                # Interleaved reasoning helps across the tool calls of this
+                # turn; earlier turns' chain-of-thought is dropped, as the
+                # models' own chat templates do.
+                if thinking and i >= turn_start and any(t.strip() for t in thinking):
+                    msg["thinking"] = "".join(thinking)
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
                 out.append(msg)
@@ -228,6 +511,13 @@ class OllamaProvider(HTTPProviderMixin):
         # If tools are present but native path isn't usable, fall back to
         # Hermes-Pro prompt injection. The agent loop then parses content
         # deltas via ToolCallTextParser — we just pipe text through.
+        # History encoding follows the same split: tool results go back as
+        # ``role: tool`` messages unless this model is on the Hermes path
+        # (tool-less requests — a wrap-up turn — keep the model's own shape).
+        native_history = use_native_tools if tools else bool(
+            (model_capability is None or model_capability.supports_native_tools)
+            and self.backend_capability.supports_native_tools
+        )
         effective_system = system
         if tools and not use_native_tools:
             tools_json = _JSON_ENCODER.encode(tools).decode("utf-8")
@@ -236,10 +526,17 @@ class OllamaProvider(HTTPProviderMixin):
 
         payload: dict[str, Any] = {
             "model": model,
-            "messages": self._encode_messages(messages, effective_system),
+            "messages": self._encode_messages(
+                messages, effective_system, native_tools=native_history
+            ),
             "stream": True,
             "options": {"num_predict": max_tokens},
         }
+        num_ctx = await self._resolve_num_ctx(model, model_capability)
+        if num_ctx is not None:
+            payload["options"]["num_ctx"] = num_ctx
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
         if temperature is not None:
             payload["options"]["temperature"] = temperature
         if use_native_tools:
@@ -542,6 +839,66 @@ class OllamaProvider(HTTPProviderMixin):
 # ---------------------------------------------------------------------------
 
 
+def _env_int(name: str) -> int | None:
+    """An integer environment variable; unset or unparseable is ``None``."""
+
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _context_length_from_info(info: dict[str, Any]) -> int | None:
+    """The trained window in an ``/api/show`` ``model_info`` map.
+
+    Exact ``<general.architecture>.context_length`` first — a multimodal model
+    also carries e.g. ``clip.context_length`` for its vision tower, and a
+    first-match suffix scan could pick that. The scan is only the fallback.
+    """
+
+    arch = info.get("general.architecture")
+    if isinstance(arch, str) and arch:
+        value = info.get(f"{arch}.context_length")
+        if isinstance(value, int) and value > 0:
+            return value
+    for key, value in info.items():
+        if str(key).endswith(".context_length") and isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
+def _norm_tag(name: str) -> str:
+    """``llama3`` and ``llama3:latest`` name the same model."""
+
+    name = name.strip().lower()
+    return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+
+
+def _resolve_keep_alive(value: str | int | None) -> str | int | None:
+    """``keep_alive`` for the wire, or ``None`` to leave Ollama's default.
+
+    Ollama parses a string as a Go duration (``"30m"``) and a number as
+    seconds — so a bare ``"-1"`` / ``"0"`` must go out as an integer; as a
+    string Ollama rejects it for missing a unit.
+    """
+
+    if value is None:
+        env = os.environ.get(_KEEP_ALIVE_ENV)
+        value = DEFAULT_KEEP_ALIVE if env is None else env
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.lower() in _OFF:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
 def _model_supports_thinking(cap: ModelCapability | None) -> bool:
     """Whether it's safe to send Ollama a ``think`` flag for this model.
 
@@ -563,6 +920,95 @@ def _model_supports_thinking(cap: ModelCapability | None) -> bool:
 
 def _join_text(blocks: list[Any]) -> str:
     return "\n".join(b.text for b in blocks if isinstance(b, TextBlock))
+
+
+def _nested_images(blk: Any) -> list[str]:
+    """Base64 payloads of images nested inside a tool result's content."""
+    nested = getattr(blk, "content", None)
+    found: list[str] = []
+    if isinstance(nested, list):
+        for part in nested:
+            source = getattr(part, "source", None) or {}
+            data = source.get("data")
+            if isinstance(data, str) and data:
+                found.append(data)
+    return found
+
+
+def _tool_result_text(blk: ToolResultBlock) -> str:
+    """A tool result's text for a ``tool`` message; errors say so up front
+    (the tool role has no error flag). Images travel separately."""
+    body = blk.content if isinstance(blk.content, str) else _join_text(blk.content)
+    if blk.is_error and not body.lstrip().lower().startswith("error"):
+        body = f"Error: {body}" if body else "Error"
+    return body
+
+
+def _encode_user_native(
+    blocks: list[Any], calls: dict[str, tuple[str, int]]
+) -> list[dict[str, Any]]:
+    """Path A: one ``tool`` message per result, in the assistant's call order,
+    then one user message for the rest (text, images, result images).
+
+    Tool messages go first because chat templates expect them immediately
+    after the assistant's ``tool_calls``. Images never ride on a tool
+    message — most templates render only ``content`` for the tool role — so
+    they follow in the user message, labelled per call so parallel
+    screenshots stay attributable.
+    """
+    results: list[ToolResultBlock] = []
+    text_buf: list[str] = []
+    images: list[str] = []
+    unsendable_images = 0  # URL-sourced: Ollama takes base64 only
+    for blk in blocks:
+        if isinstance(blk, ToolResultBlock):
+            results.append(blk)
+        elif isinstance(blk, TextBlock):
+            text_buf.append(blk.text)
+        elif hasattr(blk, "source"):  # ImageBlock
+            data = (blk.source or {}).get("data")
+            if isinstance(data, str) and data:
+                images.append(data)
+            else:
+                unsendable_images += 1
+
+    # Stable: results for unknown ids keep their relative place at the end.
+    results.sort(key=lambda r: calls.get(r.tool_use_id, ("", len(calls)))[1])
+    out: list[dict[str, Any]] = []
+    result_images: list[str] = []
+    labels: list[str] = []
+    for r in results:
+        nested = _nested_images(r)
+        content = _tool_result_text(r)
+        if not content.strip():
+            # An empty tool message reads as "the call did nothing" and small
+            # models re-issue it; say what happened instead.
+            content = (f"(see images for call {r.tool_use_id} below)" if nested
+                       else "(no output)")
+        tmsg: dict[str, Any] = {"role": "tool", "content": content}
+        name = calls.get(r.tool_use_id, ("", 0))[0]
+        if name:
+            tmsg["tool_name"] = name
+        if r.tool_use_id:
+            tmsg["tool_call_id"] = r.tool_use_id
+        out.append(tmsg)
+        if nested:
+            labels.append(f"Images from tool call {r.tool_use_id}: {len(nested)}")
+            result_images.extend(nested)
+
+    all_images = result_images + images
+    if text_buf or all_images:
+        umsg: dict[str, Any] = {"role": "user", "content": "\n".join(labels + text_buf)}
+        if all_images:
+            umsg["images"] = all_images
+        out.append(umsg)
+    if not out:
+        # Nothing sendable (URL-only images, unknown blocks). Dropping the
+        # turn entirely would put two assistant messages back to back, or
+        # end the history on the assistant — keep the user's slot.
+        out.append({"role": "user",
+                    "content": "[image]" if unsendable_images else ""})
+    return out
 
 
 def _render_block_as_text(blk: Any) -> str:

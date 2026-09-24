@@ -8,7 +8,40 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
-### Added
+## [2.64.0] - 2026-09-23
+
+### Added — the dashboard (`mantis serve`)
+
+- **Self-hosted models in My models.** Live deployments are their own family:
+  a tab, a group listed first, a rail row, and cards with the model's org mark,
+  where it runs, and the GPU's hourly rate. Switching goes through the same
+  cold-start-aware connect as the Deploy page, with the wait on the button.
+- **Connect sheet for every family.** A locked model says "Connect" and opens
+  every way in — Claude subscription, API key, Bedrock, Vertex, Azure — with
+  credentials already on the machine listed first. A family that isn't
+  connected says so once, in a strip above its grid.
+- **Deploy usage panel.** Throughput, requests, a container timeline (booting
+  vs ready, with each request), GPU time and what it cost, parsed from the
+  container's own log — never from the endpoint.
+- **Skills workspace.** A page list beside the open skill, edited in place like
+  a document: title, properties, and block editing with `/` for block types,
+  to-do checkboxes, and autosave.
+- **Memory page.** The instruction hierarchy (`MANTIS.md`, `AGENTS.md`,
+  `MANTIS.local.md`, rules) and the agent's own memory (`MEMORY.md` + entries)
+  in one place, editable, with what is loaded every session and what it costs.
+- **MCP board.** A card per server with its real status (one handshake on page
+  open), where it runs, and its tools; a sheet with every tool's parameters
+  and the configuration, edited in place.
+
+### Added — deploy
+
+- **Fireworks on-demand deployments** (`fireworks-dedicated`). Dedicated GPUs
+  (H100/H200 $8/h, B200 $13/h, B300 $15/h) for a model from the Fireworks
+  library, matched from its Hugging Face id, with the same `FIREWORKS_API_KEY`
+  as Fireworks inference. Hardware goes out with `deploymentShape: "default"`
+  so Fireworks picks a validated configuration; scale to zero is native.
+
+### Added — the harness
 
 - Evidence-aware harness: opt-in SDK artifact/task-state stores and full-model terminal
   integration. Compacted payloads remain retrievable, structured acceptance checks
@@ -19,6 +52,12 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ### Fixed
 
+- **Deploy status never wakes a GPU.** Modal status used to GET `/health`,
+  which boots a scaled-to-zero container (and resets its idle timer); it now
+  reads Modal's control plane and the container log only.
+- `mantis serve` applies `settings.json` env like the terminal does, so a saved
+  Claude subscription shows as connected on the dashboard.
+- Creating a skill or a memory never overwrites an existing one of the same name.
 - Workflow handoffs now return and persist complete worker answers rather than
   their 200-character activity previews, preserving trailing evidence and verdicts.
 

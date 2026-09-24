@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -413,7 +414,14 @@ def api_key_for(provider: Provider) -> str | None:
             # add a trailing \n, which would otherwise auth-fail confusingly.
             return v.strip()
     saved = saved_key(provider.id)
-    return saved.strip() if saved else saved
+    if saved:
+        return saved.strip()
+    if provider.id == "openai":
+        # A platform key `codex login --with-api-key` left in ~/.codex/auth.json.
+        from .cli_logins import codex_api_key  # noqa: PLC0415
+
+        return codex_api_key()
+    return saved
 
 
 def is_enabled(provider: Provider) -> bool:
@@ -423,7 +431,36 @@ def is_enabled(provider: Provider) -> bool:
     # rides ANTHROPIC_AUTH_TOKEN rather than the x-api-key store.
     if provider.id == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         return True
+    # OpenAI can ride the ChatGPT plan the Codex CLI is signed in with.
+    if provider.id == "openai" and _chatgpt_login():
+        return True
     return False
+
+
+def _chatgpt_login() -> bool:
+    from .cli_logins import has_chatgpt_login  # noqa: PLC0415
+
+    return has_chatgpt_login()
+
+
+def bearer_backend(provider: Provider | None, current_backend: str | None = None) -> str | None:
+    """Backend to wire for a provider that is enabled WITHOUT an API key.
+
+    Two cases, both keyless from :func:`api_key_for`'s point of view: Anthropic
+    authed by an OAuth/gateway Bearer token (:func:`anthropic_bearer_backend`),
+    and OpenAI authed by the Codex CLI's ChatGPT sign-in, which is served from
+    the ChatGPT Codex backend. The caller sets ``api_key=None``; the provider
+    finds its own credential. ``None`` when neither applies.
+    """
+
+    wired = anthropic_bearer_backend(provider, current_backend)
+    if wired is not None:
+        return wired
+    if provider is not None and provider.id == "openai" and _chatgpt_login():
+        from .cli_logins import CHATGPT_CODEX_URL  # noqa: PLC0415
+
+        return CHATGPT_CODEX_URL
+    return None
 
 
 def anthropic_bearer_backend(provider: Provider | None, current_backend: str | None = None) -> str | None:
@@ -707,11 +744,49 @@ def cached_live_models(provider_id: str, *, ttl_s: float = LIVE_TTL_S) -> list[s
     return clean or None
 
 
+# A provider's /v1/models is its whole product line, not its chat line: OpenAI
+# answers with image generators, speech synthesis, transcription, embeddings and
+# moderation alongside the models you can actually hold a conversation with, and
+# xAI ships grok-imagine-* the same way. Listing those in a model picker is worse
+# than noise — picking one is a guaranteed failure at the first request, because
+# they do not serve chat completions at all. These are the tokens that say so.
+_NON_CHAT_TOKENS: frozenset[str] = frozenset({
+    # pixels and frames
+    "image", "images", "imagine", "video", "sora", "dalle", "diffusion",
+    # sound, in either direction
+    "tts", "audio", "speech", "voice", "whisper", "transcribe", "transcription",
+    # the realtime/live surface is a socket, not a completion
+    "realtime", "live",
+    # vectors and verdicts, not replies
+    "embed", "embedding", "embeddings", "rerank", "reranker", "moderation", "guard",
+})
+
+# Text-completion ancestors that predate the chat API and 404 against it.
+_LEGACY_COMPLETION_PREFIXES: tuple[str, ...] = ("gpt-3.5-turbo-instruct", "babbage", "davinci")
+
+
+def is_chat_model_id(m: Any) -> bool:
+    """Can ``m`` plausibly answer a chat completion? Matching is on whole tokens
+    (``gpt-image-1`` → ``gpt``/``image``/``1``), never substrings, so a real chat
+    model is never caught by a word that merely contains a marker. ``-instruct``
+    is deliberately NOT a marker: every open-weight chat model is named that way,
+    so only OpenAI's one completion-era ``-instruct`` id is excluded, by name."""
+    if not isinstance(m, str):
+        return False
+    t = m.strip().lower()
+    if t.startswith(_LEGACY_COMPLETION_PREFIXES):
+        return False
+    return not any(tok in _NON_CHAT_TOKENS for tok in re.split(r"[-._/:]+", t))
+
+
 def _is_cacheable_model_id(m: Any) -> bool:
-    """A live-cache entry must be a plausible id AND not a bare query alias — no
+    """A live-cache entry must be a plausible id, not a bare query alias — no
     provider ships a model literally named 'newest' or 'claude', and caching one
-    would make it win the resolver's exact-match step over the real alias."""
-    return looks_like_model_id(m) and m.strip().lower() not in RESOLVER_ALIAS_WORDS
+    would make it win the resolver's exact-match step over the real alias — and
+    something you could actually talk to."""
+    return (looks_like_model_id(m)
+            and m.strip().lower() not in RESOLVER_ALIAS_WORDS
+            and is_chat_model_id(m))
 
 
 def store_live_models(provider_id: str, models: list[str]) -> None:
@@ -830,6 +905,40 @@ def refresh_public_models(provider: Provider, *, timeout: float = 2.5) -> list[s
     return ids
 
 
+def refresh_chatgpt_models(*, timeout: float = 2.5) -> list[str] | None:
+    """The models a ChatGPT plan serves through the Codex backend, cached under
+    ``openai`` — the picker's OpenAI group when that plan is the credential.
+
+    Falls back to the list Codex itself cached when the backend is unreachable.
+    """
+
+    import httpx  # noqa: PLC0415
+
+    from .cli_logins import (  # noqa: PLC0415
+        CHATGPT_CODEX_URL,
+        chatgpt_access_token,
+        chatgpt_headers,
+        codex_client_version,
+        codex_models,
+    )
+
+    ids: list[str] = []
+    try:
+        headers = {"authorization": f"Bearer {chatgpt_access_token()}", **chatgpt_headers()}
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(f"{CHATGPT_CODEX_URL}/models",
+                      params={"client_version": codex_client_version()}, headers=headers)
+            r.raise_for_status()
+            ids = [str(m.get("slug")) for m in r.json().get("models", [])
+                   if isinstance(m, dict) and m.get("slug") and m.get("visibility") != "hide"]
+    except Exception:  # noqa: BLE001 — offline / expired: use Codex's own cache
+        ids = codex_models()
+    if not ids:
+        return None
+    store_live_models("openai", ids)
+    return ids
+
+
 def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str] | None:
     """Fetch a provider's live /v1/models and persist it. Best-effort: returns
     the ids (and caches them) on success, ``None`` on any failure. Intended to
@@ -837,6 +946,8 @@ def refresh_live_models(provider: Provider, *, timeout: float = 2.5) -> list[str
     import httpx  # noqa: PLC0415
 
     key = api_key_for(provider)
+    if not key and provider.id == "openai" and _chatgpt_login():
+        return refresh_chatgpt_models(timeout=timeout)
     # No key, but the provider publishes a public catalog: use it rather than
     # spending a round trip on a 403 and falling back to the stale hardcoded list.
     if not key and provider.id in PUBLIC_MODEL_ENDPOINTS:
@@ -872,6 +983,7 @@ __all__ = [
     "set_key",
     "clear_key",
     "api_key_for",
+    "bearer_backend",
     "is_enabled",
     "provider_for_model",
     "looks_like_model_id",
@@ -886,6 +998,7 @@ __all__ = [
     "LIVE_TTL_S",
     "cached_live_models",
     "store_live_models",
+    "is_chat_model_id",
     "refresh_live_models",
     "refresh_public_models",
     "PUBLIC_MODEL_ENDPOINTS",

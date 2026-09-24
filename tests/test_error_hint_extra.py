@@ -48,3 +48,26 @@ def test_existing_hints_intact() -> None:
     from mantis_agent.errors import AuthError
     assert "API key" in error_hint(AuthError("bad key"), None)
     assert "ollama serve" in error_hint(ProviderError("connection refused"), "http://localhost:11434")
+
+
+def test_async_connect_error_with_empty_message_keeps_its_cause() -> None:
+    """async httpx raises a bare ``ConnectError('')`` for a reset TLS handshake —
+    the box must still say what happened, and the hint must still fire."""
+    import httpx
+
+    from mantis_agent.tui import classify_error
+
+    try:
+        try:
+            raise ConnectionResetError(54, "Connection reset by peer")
+        except ConnectionResetError as inner:
+            raise httpx.ConnectError("") from inner
+    except httpx.ConnectError as e:
+        err = e
+    title, text = classify_error(err, "https://x.example/v1")
+    assert title == "backend unreachable"
+    assert text == "ConnectError: Connection reset by peer"
+    assert "can't reach" in (error_hint(err, "https://x.example/v1") or "")
+    modal = "https://ws--app-server.us-east.modal.direct/v1"
+    h = error_hint(err, modal) or ""
+    assert "modal.direct" in h and "network" in h and "modal.run" in h

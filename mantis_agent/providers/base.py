@@ -142,6 +142,41 @@ def normalize_messages(messages: Iterable[Message]) -> list[Message]:
     return out
 
 
+def is_real_user_message(m: Any) -> bool:
+    """True for a user message a human actually typed — the start of a turn.
+
+    Not a real turn boundary: SDK-synthesized ``isMeta`` messages (system
+    reminders, nudges, task-state / recall blocks) and messages that carry
+    only tool results (the loop's reply to the model's own calls), where
+    ``<system-reminder>`` text riding beside the results doesn't count either.
+    """
+    from ..types import TextBlock, ToolResultBlock, UserMessage  # noqa: PLC0415
+
+    if not isinstance(m, UserMessage) or m.isMeta:
+        return False
+    if isinstance(m.content, str):
+        return True
+    return any(
+        not isinstance(b, ToolResultBlock)
+        and not (isinstance(b, TextBlock) and b.text.lstrip().startswith("<system-reminder>"))
+        for b in m.content
+    )
+
+
+def current_turn_start(messages: list[Message]) -> int:
+    """Index of the most recent real user message (0 when there is none).
+
+    Messages at or after this index are the current agentic turn. Text-channel
+    encoders use it to re-send reasoning only within that turn: reasoning
+    models' chat templates (Qwen3, DeepSeek-R1, QwQ) strip prior turns'
+    thinking, and re-sending all of it every request is pure token bloat.
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        if is_real_user_message(messages[i]):
+            return i
+    return 0
+
+
 @runtime_checkable
 class Provider(Protocol):
     """Adapter interface. Each provider lives in its own module."""

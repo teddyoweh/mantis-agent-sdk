@@ -23,28 +23,30 @@ INDEX_HTML = r"""<!doctype html>
      model names, code. Tokens first; everything below reads them.
      ========================================================================== */
   :root {
-    --bg: #eff1f4; --panel: #ffffff; --panel-2: #f4f5f7; --fill: #e7e9ee; --hover: #f7f8fa; --fill-2: #dde0e6;
+    --bg: #f3f4f6; --panel: #ffffff; --panel-2: #f8f9fa; --fill: #eef0f2; --hover: #f8f9fa; --fill-2: #e3e6ea;
     --line: rgba(0,0,0,.08);
-    --ink: #111111; --ink-2: #4b5058; --ink-3: #7d8290;
-    --accent: #2f8f3a; --accent-ink: #ffffff; --accent-soft: rgba(47,143,58,.13); --accent-soft-2: rgba(47,143,58,.22);
-    --ok: #2f8f3a; --warn: #c27a10; --bad: #d23f31; --info: #2f6fdd;
-    --ok-soft: rgba(47,143,58,.13); --warn-soft: rgba(194,122,16,.14); --bad-soft: rgba(210,63,49,.12);
+    --ink: #0e0f11; --ink-2: #4a4f57; --ink-3: #6b7080;
+    --accent: #2f855a; --accent-ink: #ffffff; --accent-soft: rgba(47,133,90,.10); --accent-soft-2: rgba(47,133,90,.18);
+    --ok: #2f855a; --warn: #c27a10; --bad: #d23f31; --info: #2f6fdd;
+    --s1: #2f855a; --s2: #3b6fd4; --seg-on: #ffffff;
+    --ok-soft: rgba(47,133,90,.13); --warn-soft: rgba(194,122,16,.14); --bad-soft: rgba(210,63,49,.12);
     --info-soft: rgba(47,111,221,.12);
     --user: #2f6fdd; --tool: #6b7280; --err: #d23f31; --caution: #c27a10; --caution-soft: rgba(194,122,16,.14);
-    --radius: 12px; --r-sm: 8px; --dim: rgba(20,22,26,.35);
-    --sans: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radius: 10px; --r-sm: 6px; --dim: rgba(20,22,26,.35);
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Inter, Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --t: 140ms cubic-bezier(.2,.7,.2,1);
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #0a0b0d; --panel: #111316; --panel-2: #16181c; --fill: #1c1f24; --hover: #191c21; --fill-2: #262a30;
+      --bg: #191919; --panel: #202020; --panel-2: #262626; --fill: #2c2c2c; --hover: #262626; --fill-2: #373737;
       --line: rgba(255,255,255,.08);
-      --ink: #ededed; --ink-2: #9a9ea6; --ink-3: #6e7380;
-      --accent: #58c467; --accent-ink: #08130a; --accent-soft: rgba(88,196,103,.14); --accent-soft-2: rgba(88,196,103,.24);
-      --ok: #58c467; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
-      --ok-soft: rgba(88,196,103,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
+      --ink: #e6e6e4; --ink-2: #a5a5a2; --ink-3: #8a8a87;
+      --accent: #5cb982; --accent-ink: #08130a; --accent-soft: rgba(92,185,130,.12); --accent-soft-2: rgba(92,185,130,.20);
+      --ok: #5cb982; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
+      --s1: #48a870; --s2: #648ce6; --seg-on: #3a3a3a;
+      --ok-soft: rgba(92,185,130,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
       --info-soft: rgba(110,162,255,.14);
       --user: #6ea2ff; --tool: #9a9ea6; --err: #ee6a5e; --caution: #e0a24a; --caution-soft: rgba(224,162,74,.15);
       --dim: rgba(0,0,0,.45);
@@ -52,12 +54,13 @@ INDEX_HTML = r"""<!doctype html>
     }
   }
   :root[data-theme="dark"] {
-    --bg: #0a0b0d; --panel: #111316; --panel-2: #16181c; --fill: #1c1f24; --hover: #191c21; --fill-2: #262a30;
+    --bg: #191919; --panel: #202020; --panel-2: #262626; --fill: #2c2c2c; --hover: #262626; --fill-2: #373737;
     --line: rgba(255,255,255,.08);
-    --ink: #ededed; --ink-2: #9a9ea6; --ink-3: #6e7380;
-    --accent: #58c467; --accent-ink: #08130a; --accent-soft: rgba(88,196,103,.14); --accent-soft-2: rgba(88,196,103,.24);
-    --ok: #58c467; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
-    --ok-soft: rgba(88,196,103,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
+    --ink: #e6e6e4; --ink-2: #a5a5a2; --ink-3: #8a8a87;
+    --accent: #5cb982; --accent-ink: #08130a; --accent-soft: rgba(92,185,130,.12); --accent-soft-2: rgba(92,185,130,.20);
+    --ok: #5cb982; --warn: #e0a24a; --bad: #ee6a5e; --info: #6ea2ff;
+    --s1: #48a870; --s2: #648ce6; --seg-on: #3a3a3a;
+    --ok-soft: rgba(92,185,130,.14); --warn-soft: rgba(224,162,74,.15); --bad-soft: rgba(238,106,94,.14);
     --info-soft: rgba(110,162,255,.14);
     --user: #6ea2ff; --tool: #9a9ea6; --err: #ee6a5e; --caution: #e0a24a; --caution-soft: rgba(224,162,74,.15);
     --dim: rgba(0,0,0,.45);
@@ -67,7 +70,7 @@ INDEX_HTML = r"""<!doctype html>
   html, body { height: 100%; margin: 0; }
   body {
     font-family: var(--sans); background: var(--bg); color: var(--ink);
-    font-size: 13px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
     display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); grid-template-rows: 100%;
     height: 100vh; overflow: hidden;
   }
@@ -93,24 +96,24 @@ INDEX_HTML = r"""<!doctype html>
      without a rule, exactly like the cards do. Collapsed (⌘\ or the chevron)
      the rail keeps the marks and drops the words; the choice is remembered.
      ========================================================================== */
-  :root { --rail-w: 236px; }
+  :root { --rail-w: 248px; }
   body[data-rail="min"] { --rail-w: 60px; }
   #rail { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; background: var(--panel); }
-  .rail-h { display: flex; align-items: center; gap: 10px; padding: 13px 12px 8px; min-width: 0; }
+  .rail-h { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; min-width: 0; }
   .brand { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
   .brand img { width: 27px; height: 27px; flex: none; display: block; padding: 3px; border-radius: 8px; background: var(--fill); }
   .brand .bt { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
-  .brand .bn { font-weight: 700; font-size: 13.5px; letter-spacing: -.02em; }
+  .brand .bn { font-weight: 600; font-size: 14px; letter-spacing: -.02em; }
   /* the machine, not the product: which box's sessions you are looking at */
-  .brand .bs { font-family: var(--mono); font-size: 10px; color: var(--ink-3); overflow: hidden;
+  .brand .bs { font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .railtog { flex: none; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
-    border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 13px; cursor: pointer;
+    border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 14px; cursor: pointer;
     transition: background var(--t), color var(--t); }
   .railtog:hover { background: var(--fill); color: var(--ink); }
 
   /* ---- the pages ---- */
-  #nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 12px; overflow-y: auto; overflow-x: hidden;
+  #nav { display: flex; flex-direction: column; gap: 1px; padding: 4px 8px 12px; overflow-y: auto; overflow-x: hidden;
     scrollbar-width: none; min-height: 0; }
   #nav::-webkit-scrollbar { display: none; }
   /* A group heading is a control: it says what the section is and folds it
@@ -119,8 +122,7 @@ INDEX_HTML = r"""<!doctype html>
      read as five buttons. */
   .ngrp { display: flex; flex-direction: column; }
   button.ng { display: flex; align-items: center; gap: 6px; width: 100%; margin: 0;
-    padding: 13px 10px 5px; font: inherit; font-size: 10px; font-weight: 600; letter-spacing: .09em;
-    text-transform: uppercase; color: var(--ink-3); background: transparent; border: 0; border-radius: 7px;
+    padding: 18px 10px 4px; font: inherit; font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--ink-3); background: transparent; border: 0; border-radius: 8px;
     cursor: pointer; white-space: nowrap; text-align: left; transition: color var(--t); }
   button.ng:hover { color: var(--ink-2); }
   button.ng > span { flex: 1; min-width: 0; }
@@ -128,14 +130,14 @@ INDEX_HTML = r"""<!doctype html>
     transform: rotate(90deg); transition: opacity var(--t), transform var(--t); }
   button.ng:hover .ngc, button.ng:focus-visible .ngc { opacity: 1; }
   .ngrp.shut .ngc { transform: rotate(0deg); opacity: 1; }
-  .ngi { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .ngi { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
   .ngrp.shut .ngi { display: none; }
-  #nav .ngi > button { display: flex; align-items: center; gap: 10px; width: 100%; height: 31px; font: inherit; font-size: 13px;
-    font-weight: 500; margin: 0; padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2);
+  #nav .ngi > button { display: flex; align-items: center; gap: 10px; width: 100%; height: 30px; font: inherit; font-size: 14px;
+    font-weight: 500; margin: 0; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-2);
     cursor: pointer; white-space: nowrap; text-align: left; transition: background var(--t), color var(--t); }
   #nav .ngi > button:hover { background: var(--fill); color: var(--ink); }
   /* active = colour + fill only; the weight never changes, so the group never shifts */
-  #nav .ngi > button.on { background: var(--accent-soft); color: var(--accent); }
+  #nav .ngi > button.on { background: var(--fill); color: var(--ink); }
   /* Every page has a mark, and the mark is the only thing left when the rail
      is collapsed — so it has to carry the page on its own. They are drawn on
      one 24-unit grid at one stroke weight, in currentColor, so a row's icon
@@ -148,21 +150,23 @@ INDEX_HTML = r"""<!doctype html>
   .nl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   /* the count is a reading, not a badge: mono, tabular, no chrome — until it
      is something that is happening RIGHT NOW, which gets the live tint */
-  .nc { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; }
-  #nav .ngi > button.on .nc { color: var(--accent); }
+  .nc { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; }
+  #nav .ngi > button.on .nc { color: var(--ink-2); }
+  #nav .ngi > button .nc:not(.hot):not(.due):not(.dot) { display: none; }
   .nc.hot { color: var(--ok); font-weight: 600; }
   /* A reading you should act on is not a quieter reading — it is a filled
      badge, so it is the one thing in the rail that carries a surface. */
   .nc.due { min-width: 17px; height: 16px; padding: 0 5px; border-radius: 8px; display: inline-flex;
     align-items: center; justify-content: center; background: var(--bad); color: var(--accent-ink);
-    font-family: var(--sans); font-size: 10px; font-weight: 700; }
+    font-family: var(--sans); font-size: 12px; font-weight: 600; }
   #nav .ngi > button.on .nc.due { color: var(--accent-ink); }
   .nc.dot { display: inline-flex; align-items: center; gap: 5px; }
   /* the caret only exists on a page that has sub-rows, and only when it is
      the page you are on — a rail full of carets is a filing cabinet */
   .ncar { display: none; flex: none; width: 12px; color: var(--ink-3); font-size: 8px; text-align: right;
     transition: transform var(--t); }
-  #nav .ngi > button.has-sub .ncar { display: block; }
+  /* the caret rendered as a stray dot at 8px; the open sub-list says it on its own */
+  #nav .ngi > button.has-sub .ncar { display: none; }
   #nav .ngi > button.sub-open .ncar { transform: rotate(90deg); }
 
   /* ---- the sub-rows: what you would have clicked next ---- */
@@ -177,33 +181,33 @@ INDEX_HTML = r"""<!doctype html>
   .nsub.on { display: flex; animation: drawer .16s ease-out; }
   .nsr { position: relative; display: flex; align-items: center; gap: 9px; width: 100%; height: 27px;
     padding: 0 10px 0 26px; border: 0;
-    border-radius: 7px; background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-2); cursor: pointer;
+    border-radius: 8px; background: transparent; font: inherit; font-size: 14px; color: var(--ink-2); cursor: pointer;
     text-align: left; white-space: nowrap; transition: background var(--t), color var(--t); }
   .nsr::before { content: ""; position: absolute; left: 17px; top: 13px; width: 5px; height: 1px;
     background-image: repeating-linear-gradient(to right, var(--fill-2) 0 1px, transparent 1px 3px); }
   .nsr:hover { background: var(--fill); color: var(--ink); }
-  .nsr.on { color: var(--accent); }
+  .nsr.on { color: var(--ink); background: var(--fill); }
   .nsr.on::before { width: 7px;
     background-image: repeating-linear-gradient(to right, var(--accent) 0 1px, transparent 1px 2px); }
-  .nsr .nl { font-size: 12.5px; }
-  .nsr .mark2 { width: 17px; height: 17px; border-radius: 5px; background: none; flex: none; }
+  .nsr .nl { font-size: 14px; }
+  .nsr .mark2 { width: 17px; height: 17px; border-radius: 6px; background: none; flex: none; }
   .nsr .mark2 svg { width: 13px; height: 13px; }
   .nsr .ic { width: 15px; height: 15px; } .nsr .ic svg { width: 15px; height: 15px; }
   .nsr .dot2 { width: 6px; height: 6px; }
-  .nsr .nc { font-size: 10px; }
+  .nsr .nc { font-size: 12px; }
 
   /* ---- the foot: what this dashboard is pointed at right now ---- */
   .rail-f { padding: 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  .railfoot { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 9px; background: var(--panel-2);
+  .railfoot { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; background: var(--panel-2);
     cursor: pointer; min-width: 0; transition: background var(--t); }
   .railfoot:hover { background: var(--fill); }
   .rf-t { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.3; }
-  .rf-v { font-family: var(--mono); font-size: 11.5px; font-weight: 600; color: var(--ink); overflow: hidden;
+  .rf-v { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
-  .rf-s { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rf-s { font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rail-b { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
   .rail-b .lan { margin-left: auto; }
-  .ver { font-family: var(--mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; }
+  .ver { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 
   /* ---- collapsed: marks only, and the rail stops being a list of words ---- */
   body[data-rail="min"] .nl, body[data-rail="min"] .nc, body[data-rail="min"] .ncar,
@@ -246,33 +250,33 @@ INDEX_HTML = r"""<!doctype html>
   @media (prefers-reduced-motion: reduce) { #rail { transition: none; } }
 
   /* ---- the bar: where you are, and the two controls that are always live ---- */
-  #shell { display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; overflow: hidden; }
-  #top { display: flex; align-items: center; gap: 12px; padding: 0 22px; min-width: 0; }
-  .crumb { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+  #shell { display: grid; grid-template-rows: 46px minmax(0, 1fr); min-width: 0; overflow: hidden; }
+  #top { display: flex; align-items: center; gap: 12px; padding: 0 16px; min-width: 0; }
+  .crumb { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; color: var(--ink-2); }
   .crumb .ic { width: 16px; height: 16px; color: var(--ink-3); } .crumb .ic svg { width: 16px; height: 16px; }
-  .crumb b { font-weight: 600; color: var(--ink); letter-spacing: -.01em; }
-  .crumb .sep { color: var(--ink-3); font-size: 11px; }
+  .crumb b { font-weight: 500; color: var(--ink); letter-spacing: 0; }
+  .crumb .sep { color: var(--ink-3); font-size: 12px; }
   /* the step back, and the steps you can jump to: text controls, not chrome */
   .crumb-b { flex: none; width: 22px; height: 22px; margin-right: -2px; display: inline-flex; align-items: center;
     justify-content: center; padding: 0; border: 0; border-radius: 6px; background: var(--fill); color: var(--ink-2);
-    font: inherit; font-size: 15px; line-height: 1; cursor: pointer; transition: background var(--t), color var(--t); }
+    font: inherit; font-size: 16px; line-height: 1; cursor: pointer; transition: background var(--t), color var(--t); }
   .crumb-b:hover { background: var(--fill-2); color: var(--ink); }
-  .crumb-l { padding: 0; border: 0; background: none; font: inherit; font-size: 13px; color: var(--ink-3);
+  .crumb-l { padding: 0; border: 0; background: none; font: inherit; font-size: 14px; color: var(--ink-3);
     cursor: pointer; white-space: nowrap; transition: color var(--t); }
   .crumb-l:hover { color: var(--ink); }
   .crumb .cs { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topr { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
   .rf-c, .rf-l, .kbd { display: none; }
-  .tb { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; font: inherit; font-size: 12.5px;
+  .tb { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; font: inherit; font-size: 14px;
     color: var(--ink-2); background: var(--fill); border: 0; border-radius: 8px; cursor: pointer; white-space: nowrap;
     transition: background var(--t), color var(--t); }
   .tb:hover { background: var(--fill-2); color: var(--ink); }
-  .tb kbd { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); background: var(--panel); border-radius: 4px;
+  .tb kbd { font-family: var(--mono); font-size: 12px; color: var(--ink-3); background: var(--panel); border-radius: 6px;
     padding: 1px 5px; line-height: 1.5; }
-  .tb.icon { width: 30px; padding: 0; justify-content: center; font-size: 14px; }
-  .lan { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  .tb.icon { width: 30px; padding: 0; justify-content: center; font-size: 15px; }
+  .lan { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; letter-spacing: 0;
     padding: 4px 8px; border-radius: 6px; background: var(--fill); color: var(--ink-3); white-space: nowrap; }
-  .lan.on { color: var(--warn); background: var(--warn-soft); }
+  .lan.on { color: var(--ink-2); background: var(--fill); }
   .live { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; animation: pulse 2.6s ease-in-out infinite; }
   .live.off { background: var(--ink-3); animation: none; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
@@ -281,64 +285,64 @@ INDEX_HTML = r"""<!doctype html>
   .view { display: none; height: 100%; }
   .view.on { display: block; }
   .scroll { overflow-y: auto; height: 100%; }
-  .page { max-width: 1280px; margin: 0 auto; padding: 20px 24px 70px; }
+  /* A page that reads like a document (Skills) scrolls as one: the top bar
+     goes up with it instead of staying pinned over the text. */
+  #shell.flow { overflow-y: auto; grid-template-rows: 46px auto; }
+  #shell.flow main { overflow: visible; }
+  #shell.flow .view.on, #shell.flow .view.on > .scroll { height: auto; overflow: visible; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 18px 48px 88px; }
   .page.wide { max-width: 1560px; }
 
   /* ---- page furniture ---- */
-  .page-h { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-  .page-t { font-size: 18px; font-weight: 600; letter-spacing: -.02em; margin: 0; display: flex; align-items: center; gap: 10px; }
-  .count { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink-2); background: var(--fill);
+  .page-h { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .page-t { font-size: 32px; font-weight: 600; letter-spacing: -.025em; line-height: 1.15; margin: 0; display: flex; align-items: center; gap: 10px; }
+  .count { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; color: var(--ink-2); background: var(--fill);
     padding: 1px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
-  .page-d { color: var(--ink-2); font-size: 13px; line-height: 1.55; max-width: 72ch; margin: 0 0 18px; }
+  .page-d { color: var(--ink-2); font-size: 14px; line-height: 1.55; max-width: 72ch; margin: 0 0 18px; }
   /* A page states its situation as READINGS, not as a sentence. The facts a
      paragraph was carrying — 184 sessions, 42 projects, since Jul 2026 — are
      each their own value-and-label, on one line, and the line never wraps: it
      is nowrap with the overflow clipped, and the readings that matter least
      are the ones that leave when there is no room. What is left of the prose
      is at most one short clause. */
-  .page-r { display: flex; align-items: baseline; gap: 16px; flex-wrap: nowrap; overflow: hidden;
+  .page-r { display: flex; align-items: baseline; gap: 20px; flex-wrap: nowrap; overflow: hidden;
     margin: 0 0 16px; min-width: 0; }
   .page-rd { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; flex: none; }
-  .page-rd b { font-weight: 600; font-size: 13.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
-  .page-rd span { font-size: 12px; color: var(--ink-3); }
+  .page-rd b { font-weight: 600; font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .page-rd span { font-size: 14px; color: var(--ink-3); }
   /* the one clause of prose that survives, if any */
-  .page-rc { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
+  .page-rc { font-size: 14px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
   /* an honesty note is a footnote on the readings, not half the paragraph */
-  .page-rn { font-size: 12px; color: var(--ink-3); flex: none; cursor: help; }
+  .page-rn { font-size: 13px; color: var(--ink-3); flex: none; cursor: help; }
   /* what goes first when the line runs out */
   @media (max-width: 1200px) { .page-rd.opt2 { display: none; } }
   @media (max-width: 1000px) { .page-rd.opt1, .page-rc { display: none; } }
-  .page-d code, .mono { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: var(--fill);
-    padding: 1px 5px; border-radius: 4px; }
+  .page-d code, .mono { font-family: var(--mono); font-size: 13px; color: var(--ink-2); background: var(--fill);
+    padding: 1px 5px; border-radius: 6px; }
   .page-a { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
-  .sec { margin-top: 28px; }
-  .sec-t { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 10px; display: flex; align-items: center;
+  .sec { margin-top: 40px; }
+  .sec-t { font-size: 16px; font-weight: 600; color: var(--ink); letter-spacing: -.01em; margin: 0 0 12px; display: flex; align-items: center;
     gap: 10px; flex-wrap: wrap; row-gap: 8px; }
   .sec-t .ic { width: 16px; height: 16px; } .sec-t .ic svg { width: 16px; height: 16px; }
-  @media (max-width: 1200px) {
-    /* the provider toggle and the token state drop to their own line */
-    .sec-t .dp-ptoggle { order: 3; flex-basis: 100%; margin-left: 0; }
-    .sec-t .hf-state { order: 4; margin-left: 0; }
-  }
-  .sec-t .fp { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--ink-3); flex: none; max-width: 46%;
+  .sec-t .fp { font-family: var(--sans); font-size: 13px; font-weight: 400; color: var(--ink-3); flex: none; max-width: 46%;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- cards & lists: filled surfaces; hover one step; selected = accent tint ---- */
   .card, .card2, .dpc, .setup, .trace, .ctxbox, .hero, .host, .selfhost-card, .comp, details.layer,
-  .cfg, .list, .browse, .mcard, .gcard { background: var(--panel); border-radius: var(--radius); }
-  .card { padding: 15px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .cfg, .list, .browse, .mcard { background: var(--panel); border-radius: var(--radius); }
+  .card { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
   .card2 { padding: 14px 16px 16px; }
-  .card2 h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 3px; }
-  .card2 .note2 { font-size: 12px; color: var(--ink-3); margin-bottom: 12px; }
+  .card2 h3 { font-size: 14px; font-weight: 600; color: var(--ink-2); margin: 0 0 3px; }
+  .card2 .note2 { font-size: 13px; color: var(--ink-3); margin-bottom: 12px; }
   .card2 .note2 b, .note2 b { color: var(--ink-2); font-family: var(--mono); font-weight: 600; }
-  .note2 { font-size: 12px; color: var(--ink-3); }
+  .note2 { font-size: 13px; color: var(--ink-3); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
   .card .head { display: flex; align-items: center; gap: 8px; }
-  .card .name { font-weight: 600; font-size: 13.5px; }
-  .card .url { font-family: var(--mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .card .note { font-size: 12px; color: var(--ink-3); line-height: 1.45; }
-  .card.cur, .dpc.cur { background: var(--accent-soft); }
+  .card .name { font-weight: 600; font-size: 14px; }
+  .card .url { font-family: var(--mono); font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .note { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+  .card.cur, .dpc.cur { background: var(--panel); }
   .card.flash, .lrow.flash, .msg.flash { box-shadow: 0 0 0 2px var(--accent); }
   .list { padding: 4px; }
   .lrow { border-radius: var(--r-sm); }
@@ -346,8 +350,8 @@ INDEX_HTML = r"""<!doctype html>
   .lrow-top { display: flex; align-items: center; gap: 10px; padding: 11px 12px; cursor: pointer; border-radius: var(--r-sm);
     transition: background var(--t); }
   .lrow-top:hover, .lrow.open .lrow-top { background: var(--panel-2); }
-  .lrow .nm { font-weight: 600; font-size: 13px; flex: none; }
-  .lrow .sub { color: var(--ink-3); font-size: 12px; font-family: var(--mono); flex: 1; overflow: hidden; text-overflow: ellipsis;
+  .lrow .nm { font-weight: 600; font-size: 14px; flex: none; }
+  .lrow .sub { color: var(--ink-3); font-size: 13px; font-family: var(--mono); flex: 1; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; }
   .lrow .sub.sans { font-family: var(--sans); color: var(--ink-2); }
   .lrow .acts { display: flex; gap: 6px; flex: none; opacity: .7; transition: opacity var(--t); }
@@ -363,167 +367,158 @@ INDEX_HTML = r"""<!doctype html>
   .dot2.ok { background: var(--ok); } .dot2.bad { background: var(--bad); } .dot2.warn { background: var(--warn); }
   .dot2.run { background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
   .dot2.pend { background: var(--warn); }
-  .t2 { font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px;
+  .t2 { font-size: 12px; font-weight: 500; letter-spacing: 0; padding: 2px 6px; border-radius: 6px;
     background: var(--fill); color: var(--ink-2); flex: none; white-space: nowrap; }
   .t2.acc { background: var(--ok-soft); color: var(--ok); }
-  .t2.vio, .t2.blu { background: var(--info-soft); color: var(--info); }
+  .t2.vio, .t2.blu { background: var(--fill); color: var(--ink-2); }
   .t2.amb { background: var(--warn-soft); color: var(--warn); }
   .t2.red { background: var(--bad-soft); color: var(--bad); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font-family: var(--mono); font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--fill); color: var(--ink-2); }
-  .chip.cur { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .chip { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--fill); color: var(--ink-2); }
+  .chip.cur { background: var(--fill-2); color: var(--ink); font-weight: 500; }
   .chip.more { color: var(--ink-3); }
   .chip.clk { cursor: pointer; transition: background var(--t), color var(--t); }
   .chip.clk:hover { background: var(--accent-soft); color: var(--accent); }
-  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); background: var(--fill);
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); background: var(--fill);
     border-radius: 6px; padding: 2px 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .pill b { font-weight: 600; color: var(--ink); }
   .pill.acc { background: var(--ok-soft); color: var(--ok); } .pill.acc b { color: var(--ok); }
   .pill.amb { background: var(--warn-soft); color: var(--warn); } .pill.amb b { color: var(--warn); }
   .pill.red { background: var(--bad-soft); color: var(--bad); } .pill.red b { color: var(--bad); }
   .pill.mono { font-family: var(--mono); }
-  .b { font: inherit; font-size: 12.5px; font-weight: 500; padding: 7px 12px; border-radius: 7px; border: 0; cursor: pointer;
+  .b { font: inherit; font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 6px; border: 0; cursor: pointer;
     white-space: nowrap; line-height: 1.2; background: var(--fill); color: var(--ink-2);
     transition: background var(--t), color var(--t); }
   .b:hover { background: var(--fill-2); color: var(--ink); }
-  .b.pri { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .b.pri { background: var(--accent); color: var(--accent-ink); font-weight: 500; }
   .b.pri:hover { filter: brightness(1.07); background: var(--accent); color: var(--accent-ink); }
   .b.gho { background: transparent; }
   .b.gho:hover { background: var(--fill); color: var(--ink); }
   .b.dan:hover { color: var(--bad); background: var(--bad-soft); }
   .b.dan.pri, .b.armed { color: #fff; background: var(--bad); }
   .b:disabled { opacity: .5; cursor: default; filter: none; }
-  .b.on { background: var(--accent-soft); color: var(--accent); }
-  .btn { font: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 14px; border: 0; border-radius: 7px; background: var(--accent);
+  .b.on { background: var(--fill-2); color: var(--ink); }
+  .btn { font: inherit; font-size: 14px; font-weight: 500; padding: 6px 14px; border: 0; border-radius: 6px; background: var(--accent);
     color: var(--accent-ink); cursor: pointer; white-space: nowrap; }
   .btn:hover { filter: brightness(1.07); }
   .btn:disabled { opacity: .5; cursor: default; }
-  .btn.big { padding: 9px 16px; font-size: 13px; text-decoration: none; display: inline-block; }
-  .a-link { color: var(--accent); font-size: 12.5px; }
+  .btn.big { padding: 9px 16px; font-size: 14px; text-decoration: none; display: inline-block; }
+  .a-link { color: var(--accent); font-size: 14px; }
   .a-link:hover { text-decoration: underline; }
-  .guide-link { font: inherit; font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; text-align: left; }
+  .guide-link { font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; text-align: left; }
   .guide-link:hover { text-decoration: underline; }
   .actions { display: flex; gap: 14px; }
-  .actions button { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; cursor: pointer; color: var(--ink-2); }
+  .actions button { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; cursor: pointer; color: var(--ink-2); }
   .actions button:hover { color: var(--ink); }
   .actions button.danger:hover { color: var(--bad); }
 
   /* inputs — filled, no line */
-  input.in, textarea.in, select.in { font: inherit; font-size: 12.5px; padding: 8px 10px; border: 0; border-radius: 7px;
+  input.in, textarea.in, select.in { font: inherit; font-size: 14px; padding: 8px 10px; border: 0; border-radius: 6px;
     background: var(--fill); color: var(--ink); min-width: 0; flex: 1; transition: background var(--t); }
   input.in[type=password], .mono-in { font-family: var(--mono); }
   input.in:hover, textarea.in:hover, select.in:hover { background: var(--fill-2); }
-  input.in:focus, textarea.in:focus, select.in:focus { outline: none; background: var(--fill); box-shadow: 0 0 0 2px var(--accent); }
+  input.in:focus, textarea.in:focus, select.in:focus { outline: none; background: var(--bg); box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 4px var(--accent-soft); background: var(--panel); }
   input.in::placeholder, textarea.in::placeholder { color: var(--ink-3); }
   select.in { cursor: pointer; flex: none; }
   input.in.search { width: 100%; margin-bottom: 12px; }
   .find { position: relative; margin-bottom: 12px; }
-  .find input { width: 100%; font: inherit; font-size: 13px; padding: 10px 12px 10px 32px; border: 0; border-radius: 8px;
+  .find input { width: 100%; font: inherit; font-size: 14px; padding: 9px 12px 9px 34px; border: 0; border-radius: 8px;
     background: var(--fill); color: var(--ink); transition: background var(--t); }
   .find input:hover { background: var(--fill-2); }
-  .find input:focus { outline: none; background: var(--fill); box-shadow: 0 0 0 2px var(--accent); }
+  .find input:focus { outline: none; background: var(--bg); box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 4px var(--accent-soft); background: var(--panel); }
   .find::before { content: "⌕"; position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--ink-3);
-    font-size: 14px; pointer-events: none; }
-  label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+    font-size: 15px; pointer-events: none; }
+  label.chk { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
   .enable { display: flex; gap: 8px; }
   .filters { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
   /* the source selector: three places models can come from, stated before
      you search so the curated list never reads as the whole world */
-  .dp-src { display: inline-flex; gap: 3px; padding: 3px; margin-bottom: 9px;
+  .dp-src { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px;
     background: var(--fill); border-radius: 8px; }
   .dp-srcb { height: 26px; padding: 0 11px; border: 0; border-radius: 6px; background: transparent;
-    font: inherit; font-size: 12px; line-height: 1; color: var(--ink-2); cursor: pointer;
+    font: inherit; font-size: 13px; line-height: 1; color: var(--ink-2); cursor: pointer;
     white-space: nowrap; transition: background var(--t), color var(--t); }
   .dp-srcb:hover { background: var(--panel-2); color: var(--ink); }
-  .dp-srcb.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .dp-srcb.on { background: var(--panel); color: var(--ink); font-weight: 500; }
   .dp-srcb:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
   /* the deploy picker: search first, then the filter row under it */
   .dp-find { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
   .dp-sub { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; min-width: 0; }
   /* segmented control — pills, like the tabs */
   .fchips { display: flex; gap: 2px; flex: none; }
-  .fchip { font: inherit; font-size: 12px; padding: 6px 12px; border: 0; border-radius: 6px; background: transparent;
+  .fchip { font: inherit; font-size: 13px; padding: 6px 12px; border: 0; border-radius: 6px; background: transparent;
     color: var(--ink-2); cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
   .fchip:hover { background: var(--fill); color: var(--ink); }
-  .fchip.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .fchip.on { background: var(--panel); color: var(--ink); font-weight: 500; }
   /* family tabs over the model list — the nav's pill treatment, with counts */
   .mtabs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; margin-bottom: 12px; }
-  .mtabs .fchip { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; padding: 6px 10px; }
+  .mtabs .fchip { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 500; padding: 6px 10px; }
   .mtabs .fchip.on { font-weight: 500; }
   /* the family's own mark, sized exactly as the Deploy page's org pills size
-     theirs — 16px box, 13px of ink, no square behind it, so the glyph carries
-     the vendor's colour and nothing else does. 16px sits inside the pill's
-     18px content box, so the row keeps its 30px height and its wrap points. */
-  .mtabs .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none; font-size: 9px; }
-  .mtabs .mark2 svg { width: 13px; height: 13px; }
-  .mtabs .tn2 { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-  .mtabs .fchip.on .tn2 { color: var(--accent); }
-  /* provider toggle on the Deploy page — the same pills, with the real marks */
-  .dp-ptoggle { display: flex; align-items: center; gap: 3px; margin-left: 6px; min-width: 0; overflow-x: auto;
-    flex-wrap: nowrap; scrollbar-width: none; }
-  .dp-ptoggle::-webkit-scrollbar { display: none; }
-  .dp-ptoggle .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; flex: none; font-weight: 500; }
-  .dp-ptoggle .fchip.on { font-weight: 600; }
-  .dp-ptoggle .fchip.dim { opacity: .5; }
-  .dp-ptoggle .fchip.dim:hover { opacity: 1; }
-  .dp-ptoggle .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none; }
-  .dp-ptoggle .mark2 svg { width: 13px; height: 13px; }
+     theirs — 20px box, 17px of ink, no square behind it, so the glyph carries
+     the vendor's colour and nothing else does. You read these rows by logo
+     first and name second, and at 13px the name was outweighing the mark;
+     20px puts them level. */
+  .mtabs .mark2 { width: 20px; height: 20px; border-radius: 6px; background: none; font-size: 12px; }
+  .mtabs .mark2 svg { width: 17px; height: 17px; }
+  .mtabs .tn2 { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .mtabs .fchip.on .tn2 { color: var(--ink-2); }
   /* the company filter — one line of org pills, scrolls rather than wraps */
   /* with an overflow control the row no longer has to scroll sideways */
-  .dp-orgs { display: flex; align-items: center; gap: 3px; min-width: 0; flex-wrap: wrap; }
+  .dp-orgs { display: flex; align-items: center; gap: 4px; min-width: 0; flex-wrap: wrap; }
   .dp-more { font-weight: 500; color: var(--ink-3); }
   /* no text-transform: it is what turned "zai-org" into "Zai-Org". The names
      are already cased correctly, and an unknown slug stays as the Hub spells
      it rather than being mangled into a word that is not a company. */
-  .dp-orgs .fchip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; flex: none; font-weight: 500; }
+  .dp-orgs .fchip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; flex: none;
+    font-size: 14px; font-weight: 500; }
   .dp-orgs .fchip.on { font-weight: 600; }
-  .dp-orgs .omark { width: 16px; height: 16px; border-radius: 4px; background: none; font-size: 9px; }
-  .dp-orgs .omark svg { width: 13px; height: 13px; }
-  .dp-orgs .tn2 { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .dp-orgs .fchip.on .tn2 { color: var(--accent); }
-  .mcard .mwhen { font-size: 11px; color: var(--ink-3); }
-  .mcard .mwhen.fresh { color: var(--accent); }
-  .mcard .vr .vbar.fits i { background: var(--ok); }
-  .mcard .vr .vbar.tight i { background: var(--warn); }
-  .mcard .vr .vbar.no i { background: var(--ink-3); }
+  /* You pick a company by its logo before you read its name, so the mark is
+     sized to the label rather than tucked beside it: a 20px box reads at the
+     same weight as 13px text, and it is the one size an avatar fetched from
+     the Hub is still legible at. */
+  .dp-orgs .omark { width: 20px; height: 20px; border-radius: 6px; background: none; font-size: 12px; }
+  .dp-orgs .omark svg { width: 17px; height: 17px; }
+  .dp-orgs .tn2 { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); }
+  .dp-orgs .fchip.on .tn2 { color: var(--ink-2); }
   /* skills — a library of cards, each with its own identity glyph */
-  .sk-state { display: flex; gap: 6px; flex-wrap: wrap; margin: -8px 0 16px; }
+  .sec-empty { font-size: 14px; color: var(--ink-3); padding: 14px 16px; border-radius: var(--radius); background: var(--panel-2); }
   .sk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-  .skcard { background: var(--panel); border-radius: var(--radius); padding: 14px 15px 12px; cursor: pointer;
-    display: flex; flex-direction: column; gap: 9px; min-width: 0; transition: background var(--t); }
+  .skcard { background: var(--panel); border-radius: var(--radius); padding: 16px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 10px; min-width: 0; transition: background var(--t); }
   .skcard:hover { background: var(--panel-2); }
   .sk-h { display: flex; align-items: center; gap: 11px; min-width: 0; }
-  .sglyph { width: 36px; height: 36px; border-radius: 10px; flex: none; display: inline-flex; align-items: center;
+  .sglyph { width: 36px; height: 36px; border-radius: 8px; flex: none; display: inline-flex; align-items: center;
     justify-content: center; overflow: hidden; }
   .sglyph svg { width: 25px; height: 25px; display: block; }
   .sk-t { min-width: 0; flex: 1; }
-  .sk-n { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sk-p { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sk-d { font-size: 12.5px; color: var(--ink-2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2;
+  .sk-n { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sk-p { font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sk-d { font-size: 14px; color: var(--ink-2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2;
     -webkit-box-orient: vertical; overflow: hidden; }
   .sk-tags { display: flex; gap: 5px; flex-wrap: wrap; }
   .sk-tools { display: flex; gap: 4px; flex-wrap: wrap; }
-  .sk-tools .chip { font-size: 10.5px; padding: 2px 7px; }
+  .sk-tools .chip { font-size: 12px; padding: 2px 7px; }
   .sk-acts { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; opacity: 0; transition: opacity var(--t); }
   .skcard:hover .sk-acts, .skcard:focus-within .sk-acts { opacity: 1; }
-  .sk-acts .b { padding: 4px 10px; font-size: 11.5px; }
-  .sk-body { margin: 14px 0 4px; font-size: 13px; line-height: 1.6; max-height: 40vh; overflow: auto; }
-  .sk-raw { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word;
+  .sk-acts .b { padding: 4px 10px; font-size: 13px; }
+  .sk-body { margin: 14px 0 4px; font-size: 14px; line-height: 1.6; max-height: 40vh; overflow: auto; }
+  .sk-raw { margin: 0; font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word;
     color: var(--ink-2); max-height: 40vh; overflow: auto; }
   .sk-frow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-bottom: 10px; }
   .sk-frow .dp-field input.in, .sk-frow .dp-field select.in { width: 100%; background: var(--panel-2); }
-  .sk-err { color: var(--bad); font-size: 11.5px; margin: -6px 0 8px; }
+  .sk-err { color: var(--bad); font-size: 13px; margin: -6px 0 8px; }
   .sk-tsel { display: flex; gap: 4px; flex-wrap: wrap; }
-  .sk-tsel .fchip { padding: 4px 9px; font-size: 11.5px; }
+  .sk-tsel .fchip { padding: 4px 9px; font-size: 13px; }
   .sk-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .sk-ed { width: 100%; min-height: 220px; resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  .sk-ed { width: 100%; min-height: 220px; resize: vertical; font-family: var(--mono); font-size: 13px; line-height: 1.55;
     background: var(--panel-2); }
-  .sk-prev { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; font-size: 12.5px; overflow: auto;
+  .sk-prev { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; font-size: 14px; overflow: auto;
     min-height: 220px; max-height: 40vh; }
   @media (max-width: 1100px) { .sk-split, .sk-frow { grid-template-columns: 1fr; } }
 
   /* provider setup — one card per provider, its auth types as a toggle */
-  .auth-glabel { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
+  .auth-glabel { font-size: 14px; font-weight: 600; color: var(--ink-2); margin: 18px 0 8px; }
   /* start-aligned so a card that opens a form never stretches its neighbours */
   .auth-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; align-items: start; }
   /* Collapsed, a card says four things: whose it is, what it's called, what
@@ -577,30 +572,30 @@ INDEX_HTML = r"""<!doctype html>
      same ink the fit viewBox gives every real glyph. The nudge is the
      measured gap between the glyph's ink centre and the box centre —
      capitals carry no descender, so uncorrected they ride low. */
-  .ac-h .bigmark.letter { font-family: var(--sans); font-size: 27px; font-weight: 600;
+  .ac-h .bigmark.letter { font-family: var(--sans); font-size: 30px; font-weight: 600;
     color: var(--ink-2); transform: translateY(-0.9px); }
-  .bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink-2); }
+  .bigmark.letter { font-family: var(--sans); font-size: 16px; font-weight: 600; color: var(--ink-2); }
   .ac-h .ft { min-width: 0; flex: 1; }
   .ac-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .ac-h .fn { font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis;
+  .ac-h .fn { font-weight: 600; font-size: 16px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; display: flex; align-items: baseline; gap: 5px; }
   .ac-nm { flex: none; }
-  .ac-nv { font-weight: 400; font-size: 12.5px; color: var(--ink-3); min-width: 0;
+  .ac-nv { font-weight: 400; font-size: 14px; color: var(--ink-3); min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* two weights on the card: 600 for the name, regular for everything else */
-  .ac-act { flex: none; font-weight: 400; font-size: 12.5px; color: var(--ink-2); }
+  .ac-act { flex: none; font-weight: 400; font-size: 14px; color: var(--ink-2); }
   .acard:hover .ac-act { color: var(--ink); }
-  .ac-h .fd { font-size: 10.5px; line-height: 1.35; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
+  .ac-h .fd { font-size: 12px; line-height: 1.35; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; background: none; padding: 0; font-family: var(--mono); }
   .ac-h .fd.sans { font-family: var(--sans); font-style: italic; }
   /* the connection state is a chip on the name row, not a row of its own */
-  .ac-via { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
+  .ac-via { font-size: 14px; color: var(--ink-3); white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; margin-top: 1px; }
   /* The state badge. Four states told apart by surface, colour AND the shape
      of the glyph — filled dot, hollow ring, amber diamond, faint dot — so it
      survives a colour-blind reading and a glance. */
   .ac-st { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 20px; padding: 0 8px;
-    border-radius: 6px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .ac-stg { width: 7px; height: 7px; border-radius: 50%; flex: none; box-sizing: border-box; }
   /* Current is the only slanted badge on the page — a tag pinned to the card
      rather than a word sitting in the row. The label is counter-skewed by
@@ -629,11 +624,11 @@ INDEX_HTML = r"""<!doctype html>
   .ac-st.off { background: var(--fill); color: var(--ink-3); font-weight: 500; }
   .ac-st.off .ac-stg { background: currentColor; opacity: .45; width: 5px; height: 5px; }
   /* what a connected card earns its height with */
-  .ac-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-3); margin-top: 9px; }
+  .ac-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 14px; color: var(--ink-3); margin-top: 9px; }
   .ac-mb { white-space: nowrap; min-width: 0; }
   .ac-mb b { color: var(--ink-2); font-weight: 600; }
-  .ac-mb code { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); background: none; padding: 0; }
-  .ac-mb i { font-style: normal; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+  .ac-mb code { font-family: var(--mono); font-size: 13px; color: var(--ink-2); background: none; padding: 0; }
+  .ac-mb i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--ink-3);
     margin-left: 6px; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; display: inline-block;
     vertical-align: bottom; }
   /* The auth-type control: one filled track, equal segments, two aligned
@@ -644,11 +639,11 @@ INDEX_HTML = r"""<!doctype html>
   .acard.open .ac-types { background: var(--fill); }
   .ac-seg { display: inline-flex; align-items: center; gap: 5px; position: relative; flex: none;
     height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
-    font: inherit; font-size: 12px; line-height: 1; color: var(--ink-2); cursor: pointer;
+    font: inherit; font-size: 13px; line-height: 1; color: var(--ink-2); cursor: pointer;
     white-space: nowrap; max-width: 100%; transition: background var(--t), color var(--t); }
   .ac-seg:hover { background: var(--panel-2); color: var(--ink); }
   .acard.open .ac-seg:hover { background: var(--panel); }
-  .ac-seg.on { background: var(--accent); color: #fff; font-weight: 600; }
+  .ac-seg.on { background: var(--panel); color: var(--ink); font-weight: 500; }
   .ac-seg.on:hover { filter: brightness(1.06); }
   .ac-seg:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
   .ac-seg .ac-lb { overflow: hidden; text-overflow: ellipsis; }
@@ -658,75 +653,64 @@ INDEX_HTML = r"""<!doctype html>
   .ac-mkdot { flex: none; width: 6px; height: 6px; padding: 0; border-radius: 50%;
     background: var(--warn); align-self: center; }
   .ac-seg.on .ac-mkdot { background: var(--accent-ink); }
-  .ac-mktick { flex: none; font-size: 10px; line-height: 1; padding: 0; align-self: center; }
+  .ac-mktick { flex: none; font-size: 12px; line-height: 1; padding: 0; align-self: center; }
   .ac-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
   .ac-dot.cfg { background: var(--warn); }
-  .ac-one { font-size: 12.5px; color: var(--ink-3); }
-  .ac-d { font-size: 12.5px; line-height: 1.45; color: var(--ink-3); margin-bottom: 8px; overflow: hidden;
+  .ac-one { font-size: 14px; color: var(--ink-3); }
+  .ac-d { font-size: 14px; line-height: 1.45; color: var(--ink-3); margin-bottom: 8px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   /* switching method crossfades the block instead of jumping */
   .ac-body { transition: opacity 140ms ease; }
   .ac-body.fade { opacity: 0; }
   .ac-models { margin-top: 9px; }
-  .ac-mh { font-size: 12.5px; color: var(--ink-3); margin-bottom: 6px; }
-  .ac-models .chip { font-size: 10.5px; padding: 2px 7px; }
+  .ac-mh { font-size: 14px; color: var(--ink-3); margin-bottom: 6px; }
+  .ac-models .chip { font-size: 12px; padding: 2px 7px; }
   /* two rows of models, then +N */
   /* one row by default; +N opens the rest */
   .ac-models .chips.clamp { max-height: 21px; overflow: hidden; }
-  .ac-models .chip.more { cursor: pointer; border: 0; font: inherit; font-family: var(--mono); font-size: 10.5px;
+  .ac-models .chip.more { cursor: pointer; border: 0; font: inherit; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px;
     color: var(--ink-3); background: var(--fill); border-radius: 6px; padding: 2px 7px; margin-top: 4px; }
   .ac-models .chip.more:hover { color: var(--accent); }
   .ac-models .chip { background: var(--fill); }
   .ap-form { margin-top: 6px; }
   .ap-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 7px 10px; margin-bottom: 7px; }
   .ap-fields .dp-field { gap: 3px; }
-  .ap-fields .kh-l { font-size: 9.5px; }
+  .ap-fields .kh-l { font-size: 12px; }
   .ap-fields input.in { padding: 6px 9px; }
   .ap-fields .dp-field input.in { background: var(--panel); width: 100%; }
-  .ap-fields .kh-n { font-size: 11px; line-height: 1.4; }
-  .ap-fields .envn { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .ap-note { font-size: 11.5px; color: var(--ink-2); background: var(--panel); border-radius: 7px; padding: 6px 9px; margin-bottom: 7px; }
+  .ap-fields .kh-n { font-size: 12px; line-height: 1.4; }
+  .ap-fields .envn { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .ap-note { font-size: 13px; color: var(--ink-2); background: var(--panel); border-radius: 8px; padding: 6px 9px; margin-bottom: 7px; }
   /* one action row: Save is the only filled button, the rest are quiet */
   .ap-acts { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .ap-acts { margin-top: 2px; }
-  .ap-acts .b { padding: 6px 11px; font-size: 12.5px; }
+  .ap-acts .b { padding: 6px 11px; font-size: 14px; }
   .ap-acts .b.gho { background: transparent; color: var(--ink-3); }
   .ap-acts .b.gho:hover { background: var(--fill); color: var(--ink); }
-  .ac-doc { margin-left: auto; color: var(--ink-3); font-size: 13px; text-decoration: none; padding: 0 2px; }
+  .ac-doc { margin-left: auto; color: var(--ink-3); font-size: 14px; text-decoration: none; padding: 0 2px; }
   .ac-doc:hover { color: var(--accent); }
   .oauth-paste { display: none; gap: 8px; margin-top: 10px; max-width: 560px; }
   .oauth-paste.on { display: flex; }
   .oauth-paste input.in { background: var(--panel); }
 
   /* the gated-model notice and its token field */
-  /* the token state sits at the END of the filter row, never in its middle */
-  .hf-state { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex: none;
-    font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  /* The filter row carries filters and nothing else. A standing "Hugging Face
+     token: not set" was a status nobody asked for, parked in the whitespace
+     beside the org pills — and it was answering a question that only comes up
+     on a gated model, where .hf-notice already asks it in context, with the
+     model's name and the reason. The HF card up on this same page still has
+     its own Add key. */
   .dp-sub .dp-status { margin-left: auto; }
-  .dp-sub .hf-state { margin-left: 0; }
-  .hf-add { font: inherit; font-size: 11.5px; color: var(--accent); background: none; border: 0; padding: 0 0 0 2px; cursor: pointer; }
-  .hf-add:hover { text-decoration: underline; }
-  .hf-notice { display: none; background: var(--warn-soft); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
-  .hf-notice.on { display: block; }
-  .hf-notice .hn-h { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-  .hf-notice .hn-h b { font-size: 13.5px; font-weight: 600; color: var(--ink); }
-  .hf-notice .hn-b { font-size: 12.5px; color: var(--ink-2); margin: 6px 0 10px; line-height: 1.5; max-width: 78ch; }
-  .hf-notice .hn-l { margin-bottom: 10px; }
-  .hf-notice .hn-l .b { text-decoration: none; }
   .hf-form .hf-row { display: flex; gap: 8px; align-items: center; max-width: 460px; }
   .hf-form .hf-row input.in { background: var(--panel); }
-  .hf-form .hf-foot { margin-top: 6px; font-size: 11.5px; }
+  .hf-form .hf-foot { margin-top: 6px; font-size: 13px; }
 
   /* the finish: an arrival, not a spec dump */
-  .dp-done { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 9px; margin: 2px 0 12px; }
-  .dp-done b { font-size: 14px; font-weight: 600; color: var(--ink); }
-  .dp-donem { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none;
-    align-self: center; }
-  .dp-donex { flex-basis: 100%; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+
   /* dual-mode search: the mode is a control you can see and flip */
   .dp-mode { display: inline-flex; align-items: center; gap: 6px; flex: none; height: 32px;
     padding: 0 11px; border: 0; border-radius: 8px; background: var(--fill); font: inherit;
-    font-size: 12px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
+    font-size: 13px; color: var(--ink-2); cursor: pointer; white-space: nowrap;
     transition: background var(--t), color var(--t); }
   .dp-mode:hover { background: var(--panel-2); color: var(--ink); }
   .dp-mode.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
@@ -742,32 +726,32 @@ INDEX_HTML = r"""<!doctype html>
   /* the agent's answer */
   .dp-groups { display: block; }
   .ask-head { margin: 0 0 14px; }
-  .ask-int { font-size: 14px; color: var(--ink); line-height: 1.5; margin-bottom: 7px; max-width: 82ch; }
-  .ask-src { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px;
+  .ask-int { font-size: 15px; color: var(--ink); line-height: 1.5; margin-bottom: 7px; max-width: 82ch; }
+  .ask-src { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px;
     color: var(--ink-3); margin-bottom: 8px; }
   .ask-badge { height: 19px; padding: 0 8px; border-radius: 6px; background: var(--fill);
-    color: var(--ink-2); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; }
+    color: var(--ink-2); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; }
   .ask-badge.on { background: var(--accent); color: var(--accent-ink); }
   .ask-srcx { min-width: 0; }
-  .ask-link { border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
+  .ask-link { border: 0; background: none; padding: 0; font: inherit; font-size: 13px;
     color: var(--accent); cursor: pointer; text-decoration: underline; }
-  .ask-note { font-size: 12px; color: var(--warn); line-height: 1.5; margin-bottom: 5px; max-width: 82ch; }
+  .ask-note { font-size: 13px; color: var(--warn); line-height: 1.5; margin-bottom: 5px; max-width: 82ch; }
   .ask-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
-  .ask-flbl { font-size: 11.5px; color: var(--ink-3); }
+  .ask-flbl { font-size: 13px; color: var(--ink-3); }
   .ask-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 4px 0 9px;
-    border-radius: 7px; background: var(--fill); font-size: 12px; color: var(--ink-2); }
-  .ask-chip b { font-weight: 600; color: var(--ink-3); font-size: 11px; }
-  .ask-x { border: 0; background: none; padding: 0 5px; font: inherit; font-size: 14px; line-height: 1;
-    color: var(--ink-3); cursor: pointer; border-radius: 5px; }
+    border-radius: 8px; background: var(--fill); font-size: 13px; color: var(--ink-2); }
+  .ask-chip b { font-weight: 600; color: var(--ink-3); font-size: 12px; }
+  .ask-x { border: 0; background: none; padding: 0 5px; font: inherit; font-size: 15px; line-height: 1;
+    color: var(--ink-3); cursor: pointer; border-radius: 6px; }
   .ask-x:hover { color: var(--ink); background: var(--panel-2); }
   .ask-x:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
   /* a group: its title, why it is a group, how many are in it */
   .dp-gh { display: flex; align-items: baseline; gap: 9px; margin: 16px 0 8px; flex-wrap: wrap; }
-  .dp-gt { font-size: 13.5px; font-weight: 600; color: var(--ink); }
-  .dp-gr { font-size: 12px; color: var(--ink-3); min-width: 0; }
-  .dp-gn { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-left: auto; }
+  .dp-gt { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .dp-gr { font-size: 13px; color: var(--ink-3); min-width: 0; }
+  .dp-gn { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); margin-left: auto; }
   .ask-best { margin-left: auto; height: 19px; padding: 0 8px; border-radius: 6px; flex: none;
-    background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 600;
+    background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 600;
     display: inline-flex; align-items: center; }
   .mcard.best { background: var(--panel-2); }
   .sk-mcard { height: 104px; border-radius: var(--radius); }
@@ -777,7 +761,7 @@ INDEX_HTML = r"""<!doctype html>
     align-items: stretch; gap: 2px; }
   /* width and flex stated outright rather than leaning on stretch: a step
      that collapses to its marker renders its label one character per line */
-  .dp-step { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; font-size: 12.5px;
+  .dp-step { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; font-size: 14px;
     color: var(--ink-3); line-height: 1.45; width: 100%; align-self: stretch; }
   .dp-step.live { color: var(--ink); }
   .dp-stepm { width: 14px; height: 14px; border-radius: 50%; flex: none; margin-top: 2px;
@@ -791,30 +775,23 @@ INDEX_HTML = r"""<!doctype html>
   }
   @keyframes steppulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
   .dp-stept { flex: 1 1 auto; min-width: 0; word-break: break-word; }
-  .dp-logbox { margin: 0 0 12px; }
-  .dp-logbox summary { font-size: 11.5px; color: var(--ink-3); cursor: pointer; padding: 3px 0; }
-  .dp-logbox summary::marker { color: var(--ink-3); }
-  .dp-logbox .dp-log { margin-top: 7px; }
   /* the fit step's waiting shape — each piece is the size of the thing it
      stands in for, so nothing moves when the data lands */
   .dp-skel .sk { animation: skpulse 1.4s ease-in-out infinite; }
   .dp-skel .lcd .sk { display: inline-block; vertical-align: baseline; }
-  .sk-tag { width: 74px; height: 18px; border-radius: 6px; }
-  .sk-num { width: 42px; height: 15px; border-radius: 4px; margin-right: 5px; }
-  .sk-lbl { width: 34px; height: 11px; border-radius: 3px; }
-  .sk-mark { width: 24px; height: 24px; border-radius: 6px; }
-  .sk-name { width: 128px; height: 15px; border-radius: 4px; }
-  .sk-row { height: 34px; border-radius: 7px; margin-top: 7px; }
+  .sk-num { width: 42px; height: 15px; border-radius: 6px; margin-right: 5px; }
+  .sk-lbl { width: 34px; height: 11px; border-radius: 6px; }
+  .sk-name { width: 128px; height: 15px; border-radius: 6px; }
   @keyframes skpulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   @media (prefers-reduced-motion: reduce) { .dp-skel .sk { animation: none; } }
   /* empty states & skeletons */
   .zero { background: var(--panel-2); border-radius: var(--radius); padding: 30px 22px 32px; text-align: center; }
   .zero .zart { color: var(--ink-2); margin: 0 auto 12px; width: 140px; }
   .zero .zart svg { width: 140px; height: 100px; display: block; }
-  .zero .zt { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
-  .zero .zd { font-size: 12.5px; color: var(--ink-3); max-width: 54ch; margin: 0 auto; line-height: 1.55; }
+  .zero .zt { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+  .zero .zd { font-size: 14px; color: var(--ink-3); max-width: 54ch; margin: 0 auto; line-height: 1.55; }
   .zero .zact { margin-top: 14px; display: flex; justify-content: center; gap: 8px; }
-  .empty { color: var(--ink-3); padding: 36px 20px; text-align: center; font-size: 13px; }
+  .empty { color: var(--ink-3); padding: 36px 20px; text-align: center; font-size: 14px; }
   .sk { border-radius: 8px; background: linear-gradient(90deg, var(--panel) 25%, var(--panel-2) 50%, var(--panel) 75%);
     background-size: 200% 100%; animation: shimmer 1.2s linear infinite; height: 14px; margin: 8px 0; }
   .sk.card { height: 84px; margin: 0; }
@@ -822,27 +799,27 @@ INDEX_HTML = r"""<!doctype html>
   @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
   /* key/value detail, code boxes, probes, banners */
-  .kvs { display: grid; grid-template-columns: 104px 1fr; gap: 4px 14px; align-items: baseline; font-size: 12.5px; margin: 10px 0 0; }
-  .kvs dt { color: var(--ink-3); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; padding-top: 2px; }
-  .kvs dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-word; }
+  .kvs { display: grid; grid-template-columns: 104px 1fr; gap: 4px 14px; align-items: baseline; font-size: 14px; margin: 10px 0 0; }
+  .kvs dt { color: var(--ink-3); font-size: 12px; letter-spacing: 0; font-weight: 600; padding-top: 2px; }
+  .kvs dd { margin: 0; font-family: var(--mono); font-size: 13px; word-break: break-word; }
   .kvs dd.wrap { white-space: pre-wrap; font-family: var(--sans); }
-  .secret { color: var(--ink-3); letter-spacing: .12em; }
+  .secret { color: var(--ink-3); letter-spacing: 0; }
   .jsonbox { margin-top: 12px; }
   .jsonbox pre { margin: 0; background: var(--panel-2); border-radius: 8px; padding: 11px 12px; font-family: var(--mono);
-    font-size: 11.5px; line-height: 1.55; overflow: auto; max-height: 320px; white-space: pre; }
+    font-size: 13px; line-height: 1.55; overflow: auto; max-height: 320px; white-space: pre; }
   .jsonbox .jh { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-  .jsonbox .jt { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
-  .probe { margin-top: 12px; border-radius: 8px; padding: 11px 13px; font-size: 12.5px; background: var(--panel-2); }
+  .jsonbox .jt { font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--ink-3); }
+  .probe { margin-top: 12px; border-radius: 8px; padding: 11px 13px; font-size: 14px; background: var(--panel-2); }
   .probe.ok { background: var(--ok-soft); }
   .probe.bad { background: var(--bad-soft); }
   .probe .ph2 { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  .probe .pe, .pe { font-family: var(--mono); font-size: 11.5px; color: var(--bad); margin-top: 6px; word-break: break-word; }
+  .probe .pe, .pe { font-family: var(--mono); font-size: 13px; color: var(--bad); margin-top: 6px; word-break: break-word; }
   .toolgrid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .toolgrid .tk { font-family: var(--mono); font-size: 11px; background: var(--fill); color: var(--ink-2); padding: 3px 8px; border-radius: 6px; }
-  .banner { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 9px; margin-bottom: 16px; font-size: 13px;
+  .toolgrid .tk { font-family: var(--mono); font-size: 12px; background: var(--fill); color: var(--ink-2); padding: 3px 8px; border-radius: 6px; }
+  .banner { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px;
     background: var(--warn-soft); color: var(--warn); }
   .banner b { font-weight: 600; }
-  .banner code { font-family: var(--mono); font-size: 12px; }
+  .banner code { font-family: var(--mono); font-size: 13px; }
   .banner .sp { flex: 1; }
   .comp { padding: 14px 16px; margin-bottom: 16px; display: none; }
   .comp.on { display: block; }
@@ -851,83 +828,63 @@ INDEX_HTML = r"""<!doctype html>
   .comp .r > .fit { flex: none; min-width: 0; }
   .comp textarea.in { width: 100%; min-height: 118px; resize: vertical; line-height: 1.55; font-family: var(--mono); }
   .comp .foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-  .comp .hint { font-size: 11.5px; color: var(--ink-3); flex: 1; line-height: 1.5; }
-  .comp .hint code { font-family: var(--mono); background: var(--fill); padding: 1px 5px; border-radius: 4px; }
+  .comp .hint { font-size: 13px; color: var(--ink-3); flex: 1; line-height: 1.5; }
+  .comp .hint code { font-family: var(--mono); background: var(--fill); padding: 1px 5px; border-radius: 6px; }
   /* One square, one glyph size, everywhere. The ink inside is normalised by
      the fit viewBox, so a 62%-of-box glyph is 62% for every vendor. */
   .mark2 { width: 22px; height: 22px; border-radius: 6px; flex: none; display: inline-flex; align-items: center; justify-content: center;
     background: var(--fill); color: var(--ink); overflow: hidden; }
   .mark2 svg { width: 22px; height: 22px; display: block; }
-  .mark2.letter { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink-2); }
-  .refresh { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .mark2.letter { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .refresh { display: inline-flex; align-items: center; gap: 6px; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); }
 
   /* ---- modal sheet ---- */
   #modal { position: fixed; inset: 0; background: var(--dim); display: none; align-items: center; justify-content: center;
     padding: 20px; z-index: 30; backdrop-filter: blur(3px); }
   #modal.on { display: flex; animation: fade 140ms ease-out; }
   @keyframes fade { from { opacity: 0; } }
-  .sheet { position: relative; background: var(--panel); border-radius: 16px; max-width: 560px; width: 100%; max-height: 86vh;
+  .sheet { position: relative; background: var(--panel); border-radius: 12px; max-width: 560px; width: 100%; max-height: 86vh;
     overflow-y: auto; padding: 22px 24px; animation: rise .16s ease-out; outline: none; }
   /* the pairing: model → provider, both with their real marks */
   .pair { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 12px; align-items: center; margin: 2px 0 16px; }
-  .pside { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .pside .omark, .pside .bigmark { width: 40px; height: 40px; border-radius: 11px; font-size: 15px; }
-  .pside .omark svg, .pside .bigmark svg { width: 22px; height: 22px; }
-  .pside .pt { min-width: 0; }
-  .pside .pn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pside .pn.mono { font-family: var(--mono); background: none; padding: 0; color: var(--ink); font-size: 13.5px; }
-  .pside .pc { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .parrow { color: var(--ink-3); font-size: 11px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 1px; }
-  .parrow b { color: var(--accent); font-size: 18px; line-height: 1; font-weight: 400; }
   .pair.sm { margin: 0; gap: 8px; grid-template-columns: auto auto auto; justify-content: start; }
-  .pair.sm .omark, .pair.sm .bigmark { width: 20px; height: 20px; border-radius: 5px; font-size: 10px; }
+  .pair.sm .omark, .pair.sm .bigmark { width: 20px; height: 20px; border-radius: 6px; font-size: 12px; }
   .pair.sm .omark svg, .pair.sm .bigmark svg { width: 12px; height: 12px; }
-  .pair.sm .parrow b { font-size: 11px; }
   /* spec tiles */
-  .spec-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 0 0 14px; }
-  .tile { background: var(--panel-2); border-radius: 9px; padding: 9px 11px; min-width: 0; }
-  .tile .tl { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
-  .tile .tv { font-family: var(--mono); font-size: 13px; font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; display: flex; align-items: center; gap: 6px; }
-  .tile .tv .pill { font-family: var(--sans); font-weight: 500; }
-  .tile .th2 { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+
+  .tile { background: var(--panel-2); border-radius: 8px; padding: 9px 11px; min-width: 0; }
+  .tile .tl { font-size: 12px; color: var(--ink-3); letter-spacing: 0; font-weight: 600; }
   /* cost — the headline number */
-  .cost-big { display: flex; align-items: baseline; gap: 8px; margin: 2px 0 2px; }
-  .cost-big b { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.03em; color: var(--ink); }
-  .cost-big span { font-size: 12.5px; color: var(--ink-2); }
-  .cost-sub { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; display: flex; gap: 12px; flex-wrap: wrap; }
-  .cost-sub .warnline { color: var(--warn); }
-  .sheet details.dp-adv { background: var(--panel-2); border-radius: 9px; padding: 8px 12px; margin: 0 0 14px; }
-  .sheet details.dp-adv .dp-advgrid input.in, .sheet details.dp-adv .dp-advgrid select.in { background: var(--panel); }
+
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .sheet.wide { max-width: 800px; }
   .sheet:focus-visible { box-shadow: none; }
   .sheet h3 { margin: 0 0 3px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
-  .sheet h4 { margin: 16px 0 6px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
-  .sheet .sub { color: var(--ink-3); font-size: 12px; font-family: var(--mono); margin-bottom: 14px; word-break: break-all; }
+  .sheet h4 { margin: 16px 0 6px; font-size: 12px; letter-spacing: 0; color: var(--ink-3); }
+  .sheet .sub { color: var(--ink-3); font-size: 13px; font-family: var(--sans); font-variant-numeric: tabular-nums; margin-bottom: 14px; word-break: break-all; }
   .sheet ol { margin: 0; padding-left: 20px; }
-  .sheet ol li { margin: 7px 0; font-size: 13px; line-height: 1.5; }
-  .sheet .free { font-size: 12.5px; color: var(--ink-2); background: var(--panel-2); border-radius: 8px; padding: 10px 12px; margin: 14px 0; }
+  .sheet ol li { margin: 7px 0; font-size: 14px; line-height: 1.5; }
+  .sheet .free { font-size: 14px; color: var(--ink-2); background: var(--panel-2); border-radius: 8px; padding: 10px 12px; margin: 14px 0; }
   .sheet .cta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
   .sheet .notes { list-style: none; padding: 0; margin: 12px 0 0; }
-  .sheet .notes li { font-size: 12.5px; color: var(--ink-2); padding: 4px 0 4px 16px; position: relative; }
+  .sheet .notes li { font-size: 14px; color: var(--ink-2); padding: 4px 0 4px 16px; position: relative; }
   .sheet .notes li::before { content: "·"; position: absolute; left: 4px; color: var(--accent); }
   .rt, .plat { background: var(--panel-2); border-radius: 8px; padding: 11px 13px; margin: 8px 0; }
-  .rt .rn, .plat-n { font-weight: 600; font-size: 13px; }
-  .rt .rnote, .rnote { color: var(--ink-3); font-size: 12px; margin: 2px 0; }
-  .rt code { display: block; font-family: var(--mono); font-size: 11.5px; background: var(--fill); padding: 7px 9px; border-radius: 6px;
+  .rt .rn, .plat-n { font-weight: 600; font-size: 14px; }
+  .rt .rnote, .rnote { color: var(--ink-3); font-size: 13px; margin: 2px 0; }
+  .rt code { display: block; font-family: var(--mono); font-size: 13px; background: var(--fill); padding: 7px 9px; border-radius: 6px;
     overflow-x: auto; white-space: pre; margin: 6px 0 2px; }
-  .skill-box { background: var(--accent-soft); border-radius: 9px; padding: 13px 15px; margin: 16px 0; }
-  .skill-t { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
-  .skill-b { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; margin-bottom: 10px; }
+  .skill-box { background: var(--accent-soft); border-radius: 8px; padding: 13px 15px; margin: 16px 0; }
+  .skill-t { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .skill-b { font-size: 14px; color: var(--ink-2); line-height: 1.5; margin-bottom: 10px; }
   .plat-top { display: flex; align-items: center; gap: 9px; }
-  .plat-k { font-size: 10px; color: var(--ink-3); background: var(--fill); padding: 2px 8px; border-radius: 6px; }
+  .plat-k { font-size: 12px; color: var(--ink-3); background: var(--fill); padding: 2px 8px; border-radius: 6px; }
   .plat-links { display: flex; gap: 16px; margin-top: 8px; }
-  .sheet .x { position: absolute; top: 12px; right: 14px; background: none; border: 0; font-size: 18px; color: var(--ink-3);
+  .sheet .x { position: absolute; top: 12px; right: 14px; background: none; border: 0; font-size: 24px; color: var(--ink-3);
     cursor: pointer; line-height: 1; }
   .sheet .x:hover { color: var(--ink); }
   #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(6px); background: var(--ink); color: var(--bg);
-    padding: 10px 16px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity var(--t), transform var(--t);
+    padding: 10px 16px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity var(--t), transform var(--t);
     pointer-events: none; z-index: 40; max-width: 80vw; }
   #toast.on { opacity: 1; transform: translateX(-50%); }
   #toast.err { background: var(--bad); color: #fff; }
@@ -936,19 +893,19 @@ INDEX_HTML = r"""<!doctype html>
   #palette { position: fixed; inset: 0; background: var(--dim); display: none; align-items: flex-start; justify-content: center;
     padding: 12vh 16px 0; z-index: 35; backdrop-filter: blur(3px); }
   #palette.on { display: flex; animation: fade 140ms ease-out; }
-  .pal { width: 100%; max-width: 620px; background: var(--panel); border-radius: 14px; overflow: hidden; animation: rise .14s ease-out; }
-  .pal input { width: 100%; font: inherit; font-size: 15px; padding: 14px 16px; border: 0; background: var(--panel-2); color: var(--ink); }
+  .pal { width: 100%; max-width: 620px; background: var(--panel); border-radius: 12px; overflow: hidden; animation: rise .14s ease-out; }
+  .pal input { width: 100%; font: inherit; font-size: 16px; padding: 14px 16px; border: 0; background: var(--panel-2); color: var(--ink); }
   .pal input:focus { outline: none; box-shadow: none; }
   .pal-list { max-height: 52vh; overflow-y: auto; padding: 6px; }
-  .pal-g { font-size: 11.5px; font-weight: 600; color: var(--ink-3); padding: 8px 10px 4px; }
-  .pal-i { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
-  .pal-i.on, .pal-i:hover { background: var(--accent-soft); }
-  .pal-i .pk { font-family: var(--mono); font-size: 10px; color: var(--ink-3); background: var(--fill); padding: 1px 6px; border-radius: 4px; flex: none; }
+  .pal-g { font-size: 13px; font-weight: 600; color: var(--ink-3); padding: 8px 10px 4px; }
+  .pal-i { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .pal-i.on, .pal-i:hover { background: var(--fill); }
+  .pal-i .pk { font-family: var(--mono); font-size: 12px; color: var(--ink-3); background: var(--fill); padding: 1px 6px; border-radius: 6px; flex: none; }
   .pal-i .pt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pal-i .ps { color: var(--ink-3); font-size: 11.5px; margin-left: auto; white-space: nowrap; font-family: var(--mono); }
-  .pal-f { display: flex; gap: 14px; padding: 8px 14px; background: var(--panel-2); font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
-  .pal-f b { color: var(--ink-2); background: var(--fill); padding: 0 5px; border-radius: 4px; font-weight: 600; }
-  .pal-none { padding: 22px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+  .pal-i .ps { color: var(--ink-3); font-size: 13px; margin-left: auto; white-space: nowrap; font-family: var(--mono); }
+  .pal-f { display: flex; gap: 14px; padding: 8px 14px; background: var(--panel-2); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); }
+  .pal-f b { color: var(--ink-2); background: var(--fill); padding: 0 5px; border-radius: 6px; font-weight: 600; }
+  .pal-none { padding: 22px; text-align: center; color: var(--ink-3); font-size: 14px; }
 
   /* ==========================================================================
      SESSIONS — three columns; projects and sessions are cards you can scan.
@@ -957,22 +914,23 @@ INDEX_HTML = r"""<!doctype html>
   /* the extra width goes to the transcript, not the two card columns */
   #transcript { max-width: 1080px; }
   .col { overflow-y: auto; height: 100%; min-width: 0; background: var(--bg); }
-  .col-head { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 14px 14px 8px; font-size: 13px; font-weight: 600;
+  .col-head { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 14px 14px 8px; font-size: 14px; font-weight: 600;
     color: var(--ink-2); }
   .colfind { padding: 0 12px 8px; position: sticky; top: 34px; background: var(--bg); z-index: 2; }
-  .colfind input { width: 100%; font: inherit; font-size: 12.5px; padding: 8px 10px; border: 0; border-radius: 7px;
+  .colfind input { width: 100%; font: inherit; font-size: 14px; padding: 8px 10px; border: 0; border-radius: 8px;
     background: var(--fill); color: var(--ink); }
   .colfind input:focus { outline: none; box-shadow: 0 0 0 2px var(--accent); }
   .cards { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 16px; }
-  .pcard { background: var(--panel); border-radius: var(--radius); padding: 12px 13px; cursor: pointer; transition: background var(--t); min-width: 0; }
+  .pcard { background: var(--panel); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; transition: background var(--t); min-width: 0; }
   .pcard:hover { background: var(--panel-2); }
-  .pcard.on { background: var(--accent-soft); }
-  .pcard.on .t { color: var(--accent); }
-  .pcard .t { font-weight: 600; font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  .pcard.on { background: var(--fill); }
+  .pcard.on .t { color: var(--ink); }
+  .pcard .t { font-weight: 500; font-size: 14px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
-  .pcard .s { color: var(--ink-3); font-size: 11px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
-  .pcard .s.sans { font-family: var(--sans); color: var(--ink-2); font-size: 12px; }
+  .pcard .s { color: var(--ink-3); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .pcard .s.sans { font-family: var(--sans); color: var(--ink-2); font-size: 13px; }
   .pcard .m { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .pcard .mmeta { margin-top: 6px; font-size: 13px; }
   .pcard.on .pill { background: var(--panel); }
   .row { display: none; }
 
@@ -980,68 +938,68 @@ INDEX_HTML = r"""<!doctype html>
   #transcript { padding: 20px 26px 60px; margin: 0 auto; }
   .conv-head { margin-bottom: 14px; }
   .conv-head h2 { font-size: 16px; font-weight: 600; margin: 0 0 3px; letter-spacing: -.01em; }
-  .conv-head .sub { color: var(--ink-3); font-size: 12px; font-family: var(--mono); }
+  .conv-head .sub { color: var(--ink-3); font-size: 13px; font-family: var(--mono); }
   .msg { display: grid; grid-template-columns: 84px minmax(0,1fr); gap: 8px 12px; padding: 12px 12px; border-radius: var(--r-sm);
     margin: 0 -12px; transition: background var(--t); }
   .msg:hover { background: var(--panel); }
-  .who { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 11px; color: var(--ink-3); }
-  .rc { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
+  .who { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 12px; color: var(--ink-3); }
+  .rc { font-size: 12px; font-weight: 600; letter-spacing: 0; padding: 2px 7px; border-radius: 6px;
     background: var(--fill); color: var(--ink-2); }
   .msg.user .rc { background: var(--info-soft); color: var(--user); }
   .msg.assistant .rc { background: var(--ok-soft); color: var(--ok); }
   .msg.system .rc { background: var(--warn-soft); color: var(--warn); }
-  .who .ts, .who .tc { font-size: 10.5px; color: var(--ink-3); font-family: var(--mono); }
-  .mbody { min-width: 0; font-size: 13.5px; line-height: 1.6; }
+  .who .ts, .who .tc { font-size: 12px; color: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; }
+  .mbody { min-width: 0; font-size: 14px; line-height: 1.6; }
   .text { white-space: pre-wrap; word-wrap: break-word; }
   .md p { margin: 0 0 8px; } .md p:last-child { margin: 0; }
   .md ul, .md ol { margin: 4px 0 8px; padding-left: 22px; }
   .md li { margin: 2px 0; }
-  .md h1, .md h2, .md h3, .md h4 { font-size: 13.5px; font-weight: 600; margin: 10px 0 4px; }
-  .md code { font-family: var(--mono); font-size: 12px; background: var(--fill); padding: 1px 5px; border-radius: 4px; }
+  .md h1, .md h2, .md h3, .md h4 { font-size: 14px; font-weight: 600; margin: 10px 0 4px; }
+  .md code { font-family: var(--mono); font-size: 13px; background: var(--fill); padding: 1px 5px; border-radius: 6px; }
   .md pre { margin: 6px 0 8px; background: var(--panel-2); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
-  .md pre code { background: none; padding: 0; font-size: 12px; line-height: 1.5; white-space: pre; }
+  .md pre code { background: none; padding: 0; font-size: 13px; line-height: 1.5; white-space: pre; }
   .md blockquote { margin: 4px 0 8px; padding: 6px 12px; background: var(--panel-2); border-radius: 6px; color: var(--ink-2); }
   .thinking { background: var(--panel-2); border-radius: 8px; padding: 8px 12px; color: var(--ink-2); font-style: italic;
-    white-space: pre-wrap; margin: 6px 0; font-size: 12.5px; }
-  .ctxtog { font: inherit; font-size: 11px; color: var(--ink-3); background: var(--fill); border: 0; border-radius: 5px; padding: 2px 8px;
+    white-space: pre-wrap; margin: 6px 0; font-size: 14px; }
+  .ctxtog { font: inherit; font-size: 12px; color: var(--ink-3); background: var(--fill); border: 0; border-radius: 6px; padding: 2px 8px;
     cursor: pointer; margin: 4px 0; }
   .ctxtog:hover { color: var(--ink); background: var(--fill-2); }
   .ctxbody { display: none; margin: 6px 0 4px; }
   .ctxbody.on { display: block; }
-  .ctxbody pre { margin: 0; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-word; color: var(--ink-3);
+  .ctxbody pre { margin: 0; font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word; color: var(--ink-3);
     background: var(--panel-2); border-radius: 8px; padding: 10px 12px; max-height: 300px; overflow: auto; }
   .tcall { border-radius: 8px; margin: 6px 0; overflow: hidden; background: var(--panel-2); }
-  .tcall .th { display: flex; align-items: center; gap: 8px; padding: 7px 11px; font-family: var(--mono); font-size: 12px; cursor: pointer;
+  .tcall .th { display: flex; align-items: center; gap: 8px; padding: 7px 11px; font-family: var(--mono); font-size: 13px; cursor: pointer;
     user-select: none; color: var(--ink-2); transition: background var(--t); }
   .tcall .th:hover { background: var(--fill); }
   .tcall .th .tn { color: var(--ink); font-weight: 600; }
   .tcall .th .ta { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .tcall .th .sz { margin-left: auto; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+  .tcall .th .sz { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
   .tcall .th .tg { font-size: 9px; color: var(--ink-3); transition: transform var(--t); }
   .tcall.open .th .tg { transform: rotate(90deg); }
   .tcall.err .th .tn { color: var(--bad); }
   .tcall .tb2 { display: none; }
   .tcall.open .tb2 { display: block; }
-  .tcall .tl2 { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 7px 11px 0; }
-  .tcall pre { margin: 0; padding: 6px 11px 10px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+  .tcall .tl2 { font-family: var(--mono); font-size: 12px; letter-spacing: 0; color: var(--ink-3); padding: 7px 11px 0; }
+  .tcall pre { margin: 0; padding: 6px 11px 10px; overflow-x: auto; font-family: var(--mono); font-size: 13px; white-space: pre-wrap;
     word-break: break-word; max-height: 340px; color: var(--ink-2); }
   .tcall.err pre.res { color: var(--bad); }
   .block { border-radius: 8px; margin: 6px 0; background: var(--panel-2); overflow: hidden; }
-  .block .bh { padding: 6px 11px; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; align-items: center; }
-  .block pre { margin: 0; padding: 8px 11px; overflow-x: auto; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+  .block .bh { padding: 6px 11px; font-family: var(--mono); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+  .block pre { margin: 0; padding: 8px 11px; overflow-x: auto; font-family: var(--mono); font-size: 13px; white-space: pre-wrap;
     word-break: break-word; max-height: 340px; }
-  .badge { font-size: 10px; padding: 1px 6px; border-radius: 5px; background: var(--fill); color: var(--ink-3); font-family: var(--mono); }
-  .compact { border-radius: 8px; background: var(--warn-soft); color: var(--warn); padding: 8px 12px; font-size: 12px; font-family: var(--mono); }
+  .badge { font-size: 12px; padding: 1px 6px; border-radius: 6px; background: var(--fill); color: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; }
+  .compact { border-radius: 8px; background: var(--warn-soft); color: var(--warn); padding: 8px 12px; font-size: 13px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
   .conv-stats { margin: 0 0 12px; }
   .ctxbox { padding: 12px 14px 8px; margin-bottom: 16px; }
-  .ctxbox .ch { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; color: var(--ink-2); font-weight: 600; }
-  .ctxbox .ch span:last-child { margin-left: auto; font-weight: 400; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .ctxbox .ch { display: flex; align-items: baseline; gap: 10px; font-size: 14px; color: var(--ink-2); font-weight: 600; }
+  .ctxbox .ch span:last-child { margin-left: auto; font-weight: 400; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); }
   .ctxsvg { width: 100%; height: auto; display: block; margin-top: 6px; }
   .ctxsvg .bar { fill: var(--accent); opacity: .55; transition: opacity var(--t); }
   .ctxsvg .bar:hover, .ctxsvg .bar.on { opacity: 1; }
   .ctxsvg .cap { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 3 3; }
   .ctxsvg .cost { fill: none; stroke: var(--info); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-  .ctxsvg text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .ctxsvg text { fill: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 9px; }
 
   /* ==========================================================================
      OVERVIEW — readouts, the trace, the punchcard, the spectrum, the ledgers.
@@ -1057,24 +1015,25 @@ INDEX_HTML = r"""<!doctype html>
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 2px 0 16px; }
   .tile { position: relative; overflow: hidden; background: var(--panel); border-radius: var(--radius);
     padding: 13px 15px 0; display: flex; flex-direction: column; min-width: 0; min-height: 124px; }
-  .tile-h { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+  .tile-h { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); min-width: 0; }
   .tile-h .ic { width: 15px; height: 15px; } .tile-h .ic svg { width: 15px; height: 15px; }
   .tile-h .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tile-v { font-size: 27px; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums;
+  .tile-v { font-size: 30px; font-weight: 600; letter-spacing: -.035em; font-variant-numeric: tabular-nums;
     line-height: 1.15; margin-top: 7px; }
-  .tile-v small { font-size: 15px; font-weight: 600; color: var(--ink-3); letter-spacing: -.02em; margin-left: 3px; }
-  .tile-s { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile-v small { font-size: 16px; font-weight: 600; color: var(--ink-3); letter-spacing: -.02em; margin-left: 3px; }
+  .tile-s { font-size: 13px; color: var(--ink-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* a delta is a direction first and a number second: the arrow is the read,
      the percentage is the detail. Neutral when the move is under a point —
      tinting noise green is how a dashboard starts lying. */
-  .dlt { display: inline-flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 11px; font-weight: 600;
+  .dlt { display: inline-flex; align-items: center; gap: 3px; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600;
     color: var(--ink-3); font-variant-numeric: tabular-nums; flex: none; }
-  .dlt.up { color: var(--ok); } .dlt.dn { color: var(--bad); }
+  /* a delta is information, not an alarm: a quiet week is not an outage */
+  .dlt.up, .dlt.dn { color: var(--ink-3); }
   .tile-c { margin: auto -15px 0; height: 38px; display: block; }
   .tile-c svg { display: block; width: 100%; height: 38px; }
-  .tile-c .ln { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round;
+  .tile-c .ln { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round;
     vector-effect: non-scaling-stroke; }
-  .tile-c .ar { fill: var(--accent); opacity: .12; }
+  .tile-c .ar { opacity: 1; }
   .tile-c .br { fill: var(--accent); opacity: .55; }
   .tile-c .br.hi { opacity: 1; }
   .tile-c .fl { fill: var(--fill-2); }
@@ -1103,24 +1062,24 @@ INDEX_HTML = r"""<!doctype html>
   /* a card that owns its own header, so a section label is not spent on it */
   .c-h { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; min-width: 0; }
   .c-h .ic { width: 16px; height: 16px; } .c-h .ic svg { width: 16px; height: 16px; }
-  .c-h h3 { font-size: 13px; font-weight: 600; color: var(--ink); margin: 0; white-space: nowrap; }
-  .c-h .cn { font-family: var(--mono); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .c-h h3 { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0; white-space: nowrap; }
+  .c-h .cn { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .c-h .sp { flex: 1; }
   .c-h .fchips { flex: none; }
   /* ---- the five families, as a standings list rather than five squat cards -- */
   .provs { display: flex; flex-direction: column; gap: 1px; margin: 0 -6px -4px; }
   .fam { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 1px 10px;
-    align-items: center; padding: 8px 10px; border-radius: 9px; cursor: pointer; min-width: 0; position: relative;
+    align-items: center; padding: 8px 10px; border-radius: 8px; cursor: pointer; min-width: 0; position: relative;
     background: transparent; transition: background var(--t); }
   .fam:hover { background: var(--panel-2); }
-  .fam.cur { background: var(--accent-soft); }
+  .fam.cur { background: var(--panel-2); }
   .fam.cur:hover { background: var(--accent-soft-2); }
   .fam .mark2 { grid-column: 1; grid-row: 1 / 3; width: 26px; height: 26px; }
   .fam .mark2 svg { width: 16px; height: 16px; }
-  .fam .fn { grid-column: 2; grid-row: 1; font-weight: 600; font-size: 12.5px; overflow: hidden;
+  .fam .fn { grid-column: 2; grid-row: 1; font-weight: 600; font-size: 14px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .fam.cur .fn { color: var(--accent); }
-  .fam .fm { grid-column: 2; grid-row: 2; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+  .fam .fm { grid-column: 2; grid-row: 2; font-family: var(--mono); font-size: 12px; color: var(--ink-3);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fam .fm.none { font-family: var(--sans); font-style: italic; }
   /* the right edge of the row is one thing at a time: the state, until you
@@ -1130,39 +1089,39 @@ INDEX_HTML = r"""<!doctype html>
   .fam .ff { display: none; align-items: center; gap: 6px; }
   .fam:hover .ff, .fam:focus-within .ff { display: flex; }
   .fam:hover .fst, .fam:focus-within .fst { display: none; }
-  .fam .ff .b { padding: 3px 9px; font-size: 11px; }
-  .fam .fst { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
-  .fam .fst .t2 { font-size: 9.5px; padding: 2px 5px; }
-  .fam .pr { font-family: var(--mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; max-width: 96px;
+  .fam .ff .b { padding: 3px 9px; font-size: 12px; }
+  .fam .fst { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+  .fam .fst .t2 { font-size: 12px; padding: 2px 5px; }
+  .fam .pr { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); white-space: nowrap; max-width: 96px;
     overflow: hidden; text-overflow: ellipsis; }
   .fam .pr.ok { color: var(--ok); } .fam .pr.bad { color: var(--bad); }
   /* a run, at a glance: state, what it was, how long ago. The full ledger
      is one click away, so this row says the least that still identifies it. */
   .arow { display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; cursor: pointer;
-    font-size: 12.5px; min-width: 0; transition: background var(--t); }
+    font-size: 14px; min-width: 0; transition: background var(--t); }
   .arow:hover { background: var(--panel-2); }
   .arow .an { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .arow .aa { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); flex: none; }
+  .arow .aa { font-family: var(--mono); font-size: 12px; color: var(--ink-3); flex: none; }
   /* ---- the ledger, on the Activity page: one line per run or job ----------
      Nine columns on one grid so the header and every row line up by
      construction, and the numeric ones are mono and right-aligned: a column
      of durations you cannot compare down the page is a list, not a ledger. */
   .xlist { display: flex; flex-direction: column; gap: 1px; }
   .xrow { display: grid; grid-template-columns: 8px 76px minmax(0, 1fr) 58px 78px 66px 62px 84px 62px;
-    gap: 10px; align-items: center; padding: 8px 11px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
+    gap: 10px; align-items: center; padding: 8px 11px; border-radius: 8px; font-size: 14px; cursor: pointer;
     min-width: 0; transition: background var(--t); }
   .xrow:hover { background: var(--panel); }
-  .xrow.head { padding: 2px 11px 6px; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  .xrow.head { padding: 2px 11px 6px; font-size: 12px; font-weight: 600; letter-spacing: 0;
     color: var(--ink-3); cursor: default; }
   .xrow.head:hover { background: transparent; }
   .xrow.head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .xrow.head span:nth-child(n+4) { text-align: right; }
-  .xk { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xk { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .xn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .xv { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); text-align: right;
+  .xv { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); text-align: right;
     font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .xs { text-align: right; } .xs .t2 { font-size: 9.5px; }
-  .xa { font-family: var(--mono); font-size: 11px; color: var(--ink-3); text-align: right; white-space: nowrap; }
+  .xs { text-align: right; font-size: 13px; color: var(--ink-2); } .xs.bad { color: var(--bad); font-weight: 500; }
+  .xa { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); text-align: right; white-space: nowrap; }
   .xmore { margin-top: 12px; }
   @media (max-width: 1200px) {
     .xrow { grid-template-columns: 8px 70px minmax(0, 1fr) 78px 84px 62px; }
@@ -1171,31 +1130,38 @@ INDEX_HTML = r"""<!doctype html>
   }
   /* the one way out of a card, in the card's own bottom padding */
   .c-more { display: block; width: 100%; margin: 6px 0 -4px; padding: 7px 10px; border: 0; border-radius: 8px;
-    background: transparent; font: inherit; font-size: 12px; color: var(--ink-3); text-align: left; cursor: pointer;
+    background: transparent; font: inherit; font-size: 13px; color: var(--ink-3); text-align: left; cursor: pointer;
     transition: background var(--t), color var(--t); }
   .c-more:hover { background: var(--panel-2); color: var(--accent); }
-  .lcd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 22px; font-size: 12px; color: var(--ink-3); margin: 0 0 18px; }
-  .lcd i { font-style: normal; color: var(--ink); font-weight: 600; font-size: 15px; letter-spacing: -.02em; font-variant-numeric: tabular-nums;
-    margin-right: 5px; font-family: var(--mono); }
+  .lcd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 22px; font-size: 13px; color: var(--ink-3); margin: 0 0 18px; }
+  .lcd i { font-style: normal; color: var(--ink); font-weight: 600; font-size: 16px; letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+    margin-right: 5px; font-family: var(--sans); font-variant-numeric: tabular-nums; }
   .lcd .hot i { color: var(--accent); }
   .lcd.tight { margin: 4px 0 10px; gap: 0 18px; }
   .lcd .dim i { color: var(--ink-2); }
   .trace { position: relative; padding: 14px 16px 8px; margin-bottom: 12px; }
   .trace-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-  .trace-t { font-size: 13px; font-weight: 600; color: var(--ink-2); }
-  .trace-pk { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+  .trace-t { font-size: 14px; font-weight: 600; color: var(--ink-2); }
+  .trace-pk { margin-left: auto; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); }
   .trace-pk b { color: var(--ink); }
   .trace svg { display: block; width: 100%; height: auto; }
-  .trace .env { fill: var(--accent); opacity: .1; }
+  .trace { position: relative; }
+  .trace .env { opacity: 1; }
   .trace .sig { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-  .trace .raw { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .3; vector-effect: non-scaling-stroke; }
+  /* the hover: a hairline crosshair and a small card with the day's number */
+  .trace .xh { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+  .trace .tip, .bars-wrap .tip, .us-chart .tip { position: absolute; top: 40px; pointer-events: none; padding: 6px 10px; border-radius: 8px;
+    background: var(--ink); color: var(--bg); font-size: 13px; white-space: nowrap; box-shadow: 0 6px 20px -8px var(--dim); }
+  .trace .tip b { font-weight: 600; margin-right: 4px; }
+  .trace .tip span { margin-left: 8px; opacity: .65; }
   .trace .pk { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
   .trace .pkd { fill: var(--accent); }
-  .trace .base { stroke: var(--fill-2); stroke-width: 1; }
-  .trace text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .trace .base { stroke: var(--fill-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  /* in viewBox units: the chart is 1000 wide and renders ~650px, so 17 ≈ 11px */
+  .trace text { fill: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 17px; }
   @media (prefers-reduced-motion: no-preference) {
     .trace .sig { animation: draw 1.15s cubic-bezier(.22,.7,.2,1) forwards; }
-    .trace .env, .trace .raw { animation: fadein .8s .35s both ease-out; }
+    .trace .env { animation: fadein .8s .35s both ease-out; }
     @keyframes draw { to { stroke-dashoffset: 0; } }
     @keyframes fadein { from { opacity: 0; } }
   }
@@ -1203,84 +1169,84 @@ INDEX_HTML = r"""<!doctype html>
   @media (max-width: 980px) { .duo { grid-template-columns: 1fr; } }
   .punch { width: 100%; height: auto; display: block; }
   .punch .cell { fill: var(--accent); }
-  .punch text { fill: var(--ink-3); font-family: var(--mono); font-size: 8.5px; }
-  .spec { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; margin-bottom: 14px; }
+  .punch text { fill: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 8.5px; }
+  .spec { display: flex; height: 10px; border-radius: 6px; overflow: hidden; gap: 2px; margin-bottom: 14px; }
   .spec i { display: block; background: var(--accent); }
-  .tl { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; align-items: baseline; font-size: 12px; }
-  .tl .tn { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .tl { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; align-items: baseline; font-size: 13px; }
+  .tl .tn { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sans); font-variant-numeric: tabular-nums; }
   .tl .tc { color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .tl .tp { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; min-width: 34px; }
   .tl .sw { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); display: inline-block; margin-right: 8px; }
   .plist { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
-  .prow { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px;
+  .prow { position: relative; display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 14px;
     overflow: hidden; background: var(--panel-2); }
   .prow .fillbar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); opacity: .1; }
   .prow .pn { position: relative; font-weight: 600; }
-  .prow .pp { position: relative; color: var(--ink-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .prow .pp { position: relative; color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
   .prow .pv { position: relative; margin-left: auto; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums;
-    font-family: var(--mono); font-size: 11.5px; }
-  .prow .pf { position: relative; } .prow .pf .mark2 { width: 18px; height: 18px; border-radius: 5px; }
+    font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .prow .pf { position: relative; } .prow .pf .mark2 { width: 18px; height: 18px; border-radius: 6px; }
   .prow .pf .mark2 svg { width: 11px; height: 11px; }
   .prow .t2 { position: relative; }
   .bars { width: 100%; height: auto; display: block; margin: 6px 0 4px; }
-  .bars .est { fill: url(#hatch); }
+  .bars .est { fill: var(--accent); opacity: .32; }
   .bars .rec { fill: var(--accent); }
-  .bars .hl { fill: var(--accent); opacity: .18; }
-  .bars text { fill: var(--ink-3); font-family: var(--mono); font-size: 9px; }
+  .bars text { fill: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 17px; }
+  .bars path:hover { opacity: .85; }
   .bars .base { stroke: var(--fill-2); stroke-width: 1; }
-  .leg { display: flex; gap: 14px; font-size: 11px; color: var(--ink-3); margin-bottom: 8px; flex-wrap: wrap; }
+  .leg { display: flex; gap: 14px; font-size: 12px; color: var(--ink-3); margin-bottom: 8px; flex-wrap: wrap; }
   .leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; background: var(--accent); }
-  .leg i.est { background: repeating-linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 4px); }
-  .run-ph { margin: 14px 0 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); display: flex; gap: 10px; align-items: center; }
-  .run-ag { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; margin: 6px 0; font-size: 12.5px; }
-  .run-ag .rh { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .leg i.est { background: var(--accent); opacity: .32; }
+  .run-ph { margin: 14px 0 6px; font-size: 14px; font-weight: 600; color: var(--ink-2); display: flex; gap: 10px; align-items: center; }
+  .run-ag { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; margin: 6px 0; font-size: 14px; }
+  .run-ag .rh { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .run-ag .rh b { font-weight: 600; }
   .run-ag .rh .sp { flex: 1; }
-  .run-ag .rs { color: var(--ink-2); margin-top: 5px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font-size: 12px; }
-  .run-ag .re { color: var(--bad); font-family: var(--mono); font-size: 11.5px; margin-top: 5px; }
-  .log { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 11px; line-height: 1.55;
+  .run-ag .rs { color: var(--ink-2); margin-top: 5px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font-size: 13px; }
+  .run-ag .re { color: var(--bad); font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; margin-top: 5px; }
+  .log { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.55;
     max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
 
   /* ==========================================================================
      MODELS — a comparison table, local models, provider setup, self-host.
      ========================================================================== */
   .hero { padding: 18px 20px; margin-bottom: 20px; }
-  .hero-t { font-size: 18px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 4px; }
-  .hero-s { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; max-width: 62ch; }
-  .hero-m { font-family: var(--mono); font-weight: 600; font-size: 14px; }
+  .hero-t { font-size: 24px; font-weight: 600; letter-spacing: -.02em; margin: 0 0 4px; }
+  .hero-s { font-size: 14px; color: var(--ink-2); line-height: 1.5; max-width: 62ch; }
+  .hero-m { font-family: var(--mono); font-weight: 600; font-size: 15px; }
   .host { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; margin-bottom: 20px; }
-  .host .kbadge { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 3px 9px; border-radius: 6px; }
+  .host .kbadge { font-size: 12px; font-weight: 600; letter-spacing: 0; padding: 3px 9px; border-radius: 6px; }
   .kbadge.selfhost, .kbadge.local { background: var(--info-soft); color: var(--info); }
   .kbadge.provider { background: var(--ok-soft); color: var(--ok); }
   .kbadge.default { background: var(--fill); color: var(--ink-2); }
-  .host .hm { font-family: var(--mono); font-weight: 600; font-size: 14px; }
-  .host .hb, .hero .hb { font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-left: auto; word-break: break-all; }
+  .host .hm { font-family: var(--mono); font-weight: 600; font-size: 15px; }
+  .host .hb, .hero .hb { font-family: var(--mono); font-size: 13px; color: var(--ink-3); margin-left: auto; word-break: break-all; }
   .browse-head { display: flex; align-items: baseline; gap: 11px; margin-bottom: 10px; }
-  .cnt2 { font-size: 11.5px; color: var(--ink-2); background: var(--fill); padding: 1px 8px; border-radius: 6px; }
+  .cnt2 { font-size: 13px; color: var(--ink-2); background: var(--fill); padding: 1px 8px; border-radius: 6px; }
   .browse { overflow: hidden auto; max-height: 340px; margin-bottom: 22px; }
-  .brow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; cursor: pointer; border-radius: 7px; margin: 1px 4px; }
+  .brow { display: flex; align-items: center; gap: 12px; padding: 8px 12px; cursor: pointer; border-radius: 8px; margin: 1px 4px; }
   .brow:hover { background: var(--panel-2); }
-  .brow.cur { background: var(--accent-soft); }
-  .brow .bm { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .brow .bp { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
-  .brow .bx { font-size: 11px; color: var(--ink-3); white-space: nowrap; min-width: 62px; text-align: right; }
-  .browse-empty { padding: 14px 15px; font-size: 12.5px; color: var(--ink-3); font-style: italic; }
+  .brow.cur { background: var(--fill); }
+  .brow .bm { font-family: var(--mono); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .brow .bp { font-size: 13px; color: var(--ink-3); white-space: nowrap; }
+  .brow .bx { font-size: 12px; color: var(--ink-3); white-space: nowrap; min-width: 62px; text-align: right; }
+  .browse-empty { padding: 14px 15px; font-size: 14px; color: var(--ink-3); font-style: italic; }
   .selfhost-card { gap: 10px; margin-bottom: 20px; }
   .selfhost-card .fields, .selfhost .fields { display: flex; flex-direction: column; gap: 8px; }
   .selfhost-card .fields .r, .selfhost .fields .r { display: flex; gap: 8px; }
   .selfhost { border-radius: var(--radius); padding: 15px 17px; margin-bottom: 20px; background: var(--accent-soft); }
-  .selfhost h3 { margin: 0 0 4px; font-size: 14px; }
-  .keyline { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .selfhost h3 { margin: 0 0 4px; font-size: 15px; }
+  .keyline { display: flex; align-items: center; gap: 8px; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 13px; }
   .keyline .env { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .keyline .val { font-weight: 600; }
-  .src { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+  .src { font-size: 9px; letter-spacing: 0; font-weight: 600; padding: 2px 6px; border-radius: 6px; }
   .src.env { background: var(--info-soft); color: var(--info); }
   .src.saved { background: var(--ok-soft); color: var(--ok); }
   .setup { padding: 13px 15px 14px; margin-bottom: 10px; }
   .setup-h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  .setup-n { font-weight: 600; font-size: 13px; }
-  .setup-s { font-size: 12.5px; color: var(--ink-2); }
-  .setup-note { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 8px; }
+  .setup-n { font-weight: 600; font-size: 14px; }
+  .setup-s { font-size: 14px; color: var(--ink-2); }
+  .setup-note { font-size: 13px; color: var(--ink-3); line-height: 1.5; margin-top: 8px; }
   /* a card that changed group fades in where it landed — 140ms, the same
      step as every other transition on the page, and no motion for anyone
      who has asked for none */
@@ -1288,11 +1254,11 @@ INDEX_HTML = r"""<!doctype html>
     .ac-moved { animation: ac-land 140ms ease-out; }
   }
   @keyframes ac-land { from { opacity: 0; } to { opacity: 1; } }
-  .ready { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+  .ready { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
   .keyheld { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); }
-  .kh-l { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); }
-  .kh-v { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: .02em; }
-  .kh-n { font-size: 11px; color: var(--ink-3); }
+  .kh-l { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; letter-spacing: 0; color: var(--ink-3); }
+  .kh-v { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: .02em; }
+  .kh-n { font-size: 12px; color: var(--ink-3); }
   /* WHAT YOU ARE RUNNING — the hero of this page.
      The question this page exists to answer is "what am I running, and what
      else could I run". The answer to the first half was a word in the third
@@ -1303,25 +1269,25 @@ INDEX_HTML = r"""<!doctype html>
   .nowcard { position: relative; background: var(--panel); border-radius: var(--radius);
     padding: 16px 18px 14px; margin: 2px 0 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .now-top { display: flex; align-items: center; gap: 13px; min-width: 0; }
-  .now-top .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex;
+  .now-top .bigmark { width: 40px; height: 40px; border-radius: 12px; flex: none; display: inline-flex;
     align-items: center; justify-content: center; background: var(--fill); overflow: hidden; }
   .now-top .bigmark svg { width: 40px; height: 40px; display: block; }
   .now-t { min-width: 0; flex: 1; }
-  .now-id { font-family: var(--mono); font-size: 21px; font-weight: 600; letter-spacing: -.02em;
+  .now-id { font-family: var(--mono); font-size: 24px; font-weight: 600; letter-spacing: -.02em;
     line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .now-via { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; overflow: hidden;
+  .now-via { font-size: 14px; color: var(--ink-3); margin-top: 2px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
   .now-a { flex: none; display: flex; align-items: center; gap: 8px; }
   .now-facts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   /* Reachability is a claim, so it is only made when something checked. Until
      then it says so and offers the check — a page that shows a green dot for
      "a key is saved" is telling you something it does not know. */
-  .now-reach { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3);
+  .now-reach { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-3);
     flex-wrap: wrap; }
   .now-reach b { font-weight: 600; color: var(--ink-2); }
   .now-reach.ok b { color: var(--ok); }
   .now-reach.bad b { color: var(--bad); }
-  .now-none { font-size: 13px; color: var(--ink-2); }
+  .now-none { font-size: 14px; color: var(--ink-2); }
 
   /* SETUP, ONE CLICK AWAY — the provider grid is the same subject at a lower
      altitude, and 13 rows of "Not connected" above the models made the page
@@ -1330,13 +1296,13 @@ INDEX_HTML = r"""<!doctype html>
      connected, because then setup IS the job. */
   .provsum { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; width: 100%; margin: 0;
     padding: 11px 14px; border: 0; border-radius: var(--radius); background: var(--panel); color: var(--ink-2);
-    font: inherit; font-size: 13px; text-align: left; cursor: pointer; transition: background var(--t); }
+    font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background var(--t); }
   .provsum:hover { background: var(--panel-2); }
   .provsum b { font-weight: 600; color: var(--ink); }
   .provsum-m { display: flex; align-items: center; gap: 5px; flex: none; }
-  .provsum-m .mark2 { width: 20px; height: 20px; border-radius: 5px; background: none; }
+  .provsum-m .mark2 { width: 20px; height: 20px; border-radius: 6px; background: none; }
   .provsum-m .mark2 svg { width: 16px; height: 16px; }
-  .provsum-x { margin-left: auto; flex: none; font-size: 12.5px; color: var(--ink-3); }
+  .provsum-x { margin-left: auto; flex: none; font-size: 14px; color: var(--ink-3); }
   .provsum:hover .provsum-x { color: var(--accent); }
   .provbox { display: none; margin-top: 10px; }
   .provbox.on { display: block; }
@@ -1352,68 +1318,25 @@ INDEX_HTML = r"""<!doctype html>
      step. */
   .pmenu-w { position: relative; flex: none; }
   .pmenu-b { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px; border: 0;
-    border-radius: 8px; background: var(--fill); font: inherit; font-size: 12.5px; color: var(--ink-2);
+    border-radius: 8px; background: var(--fill); font: inherit; font-size: 14px; color: var(--ink-2);
     cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
   .pmenu-b:hover { background: var(--fill-2); color: var(--ink); }
   .pmenu-b i { font-style: normal; font-size: 8px; color: var(--ink-3); }
   .pmenu-b b { font-weight: 600; color: var(--ink); }
   .pmenu { position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; min-width: 190px; padding: 5px;
-    border-radius: 10px; background: var(--panel-2); box-shadow: 0 12px 32px -8px var(--dim);
+    border-radius: 8px; background: var(--panel-2); box-shadow: 0 12px 32px -8px var(--dim);
     display: flex; flex-direction: column; gap: 1px; }
   .pmenu.left { right: auto; left: 0; }
   .pmenu-i { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 9px; border: 0;
-    border-radius: 7px; background: transparent; font: inherit; font-size: 12.5px; color: var(--ink-2);
+    border-radius: 8px; background: transparent; font: inherit; font-size: 14px; color: var(--ink-2);
     text-align: left; cursor: pointer; white-space: nowrap; transition: background var(--t), color var(--t); }
   .pmenu-i:hover { background: var(--fill); color: var(--ink); }
   .pmenu-i.on { color: var(--accent); }
   .pmenu-i .pmenu-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .pmenu-i .pmenu-s { font-size: 11px; color: var(--ink-3); flex: none; }
-  .pmenu-i .omark { width: 18px; height: 18px; border-radius: 5px; background: none; flex: none; }
+  .pmenu-i .pmenu-s { font-size: 12px; color: var(--ink-3); flex: none; }
+  .pmenu-i .omark { width: 18px; height: 18px; border-radius: 6px; background: none; flex: none; }
   .pmenu-i .omark svg { width: 15px; height: 15px; }
-  .pmenu-h { padding: 6px 9px 3px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--ink-3); }
-
-  /* COMPARE — picking between two models means holding their numbers next to
-     each other, which the grid cannot do: they are three cards apart and the
-     facts are in different places on each. Pin up to three and they are laid
-     out as one table. The pin lives in the card's foot, revealed on hover the
-     same way the Deploy card reveals its verb, so a grid at rest is unchanged. */
-  .mm-pin { flex: none; margin-left: auto; padding: 0 8px; height: 20px; border: 0; border-radius: 6px;
-    background: var(--fill); font: inherit; font-size: 11px; font-weight: 600; color: var(--ink-3);
-    cursor: pointer; opacity: 0; transition: opacity var(--t), background var(--t), color var(--t); }
-  .mmcard:hover .mm-pin, .mm-pin:focus-visible, .mm-pin.on { opacity: 1; }
-  .mm-pin:hover { color: var(--ink); }
-  .mm-pin.on { background: var(--accent); color: var(--accent-ink); }
-  .mmcard.on .mm-pin { background: var(--panel); }
-  .mmcard.on .mm-pin.on { background: var(--accent); color: var(--accent-ink); }
-  /* the tray: what is pinned, and the one thing to do with it */
-  .cmp-bar { position: sticky; bottom: 14px; z-index: 30; display: none; align-items: center; gap: 10px;
-    margin: 14px 0 0; padding: 10px 14px; border-radius: var(--radius); background: var(--panel-2);
-    box-shadow: 0 12px 32px -8px var(--dim); }
-  .cmp-bar.on { display: flex; }
-  .cmp-bar .cmp-n { font-size: 12.5px; color: var(--ink-2); flex: none; }
-  .cmp-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1; }
-  .cmp-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 9px;
-    border-radius: 7px; background: var(--fill); font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
-  .cmp-x { border: 0; background: none; padding: 0 4px; font: inherit; font-size: 13px; line-height: 1;
-    color: var(--ink-3); cursor: pointer; border-radius: 5px; }
-  .cmp-x:hover { color: var(--ink); background: var(--panel); }
-  /* the table: one column per model, one row per fact, differences left to
-     the reader — nothing here scores or ranks, because nothing here can */
-  .cmp-grid { display: grid; gap: 1px; background: none; margin-top: 4px; }
-  .cmp-r { display: grid; grid-template-columns: var(--cmp-cols); gap: 10px; align-items: center;
-    padding: 8px 10px; border-radius: 7px; }
-  .cmp-r:nth-child(odd) { background: var(--panel-2); }
-  .cmp-k { font-size: 11.5px; color: var(--ink-3); }
-  .cmp-v { font-size: 12.5px; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .cmp-v.mono { font-family: var(--mono); }
-  .cmp-v.dim { color: var(--ink-3); }
-  .cmp-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .cmp-h .omark { width: 22px; height: 22px; border-radius: 6px; background: none; flex: none; }
-  .cmp-h .omark svg { width: 18px; height: 18px; }
-  .cmp-h b { font-family: var(--mono); font-size: 12.5px; font-weight: 600; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+  .pmenu-h { padding: 6px 9px 3px; font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--ink-3); }
 
   .mm-flat { display: none; }
   .mm-flat.on { display: block; }
@@ -1421,19 +1344,23 @@ INDEX_HTML = r"""<!doctype html>
   .mm-off { display: none !important; }
 
   /* a labelled grid per source */
-  .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 12.5px;
+  .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 14px;
     font-weight: 600; color: var(--ink-2); }
-  .mm-glabel .mark2 { width: 18px; height: 18px; border-radius: 5px; }
+  .mm-glabel .mark2 { width: 18px; height: 18px; border-radius: 6px; }
   .mm-glabel .mark2 svg { width: 11px; height: 11px; }
   /* the stand-in for a family that is not a vendor: the page's own pixel
      grid, in neutral ink, so it cannot be mistaken for somebody's logo */
   .mm-anymark { color: var(--ink-3); }
+  .now-top .omark { width: 40px; height: 40px; border-radius: 12px; }
+  .now-top .omark svg { width: 40px; height: 40px; }
+  .mm-hostmark { color: var(--accent); }
+  .mm-hostmark svg { fill: currentColor; }
+  .omark.mm-hostmark svg, .bigmark.mm-hostmark svg { width: 44%; height: 44%; }
   .mm-anymark svg { fill: currentColor; }
-  .mm-gn { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
+  .mm-gn { font-weight: 400; color: var(--ink-3); font-size: 13px; }
   /* The head gives its 70px back: nothing sits top-right unless the card is
      the current one, and reserving that space would truncate a long model id
      for no reason. */
-  .mmcard .mh { padding-right: 0; }
   .mmcard.on .mh { padding-right: 84px; }
   /* THE CURRENT MODEL'S CARD — the badge, and nothing else.
      .mcard.on carries an accent wash on the Deploy picker, where it means
@@ -1443,59 +1370,63 @@ INDEX_HTML = r"""<!doctype html>
      card keeps the neutral surface its neighbours have. */
   .mcard.mmcard.on { background: var(--panel); }
   .mcard.mmcard.on:hover { background: var(--panel-2); }
-  .mcard.mmcard.on .pill, .mcard.mmcard.on .cap,
-  .mcard.mmcard.on .mm-pin { background: var(--fill); }
+  .mcard.mmcard.on .pill, .mcard.mmcard.on .cap { background: var(--fill); }
   /* keyboard focus is a background step, like every other state on the page */
   .mmcard.kb { background: var(--fill); }
   .mmcard.locked .mt { color: var(--ink-2); }
   /* The foot: the compare pin, and the one action. */
-  .mm-foot { display: flex; align-items: center; gap: 10px; min-height: 16px; margin-top: auto; }
-  .mm-act { margin-left: 10px; font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
-  .mmcard:hover .mm-act { color: var(--accent); }
-  .mmcard.locked .mm-act { color: var(--warn); }
   /* the tag is clipped by the card it sits on */
   .mmcard, .nowcard { overflow: hidden; }
   /* the head keeps clear of it; so does the hero's whole top row */
   .nowcard.hastag .now-top { padding-right: 104px; }
-  .cap { font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+  .cap { font-size: 12px; letter-spacing: 0; font-weight: 600; padding: 2px 6px; border-radius: 6px;
     background: var(--fill); color: var(--ink-3); }
   .cap.ok { background: var(--ok-soft); color: var(--ok); }
   .cap.bad { background: var(--bad-soft); color: var(--bad); }
   .cap.amb { background: var(--warn-soft); color: var(--warn); }
   .mcard.on .cap { background: var(--panel); }
   .orow { display: grid; grid-template-columns: minmax(0,1fr) 90px 72px 92px 62px; gap: 12px; align-items: center; padding: 8px 11px;
-    border-radius: 7px; font-size: 12.5px; cursor: pointer; transition: background var(--t); }
+    border-radius: 8px; font-size: 14px; cursor: pointer; transition: background var(--t); }
   .orow:hover { background: var(--panel-2); }
-  .orow.cur { background: var(--accent-soft); }
+  .orow.cur { background: var(--fill); }
   .orow .on2 { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .orow .osz, .orow .opq { color: var(--ink-2); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); }
-  .orow .ost { font-size: 10px; }
-  .orow .ogo { font-size: 11px; color: var(--ink-3); text-align: right; }
+  .orow .osz, .orow .opq { color: var(--ink-2); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--sans); font-variant-numeric: tabular-nums; }
+  .orow .ost { font-size: 12px; }
+  .orow .ogo { font-size: 12px; color: var(--ink-3); text-align: right; }
   .orow:hover .ogo { color: var(--accent); }
 
   /* ==========================================================================
      CONFIG
      ========================================================================== */
-  .cfg { margin-bottom: 20px; padding: 4px; }
-  .cfg .kv { display: grid; grid-template-columns: 220px 1fr; gap: 12px; padding: 8px 12px; border-radius: 6px; }
-  .cfg .kv:nth-child(odd) { background: var(--panel-2); }
-  .cfg .kv .ck { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
-  .cfg .kv .cv { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  /* The key column is sized by the longest key that is actually here, not by a
+     guess: the grid lives on the table so every row shares one track, and the
+     rows hand their cells straight to it. A short key like `env` no longer
+     leaves 200px of nothing before its value. */
+  .cfg { margin-bottom: 20px; padding: 4px; display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
+  .cfg .kv { display: contents; }
+  .cfg .kv > * { padding: 8px 12px; min-width: 0; }
+  .cfg .kv .ck { padding-right: 24px; }
+  .cfg .kv:nth-child(odd) > * { background: var(--panel-2); }
+  .cfg .kv:nth-child(odd) > :first-child { border-radius: 6px 0 0 6px; }
+  .cfg .kv:nth-child(odd) > :last-child { border-radius: 0 6px 6px 0; }
+  .cfg .kv .ck { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+  .cfg .kv .cv { font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
   details.layer { margin-bottom: 8px; }
   details.layer summary { padding: 11px 14px; cursor: pointer; display: flex; align-items: center; gap: 9px;
     list-style: none; }
   details.layer summary::-webkit-details-marker { display: none; }
-  details.layer summary::before { content: "▸"; color: var(--ink-3); font-size: 10px; }
+  details.layer summary::before { content: "▸"; color: var(--ink-3); font-size: 12px; }
   details.layer[open] summary::before { content: "▾"; }
   details.layer summary:hover { color: var(--ink); }
   .lay-n { font-weight: 600; }
-  .lay-c { color: var(--ink-3); font-size: 12.5px; }
-  details.layer pre { margin: 0; padding: 0 14px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-  .layerpath { font-family: var(--mono); font-size: 11px; color: var(--ink-3); padding: 0 14px 8px; }
-  .note-sec { font-size: 12px; color: var(--ink-3); margin: -14px 0 18px; }
+  .lay-c { color: var(--ink-3); font-size: 14px; }
+  details.layer pre { margin: 0; padding: 0 14px 12px; font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .layerpath { font-family: var(--mono); font-size: 12px; color: var(--ink-3); padding: 0 14px 8px; }
+  .note-sec { font-size: 13px; color: var(--ink-3); margin: -14px 0 18px; }
   .now { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; padding: 12px 14px; border-radius: var(--radius); background: var(--panel); }
-  .now .k { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
-  .now .v { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+  .now .k { font-size: 12px; color: var(--ink-3); letter-spacing: 0; }
+  .now .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
 
   /* ==========================================================================
      DEPLOY — provider cards, model cards, GPU cards, the job sheet, the
@@ -1512,157 +1443,232 @@ INDEX_HTML = r"""<!doctype html>
   .dpc.blocked .fs.warn b { color: var(--warn); font-weight: 600; }
   .dpc.blocked .bigmark { opacity: .75; }
   .dpc .fh { display: flex; align-items: center; gap: 12px; }
-  .dpc .bigmark { width: 40px; height: 40px; border-radius: 11px; flex: none; display: inline-flex; align-items: center;
+  .dpc .bigmark { width: 40px; height: 40px; border-radius: 12px; flex: none; display: inline-flex; align-items: center;
     justify-content: center; background: var(--fill); color: var(--ink); overflow: hidden; }
   .dpc .bigmark svg { width: 40px; height: 40px; display: block; }
   .dpc .ft { min-width: 0; flex: 1; }
-  .dpc .fn { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpc .fn { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dpc.on .fn { color: var(--accent); }
-  .dpc .fd { font-size: 11.5px; color: var(--ink-3); line-height: 1.35; margin-top: 1px; }
-  .dpc .fs { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+  .dpc .fd { font-size: 13px; color: var(--ink-3); line-height: 1.35; margin-top: 1px; }
+  /* A state reads as one sentence, and it breaks between its clauses, never
+     inside them: the name of the state holds its line, and the clause that
+     qualifies it drops to the next line whole rather than being cut mid-word. */
+  .dpc .fs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 14px;
+    color: var(--ink-2); min-width: 0; }
   .dpc .fs .dot2 { width: 8px; height: 8px; }
-  .dpc .fs b { font-weight: 600; color: var(--ink); }
-  .dpc .fs .fsx { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpc .fs b { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .dpc .fs .fsx { flex: 1 1 auto; min-width: 0; color: var(--ink-3); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
   .dpc .fs.warn .fsx { color: var(--warn); }
   .dpc .chips { gap: 5px; }
-  .dpc .chip { font-size: 10.5px; padding: 2px 7px; }
+  .dpc .chip { font-size: 12px; padding: 2px 7px; }
   .dpc.on .chip, .dpc.on .pill { background: var(--panel); }
   .dpc .ff { display: flex; align-items: center; gap: 6px; margin-top: auto; flex-wrap: wrap; }
-  .dpc .ff .b { padding: 6px 11px; font-size: 12px; }
+  .dpc .ff .b { padding: 6px 11px; font-size: 13px; }
   .dpc .ff .b.gho { background: var(--fill); }
   .dpc.on .ff .b.gho { background: var(--panel); }
-  .dpc .ff .lnk { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+  .dpc .ff .lnk { margin-left: auto; font-size: 13px; color: var(--ink-3); }
   .dpc .ff .lnk:hover { color: var(--accent); }
   /* the credential sheet: fields first, guide collapsed, actions pinned */
   .cs-h { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-  .cs-h .bigmark { width: 40px; height: 40px; border-radius: 11px; }
+  .cn-h { display: flex; align-items: center; gap: 13px; margin: 2px 0 18px; padding-right: 34px; }
+  .cn-h .bigmark { width: 40px; height: 40px; border-radius: 12px; flex: none; display: inline-flex;
+    align-items: center; justify-content: center; background: var(--fill); overflow: hidden; }
+  .cn-h .bigmark svg { width: 40px; height: 40px; display: block; }
+  .cn-h .fn { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+  .cn-h .fd { font-size: 13px; color: var(--ink-3); margin-top: 2px; }
+  .cn-list { display: flex; flex-direction: column; gap: 6px; }
+  .cn-row { background: var(--panel-2); border-radius: 10px; transition: background var(--t); }
+  .cn-row.on { background: var(--bg); }
+  .cn-top { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 12px;
+    padding: 11px 12px; cursor: pointer; border-radius: 10px; }
+  .cn-top:hover { background: var(--fill); }
+  .cn-row.on .cn-top:hover { background: none; }
+  .cn-top:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+  .cn-top .omark { width: 32px; height: 32px; }
+  .cn-top .omark svg { width: 32px; height: 32px; }
+  .cn-tt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  .cn-l { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .cn-d { font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cn-tag { flex: none; font-size: 12px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
+    background: var(--fill); color: var(--ink-2); }
+  .cn-tag.ok { background: var(--accent); color: #fff; }
+  .cn-tag.found { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .cn-body { padding: 0 12px 14px 56px; }
+  .cn-more { all: unset; cursor: pointer; margin-top: 12px; font-size: 13px; color: var(--ink-2); padding: 4px 2px; border-radius: 6px; }
+  .cn-more:hover { color: var(--ink); }
+  .cn-more:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+  @media (max-width: 560px) { .cn-body { padding-left: 12px; } .cn-d { white-space: normal; } }
+  .cs-h .bigmark { width: 40px; height: 40px; border-radius: 12px; }
   .cs-h .bigmark svg { width: 22px; height: 22px; }
-  .cs-h .fn { font-weight: 600; font-size: 15px; }
-  .cs-h .fd { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+  .cs-h .fn { font-weight: 600; font-size: 16px; }
+  .cs-h .fd { font-size: 13px; color: var(--ink-3); margin-top: 1px; }
   .cs-fields { display: flex; flex-direction: column; gap: 12px; }
   .cs-fields .dp-field { display: flex; flex-direction: column; gap: 5px; }
   .cs-fields .dp-field input.in { width: 100%; background: var(--panel-2); }
-  .cs-fields .kh-n { font-size: 11.5px; color: var(--ink-3); line-height: 1.45; }
-  .cs-guide { margin-top: 16px; background: var(--panel-2); border-radius: 9px; padding: 4px 12px; }
-  .cs-guide summary { font-size: 12.5px; color: var(--ink-2); cursor: pointer; padding: 8px 0; list-style: none; }
+  .cs-fields .kh-n { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+  .cs-guide { margin-top: 16px; background: var(--panel-2); border-radius: 8px; padding: 4px 12px; }
+  .cs-guide summary { font-size: 14px; color: var(--ink-2); cursor: pointer; padding: 8px 0; list-style: none; }
   .cs-guide summary::-webkit-details-marker { display: none; }
-  .cs-guide summary::before { content: "▸ "; color: var(--ink-3); font-size: 10px; }
+  .cs-guide summary::before { content: "▸ "; color: var(--ink-3); font-size: 12px; }
   .cs-guide[open] summary::before { content: "▾ "; }
   .cs-guide summary:hover { color: var(--ink); }
-  .cs-gb { font-size: 12.5px; color: var(--ink-2); padding: 2px 0 12px; }
+  .cs-gb { font-size: 14px; color: var(--ink-2); padding: 2px 0 12px; }
   .cs-gb .gi { color: var(--ink); margin-bottom: 6px; }
   .cs-gb ol { margin: 0 0 10px; padding-left: 18px; }
   .cs-gb li { margin: 3px 0; line-height: 1.45; }
   .cs-gb .gr { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .cs-gb .gr .b { text-decoration: none; }
-  .cs-gb .gn { font-size: 11.5px; color: var(--ink-3); margin-top: 8px; }
+  .cs-gb .gn { font-size: 13px; color: var(--ink-3); margin-top: 8px; }
   .cs-foot { display: flex; gap: 10px; align-items: center; position: sticky; bottom: -22px; margin: 18px -24px -22px;
     padding: 14px 24px; background: var(--panel); }
 
-  .dp-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-  .dp-field .kh-l { font-size: 10px; }
+  .dp-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .dp-field .kh-l { font-size: 12px; }
   .dp-field input.in, .dp-field select.in { width: 100%; background: var(--panel-2); }
   .dpc.on .dp-field input.in { background: var(--panel); }
   .dp-field .kh-n { line-height: 1.45; }
   /* the Hub search — model cards */
-  .dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-  .dp-glabel { grid-column: 1 / -1; font-size: 12.5px; font-weight: 600; color: var(--ink-2); padding: 4px 2px 0; }
-  .dp-status { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-left: auto; white-space: nowrap; }
-  .mcard { padding: 14px 15px 13px; cursor: pointer; display: flex; flex-direction: column; gap: 9px; min-width: 0; position: relative;
-    transition: background var(--t); }
+  /* Both model grids are things you scan, not lists you read: four to a row,
+     so a family or a search fits in a glance instead of a scroll. A fixed
+     count rather than auto-fill, because auto-fill sizes to the widest card
+     it can fit and lands on three at these page widths — the count steps down
+     by breakpoint instead, which is also the only way four neighbours can be
+     relied on to line their readings up. */
+  .dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px; align-items: stretch; }
+  @media (max-width: 1360px) { .dp-mgrid, .mm-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 860px) { .dp-mgrid, .mm-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 600px) { .dp-mgrid, .mm-grid { grid-template-columns: minmax(0, 1fr); } }
+  .dp-status { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3); margin-left: auto; white-space: nowrap; }
+  /* ==========================================================================
+     A MODEL CARD — four to a row, so it is read at a glance or not at all.
+
+     Every card used to be a bag of identical grey pills: 17B, BF16, mit,
+     vllm ✓, 162k downloads, all the same weight, so nothing was findable and
+     two cards could not be compared without reading every pill on both. A
+     card now says its facts in three registers instead of one:
+
+       WHO   the logo, the name (two lines, never cut mid-word), the company
+       HOW MUCH  two or three READINGS — a tabular number over a small label,
+             on the same grid line in every card, so a column of numbers can
+             be compared straight down the grid by eye
+       WHAT ELSE  one quiet line of categorical facts, and one action
+
+     The head is a fixed height so the readings of four neighbours line up
+     even when one name wraps and another does not, and the foot is pushed to
+     the bottom, so the row's cards end together however much is in them.
+     ========================================================================== */
+  .mcard { padding: 16px; cursor: pointer; display: flex; flex-direction: column; gap: 10px; min-width: 0; position: relative;
+    height: 100%; transition: background var(--t); }
   .mcard:hover { background: var(--panel-2); }
-  .mcard.on { background: var(--accent-soft); }
+  .mcard.on { background: var(--panel-2); }
   .mcard.on:hover { background: var(--accent-soft-2); }
-  .mcard .mh { display: flex; align-items: center; gap: 10px; min-width: 0; padding-right: 70px; }
+  .mcard .mh { display: flex; align-items: flex-start; gap: 10px; min-width: 0; min-height: 50px; }
+  .mcard .mh .mwhen { flex: none; margin-left: auto; font-size: 12px; color: var(--ink-3); white-space: nowrap; padding-top: 2px; }
+  .mcard .mh .mwhen.fresh { color: var(--accent); }
+  .mwarn { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; font-weight: 500; }
+  .mwarn .bad { color: var(--bad); } .mwarn .amb { color: var(--warn); }
   .mcard .mh .mtt { min-width: 0; flex: 1; }
-  .omark { width: 34px; height: 34px; border-radius: 9px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+
+  /* the readings: value over label, tabular, one grid line per card */
+  /* Each reading is its own small tile inside the card: the three numbers
+     read as a set you compare, not as loose text between two lines. */
+  .mstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; align-items: stretch; }
+  .mstat { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 9px 10px 8px;
+    border-radius: 8px; background: var(--bg); }
+  .mstat b { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; letter-spacing: -.02em;
+    color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .mstat span { font-size: 12px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mstat.acc b { color: var(--accent); }
+  .mstat.amb b { color: var(--warn); }
+  .mstat.red b { color: var(--bad); }
+  .mstat.mute b { color: var(--ink-3); font-weight: 500; }
+  .mstat.span2 { grid-column: span 2; }
+
+  /* the quiet line: categorical facts, separated by middots, never boxed */
+  .mmeta { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; font-size: 12px;
+    color: var(--ink-3); line-height: 1.5; }
+  .mmeta > * { white-space: nowrap; }
+  .mmeta > *:not(:last-child)::after { content: "\00b7"; margin: 0 5px; opacity: .55; }
+  .mmeta .mono { font-family: var(--mono); font-size: 12px; background: none; padding: 0; color: var(--ink-3); }
+  .mmeta .ok { color: var(--ok); } .mmeta .bad { color: var(--bad); } .mmeta .amb { color: var(--warn); }
+  .mmeta .fresh { color: var(--accent); }
+
+  /* The foot: pushed down, so a row of cards ends level — and set off from
+     the facts above it by the sheet's own material. This page draws no lines,
+     so the division is a run of single pixels, the rail's branch motif at a
+     sparser 4px pitch so it reads as texture rather than as a rule. On the
+     card under the cursor the run takes the accent, the way the rail's stub
+     does under the row you are on. */
+  .mfoot { display: flex; align-items: center; gap: 8px; min-height: 28px; margin-top: auto; padding-top: 11px;
+    background-image: repeating-linear-gradient(to right, var(--fill-2) 0 1px, transparent 1px 4px);
+    background-size: 100% 1px; background-repeat: no-repeat; background-position: 0 0; }
+  .mcard.on .mfoot {
+    background-image: repeating-linear-gradient(to right, var(--accent) 0 1px, transparent 1px 4px); }
+  .omark { width: 34px; height: 34px; border-radius: 8px; flex: none; display: inline-flex; align-items: center; justify-content: center;
     background: var(--fill); color: var(--ink-2); overflow: hidden; position: relative; }
   .omark svg { width: 34px; height: 34px; display: block; }
-  .omark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600; }
+  .omark.letter { font-family: var(--sans); font-size: 16px; font-weight: 600; }
   .omark img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--t); }
   .omark.img img { opacity: 1; }
   .omark.img { color: transparent; }
   .mcard.on .omark { background: var(--panel); }
-  .mcard .mt { font-family: var(--mono); font-weight: 600; font-size: 13.5px; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
+  /* Repo ids are long — Llama-4-Scout-17B-16E-Instruct does not fit one line
+     of a quarter-width card — so the name takes two and breaks on its own
+     separators rather than being cut with an ellipsis at "Instru…". */
+  .mcard .mt { font-family: var(--mono); font-weight: 600; font-size: 14px; line-height: 1.3; letter-spacing: -.01em;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    overflow-wrap: anywhere; }
   .mcard.on .mt { color: var(--accent); }
-  .mcard .mo { font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mcard .vr.pend { opacity: .55; }
+  .mcard .mo { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
   .mcard .mp2 { display: flex; flex-wrap: wrap; gap: 5px; }
   .mcard.on .pill { background: var(--panel); }
-  .mcard .vr { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
-  .mcard .vr .vbar { flex: 1; height: 5px; border-radius: 3px; background: var(--fill); overflow: hidden; }
-  .mcard.on .vr .vbar { background: var(--panel); }
-  .mcard .vr .vbar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
-  .mcard .vr b { color: var(--ink); font-weight: 600; white-space: nowrap; }
-  .mcard .go { position: absolute; top: 13px; right: 14px; font-size: 11.5px; color: var(--accent); opacity: 0; transition: opacity var(--t); }
-  .mcard:hover .go, .mcard.on .go { opacity: 1; }
+  /* THE ACTION — a real button, right-aligned in the foot. It sits in the
+     foot rather than the head's corner, which is what used to force a 70px
+     hole into every title. At rest it is a quiet fill so a grid of forty does
+     not shout forty times; the card under the cursor lights its own. */
+  .mbtn { margin-left: auto; flex: none; font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
+    padding: 5px 12px; border: 0; border-radius: 8px; background: var(--fill); color: var(--ink-2);
+    cursor: pointer; transition: background var(--t), color var(--t); }
+  /* Hovering a card is not choosing it: the button darkens a step and turns
+     green only under the pointer itself. A green button on whichever card the
+     mouse happened to cross read as "this one is recommended". */
+  .mcard:hover .mbtn { background: var(--fill-2); color: var(--ink); }
+  .mbtn:hover, .mbtn:focus-visible { background: var(--accent); color: var(--accent-ink); }
+  .mbtn.on { background: var(--accent-soft-2); color: var(--accent); }
+  .mbtn.amb { background: var(--warn-soft); color: var(--warn); }
+  .mcard:hover .mbtn.amb { background: var(--warn-soft); color: var(--warn); }
+  .mbtn.amb:hover { background: var(--warn); color: var(--accent-ink); }
+  /* A family that isn't connected says so ONCE, in the strip over its grid;
+     its cards drop the per-card warning and wear the plain button. Sorted
+     flat, the strip is gone and each card speaks for itself again. */
+  .mm-grid.famlock .mmeta .amb { display: none; }
+  .mm-grid.famlock .mmeta:not(:has(> :not(.amb))) { display: none; }
+  .mm-grid.famlock .mbtn.amb, .mm-grid.famlock .mcard:hover .mbtn.amb { background: var(--fill); color: var(--ink-2); }
+  .mm-grid.famlock .mcard:hover .mbtn.amb { background: var(--fill-2); color: var(--ink); }
+  .mm-grid.famlock .mbtn.amb:hover { background: var(--accent); color: var(--accent-ink); }
+  .mm-lock { display: flex; align-items: center; gap: 14px; background: var(--panel); border-radius: 12px;
+    padding: 14px 16px; margin: 0 0 12px; min-width: 0; }
+  .mm-lock .ml-marks { display: flex; flex: none; }
+  .mm-lock .ml-marks .omark { width: 36px; height: 36px; border-radius: 10px; }
+  .mm-lock .ml-marks .omark svg { width: 36px; height: 36px; }
+  .mm-lock .ml-t { flex: 1; min-width: 0; }
+  .mm-lock .ml-h { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .mm-lock .ml-d { font-size: 13px; color: var(--ink-3); margin-top: 1px; }
+  .mm-lock .ml-d b { font-weight: 600; color: var(--accent); }
+  @media (max-width: 640px) { .mm-lock { flex-wrap: wrap; } .mm-lock .b { width: 100%; } }
   /* fit & deploy — one group per provider, GPUs as cards */
-  .dp-mh { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 8px; }
-  .dp-mid { font-family: var(--mono); font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .dp-eng { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
-  .dp-eng select.in { padding: 4px 8px; }
-  .dp-fitbox { margin-top: 12px; }
-  .dp-loading { color: var(--ink-3); font-family: var(--mono); font-size: 12.5px; }
-  .dp-ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 10px; }
-  .gcard { background: var(--panel-2); padding: 13px 14px; display: grid; grid-template-columns: minmax(0,1fr) auto;
-    grid-template-rows: auto auto; gap: 6px 12px; align-items: center; transition: background var(--t); }
-  .gcard .gt { grid-column: 1; grid-row: 1; }
-  .gcard .gm { grid-column: 1; grid-row: 2; }
-  .gcard:hover { background: var(--fill); }
-  .gcard.no { opacity: .6; }
-  .gcard .gt { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .gcard .gt small { color: var(--ink-3); font-weight: 400; font-family: var(--mono); font-size: 11px; margin-left: 6px; }
-  .gcard .gp { grid-column: 2; grid-row: 1; font-family: var(--mono); font-weight: 700; font-size: 17px; letter-spacing: -.02em; text-align: right; white-space: nowrap; }
-  .gcard .gp small { font-size: 11px; font-weight: 400; color: var(--ink-3); }
-  .gcard.no .gp { color: var(--ink-3); font-weight: 500; }
-  .gcard .gm { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-3); min-width: 0; overflow: hidden; }
-  .gcard .gm .vd { flex: none; }
-  .gcard .gm span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .gcard .ga { grid-column: 2; grid-row: 2; display: flex; justify-content: flex-end; }
-  .gcard .ga .b { padding: 6px 12px; font-size: 12px; }
-  .gcard .ga .mgo { font-size: 10.5px; color: var(--ink-3); text-align: right; }
-  .vd { font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
-    background: var(--fill); color: var(--ink-3); text-align: center; }
-  .vd.fits { background: var(--ok-soft); color: var(--ok); }
-  .vd.tight { background: var(--warn-soft); color: var(--warn); }
-  .vd.no { background: var(--fill); color: var(--ink-3); }
-  .dp-adv { margin: 6px 0 2px; }
-  .dp-adv summary { font-family: var(--mono); font-size: 11px; color: var(--ink-3); cursor: pointer; padding: 3px 0; }
-  .dp-adv summary:hover { color: var(--ink); }
-  .dp-advgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; padding: 8px 0 4px; align-items: end; }
-  .dp-advgrid input.in, .dp-advgrid select.in { width: 100%; padding: 5px 8px; background: var(--panel-2); }
-  .dp-cost { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); background: var(--panel-2); border-radius: 8px; padding: 9px 12px; margin: 12px 0 4px; }
-  .dp-cost b { color: var(--ink); }
-  .dp-log { max-height: 260px; min-height: 80px; margin-top: 10px; }
+
   .sheet .banner { margin: 12px 0 0; }
   /* deployments — filled rows */
-  .dp-rows { display: flex; flex-direction: column; gap: 4px; }
-  .dp-drow { display: grid; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 12px; background: var(--panel-2);
-    grid-template-columns: 58px minmax(0,.9fr) minmax(0,1.2fr) 118px 116px minmax(0,1fr) 96px 56px auto; transition: background var(--t); }
-  .dp-drow:hover { background: var(--fill); }
-  .dp-drow.head { background: transparent; font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--ink-3); padding: 4px 12px 2px; }
-  .dp-drow.off { color: var(--ink-3); }
-  .dp-drow .mark2 { width: 20px; height: 20px; border-radius: 5px; } .dp-drow .mark2 svg { width: 12px; height: 12px; }
-  .dp-drow .dp-dn { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dp-drow .dp-dm, .dp-drow .dp-dg { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-family: var(--mono); }
-  .dp-drow .dp-ds { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; white-space: nowrap; }
-  .dp-drow .dp-de { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-  .dp-drow .dp-de .clk { cursor: pointer; } .dp-drow .dp-de .clk:hover { color: var(--accent); }
-  .dp-drow .dp-dc { font-size: 11.5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: var(--mono); }
-  .dp-drow .dp-da { color: var(--ink-3); font-size: 11px; text-align: right; white-space: nowrap; }
-  .dp-drow .dp-dx { display: flex; gap: 4px; justify-content: flex-end; }
-  .dp-drow .dp-dx .b { padding: 4px 9px; font-size: 11px; }
-  .dp-drow .dp-dx .b.gho { background: transparent; }
+
   .dp-none { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--r-sm); background: var(--panel);
-    font-size: 12.5px; color: var(--ink-2); }
-  .dp-drow.flash { box-shadow: 0 0 0 2px var(--accent); }
+    font-size: 14px; color: var(--ink-2); }
 
   /* ---- responsive ---- */
   @media (max-width: 1100px) {
-    .dp-drow { grid-template-columns: 58px minmax(0,1fr) 116px minmax(0,1fr) 56px auto; }
-    .dp-drow .dp-dm, .dp-drow .dp-dg, .dp-drow .dp-dc { display: none; }
     #sessions.on { grid-template-columns: 240px 280px minmax(0,1fr); }
   }
   @media (max-width: 900px) {
@@ -1678,6 +1684,434 @@ INDEX_HTML = r"""<!doctype html>
     .msg { grid-template-columns: 1fr; gap: 4px; margin: 0; }
     .who { flex-direction: row; align-items: center; gap: 8px; }
   }
+
+  /* ==========================================================================
+     DEPLOY — the sheet, the Active cards, the logs.
+     ========================================================================== */
+  /* the deploy sheet: what it is, where it runs, what it costs, one button */
+  .ds-head { display: flex; align-items: center; gap: 12px; margin: 2px 0 16px; min-width: 0; }
+  .ds-head .omark { width: 40px; height: 40px; border-radius: 12px; }
+  .ds-ht { min-width: 0; }
+  .ds-name { font-family: var(--mono); font-weight: 600; font-size: 16px; letter-spacing: -.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-org { font-size: 13px; color: var(--ink-3); margin-top: 1px; }
+  .ds-facts { margin: 0 0 18px; }
+  .ds-lbl { font-size: 12px; font-weight: 600; color: var(--ink-3); margin: 0 0 8px; }
+  .ds-gpus { display: flex; flex-direction: column; gap: 4px; }
+  .ds-gpu { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px 12px; border: 0;
+    border-radius: 8px; background: var(--panel-2); font: inherit; color: var(--ink); text-align: left;
+    cursor: pointer; transition: background var(--t); }
+  .ds-gpu:hover { background: var(--fill); }
+  .ds-gpu.on { background: var(--fill); }
+  .ds-radio { width: 15px; height: 15px; border-radius: 50%; flex: none; background: var(--panel);
+    box-shadow: inset 0 0 0 2px var(--fill-2); transition: box-shadow var(--t); }
+  .ds-gpu.on .ds-radio { box-shadow: inset 0 0 0 5px var(--accent); }
+  .ds-gpu .mark2 { width: 20px; height: 20px; flex: none; }
+  .ds-gt { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+  .ds-gt b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-gt span { font-size: 13px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-best { flex: none; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft);
+    padding: 2px 8px; border-radius: 999px; }
+  .ds-gpu.on .ds-best { background: var(--panel); }
+  .ds-tight { flex: none; font-size: 12px; color: var(--warn); }
+  .ds-price { flex: none; min-width: 72px; text-align: right; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 14px;
+    font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ds-more { align-self: flex-start; border: 0; background: none; padding: 6px 2px 0; font: inherit;
+    font-size: 13px; color: var(--ink-3); cursor: pointer; }
+  .ds-more:hover { color: var(--ink); }
+  .ds-adv { margin-top: 14px; }
+  .ds-adv summary { cursor: pointer; font-size: 14px; color: var(--ink-3); list-style: none; width: max-content; }
+  .ds-adv summary::-webkit-details-marker { display: none; }
+  .ds-adv summary::after { content: " ▾"; font-size: 12px; }
+  .ds-adv[open] summary::after { content: " ▴"; }
+  .ds-adv summary:hover { color: var(--ink); }
+  .ds-advgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 10px; }
+  .ds-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .ds-fl { font-size: 13px; color: var(--ink-3); }
+  .ds-chk { grid-column: 1 / -1; font-size: 14px; }
+  .ds-use { display: flex; align-items: center; gap: 9px; margin-top: 16px; font-size: 14px; cursor: pointer; }
+  .ds-use input { accent-color: var(--accent); width: 15px; height: 15px; }
+  .ds-note { font-size: 13px; color: var(--ink-3); margin-top: 8px; line-height: 1.5; }
+  .ds-note.warn { color: var(--warn); }
+  .ds-foot { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 20px; }
+  .ds-go { min-width: 168px; padding: 9px 16px; font-size: 14px; }
+  .ds-gate { background: var(--warn-soft); border-radius: 8px; padding: 12px 14px; margin-top: 14px;
+    display: flex; flex-direction: column; gap: 6px; }
+  .ds-gate b { font-size: 14px; }
+  .ds-gsub { font-size: 14px; color: var(--ink-2); line-height: 1.5; }
+  .ds-caution { font-size: 13px; color: var(--warn); margin: -8px 0 14px; }
+  .ds-cold { font-size: 13px; color: var(--ink-2); line-height: 1.5; margin: -6px 0 14px; padding: 10px 12px;
+    border-radius: 8px; background: var(--warn-soft); }
+  .ds-cold b { color: var(--warn); font-weight: 600; }
+  .ds-err { font-size: 14px; color: var(--bad); line-height: 1.5; }
+  .ds-none { display: flex; flex-direction: column; gap: 6px; }
+  .ds-none > b { font-size: 15px; }
+  .ds-provs { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .ds-prov { display: flex; align-items: center; gap: 11px; padding: 9px 12px; border-radius: 8px; background: var(--panel-2); }
+  .ds-prov .mark2 { width: 20px; height: 20px; flex: none; }
+  .ds-prov .b { padding: 5px 11px; font-size: 13px; }
+  .ds-skrow { height: 52px; border-radius: 8px; margin-bottom: 4px; }
+  .ds-stopsub { line-height: 1.55; margin-bottom: 4px; }
+
+  /* the Active cards: one per deployment, the job acting on it folded in */
+  /* USAGE — what a deployment did, from its own log. Two chart series,
+     validated for CVD + contrast on both surfaces: --s1 generation, --s2 prompt. */
+  .us-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+  .us-bar .sp { flex: 1; }
+  .us-deps .fchip .omark { width: 18px; height: 18px; border-radius: 5px; margin-right: 6px; }
+  .us-deps .fchip .omark svg { width: 18px; height: 18px; }
+  .us-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+  .us-grid .card { min-width: 0; }
+  .us-full { margin-bottom: 12px; }
+  .us-chart { position: relative; }
+  .us-chart svg { display: block; width: 100%; height: 132px; }
+  .us-chart.tl svg { height: 44px; }
+  .us-chart .base { stroke: var(--fill-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .us-chart .grid { stroke: var(--fill); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .us-chart .l1, .us-chart .l2 { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .us-chart .l1 { stroke: var(--s1); } .us-chart .l2 { stroke: var(--s2); }
+  .us-chart .a1 { fill: var(--s1); opacity: .10; }
+  .us-chart .bt { fill: var(--s1); opacity: .30; }
+  .us-chart .sv { fill: var(--s1); }
+  .us-chart .rq { stroke: var(--ink-2); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .us-chart .rq.bad { stroke: var(--bad); }
+  .us-chart .br { fill: var(--s1); }
+  .us-chart .hit { fill: transparent; }
+  .us-chart .xh { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+  .us-ax { position: relative; height: 18px; margin-top: 6px; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .us-ax span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .us-ax span:first-child { transform: none; } .us-ax span:last-child { transform: translateX(-100%); }
+  .us-y { position: absolute; top: -2px; right: 0; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums;
+    background: var(--panel); padding: 0 0 2px 6px; }
+  .us-chart .tip { top: -8px; z-index: 2; }
+  .us-chart .tip b { font-weight: 600; } .us-chart .tip span { opacity: .65; margin-left: 8px; }
+  .us-chart .tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin: 0 6px 0 10px; }
+  .us-chart .tip i:first-child { margin-left: 0; }
+  .us-leg { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+  .us-leg span { display: inline-flex; align-items: center; gap: 6px; }
+  .us-leg i { width: 10px; height: 10px; border-radius: 3px; background: var(--s1); }
+  .us-leg i.bt { opacity: .3; } .us-leg i.p { background: var(--s2); }
+  .us-leg i.ln { height: 2px; border-radius: 1px; }
+  .us-leg i.rq { width: 2px; height: 10px; border-radius: 1px; background: var(--ink-2); }
+  .us-empty { font-size: 13px; color: var(--ink-3); padding: 18px 0 8px; }
+  .us-note { font-size: 13px; color: var(--ink-3); margin: -4px 0 10px; }
+  .us-note b { color: var(--ink-2); font-weight: 600; }
+  @media (max-width: 900px) { .us-grid { grid-template-columns: minmax(0, 1fr); } }
+  /* SKILLS — a page list and the open page, edited in place like a document.
+     No borders anywhere: the list is a panel, the page is a panel, and a row
+     or a property lifts with a fill on hover. */
+  .skx { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 12px; align-items: start; }
+  .skx-list { background: var(--panel); border-radius: var(--radius); padding: 8px; position: sticky; top: 16px;
+    max-height: calc(100vh - 32px); overflow: auto; }
+  .skx-top { display: flex; gap: 6px; margin-bottom: 6px; }
+  .skx-find { flex: 1; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px; border-radius: 7px;
+    background: var(--fill); color: var(--ink-3); min-width: 0; }
+  .skx-find input { all: unset; flex: 1; min-width: 0; font-size: 13px; color: var(--ink); }
+  .skx-find input::placeholder { color: var(--ink-3); }
+  .skx-fi { font-size: 13px; }
+  .skx-add, .skx-gadd { all: unset; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 7px; color: var(--ink-2); font-size: 17px; }
+  .skx-add { background: var(--fill); }
+  .skx-add:hover, .skx-gadd:hover { background: var(--fill-2); color: var(--ink); }
+  .skx-add:focus-visible, .skx-gadd:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .skx-g { margin-top: 8px; }
+  .skx-gh { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+  .skx-gh .skx-gn { font-weight: 500; }
+  .skx-gadd { width: 22px; height: 22px; margin-left: auto; font-size: 15px; opacity: 0; }
+  .skx-g:hover .skx-gadd, .skx-gadd:focus-visible { opacity: 1; }
+  .skx-i { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: flex; align-items: center; gap: 9px;
+    height: 32px; padding: 0 8px; border-radius: 6px; font-size: 14px; color: var(--ink-2); }
+  .skx-i:hover { background: var(--fill); color: var(--ink); }
+  .skx-i.on { background: var(--fill); color: var(--ink); font-weight: 600; }
+  .skx-i:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .skx-i .sglyph { width: 20px; height: 20px; border-radius: 5px; }
+  .skx-i .sglyph svg { width: 14px; height: 14px; }
+  .skx-in { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skx-in.ph { color: var(--ink-3); font-weight: 500; }
+  .skx-al { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+  .skx-none { font-size: 13px; color: var(--ink-3); padding: 4px 8px 6px; }
+
+  .skx-doc { background: var(--panel); border-radius: var(--radius); min-height: 72vh; min-width: 0; }
+  .skx-bar { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 10px 0 18px; }
+  .skx-bar .sp { flex: 1; }
+  .skx-crumb { font-size: 13px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .skx-status { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+  .skx-status.ok { color: var(--ink-3); }
+  .skx-status.bad { color: var(--bad); }
+  .skx-more .pmenu-b { height: 28px; padding: 0 8px; background: none; }
+  .skx-more .pmenu-b:hover { background: var(--fill); }
+  .skx-more .pmenu-b i { display: none; }
+  .skx-more .pmenu-b b { font-size: 16px; color: var(--ink-2); font-weight: 600; }
+  .skx-confirm { display: flex; align-items: center; gap: 10px; margin: 0 14px; padding: 10px 12px; border-radius: 8px;
+    background: var(--fill); font-size: 13px; color: var(--ink); }
+  .skx-confirm .sp { flex: 1; }
+  .skx-page { max-width: 760px; margin: 0 auto; padding: 26px 56px 40px; }
+  .skx-page > .sglyph { width: 52px; height: 52px; border-radius: 12px; margin-bottom: 14px; }
+  .skx-page > .sglyph svg { width: 36px; height: 36px; }
+  .skx-title { font-size: 34px; font-weight: 600; letter-spacing: -.025em; line-height: 1.2; color: var(--ink); outline: none;
+    word-break: break-word; }
+  .skx-desc { font-size: 16px; color: var(--ink-2); line-height: 1.5; margin-top: 6px; outline: none; word-break: break-word; }
+  .skx-title:empty::before, .skx-desc:empty::before { content: attr(data-ph); color: var(--ink-3); opacity: .6; pointer-events: none; }
+  .skx-props { margin: 18px 0 20px; display: flex; flex-direction: column; gap: 2px; }
+  .skx-pr { display: grid; grid-template-columns: 132px minmax(0, 1fr); align-items: center; min-height: 34px; gap: 8px; }
+  .skx-pl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-3); padding: 0 6px; }
+  .skx-pl .ic { width: 15px; height: 15px; opacity: .85; } .skx-pl .ic svg { width: 15px; height: 15px; }
+  .skx-pv { min-width: 0; display: flex; align-items: center; font-size: 14px; color: var(--ink); }
+  .skx-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 7px; background: var(--fill); }
+  .skx-seg button { all: unset; cursor: pointer; padding: 3px 10px; border-radius: 5px; font-size: 13px; color: var(--ink-2); }
+  .skx-seg button:hover { color: var(--ink); }
+  .skx-seg button.on { background: var(--seg-on); color: var(--ink); font-weight: 600; }
+  .skx-seg button:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .skx-ro { padding: 4px 6px; color: var(--ink-2); }
+  .skx-inp { all: unset; box-sizing: border-box; width: 100%; max-width: 320px; padding: 5px 6px; border-radius: 6px; font-size: 14px; color: var(--ink); }
+  .skx-inp:hover { background: var(--fill); }
+  .skx-inp:focus { background: var(--fill); }
+  .skx-inp::placeholder { color: var(--ink-3); opacity: .7; }
+  .skx-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+  .skx-tag { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 4px 0 8px; border-radius: 5px;
+    background: var(--fill); font-size: 13px; color: var(--ink); }
+  .skx-tx { all: unset; cursor: pointer; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 4px; color: var(--ink-3); font-size: 13px; }
+  .skx-tx:hover { background: var(--fill-2); color: var(--ink); }
+  .skx-tadd .pmenu-b { height: 24px; padding: 0 7px; background: none; font-size: 13px; }
+  .skx-tadd .pmenu-b:hover { background: var(--fill); }
+  .skx-tadd .pmenu-b i { display: none; }
+  .skx-tadd .pmenu-b b { font-weight: 500; color: var(--ink-3); }
+  .skx-tadd .pmenu { max-height: 280px; overflow: auto; }
+  .skx-file { font-family: var(--mono); font-size: 12px; color: var(--ink-3); padding: 4px 6px; border-radius: 6px; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skx-file:hover { background: var(--fill); color: var(--ink-2); }
+
+  .skx-body { position: relative; }
+  .skx-b { position: relative; border-radius: 6px; margin: 0 -8px 4px; padding: 3px 8px; cursor: text; }
+  .skx-bc ul, .skx-bc ol { padding-left: 22px; margin: 0; }
+  .skx-bc li { margin: 2px 0; }
+  .skx-bc li.todo { list-style: none; margin-left: -22px; display: flex; align-items: flex-start; gap: 9px; }
+  .skx-bc li.todo.done .skx-tt { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--ink-3); }
+  .skx-chk { all: unset; cursor: pointer; flex: none; width: 16px; height: 16px; margin-top: 5px; border-radius: 4px;
+    background: var(--fill-2); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; }
+  .skx-chk:hover { background: var(--ink-3); }
+  .skx-chk.on { background: var(--accent); }
+  .skx-chk:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .skx-b:hover { background: var(--panel-2); }
+  .skx-b.editing { background: none; }
+  .skx-plus { all: unset; position: absolute; left: -28px; top: 4px; width: 22px; height: 22px; border-radius: 5px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 16px; color: var(--ink-3); opacity: 0; }
+  .skx-b:hover .skx-plus { opacity: 1; }
+  .skx-plus:hover { background: var(--fill); color: var(--ink); }
+  .skx-bc { font-size: 15px; line-height: 1.65; color: var(--ink); min-height: 1.65em; }
+  .skx-bc > :first-child { margin-top: 0; } .skx-bc > :last-child { margin-bottom: 0; }
+  .skx-bc.ph { color: var(--ink-3); opacity: .7; }
+  .skx-b.k-h1 .skx-bc h1, .skx-ta.k-h1 { font-size: 26px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
+  .skx-b.k-h2 .skx-bc h2, .skx-ta.k-h2 { font-size: 21px; font-weight: 600; letter-spacing: -.015em; line-height: 1.35; }
+  .skx-b.k-h3 .skx-bc h3, .skx-ta.k-h3 { font-size: 17px; font-weight: 600; line-height: 1.4; }
+  .skx-b.k-h1, .skx-b.k-h2 { margin-top: 14px; }
+  .skx-b.k-h1 .skx-bc h1, .skx-b.k-h2 .skx-bc h2, .skx-b.k-h3 .skx-bc h3 { margin: 0; }
+  .skx-ta { all: unset; box-sizing: border-box; display: block; width: 100%; resize: none; overflow: hidden; white-space: pre-wrap;
+    font-size: 15px; line-height: 1.65; color: var(--ink); caret-color: var(--accent); min-height: 1.65em; word-break: break-word; }
+  .skx-ta.k-code { font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--fill); border-radius: 6px; padding: 10px 12px; }
+  .skx-ta.k-quote { color: var(--ink-2); }
+  .skx-raw { all: unset; box-sizing: border-box; display: block; width: 100%; resize: none; overflow: hidden; white-space: pre-wrap;
+    font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink); background: var(--panel-2); border-radius: 8px; padding: 14px 16px; }
+  .skx-tail { min-height: 120px; cursor: text; }
+  .skx-slash { top: calc(100% + 2px); min-width: 220px; }
+  .skx-slash .pmenu-i.on { background: var(--fill); color: var(--ink); }
+  .mem-mk { color: var(--ink-2); background: var(--fill); }
+  .skx-i .mem-mk .ic, .skx-i .mem-mk .ic svg { width: 13px; height: 13px; }
+  .skx-page > .mem-mk .ic, .skx-page > .mem-mk .ic svg { width: 26px; height: 26px; }
+  .skx-i.ghost .skx-in { color: var(--ink-3); }
+  .mem-new { font-size: 12px; color: var(--ink-3); opacity: 0; }
+  .skx-i:hover .mem-new { opacity: 1; }
+  .mem-side { font-size: 12px; color: var(--ink-3); flex: none; }
+  .skx-ro.ok { color: var(--ink); } .skx-ro.warn { color: var(--warn); }
+  .mem-ro { font-size: 15px; line-height: 1.65; }
+  .skx-empty { padding: 60px 24px; text-align: center; font-size: 14px; color: var(--ink-3); }
+  @media (max-width: 900px) {
+    .skx { grid-template-columns: minmax(0, 1fr); }
+    .skx-list { position: static; max-height: none; }
+    .skx-page { padding: 18px 20px 32px; }
+    .skx-plus { display: none; }
+    .skx-pr { grid-template-columns: 104px minmax(0, 1fr); }
+  }
+  /* MCP — a board of connections: a card per server (status, where it runs,
+     the tools it gives the agent), and a sheet with the tools in full. */
+  .mcx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  .mcx { background: var(--panel); border-radius: var(--radius); padding: 16px 16px 12px; display: flex; flex-direction: column;
+    gap: 12px; min-width: 0; cursor: pointer; transition: background var(--t); }
+  .mcx:hover { background: var(--panel-2); }
+  .mcx:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .mcx-h, .mcs-h { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .mcx-tt { flex: 1; min-width: 0; }
+  .mcx-n { font-size: 15px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcx-w { font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .mcx-st { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; background: var(--fill); color: var(--ink-2); }
+  .mcx-st i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+  .mcx-st.ok { color: var(--ok); } .mcx-st.ok i { background: var(--ok); }
+  .mcx-st.bad { color: var(--bad); } .mcx-st.bad i { background: var(--bad); }
+  .mcx-st.warn { color: var(--warn); } .mcx-st.warn i { background: var(--warn); }
+  .mcx-st.run i { animation: skpulse 1.1s ease-in-out infinite; }
+  .mcx-b { min-height: 52px; display: flex; flex-direction: column; gap: 4px; }
+  .mcx-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .mcx-chip { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--fill); border-radius: 5px; padding: 2px 7px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcx-chip.more { color: var(--ink-3); }
+  .mcx-chip.sk { width: 88px; height: 20px; animation: skpulse 1.4s ease-in-out infinite; }
+  .mcx-note { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+  .mcx-note.bad { color: var(--ink); }
+  .mcx-err { font-family: var(--mono); font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcx-f { display: flex; align-items: center; gap: 4px; padding-top: 10px; margin-top: auto; }
+  .mcx-f .b { flex: none; }
+  .mcx-f .sp { flex: 1; }
+  .mcx-facts { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .mcx-f .b { height: 28px; padding: 0 10px; font-size: 13px; }
+  .mcx-mono { font-family: var(--mono); font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .mcx-link { all: unset; cursor: pointer; font-size: 13px; color: var(--ink-2); margin-left: 10px; padding: 1px 6px; border-radius: 5px; }
+  .mcx-link:hover { background: var(--fill); color: var(--ink); }
+  .mcx-link:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  /* the sheet */
+  .mcs-h { padding-right: 34px; }
+  .mcs-h .sglyph { width: 40px; height: 40px; border-radius: 10px; }
+  .mcs-n { font-size: 18px; font-weight: 600; color: var(--ink); letter-spacing: -.01em; }
+  .mcs-line { font-size: 13px; color: var(--ink-2); margin: 10px 0 14px; line-height: 1.5; }
+  .mcs-tabs { margin-bottom: 14px; }
+  .mcs-tabs button { display: inline-flex; align-items: center; gap: 7px; padding: 5px 14px; font-size: 13px; }
+  .mcs-tn2 { font-size: 11px; font-weight: 600; min-width: 18px; height: 17px; padding: 0 5px; border-radius: 999px; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center; background: var(--fill-2); color: var(--ink-2); }
+  .mcs-tabs button.on .mcs-tn2 { background: var(--accent); color: var(--accent-ink); }
+  .mcs-body { min-height: 220px; }
+  .mcs-find { height: 32px; margin-bottom: 8px; }
+  .mcs-tools { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow: auto; margin: 0 -8px; }
+  .mcs-tool { padding: 10px 8px; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .mcs-tool:hover { background: var(--panel-2); }
+  .mcs-tn { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+  .mcs-td { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+  .mcs-tool.sk .mcs-tn, .mcs-tool.sk .mcs-td { height: 12px; border-radius: 4px; background: var(--fill); animation: skpulse 1.4s ease-in-out infinite; }
+  .mcs-tool.sk .mcs-tn { width: 160px; }
+  .mcs-ps { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .mcs-p { font-family: var(--mono); font-size: 11px; color: var(--ink-3); background: var(--fill); border-radius: 4px; padding: 1px 6px; }
+  .mcs-p.req { color: var(--ink); }
+  .mcs-p.req::after { content: "*"; color: var(--accent); margin-left: 1px; }
+  .mcs-p i { font-style: normal; opacity: .7; margin-left: 5px; }
+  .mcs-props { margin: 0 0 12px; }
+  .mcs-props .skx-pl { padding: 0; }
+  .mcs-file { cursor: pointer; }
+  .mcs-foot { position: static; margin: 14px 0 0; padding: 0; background: none; }
+  .mcs-foot .sp { flex: 1; }
+  .mcs-comp { padding: 0; margin: 0; background: none; }
+  .mcs-ex { margin-top: 18px; }
+  .mcs-exh { font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
+  .mcp-kv { display: flex; flex-direction: column; gap: 3px; min-width: 0; width: 100%; }
+  .mcp-kvr { display: flex; gap: 10px; font-family: var(--mono); font-size: 12px; min-width: 0; }
+  .mcp-k { color: var(--ink-2); flex: none; }
+  .mcp-v { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .mcp-v.secret { letter-spacing: .08em; }
+  .mcp-err { display: flex; flex-direction: column; gap: 4px; background: var(--fill); border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+  .mcp-err b { color: var(--bad); font-weight: 600; }
+  .mcp-err span { color: var(--ink-2); font-family: var(--mono); font-size: 12px; word-break: break-word; }
+  .mcp-err .mcp-hint { font-family: var(--sans); font-size: 13px; color: var(--ink); }
+  .mcp-json { margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--ink-2); background: var(--panel-2);
+    border-radius: 8px; padding: 12px 14px; overflow: auto; white-space: pre; max-height: 260px; }
+  .mcp-jerr { font-size: 13px; color: var(--bad); margin-top: 6px; }
+  .mcp-ex { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 2px; width: 100%;
+    padding: 7px 10px; margin: 0 -10px; border-radius: 6px; }
+  .mcp-ex:hover { background: var(--panel-2); }
+  .mcp-ex:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .mcp-exl { font-size: 13px; color: var(--ink-2); }
+  .mcp-ext { color: var(--ink-3); }
+  @media (max-width: 640px) { .mcx-grid { grid-template-columns: minmax(0, 1fr); } .mcx-st { padding: 0 7px; } }
+  .dcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+  .dcard { background: var(--panel); border-radius: var(--radius); padding: 16px; display: flex;
+    flex-direction: column; gap: 12px; min-width: 0; }
+  .dcard.bad { background: color-mix(in srgb, var(--bad-soft) 55%, var(--panel)); }
+  .dc-h { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .dc-h .omark { width: 36px; height: 36px; border-radius: 8px; }
+  .dc-t { flex: 1; min-width: 0; }
+  .dc-n { font-family: var(--mono); font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dc-s { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 13px; color: var(--ink-3); min-width: 0; }
+  .dc-s span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dc-s .mark2 { width: 14px; height: 14px; flex: none; background: none; }
+  .dc-s .mark2 svg { width: 12px; height: 12px; }
+  .dc-st { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; background: var(--fill); color: var(--ink-2); }
+  .dc-st i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+  .dc-st.ok { background: var(--ok-soft); color: var(--ok); } .dc-st.ok i { background: var(--ok); }
+  .dc-st.run { background: var(--info-soft); color: var(--info); }
+  .dc-st.run i { background: var(--info); animation: pulse 1.4s ease-in-out infinite; }
+  .dc-st.bad { background: var(--bad-soft); color: var(--bad); } .dc-st.bad i { background: var(--bad); }
+  .dc-st.pend { background: var(--warn-soft); color: var(--warn); } .dc-st.pend i { background: var(--warn); }
+  /* The stage track. Four stops, joined the way this sheet joins everything
+     it will not draw a line for — a run of single pixels — which fills in
+     with the accent as each stage is passed. */
+  .dc-track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dc-step { position: relative; display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: var(--ink-3); }
+  .dc-step i { position: relative; z-index: 1; width: 9px; height: 9px; border-radius: 50%; background: var(--fill-2); }
+  .dc-step::before { content: ""; position: absolute; left: 13px; right: 4px; top: 4px; height: 1px;
+    background-image: repeating-linear-gradient(to right, var(--fill-2) 0 1px, transparent 1px 3px); }
+  .dc-step:last-child::before { display: none; }
+  .dc-step.did i { background: var(--accent); }
+  .dc-step.did::before { background-image: repeating-linear-gradient(to right, var(--accent) 0 1px, transparent 1px 3px); }
+  .dc-step.did span { color: var(--ink-2); }
+  .dc-step.cur i { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft-2); animation: pulse 1.6s ease-in-out infinite; }
+  .dc-step.cur span { color: var(--ink); font-weight: 600; }
+  .dc-now { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 12px;
+    font-size: 14px; color: var(--ink-2); }
+  .dc-clock { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .dc-last { margin-top: 4px; font-family: var(--mono); font-size: 12px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dc-line { font-size: 14px; color: var(--ink-2); }
+  .dc-ep { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 6px 6px 11px; border-radius: 8px; background: var(--panel-2); }
+  .dc-url { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; color: var(--ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dc-url.dim { font-family: var(--sans); color: var(--ink-3); }
+  .dc-copy { padding: 3px 10px; font-size: 13px; }
+  .dc-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--ink-3); }
+  .dc-facts .amb { color: var(--warn); }
+  .dc-err { display: flex; flex-direction: column; gap: 3px; }
+  .dc-err b { font-size: 14px; color: var(--bad); font-weight: 600; }
+  .dc-err span { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+  .dc-warn { font-size: 13px; color: var(--warn); line-height: 1.45; }
+  .dc-foot { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 11px;
+    background-image: repeating-linear-gradient(to right, var(--fill-2) 0 1px, transparent 1px 4px);
+    background-size: 100% 1px; background-repeat: no-repeat; }
+  .dc-foot .b { padding: 5px 11px; font-size: 13px; }
+  .dc-sp { flex: 1; }
+  .dc-inuse { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--accent); }
+  .dc-inuse::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+  /* the providers, folded to one line once one of them can deploy */
+  .dp-provsum { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; border: 0;
+    border-radius: var(--radius); background: var(--panel); font: inherit; color: var(--ink); text-align: left;
+    cursor: pointer; transition: background var(--t); }
+  .dp-provsum:hover { background: var(--panel-2); }
+  .dp-provmarks { display: flex; gap: 5px; flex: none; }
+  .dp-provmarks .mark2 { width: 20px; height: 20px; background: none; }
+  .dp-provtxt { flex: 1; min-width: 0; font-size: 14px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dp-provtxt b { color: var(--ink); font-weight: 600; }
+  .dp-provx { flex: none; font-size: 14px; font-weight: 600; color: var(--ink-3); }
+  .dp-provsum:hover .dp-provx { color: var(--accent); }
+  #dp-provsec #dp-grid { margin-top: 12px; }
+
+  /* try it: one real request, the answer, and how fast it came */
+  .tr-row { display: flex; gap: 8px; }
+  .tr-row .in { flex: 1; min-width: 0; }
+  .tr-out { margin-top: 12px; min-height: 84px; padding: 14px 16px; border-radius: 8px; background: var(--panel-2);
+    font-size: 15px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+  .tr-out:empty { display: none; }
+  .tr-out.wait { color: var(--ink-3); font-size: 14px; }
+  .tr-out.bad { color: var(--bad); font-size: 14px; }
+  .tr-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .tr-stats:empty { display: none; }
+  /* logs: a pane that follows the output */
+  .lg-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-width: 0; padding-right: 34px; }
+  .lg-h h3 { margin: 0; }
+  .lg-sub { font-size: 13px; color: var(--ink-3); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lg-st { font-size: 13px; color: var(--ink-3); font-family: var(--sans); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lg-follow { font-size: 14px; }
+  .in-log { height: 34vh; margin-bottom: 12px; font-size: 12px; }
+  .lg-body { margin: 0; height: 62vh; overflow: auto; padding: 12px 14px; border-radius: 8px; background: var(--panel-2);
+    font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
 </style>
 </head>
 <body>
@@ -1717,6 +2151,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="ngi">
         <button data-v="mcp"><i class="ic" data-i="mcp"></i><span class="nl">MCP</span><span class="nc" id="n-mcp"></span></button>
         <button data-v="skills"><i class="ic" data-i="skills"></i><span class="nl">Skills</span><span class="nc" id="n-skills"></span></button>
+        <button data-v="memory"><i class="ic" data-i="memory"></i><span class="nl">Memory</span><span class="nc" id="n-memory"></span></button>
       </div>
     </div>
     <div class="ngrp" data-g="system">
@@ -1747,6 +2182,7 @@ INDEX_HTML = r"""<!doctype html>
 <main>
   <section id="home" class="view on"><div class="scroll"><div class="page wide" id="homepad"></div></div></section>
   <section id="skills" class="view"><div class="scroll"><div class="page" id="skillspad"></div></div></section>
+  <section id="memory" class="view"><div class="scroll"><div class="page" id="memorypad"></div></div></section>
   <section id="mcp" class="view"><div class="scroll"><div class="page" id="mcppad"></div></div></section>
   <section id="sessions" class="view">
     <div class="col" id="projects"><div class="col-head">Projects</div><div class="cards" id="projcards"></div></div>
@@ -1806,6 +2242,10 @@ const el = (t, c, txt) => { const e = document.createElement(t); if (c) e.classN
 // ==========================================================================
 const IC0 = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
 const ICONS = {
+  // a brain: two hemispheres and their folds (after Lucide's, ISC) on the same 24 grid and stroke
+  memory: IC0 + '<path d="M12 5a3 3 0 1 0-6 .13 4 4 0 0 0-2.52 5.77 4 4 0 0 0 .55 6.59A4 4 0 1 0 12 18z"/>' +
+    '<path d="M12 5a3 3 0 1 1 6 .13 4 4 0 0 1 2.52 5.77 4 4 0 0 1-.55 6.59A4 4 0 1 1 12 18z"/>' +
+    '<path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M12 5v13"/></svg>',
   // OVERVIEW — the instrument panel itself: four readings, one of them live
   menu: IC0 + '<path d="M3.5 6.5h17M3.5 12h17M3.5 17.5h17"/></svg>',
   home: IC0 + '<rect x="3" y="3" width="8" height="8.5" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/>' +
@@ -1951,7 +2391,11 @@ function showModal(wide) {
   document.getElementById("modal").className = "on";
   document.querySelector("#modal .sheet").classList.toggle("wide", !!wide);
 }
-function hideModal() { document.getElementById("modal").className = ""; }
+function hideModal() {
+  const wasConnect = typeof CONNECT !== "undefined" && CONNECT.fam && connectOpen();
+  document.getElementById("modal").className = "";
+  if (wasConnect) { const d = CONNECT.dirty; CONNECT.fam = null; if (d && curView === "models") loadModels(); }
+}
 document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") hideModal(); });
 window.addEventListener("keydown", e => { if (e.key === "Escape") { hideModal(); hidePalette(); } });
 function extLink(cls, text, href) {
@@ -2052,7 +2496,7 @@ function dailySeries(daily, n) {
 // line on top, the peak annotated in place. Spiky data plus a calm mean reads
 // the way an instrument does: the noise and the trend at once.
 function traceSVG(series, box) {
-  const W = 1000, H = 190, PL = 6, PR = 6, PT = 14, PB = 20;
+  const W = 1000, H = 200, PL = 6, PR = 6, PT = 14, PB = 30;
   const n = series.length, iw = W - PL - PR, ih = H - PT - PB;
   const vals = series.map(s => s.msgs);
   const mean = vals.map((_, i) => {
@@ -2064,7 +2508,7 @@ function traceSVG(series, box) {
   const X = i => PL + (n <= 1 ? 0 : i/(n-1)*iw);
   const Y = v => PT + ih - (v/max)*ih;
   const path = (arr) => "M" + arr.map((v,i) => X(i).toFixed(1)+","+Y(v).toFixed(1)).join(" L");
-  const rawLine = path(vals), sigLine = path(mean);
+  const sigLine = path(mean);
   const area = sigLine + ` L${(PL+iw).toFixed(1)},${(PT+ih).toFixed(1)} L${PL.toFixed(1)},${(PT+ih).toFixed(1)} Z`;
   const pi = vals.reduce((b,v,i) => v > vals[b] ? i : b, 0);
   // Month ticks, but never two labels on top of each other at the left edge
@@ -2074,15 +2518,37 @@ function traceSVG(series, box) {
     const dt = new Date(s.date+"T00:00:00"), m = dt.getMonth(), x = X(i);
     if (m !== lastM && i > 3 && i < n-3 && x - lastX > 60) {
       lastM = m; lastX = x;
-      ticks += `<text x="${x.toFixed(1)}" y="${H-5}" text-anchor="middle">${MON[m]}</text>`;
+      ticks += `<text x="${x.toFixed(1)}" y="${H-3}" text-anchor="middle">${MON[m]}</text>`;
     } else if (m !== lastM) { lastM = m; }
   });
   const peak = vals[pi] ? `<line class="pk" x1="${X(pi).toFixed(1)}" y1="${(PT-6).toFixed(1)}" x2="${X(pi).toFixed(1)}" y2="${(PT+ih).toFixed(1)}"/>` +
     `<circle class="pkd" cx="${X(pi).toFixed(1)}" cy="${Y(vals[pi]).toFixed(1)}" r="3"/>` : "";
+  // one line — the 7-day mean — over a gradient; the raw daily series was a
+  // second, jagged line under it that only added noise. The hover says the
+  // day's real number.
   box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="messages per day">` +
+    `<defs><linearGradient id="trg" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="var(--accent)" stop-opacity=".20"/>` +
+    `<stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>` +
     `<line class="base" x1="${PL}" y1="${PT+ih}" x2="${PL+iw}" y2="${PT+ih}"/>` +
-    `<path class="env" d="${area}"/><path class="raw" d="${rawLine}"/>${peak}` +
-    `<path class="sig" d="${sigLine}"/>${ticks}</svg>`;
+    `<path class="env" fill="url(#trg)" d="${area}"/>${peak}` +
+    `<path class="sig" d="${sigLine}"/>${ticks}` +
+    `<line class="xh" x1="0" y1="${PT}" x2="0" y2="${PT+ih}" style="display:none"/></svg>` +
+    `<div class="tip" style="display:none"></div>`;
+  const svg = box.querySelector("svg"), xh = box.querySelector(".xh"), tip = box.querySelector(".tip");
+  svg.onmousemove = ev => {
+    const r = svg.getBoundingClientRect(); if (!r.width) return;
+    const fx = (ev.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((fx - PL) / Math.max(1, iw) * (n - 1))));
+    const x = X(i);
+    xh.setAttribute("x1", x.toFixed(1)); xh.setAttribute("x2", x.toFixed(1)); xh.style.display = "";
+    const dt = new Date(series[i].date + "T00:00:00");
+    tip.innerHTML = "<b>" + fmt(vals[i]) + "</b> messages<span>" + dt.toLocaleDateString([], { month: "short", day: "numeric" }) + "</span>";
+    tip.style.display = "";
+    const px = x / W * r.width, tw = tip.offsetWidth || 120;
+    tip.style.left = Math.max(0, Math.min(r.width - tw, px - tw / 2)) + "px";
+  };
+  svg.onmouseleave = () => { xh.style.display = "none"; tip.style.display = "none"; };
   const sig = box.querySelector(".sig");
   try { const L = sig.getTotalLength(); sig.style.strokeDasharray = L; sig.style.strokeDashoffset = L; }
   catch (e) { /* jsdom / no layout — the line just appears */ }
@@ -2138,11 +2604,14 @@ const fmtUsd = v => v == null ? "—" : (v > 0 && v < 0.01 ? "$" + v.toFixed(4)
                     : v < 1 ? "$" + v.toFixed(3) : "$" + v.toFixed(2));
 const fmtDur = s => { if (s == null) return "—"; s = Math.max(0, Math.round(s));
   if (s < 60) return s + "s"; if (s < 3600) return Math.floor(s/60) + "m " + (s%60) + "s";
-  return Math.floor(s/3600) + "h " + Math.floor(s%3600/60) + "m"; };
+  if (s < 48 * 3600) return Math.floor(s/3600) + "h " + Math.floor(s%3600/60) + "m";
+  return Math.floor(s/86400) + "d " + Math.floor(s%86400/3600) + "h"; };   // "16d 6h", not "390h 24m"
 const fmtBytes = b => { if (!b) return "—"; const u = ["B","KB","MB","GB","TB"]; let i = 0;
   while (b >= 1024 && i < u.length-1) { b /= 1024; i++; } return b.toFixed(b >= 10 || i === 0 ? 0 : 1) + " " + u[i]; };
-const AUTH_LABEL = { saved: "key saved", env: "key from env", oauth: "oauth token", none: "no key" };
-const AUTH_CLS = { saved: "acc", env: "blu", oauth: "vio", none: "" };
+// the same words the Connect sheet uses: how it is connected, or that it isn't
+const AUTH_LABEL = { saved: "API key", env: "API key", oauth: "Subscription", none: "Not connected" };
+// connected is one state, whichever way in — three colours for it read as three states
+const AUTH_CLS = { saved: "acc", env: "acc", oauth: "acc", none: "" };
 function statusClass(status, active) {
   if (active || status === "running" || status === "starting") return "run";
   if (["done","completed","ok","succeeded"].includes(status)) return "ok";
@@ -2175,23 +2644,26 @@ function renderFamilies(box, g) {
     const sub = f.last_model ? f.last_model
       : f.id === "oss" && f.local && f.local.reachable
         ? f.local.model_count + " local model" + (f.local.model_count === 1 ? "" : "s") + " · " + f.local.loaded_count + " loaded"
-      : target ? (target.base_url || "").replace(/^https?:\/\//, "")
+      : target ? "no model used yet"
       : "not in catalog";
-    const sl = el("div","fm" + (f.last_model ? "" : " none"), sub); sl.title = sub;
+    // an endpoint URL is not a caption; it is still there on hover
+    const sl = el("div","fm" + (f.last_model ? "" : " none"), sub);
+    sl.title = target && target.base_url ? target.base_url : sub;
     card.append(sl);
     const fr = el("div","fr");
     // state, until you hover — then the one action that changes the state
     const st = el("div","fst");
     if (f.id === "oss") {
+      // a family of many vendors: connected is "any one of them answers",
+      // and Ollama running is the only thing worth naming on its own
       const loc = f.local || {};
-      st.append(el("span","t2 " + (loc.reachable ? "acc" : ""), loc.reachable ? "ollama up" : "ollama off"));
+      st.append(el("span","t2 " + (f.ready || loc.reachable ? "acc" : ""),
+        loc.reachable ? "Ollama running" : f.ready ? "Connected" : "Not connected"));
     } else if (!provs.length) {
       st.append(el("span","t2 amb","no catalog"));
     } else {
       st.append(el("span","t2 " + (AUTH_CLS[target.auth] || ""), AUTH_LABEL[target.auth] || target.auth));
     }
-    const d = el("span","dot2 " + (f.ready ? "ok" : "")); d.title = f.ready ? "ready to run" : "not set up";
-    st.append(d);
     fr.append(st);
     const ff = el("div","ff");
     const pr = el("span","pr");
@@ -2236,10 +2708,10 @@ async function testProviderQuick(target) {
 // Transcripts store messages, not the provider's usage record, so session
 // tokens are an estimate from size (≈4 chars/token, context re-billed each
 // turn) priced at the current model. Workflow runs record real usage. The
-// two are drawn differently on purpose: hatched is a guess, solid is a reading.
+// two are drawn differently on purpose: a tint is a guess, solid is a reading.
 let SPEND_WIN = 7, SPEND_TOUCHED = false;
 function spendBars(days) {
-  const W = 1000, H = 150, PL = 6, PR = 6, PT = 12, PB = 18, n = days.length;
+  const W = 1000, H = 170, PL = 6, PR = 6, PT = 12, PB = 30, n = days.length;
   const iw = W-PL-PR, ih = H-PT-PB, bw = iw/Math.max(1, n);
   const tot = d => d.est_in + d.est_out + d.rec_in + d.rec_out;
   const max = Math.max(1, ...days.map(tot));
@@ -2249,16 +2721,23 @@ function spendBars(days) {
     const hr = (d.rec_in + d.rec_out)/max*ih, he = (d.est_in + d.est_out)/max*ih;
     const title = `<title>${d.date} · est ${fmtTok(d.est_in+d.est_out)} tok${d.est_usd != null ? " ≈ " + fmtUsd(d.est_usd) : ""}` +
       `${(d.rec_in+d.rec_out) ? " · recorded " + fmtTok(d.rec_in+d.rec_out) + " tok " + fmtUsd(d.rec_usd) : ""}</title>`;
-    if (hr) bars += `<rect class="rec" x="${x.toFixed(1)}" y="${(y0-hr).toFixed(1)}" width="${w.toFixed(1)}" height="${hr.toFixed(1)}" rx="1">${title}</rect>`;
-    if (he) bars += `<rect class="est" x="${x.toFixed(1)}" y="${(y0-hr-he).toFixed(1)}" width="${w.toFixed(1)}" height="${he.toFixed(1)}" rx="1">${title}</rect>`;
-    if (!hr && !he) bars += `<rect class="hl" x="${x.toFixed(1)}" y="${(y0-1.5).toFixed(1)}" width="${w.toFixed(1)}" height="1.5"/>`;
+    // stacked: recorded (a reading) at the base, estimated (a guess) above it
+    // in a tint of the same hue, 2px of surface between them; only the top
+    // segment is rounded, and every bar stands on the baseline
+    const seg = (cls, top, h, round) => {
+      if (h <= 0) return "";
+      const r = round ? Math.min(4, w / 2, h) : 0, x1 = x + w, yb = top + h;
+      return `<path class="${cls}" d="M${x.toFixed(1)},${yb.toFixed(1)} V${(top + r).toFixed(1)} Q${x.toFixed(1)},${top.toFixed(1)} ${(x + r).toFixed(1)},${top.toFixed(1)} ` +
+        `H${(x1 - r).toFixed(1)} Q${x1.toFixed(1)},${top.toFixed(1)} ${x1.toFixed(1)},${(top + r).toFixed(1)} V${yb.toFixed(1)} Z">${title}</path>`;
+    };
+    const gap = hr && he ? 2 : 0;
+    bars += seg("rec", y0 - hr, hr, !he);
+    bars += seg("est", y0 - hr - he - gap, he - (he > gap ? 0 : 0), true);
     const dt = new Date(d.date + "T00:00:00");
     if (n <= 7 || dt.getDay() === 1 || i === n-1)
-      ticks += `<text x="${(x+w/2).toFixed(1)}" y="${H-5}" text-anchor="middle">${n <= 7 ? WD[(dt.getDay()+6)%7] : (dt.getMonth()+1) + "/" + dt.getDate()}</text>`;
+      ticks += `<text x="${(x+w/2).toFixed(1)}" y="${H-3}" text-anchor="middle">${n <= 7 ? WD[(dt.getDay()+6)%7] : (dt.getMonth()+1) + "/" + dt.getDate()}</text>`;
   });
   return `<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="tokens per day">` +
-    `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">` +
-    `<rect width="2.5" height="6" style="fill:var(--accent)"/></pattern></defs>` +
     `<line class="base" x1="${PL}" y1="${PT+ih}" x2="${PL+iw}" y2="${PT+ih}"/>${bars}${ticks}</svg>`;
 }
 function renderSpend(box, sp, win) {
@@ -2289,7 +2768,7 @@ function renderSpend(box, sp, win) {
   lcdCell(lcd, fmt(t.msgs), "messages", "dim");
   box.append(lcd);
   const leg = el("div","leg");
-  leg.innerHTML = '<span><i class="est"></i>estimated · sessions</span><span><i></i>recorded · workflow runs</span>';
+  leg.innerHTML = '<span><i></i>Recorded</span><span><i class="est"></i>Estimated</span>';
   box.append(leg);
   const sv = el("div"); sv.innerHTML = spendBars((sp.days || []).slice(-win)); box.append(sv);
   const provs = sp.by_provider || [];
@@ -2363,16 +2842,8 @@ async function loadActivity(refreshOnly) {
     { v: c7.error || 0, k: "failed" },
     { v: "7 days", k: "window", opt: 2 },
   ], null, "Jobs and workflow runs this machine recorded, newest first.");
-  // The three states the ledger sorts into, counted over the same seven days
-  // the caption names. There is no previous week on this endpoint, so there is
-  // no delta: a trend nobody can compute is a trend nobody should be shown.
-  statRow(pad, [
-    { icon: "clock", label: "Running", value: String(c7.running || 0),
-      sub: (c7.running || 0) ? "jobs and workflow runs in flight" : "nothing in flight" },
-    { icon: "trace", label: "Done", value: String(c7.done || 0), sub: "finished in the last 7 days" },
-    { icon: "tool", label: "Failed", value: String(c7.error || 0),
-      sub: (c7.error || 0) ? "worth opening — the error is on the row" : "nothing failed in the last 7 days" },
-  ]);
+  // The readings line already says running / done / failed; three tiles
+  // repeating it at 28px was the loudest thing on the page and said nothing new.
   const bar = el("div","filters");
   const find = findBox("Filter — name, kind, status…  ( / )");
   find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = ACT.q;
@@ -2412,7 +2883,10 @@ function renderActivityPage() {
     row.append(el("span","xv", (r.active ? "▶ " : "") + fmtDur(r.elapsed)));
     row.append(el("span","xv xtok", r.tokens != null ? fmtTok(r.tokens) : ""));
     row.append(el("span","xv xusd", r.usd ? fmtUsd(r.usd) : ""));
-    const st = el("span","xs"); st.append(el("span","t2 " + ({ run: "acc", ok: "acc", bad: "red", pend: "amb" }[statusClass(r.status, r.active)] || ""), r.status || "?")); row.append(st);
+    // the dot already carries the colour; the word is just the word, and only
+    // a failure is allowed to be loud
+    const sc = statusClass(r.status, r.active), word = String(r.status || "?");
+    const st = el("span","xs" + (sc === "bad" ? " bad" : ""), word.charAt(0).toUpperCase() + word.slice(1)); row.append(st);
     row.append(el("span","xa", r.ts ? ago(r.ts) : ""));
     row.onclick = r.open;
     return row;
@@ -2491,13 +2965,22 @@ let homeReq = 0;
 // a column, and a yes/no per day is a block. All three are drawn edge to edge
 // on a 100-unit box with preserveAspectRatio="none", so a tile can be any
 // width and the shape still lands on the card's own padding.
+let SPARK_ID = 0;
+// Every tile's chart is the same mark: a 2px line over a gradient that fades
+// to nothing at the baseline. Four tiles in four chart styles read as four
+// different products; one shape reads as one instrument.
 function sparkLine(vals) {
-  const n = vals.length, max = Math.max(1, ...vals), W = 100, H = 38, PB = 3;
+  const n = vals.length, max = Math.max(1, ...vals), W = 100, H = 38, PB = 2;
   const X = i => (n === 1 ? W / 2 : i / (n - 1) * W);
-  const Y = v => H - PB - v / max * (H - PB - 3);
+  const Y = v => H - PB - v / max * (H - PB - 4);
   const d = vals.map((v, i) => X(i).toFixed(2) + "," + Y(v).toFixed(2)).join(" L");
+  const id = "sg" + (++SPARK_ID);
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
-    '<path class="ar" d="M' + d + ' L' + W + ',' + H + ' L0,' + H + ' Z"/><path class="ln" d="M' + d + '"/></svg>';
+    '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/>' +
+    '<stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>' +
+    '<path class="ar" fill="url(#' + id + ')" d="M' + d + ' L' + W + ',' + H + ' L0,' + H + ' Z"/>' +
+    '<path class="ln" d="M' + d + '"/></svg>';
 }
 function sparkBars(vals) {
   const n = vals.length, max = Math.max(1, ...vals), W = 100, H = 38, bw = W / n;
@@ -2512,13 +2995,13 @@ function sparkBars(vals) {
 // a day you worked is a block, a day you didn't is the ghost of one — the
 // same pixel grid the provider cards are marked on, read as a fortnight
 function dayBlocks(vals) {
-  const n = vals.length, W = 100, H = 38, bw = W / n;
+  const n = vals.length, W = 100, H = 38, bw = W / n, r = Math.min(bw * 0.3, 3.2);
   let out = "";
   vals.forEach((v, i) => {
-    out += '<rect class="blk' + (v ? "" : " off") + '" x="' + (i * bw + bw * 0.18).toFixed(2) +
-      '" y="' + (v ? 12 : 20) + '" width="' + (bw * 0.64).toFixed(2) + '" height="' + (v ? 18 : 10) + '" rx="1"/>';
+    out += '<circle class="blk' + (v ? "" : " off") + '" cx="' + (i * bw + bw / 2).toFixed(2) + '" cy="' + (H / 2 + 4) +
+      '" r="' + r.toFixed(2) + '"/>';
   });
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + out + '</svg>';
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" aria-hidden="true">' + out + '</svg>';
 }
 // A delta is only a delta if there was a previous window to compare with, and
 // only a direction if the move clears a point. Anything under that is noise
@@ -2642,7 +3125,7 @@ async function loadHome() {
     sparkLine(recent.map(d => d.msgs || 0)), deltaEl(msgsN, msgsP, WIN + " days"));
   tile(tiles, "tool", "Tool calls" + wlab, fmt(toolsN), null,
     t.unique_tools + " distinct tools · " + fmt(t.tool_calls) + " all time",
-    sparkBars(recent.map(d => d.tools || 0)), deltaEl(toolsN, toolsP, WIN + " days"));
+    sparkLine(recent.map(d => d.tools || 0)), deltaEl(toolsN, toolsP, WIN + " days"));
   if (sp) {
     const days = sp.days || [];
     const cut = days.slice(-span), prevCut = days.slice(-2 * span, -span);
@@ -2654,7 +3137,7 @@ async function loadHome() {
       priced ? null : " tok",
       priced ? fmtTok(toks) + " tokens at " + ((sp.pricing || {}).model || "current") + " rates"
              : "no price row for this model — tokens only",
-      sparkBars(cut.map(tok)), priced ? deltaEl(usd(cut), usd(prevCut), span + " days") : null);
+      sparkLine(cut.map(tok)), priced ? deltaEl(usd(cut), usd(prevCut), span + " days") : null);
     if (!SPEND_TOUCHED) SPEND_WIN = WIN === 7 ? 7 : 30;
   }
   tile(tiles, "streak", streak ? "Streak" : "Active days", streak ? String(streak) : String(t.active_days),
@@ -2859,78 +3342,30 @@ function hfTokenForm(onSaved) {
 // turns every lock into "token set" and re-enables Deploy in place.
 async function refreshGating() {
   const grid = document.getElementById("dp-models");
-  if (grid) grid.querySelectorAll(".mcard").forEach(c => { c.dataset.sig = ""; });
-  const id = DEPLOY.model;
-  if (id) { DEPLOY.inspect = null; const sec = document.getElementById("dp-fit"); if (sec) renderFit(sec, true); await pickModel(id); }
-  const st = document.getElementById("hf-state"); if (st) renderHfState(st);
-}
-function renderHfState(box) {
-  box.innerHTML = "";
-  box.append(el("span","dot2 " + (DEPLOY.hfToken ? "ok" : "")));
-  box.append(document.createTextNode("Hugging Face token: " + (DEPLOY.hfToken ? "set" : "not set")));
-  if (!DEPLOY.hfToken) {
-    const a = el("button","hf-add","· add");
-    a.onclick = () => { const n = document.getElementById("hf-notice"); if (n) { n.classList.add("on"); const i = n.querySelector("input"); if (i) i.focus(); n.scrollIntoView({ behavior: "smooth", block: "center" }); }
-      else openAddKey("hf"); };
-    box.append(a);
-  }
+  if (grid) { grid.querySelectorAll(".mcard").forEach(c => { c.dataset.sig = ""; }); paintModels(); }
 }
 // Which GPU provider the page is scoped to. The hash (#deploy/modal) wins,
 // then the last choice in this browser, then — when exactly one provider is
 // configured — that one, so the common case needs no clicking at all.
 const DEPLOY_PROV_KEY = "mantis-deploy-provider";
-const PROV_SHORT = { runpod: "RunPod", hf: "HF", modal: "Modal", deepinfra: "DeepInfra", baseten: "Baseten", vastai: "Vast.ai" };
-const provFromHash = () => { const [t, sub] = location.hash.slice(1).split("/"); return t === "deploy" && sub ? sub : null; };
+const PROV_SHORT = { runpod: "RunPod", hf: "HF", modal: "Modal", deepinfra: "DeepInfra", baseten: "Baseten", vastai: "Vast.ai",
+                     "fireworks-dedicated": "Fireworks" };
+// the company filter rides in the hash as #deploy/all/<name>, URL-encoded —
+// a company's name can have spaces ("Kimi (Moonshot)")
+const hashOrg = () => { const raw = location.hash.slice(1).split("/")[2] || "";
+  try { return decodeURIComponent(raw); } catch (e) { return raw; } };
 function initDeployProvider(configured) {
-  const known = id => id === "all" || DEPLOY.providers.some(p => p.id === id);
-  DEPLOY.org = location.hash.slice(1).split("/")[2] || DEPLOY.org || "all";
-  let want = provFromHash();
-  if (!want) { try { want = localStorage.getItem(DEPLOY_PROV_KEY); } catch (e) { want = null; } }
-  if (!want || !known(want)) want = configured.length === 1 ? configured[0].id : "all";
-  DEPLOY.provider = want;
+  // The page is never scoped to one provider any more: the deploy sheet looks
+  // across every provider that can deploy and picks the best card. What the
+  // hash still carries is the company filter on the model grid.
+  DEPLOY.org = hashOrg() || DEPLOY.org || "all";
+  DEPLOY.provider = "all";
+  try { localStorage.removeItem(DEPLOY_PROV_KEY); } catch (e) { /* private mode */ }
 }
 function writeDeployHash() {
-  const p = DEPLOY.provider === "all" ? "" : DEPLOY.provider;
-  const o = DEPLOY.org === "all" ? "" : DEPLOY.org;
-  const want = "deploy" + (p || o ? "/" + (p || "all") : "") + (o ? "/" + o : "");
+  const o = DEPLOY.org === "all" ? "" : encodeURIComponent(DEPLOY.org);
+  const want = "deploy" + (o ? "/all/" + o : "");
   if (location.hash !== "#" + want) location.hash = want;
-}
-function setDeployProvider(id) {
-  DEPLOY.provider = id;
-  try { if (id === "all") localStorage.removeItem(DEPLOY_PROV_KEY); else localStorage.setItem(DEPLOY_PROV_KEY, id); } catch (e) { /* private mode */ }
-  writeDeployHash();
-  document.querySelectorAll("#dp-ptoggle .fchip").forEach(x => x.classList.toggle("on", x.dataset.prov === id));
-  const sec = document.getElementById("dp-fit"); if (sec) renderFit(sec);
-  const grid = document.getElementById("dp-models");
-  if (grid) gpuCeiling().then(() => { grid.querySelectorAll(".mcard").forEach(c => (c.dataset.sig = "")); paintModels(); });
-}
-// The segmented control itself: every provider, its real mark and short name.
-// An unconfigured one is dimmed and, clicked, opens its Add-key form rather
-// than selecting something that can't deploy yet.
-function providerToggle() {
-  const row = el("div","dp-ptoggle"); row.id = "dp-ptoggle";
-  const item = (id, label, mark, dim) => {
-    const c = el("button","fchip" + (DEPLOY.provider === id ? " on" : "") + (dim ? " dim" : ""));
-    c.dataset.prov = id;
-    if (mark) c.append(mark);
-    c.append(el("span", null, label));
-    row.append(c);
-    return c;
-  };
-  item("all", "All", null, false).onclick = () => setDeployProvider("all");
-  DEPLOY.providers.forEach(p => {
-    const short = PROV_SHORT[p.id] || p.display_name || p.id;
-    const ready = provReady(p);
-    const c = item(p.id, short, providerMark(p.logo || p.id, short), !p.configured || !ready);
-    // a few words here; the full hint lives on the card
-    c.title = !ready ? reqShort(p) : p.configured ? "scope to " + (p.display_name || p.id) : "no key yet — click to add one";
-    c.onclick = () => {
-      if (!ready) openInstallSheet(p);
-      else if (p.configured) setDeployProvider(p.id);
-      else openAddKey(p.id);
-    };
-  });
-  return row;
 }
 function openAddKey(pid) {
   const p = DEPLOY.providers.find(x => x.id === pid);
@@ -2938,6 +3373,18 @@ function openAddKey(pid) {
 }
 const DEP_STATE = { running: "ok", scaled_to_zero: "ok", starting: "run", pending: "run", building: "run",
                     deleting: "run", paused: "pend", failed: "bad", deleted: "", unknown: "" };
+// what a weights format means, for the tooltip on the letters
+function dtypeWords(dt) {
+  const t = String(dt || "").toUpperCase();
+  const w = /^BF16$/.test(t) ? "16-bit weights (bfloat16) — full quality"
+    : /^F16|FP16$/.test(t) ? "16-bit weights (float16) — full quality"
+    : /^F32|FP32$/.test(t) ? "32-bit weights — twice the memory of 16-bit"
+    : /^F8|FP8/.test(t) ? "8-bit float weights — about half the memory of 16-bit"
+    : /^(U8|I8|INT8)$/.test(t) ? "8-bit integers — usually a quantized model"
+    : /^(U32|I32)$/.test(t) ? "packed integers — usually a 4-bit quantized model"
+    : /^(U4|I4|INT4|Q4)/.test(t) ? "4-bit quantized weights" : "";
+  return (w ? w + " · " : "") + "the format the weights are stored in";
+}
 const fmtGb = g => g == null ? "—" : (Number.isInteger(g) ? g : Number(g).toFixed(1)) + " GB";
 const fmtRate = v => v == null ? "—" : "$" + (v < 1 ? v.toFixed(3) : v.toFixed(2)) + "/h";
 const fmtParams = b => b == null ? "—" : (b >= 1000 ? (b/1000).toFixed(1) + "T" : b >= 10 ? Math.round(b) + "B" : Number(b).toFixed(1) + "B");
@@ -2958,79 +3405,78 @@ async function loadDeploy() {
   const pad = document.getElementById("deploypad");
   const my = ++deployReq;
   if (!pad.childElementCount) skeleton(pad);
-  const [pv, ls] = await Promise.all([
+  const [pv, ls, jr] = await Promise.all([
     api("/api/deploy/providers").catch(e => ({ ok: false, error: e.message, providers: [] })),
     api("/api/deploy/list").catch(e => ({ ok: false, error: e.message, deployments: [] })),
+    api("/api/deploy/jobs").catch(() => ({ ok: false, jobs: [] })),
   ]);
   if (my !== deployReq) return;
   DEPLOY.providers = pv.providers || [];
   DEPLOY.deployments = ls.deployments || [];
+  DEPLOY.jobs = jr.jobs || [];
   pad.innerHTML = "";
-  const live = DEPLOY.deployments.filter(d => d.is_live);
   const configured = DEPLOY.providers.filter(p => p.configured);
-  const ref = el("span","refresh"); ref.append(el("span","live"), document.createTextNode("live · 15s"));
-  ref.title = "deployments refresh every 15s while this tab is visible";
-  pageHead(pad, "Deploy", live.length || null, null, [ref]);
-  pageReads(pad, [
-    { v: live.length, k: "live" },
-    { v: configured.length + " of " + DEPLOY.providers.length, k: "providers keyed" },
-  ], "Add a GPU key, pick a model, deploy.",
-     "Rates are the providers' own list prices; nothing here is billed by mantis.");
-  // What this page costs you right now. The burn is summed from the rates the
-  // providers actually quote for the endpoints that are actually up — an
-  // endpoint whose provider gives no rate is counted as unpriced rather than
-  // as zero, and the tile says so instead of understating the bill.
-  {
-    const rate = d => { const c = d.cost || {};
-      return c.per_hour_usd != null ? c.per_hour_usd
-           : (d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null); };
-    const priced = live.filter(d => rate(d) != null);
-    const burn = priced.reduce((a, d) => a + rate(d), 0);
-    const ready = configured.filter(p => provReady(p)).length;
-    statRow(pad, [
-      { icon: "deploy", label: "Live deployments", value: String(live.length),
-        sub: live.length ? live.length + " of " + DEPLOY.deployments.length + " endpoints are up"
-                         : "nothing is running — nothing is being billed" },
-      { icon: "spend", label: "Hourly burn", value: live.length ? fmtRate(burn) : "—",
-        sub: !live.length ? "no endpoint is up"
-             : priced.length < live.length
-               ? (live.length - priced.length) + " of " + live.length + " unpriced — this is the rest"
-               : "list price across every live endpoint" },
-      { icon: "key", label: "Providers ready", value: String(ready), small: "/ " + DEPLOY.providers.length,
-        sub: ready ? "keyed and runnable" : "add a key to deploy anywhere" },
-    ]);
-  }
+  const ready = configured.filter(p => provReady(p));
+  pageHead(pad, "Deploy", null, null);
+  const reads = el("div"); reads.id = "dp-reads"; pad.append(reads); paintDeployReads();
   if (pv.ok === false) {
     const b = el("div","banner"); const t = el("div","sp");
     t.innerHTML = "<b>Deploy isn't available:</b> " + esc(errText(pv)); b.append(t); pad.append(b);
   }
-
-  // no caption: "keys → user settings env" is implementation jargon, and the
-  // cards below already say where each key stands
-  const pSec = section(pad, "GPU providers · " + configured.length + "/" + DEPLOY.providers.length + " configured");
-  const strip = el("div","dp-grid"); strip.id = "dp-grid"; renderDpProviders(strip); pSec.append(strip);
-
-  // what's running sits right under the providers; picking and fitting follow
-  const dSec = section(pad, "Deployments" + (live.length ? " · " + live.length + " live" : ""));
-  const tbl = el("div"); tbl.id = "dp-deps"; renderDeployments(tbl); dSec.append(tbl);
-
+  // What is running, and what is on its way there — the first thing on the
+  // page whenever there is any, and not on the page at all when there isn't.
+  const aSec = section(pad, "Active"); aSec.id = "dp-active";
+  const cards = el("div","dcards"); cards.id = "dp-cards"; aSec.append(cards);
+  const uSec = section(pad, "Usage"); uSec.id = "dp-usage";
+  loadUsage();
+  // The providers are setup: the page leads with them only while nothing can
+  // deploy yet. Once one can, they fold to one line under the models.
+  const pSec = el("div","sec dp-prov"); pSec.id = "dp-provsec";
+  if (!ready.length) pad.append(pSec);
   initDeployProvider(configured);
-  // No "Pick a model" heading: the search box IS the instruction, and the
-  // section header was only there to hold the org pills and the token line —
-  // which is how the token line ended up floating in the middle of a row it
-  // had nothing to do with.
   const mSec = el("div","sec"); pad.append(mSec);
-  if (!configured.length) {
-    mSec.append(emptyState("socket", "Add a GPU provider to deploy any model",
-      "Paste one provider key above, then search every open model on the Hub."));
-  } else renderDpPicker(mSec);
-
-  const fSec = section(pad, "Fit & deploy"); fSec.id = "dp-fit";
-  fSec.querySelector(".sec-t").append(providerToggle());
-  renderFit(fSec);
-  // deep link: /?model=<hf id>#deploy lands with that model inspected
+  renderDpPicker(mSec);
+  if (ready.length) pad.append(pSec);
+  renderProvSection(pSec, !ready.length);
+  renderActive();
+  kickDeployPoll(false);
+  // the store's state can be minutes old — ask the providers once, behind the paint
+  setTimeout(() => { if (curView === "deploy" && !document.hidden) syncDeploy(true); }, 900);
+  // deep link: /?model=<hf id>#deploy opens straight into that model's sheet
   const want = new URLSearchParams(location.search).get("model");
-  if (want && configured.length && DEPLOY.model !== want) pickModel(want);
+  if (want) openDeploySheet(want);
+}
+// The providers as one line — which are ready, and the way into setup —
+// opening onto the full cards. Open by default only when none is ready.
+function renderProvSection(sec, open) {
+  sec.innerHTML = "";
+  const configured = DEPLOY.providers.filter(p => p.configured);
+  const ready = configured.filter(p => provReady(p));
+  const sum = el("button","dp-provsum"); sum.type = "button";
+  const marks = el("span","dp-provmarks");
+  (ready.length ? ready : DEPLOY.providers).slice(0, 6).forEach(p => marks.append(providerMark(p.logo || p.id, p.display_name)));
+  const txt = el("span","dp-provtxt");
+  if (ready.length)
+    txt.append(el("b", null, ready.length + " of " + DEPLOY.providers.length + " GPU providers ready"),
+               el("span", null, " · " + ready.map(p => PROV_SHORT[p.id] || p.display_name).join(", ")));
+  else if (configured.length)
+    txt.append(el("b", null, "Finish setting up " + configured.map(p => PROV_SHORT[p.id] || p.display_name).join(", ")),
+               el("span", null, " · " + configured.map(p => reqShort(p).toLowerCase()).join(", ") + " — or connect another provider"));
+  else
+    txt.append(el("b", null, "Connect a GPU provider"),
+               el("span", null, " · paste one API key and any model below is two clicks from running"));
+  const x = el("span","dp-provx");
+  sum.append(marks, txt, x);
+  const box = el("div","dp-grid"); box.id = "dp-grid";
+  const set = on => {
+    box.style.display = on ? "" : "none";
+    x.textContent = on ? "Hide" : (ready.length ? "Manage" : "Set up");
+    sum.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on && !box.childElementCount) renderDpProviders(box);
+  };
+  sum.onclick = () => set(box.style.display === "none");
+  sec.append(sum, box);
+  set(open);
 }
 
 // ---- providers strip ----
@@ -3052,7 +3498,9 @@ const reqCmd = p => {
   return "pip install mantis-agent-sdk" + (pkg ? "[" + pkg + "]" : "");
 };
 function providerDescriptor(p) {
-  const kind = p.id === "vastai" ? "marketplace" : p.scale_to_zero ? "serverless" : "dedicated";
+  // Fireworks scales to zero, but what it rents you is dedicated GPUs
+  const kind = p.id === "vastai" ? "marketplace" : p.id === "fireworks-dedicated" ? "dedicated GPUs"
+    : p.scale_to_zero ? "serverless" : "dedicated";
   return kind + " · " + (p.scale_to_zero ? "scale to zero" : "always warm") +
     (p.public_by_default ? " · public endpoint" : "") + (p.id === "vastai" ? " · plain http" : "");
 }
@@ -3139,22 +3587,53 @@ function openInstallSheet(p) {
   head.append(bigMark(p.logo || p.id, p.display_name));
   const ht = el("div","ft");
   ht.append(el("div","fn", "Install " + (p.display_name || p.id) + "'s package"));
-  ht.append(el("div","fd", p.requirements_hint || reqShort(p)));
+  ht.append(el("div","fd", (reqPkg(p) ? "`" + reqPkg(p) + "` goes into the dashboard's own Python environment. " : "")
+    + "One click; it takes about a minute."));
   head.append(ht);
   s.append(head);
+  const log = el("pre","lg-body in-log"); log.style.display = "none"; s.append(log);
+  const out = el("div"); s.append(out);
+  const foot = el("div","cs-foot");
+  const go = btn("Install now", "pri", async () => {
+    go.disabled = true; go.textContent = "Installing…"; out.innerHTML = "";
+    log.style.display = ""; log.textContent = "starting…";
+    let r;
+    try { r = await post("/api/deploy/install", { provider: p.id }); } catch (e) { r = { ok: false, error: e.message }; }
+    if (!r.ok) { out.append(probeBox(false, errText(r))); go.disabled = false; go.textContent = "Install now"; return; }
+    if (r.already) { toast("✓ " + (p.display_name || p.id) + " is ready"); hideModal(); loadDeploy(); return; }
+    const open = () => document.getElementById("modal").className && s.firstChild === head;
+    for (;;) {
+      await sleep(900);
+      if (!open()) return;
+      let j;
+      try { j = await api("/api/deploy/job?" + q({ id: r.job })); } catch (e) { continue; }
+      log.textContent = (j.lines || []).join("\n") || "starting…"; log.scrollTop = log.scrollHeight;
+      if (j.status === "running") continue;
+      if (j.status === "done") {
+        toast("✓ " + (p.display_name || p.id) + " can deploy now");
+        const pr = await api("/api/deploy/providers").catch(() => null);
+        if (pr) DEPLOY.providers = pr.providers || [];
+        hideModal(); loadDeploy(); return;
+      }
+      out.append(probeBox(false, (j.error || "install failed") + (j.hint ? " — " + j.hint : "")));
+      go.disabled = false; go.textContent = "Try again";
+      return;
+    }
+  });
+  // the manual route stays one line away, for a mantis installed as a uv tool
+  const alt = el("details","ds-adv"); alt.append(el("summary", null, "Or run it yourself"));
   const cmd = reqCmd(p);
   const box = el("div","jsonbox");
   const h2 = el("div","jh");
-  h2.append(el("span","jt", "run this in your shell"));
+  h2.append(el("span","jt", "in your shell"));
   const cp = btn("Copy", "gho", () => copyText(cmd, "command")); cp.style.marginLeft = "auto"; h2.append(cp);
   box.append(h2);
   const pre = el("pre"); pre.textContent = cmd; box.append(pre);
-  s.append(box);
-  s.append(el("div","note2", "Installed mantis as a uv tool? Use " +
+  alt.append(box);
+  alt.append(el("div","note2", "Installed mantis as a uv tool? Use " +
     "uv tool install --force 'mantis-agent-sdk[" + (reqPkg(p) || "modal") + "]' instead, then re-check."));
-  const out = el("div"); s.append(out);
-  const foot = el("div","cs-foot");
-  const re = btn("Re-check", "pri", async () => {
+  s.append(alt);
+  const re = btn("Re-check", "gho", async () => {
     re.disabled = true; re.textContent = "Checking…"; out.innerHTML = "";
     try {
       const r = await api("/api/deploy/providers");
@@ -3166,10 +3645,11 @@ function openInstallSheet(p) {
     } catch (e) { out.append(probeBox(false, e.message)); }
     finally { re.disabled = false; re.textContent = "Re-check"; }
   });
-  foot.append(re, btn("Close", "gho", hideModal));
+  foot.append(go, re, btn("Close", "gho", hideModal));
   s.append(foot);
   showModal();
   trapFocus(s.parentElement);
+  setTimeout(() => go.focus(), 30);
 }
 // The credential sheet. What the user came for is first — the fields — with
 // the how-to-get-a-key guide collapsed underneath for whoever needs it, and
@@ -3301,7 +3781,7 @@ function renderDpPicker(sec) {
   const paintMode = () => {
     const on = askMode(find.input.value);
     modeBtn.classList.toggle("on", on);
-    modeLbl.textContent = on ? "Ask" : "Keywords";
+    modeLbl.textContent = on ? "Ask the agent" : "Keyword search";
     modeBtn.title = DEPLOY.mode === "auto"
       ? (on ? "This reads as a question — Enter asks the agent. Click to force keyword search."
             : "This reads as keywords — Enter searches the Hub. Click to ask the agent instead.")
@@ -3319,23 +3799,36 @@ function renderDpPicker(sec) {
   find.input.addEventListener("input", paintMode);
   paintMode();
   bar.append(modeBtn);
+  // Four always-on pills to answer a question most people ask once, and then
+  // only to change their mind. The ordering is one choice, so it reads as one
+  // labelled control that states it without being opened — the same Sort
+  // control the model grid already uses. "Last 30 days" stays a pill: it is a filter
+  // that rides ALONGSIDE any ordering, not a fifth way to order.
+  const HUB_SORTS = [["trending", "Trending", "what the Hub is pushing"],
+                     ["downloads", "Downloads", "most pulled"],
+                     ["likes", "Likes", "most liked"],
+                     ["recent", "Recent", "last updated"]];
+  const hubSort = () => HUB_SORTS.find(([k]) => k === DEPLOY.sort) || HUB_SORTS[0];
+  const sortBtn = popMenu(() => hubSort()[1], () => HUB_SORTS.map(([k, lab, hint]) => ({
+    label: lab, on: k === DEPLOY.sort, side: hint,
+    // an ordering is a question for the whole Hub — the curated list is in
+    // the order it was picked — so choosing one goes there, like typing does
+    run: () => { DEPLOY.sort = k; sortBtn.repaint(); if (DEPLOY.source === "curated") setSource("hub"); runSearch(); },
+  })), { prefix: "Sort by", title: "how the Hub orders these results" });
+  sortBtn.id = "dp-sort";
+  bar.append(sortBtn);
   const chips = el("div","fchips");
-  [["trending","Trending"], ["downloads","Downloads"], ["likes","Likes"], ["recent","Recent"]].forEach(([k, lab]) => {
-    const c = el("button","fchip" + (k === DEPLOY.sort ? " on" : ""), lab);
-    c.onclick = () => { DEPLOY.sort = k; chips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c)); runSearch(); };
-    chips.append(c);
-  });
-  const fresh = el("button","fchip" + (DEPLOY.fresh ? " on" : ""), "New");
+  // a filter, so it is named for what it keeps — "New" read as a create button
+  const fresh = el("button","fchip" + (DEPLOY.fresh ? " on" : ""), "Last 30 days");
   fresh.title = "released or updated in the last 30 days";
   fresh.onclick = () => { DEPLOY.fresh = !DEPLOY.fresh; fresh.classList.toggle("on", DEPLOY.fresh); paintModels(); };
   chips.append(fresh);
   bar.append(chips); sec.append(bar);
-  // second row: what is being searched, how it is filtered, and where the
-  // token stands — one line, left to right, nothing floating in the middle
+  // second row: how the results are filtered — the company pills, and the
+  // result count when a search is what produced them. Nothing else.
   const sub = el("div","dp-sub");
   const orgRow = el("div","dp-orgs"); orgRow.id = "dp-orgs"; sub.append(orgRow);
   const status = el("div","dp-status"); status.id = "dp-mstatus"; sub.append(status);
-  const hfState = el("div","hf-state"); hfState.id = "hf-state"; renderHfState(hfState); sub.append(hfState);
   sec.append(sub);
   const grid = el("div","dp-mgrid"); grid.id = "dp-models"; sec.append(grid);
   let t = null;
@@ -3365,7 +3858,8 @@ function renderDpPicker(sec) {
                 dtype: x.quant, size_b: x.size, loaded: x.loaded, lastModified: x.modified_at })) };
       } catch (e) { r = { ok: false, error: e.message, models: [] }; }
     } else {
-      try { r = await api("/api/deploy/models?" + q({ q: DEPLOY.q, sort: DEPLOY.sort, limit: 30 })); }
+      try { r = await api("/api/deploy/models?" + q({ q: DEPLOY.q, sort: DEPLOY.sort, limit: 30,
+                                                          source: DEPLOY.source === "curated" ? "curated" : "hub" })); }
       catch (e) { r = { ok: false, error: e.message, models: [] }; }
     }
     if (my !== modelSearchReq) return;
@@ -3389,7 +3883,8 @@ function renderDpPicker(sec) {
   };
   const setStatus = txt => { status.textContent = txt; };
   const searchingLine = () => DEPLOY.source === "ollama" ? "reading local models…"
-    : DEPLOY.q ? "searching all of Hugging Face…" : "loading the curated list…";
+    : DEPLOY.q ? "searching all of Hugging Face…"
+    : DEPLOY.source === "hub" ? "loading what's trending on Hugging Face…" : "loading the curated list…";
   const resultLine = r => {
     if (r.ok === false) return "";
     const n = (r.models || []).length;
@@ -3397,7 +3892,10 @@ function renderDpPicker(sec) {
       return r.reachable === false ? "Ollama is not running on this machine"
         : n + " pulled locally";
     if (DEPLOY.q) return n + " of all Hugging Face, for “" + DEPLOY.q + "”";
-    return n + " curated · search above to reach all of Hugging Face";
+    // The curated list needs no caption: the "Curated" tab is already selected
+    // above it, and the count is on the tab. Saying it again under the grid was
+    // just noise.
+    return "";
   };
   // Progressive enrichment: bare ids paint first, then params / dtype /
   // license / vLLM / VRAM fill in as the server's lookups land (diff-render,
@@ -3469,7 +3967,7 @@ async function runAsk(grid, status) {
   };
   paint(["reading your question…"], true);
   let start;
-  try { start = await api("/api/deploy/find?" + q({ q: DEPLOY.q, provider: DEPLOY.provider, limit: 24,
+  try { start = await api("/api/deploy/find?" + q({ q: DEPLOY.q, provider: DEPLOY.provider === "all" ? "" : DEPLOY.provider, limit: 24,
                                                     agent: DEPLOY.mode === "keyword" ? 0 : 1 })); }
   catch (e) { start = { ok: false, error: e.message }; }
   if (my !== askReq) return;
@@ -3617,7 +4115,7 @@ function askCard(m, cols, best) {
     lcdCell(lcd, v, COL_LABEL[c] || c, c === "vram" ? "hot" : "dim");
   });
   if (any) card.append(lcd);
-  card.onclick = () => pickModel(m.id);
+  card.onclick = () => openDeploySheet(m.id);
   return card;
 }
 // ---- dual-mode search ------------------------------------------------------
@@ -3646,7 +4144,7 @@ function askMode(q) {
 }
 // Which facts a card shows is decided by the query, not by the card. Nine
 // columns on every card is how a result grid stops being readable.
-const COL_LABEL = { params: "params", dtype: "dtype", vram: "est. vram", license: "license",
+const COL_LABEL = { params: "params", dtype: "weights", vram: "GPU memory", license: "license",
                     downloads: "downloads", updated: "updated", context: "context",
                     fit: "fits", price: "$/h" };
 function colValue(m, c) {
@@ -3667,11 +4165,21 @@ function parseParams(v) {
   const n = parseFloat(m[1]);
   return isNaN(n) ? null : (m[2].toLowerCase() === "m" ? n / 1000 : n);
 }
+// A company is its NAME, not its Hub namespace: openai and openai-community
+// are both OpenAI, and two "OpenAI" pills side by side read as a bug. The pill
+// and the filter both key on the display name; the first namespace seen
+// supplies the mark.
+const orgKey = slug => orgName(String(slug || "").toLowerCase()).toLowerCase();
 function renderOrgPills() {
   const row = document.getElementById("dp-orgs"); if (!row) return;
   const models = (DEPLOY.results && DEPLOY.results.models) || [];
-  const counts = {};
-  models.forEach(m => { const o = (m.org || _orgOf(m.id) || "").toLowerCase(); if (o) counts[o] = (counts[o] || 0) + 1; });
+  const counts = {}, slugOf = {};
+  models.forEach(m => {
+    const slug = (m.org || _orgOf(m.id) || "").toLowerCase(); if (!slug) return;
+    const o = orgKey(slug);
+    counts[o] = (counts[o] || 0) + 1;
+    if (!slugOf[o]) slugOf[o] = slug;
+  });
   const orgs = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
   if (!orgs.some(o => o === DEPLOY.org)) DEPLOY.org = DEPLOY.org === "all" ? "all" : "all";
   row.innerHTML = "";
@@ -3697,10 +4205,10 @@ function renderOrgPills() {
   let head = orgs.slice(0, TOP);
   if (DEPLOY.org !== "all" && orgs.includes(DEPLOY.org) && !head.includes(DEPLOY.org))
     head = head.slice(0, TOP - 1).concat(DEPLOY.org);
-  head.forEach(o => add(o, orgName(o), orgMark(o), counts[o]));
+  head.forEach(o => add(o, orgName(slugOf[o]), orgMark(slugOf[o]), counts[o]));
   const rest = orgs.filter(o => !head.includes(o));
   if (!rest.length) return;
-  if (DEPLOY.orgsOpen) { rest.forEach(o => add(o, orgName(o), orgMark(o), counts[o])); }
+  if (DEPLOY.orgsOpen) { rest.forEach(o => add(o, orgName(slugOf[o]), orgMark(slugOf[o]), counts[o])); }
   const more = el("button","fchip dp-more",
     DEPLOY.orgsOpen ? "Fewer" : "+" + rest.length + " more");
   more.setAttribute("aria-expanded", DEPLOY.orgsOpen ? "true" : "false");
@@ -3708,8 +4216,7 @@ function renderOrgPills() {
   row.append(more);
 }
 function modelShown(m) {
-  if (m._label) return true;
-  if (DEPLOY.org !== "all" && (m.org || _orgOf(m.id) || "").toLowerCase() !== DEPLOY.org) return false;
+  if (DEPLOY.org !== "all" && orgKey(m.org || _orgOf(m.id)) !== DEPLOY.org) return false;
   if (DEPLOY.fresh && !isFresh(m)) return false;
   return true;
 }
@@ -3722,7 +4229,13 @@ function renderModelRows(grid, r) {
   if (r.ok === false) { grid.innerHTML = ""; grid.append(el("div","browse-empty", errText(r))); return; }
   if (!(r.models || []).length) {
     grid.innerHTML = "";
-    grid.append(emptyState("search", r.curated ? "Nothing curated yet" : "No model matches “" + r.query + "”",
+    // Ollama answers with no query at all — "No model matches “undefined”"
+    // was that absence printed. It gets its own words.
+    if (DEPLOY.source === "ollama")
+      grid.append(emptyState("search", r.reachable === false ? "Ollama isn't running here" : "No models pulled yet",
+        r.reachable === false ? "Start it with `ollama serve`, or pick Curated or Hugging Face above."
+                              : "Pull one with `ollama pull <name>` and it shows up here."));
+    else grid.append(emptyState("search", r.curated ? "Nothing curated yet" : "No model matches “" + (r.query || DEPLOY.q || "") + "”",
       r.curated ? "Type to search the Hub." : "Try the org name, or a family — llama, qwen, gemma, mistral."));
     return;
   }
@@ -3734,12 +4247,10 @@ function renderModelRows(grid, r) {
       "Clear the company pill or the New filter, or search the Hub for something else."));
     return;
   }
-  if (r.curated) items.push({ _label: "Curated · good first deploys", id: "__label" });
   shown.forEach(m => items.push(m));
-  patchList(grid, items, m => m.id, m => [m._label, m.params_b, m.dtype, m.license, m.gated, m.gated_kind, DEPLOY.hfToken,
+  patchList(grid, items, m => m.id, m => [m.params_b, m.dtype, m.license, m.gated, m.gated_kind, DEPLOY.hfToken,
                                           m.vllm_ok, m.est_vram_gb, m.reason, m.downloads, m._pending, m.last_modified,
                                           DEPLOY.gpuMax[DEPLOY.provider] || 0], (card, m) => {
-    if (m._label) { card = card || el("div"); card.innerHTML = ""; card.className = "dp-glabel"; card.textContent = m._label; return card; }
     card = card || el("div"); card.innerHTML = "";
     card.className = "mcard" + (m.id === DEPLOY.model ? " on" : ""); card.dataset.model = m.id;
     const slash = m.id.indexOf("/");
@@ -3753,593 +4264,930 @@ function renderModelRows(grid, r) {
       if (orgName(og) !== og) o2.title = og; mtt.append(o2); }
     mh.append(mtt); card.append(mh);
     const pend = !!(m._pending && m.params_b == null && m.vllm_ok == null);
-    const pills = el("div","mp2");
-    if (m.params_b != null) pills.append(pill(fmtParams(m.params_b), " params"));
-    if (m.dtype) pills.append(pill(m.dtype, "", "mono"));
-    if (m.license) { const lp = pill(m.license, ""); lp.title = "license"; pills.append(lp); }
-    const gc = gatedChip(m); if (gc) pills.append(gc);
-    if (m.vllm_ok === true) { const v = pill("vllm ✓", "", "acc"); v.title = "architecture served by vLLM"; pills.append(v); }
-    else if (m.vllm_ok === false) { const v = pill("vllm ✗", "", "red"); v.title = m.reason || "not servable by vLLM"; pills.append(v); }
-    else if (pend) { const v = pill("…", " looking up"); v.title = "reading the Hub's metadata"; pills.append(v); }
-    else { const v = pill("vllm ?", "");
-      v.title = (m.architectures || []).length
-        ? (m.architectures[0] + " is not in the vLLM support list — deploy may still work")
-        : "architecture not in the vLLM support list — deploy may still work";
-      pills.append(v); }
-    if (m.downloads != null) pills.append(pill(fmtTok(m.downloads), " downloads"));
-    card.append(pills);
-    // the bar is measured against the biggest card the chosen provider rents,
-    // so 744 GB and 730 GB no longer look identical — and its colour says
-    // whether anything available can actually hold it
-    const vr = el("div","vr" + (pend ? " pend" : ""));
+    // THE READINGS. How big it is, what it costs you in hardware, how many
+    // other people run it — the three questions asked of an open model, in
+    // the order they get asked, in the same place on every card.
+    const stats = el("div","mstats");
+    stats.append(stat(m.params_b != null ? fmtParams(m.params_b) : pend ? "…" : "—",
+                      "params", m.params_b == null ? "mute" : ""));
+    // VRAM is measured against the biggest card the chosen provider rents, so
+    // the verdict — and the colour — is about what you can actually book.
     const ceil = DEPLOY.gpuMax[DEPLOY.provider] || (DEPLOY.provider === "all"
       ? Math.max(1024, ...Object.values(DEPLOY.gpuMax).concat([0])) : 1024);
-    if (m.est_vram_gb == null && pend) vr.append(el("span", null, "sizing…"));
-    else if (m.est_vram_gb != null) {
+    let vcls = "";
+    const vs = stat(m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : pend ? "…" : "—", "memory", "mute");
+    if (m.est_vram_gb != null) {
       const frac = m.est_vram_gb / ceil;
-      const cls = frac > 1 ? " no" : frac > 0.85 ? " tight" : " fits";
-      const bar = el("div","vbar" + cls); const fill = el("i");
-      fill.style.width = Math.max(3, Math.min(100, frac * 100)).toFixed(0) + "%"; bar.append(fill);
-      const b = el("b", null, fmtGb(m.est_vram_gb));
-      vr.append(bar, b, document.createTextNode("est. vram"));
-      vr.title = fmtGb(m.est_vram_gb) + " of " + fmtGb(ceil) + " available" +
-        (frac > 1 ? " — larger than anything on offer" : frac > 0.85 ? " — tight" : "");
-    } else if (m.params_b == null) vr.append(el("span", null, "size unknown"));
-    else vr.append(el("span", null, "vram unknown"));
-    card.append(vr);
+      vcls = frac > 1 ? "red" : frac > 0.85 ? "amb" : "";
+      vs.className = "mstat" + (vcls ? " " + vcls : "");
+      vs.title = fmtGb(m.est_vram_gb) + " of " + fmtGb(ceil) + " available"
+               + (frac > 1 ? " — larger than anything on offer" : frac > 0.85 ? " — tight" : "");
+    }
+    stats.append(vs);
+    const dl = stat(m.downloads != null ? fmtTok(m.downloads) : "—", "pulls", m.downloads == null ? "mute" : "");
+    dl.title = "downloads from the Hugging Face Hub";
+    stats.append(dl);
+    card.append(stats);
+    // No line of small print under the numbers. Precision and licence are the
+    // card's tooltip; the date sits beside the name. A line appears only when
+    // something is WRONG — vLLM can't serve it, or it won't fit the GPUs on
+    // offer — because that is the one thing worth reading before you click.
+    card.title = [m.dtype && (m.dtype + " — " + dtypeWords(m.dtype)), m.license && ("license " + m.license)]
+      .filter(Boolean).join("\n");
     const when = whenText(m.last_modified);
-    if (when) { const w = el("div","mwhen", when); if (isFresh(m)) w.classList.add("fresh"); card.append(w); }
-    card.append(el("span","go", m.id === DEPLOY.model ? "selected ✓" : "inspect →"));
-    card.onclick = () => pickModel(m.id);
+    if (when) {
+      // always a short month and year here — "10 months ago" crowds the name
+      const t = Date.parse(m.last_modified);
+      const short = isNaN(t) ? when.replace(/^updated /, "")
+        : new Date(t).toLocaleDateString([], { month: "short", year: "numeric" });
+      const w = el("span","mwhen" + (isFresh(m) ? " fresh" : ""), short);
+      w.title = when; mh.append(w);
+    }
+    const warn = el("div","mwarn");
+    if (m.vllm_ok === false) { const v = el("span","bad", "vLLM can't serve it"); v.title = m.reason || ""; warn.append(v); }
+    if (vcls) warn.append(el("span", vcls === "red" ? "bad" : "amb", vcls === "red" ? "Won't fit any GPU on offer" : "Tight fit"));
+    if (warn.childElementCount) card.append(warn);
+    const foot = el("div","mfoot");
+    const gc = gatedChip(m); if (gc) foot.append(gc);
+    const sel = m.id === DEPLOY.model;
+    const go = el("button","mbtn" + (sel ? " on" : ""), sel ? "Selected ✓" : "Deploy");
+    go.title = sel ? "this is the model below" : "pick a GPU for it and deploy";
+    foot.append(go);
+    card.append(foot);
+    card.onclick = () => openDeploySheet(m.id);
     return card;
   });
 }
-async function pickModel(id) {
-  DEPLOY.model = id; DEPLOY.inspect = null;
-  document.querySelectorAll("#dp-models .mcard").forEach(r => {
-    const on = r.dataset.model === id;
-    r.classList.toggle("on", on);
-    const g = r.querySelector(".go"); if (g) g.textContent = on ? "selected ✓" : "inspect →";
-  });
-  const sec = document.getElementById("dp-fit"); if (!sec) return;
-  renderFit(sec, true);
-  sec.scrollIntoView({ behavior: "smooth", block: "start" });
-  let r;
-  try { r = await api("/api/deploy/inspect?" + q({ model: id })); }
-  catch (e) { r = { ok: false, error: e.message }; }
-  if (DEPLOY.model !== id) return;
-  DEPLOY.inspect = r; renderFit(sec);
-}
+// ==========================================================================
+// DEPLOY — two clicks from a model to a running endpoint, and everything that
+// happens after it on one surface.
+//
+// The old flow was three "Deploy" buttons deep: the card's button selected
+// the model and scrolled 2,000px to a Fit section, which listed every GPU on
+// every provider (72 of them for an 8B model), each with its own Deploy that
+// opened a confirm sheet that Enter would submit — and once it was running,
+// the progress lived in a modal that closing or reloading threw away.
+//
+// Now: the card's Deploy opens ONE sheet with the best-value GPU already
+// chosen (the server picks it: cheapest card that fits and is in stock) and
+// a button that says what it costs. Press it and the sheet gets out of the
+// way; the deploy becomes a card at the top of the page with its stage, a
+// running clock, the provider's latest line and — the moment something is
+// billable — Logs and Stop. The card is the server's job, not the page's, so
+// a reload, another tab or a closed laptop lid never loses it.
+// ==========================================================================
+const _orgOf = id => { const i = String(id || "").indexOf("/"); return i > 0 ? String(id).slice(0, i) : ""; };
+const shortId = id => { const s = String(id || ""), i = s.indexOf("/"); return i > 0 ? s.slice(i + 1) : s; };
+const gpuName = g => !g ? "" : (g.family && g.family !== "other" ? g.family : (g.display || g.label || g.provider_id))
+  + (g.count > 1 ? " ×" + g.count : "");
+const provName = pid => { const p = DEPLOY.providers.find(x => x.id === pid); return (p && p.display_name) || pid || ""; };
+const depRate = d => { const c = (d && d.cost) || {};
+  return c.per_hour_usd != null ? c.per_hour_usd : (d && d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null); };
+const fmtClock = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s % 60).padStart(2, "0"); };
+const STAGES = [["prepare", "Check"], ["create", "Create"], ["boot", "Boot"], ["ready", "Ready"]];
+const STAGE_TEXT = { prepare: "Checking the model and the GPU", create: "Creating the endpoint",
+                     boot: "Booting — pulling weights onto the GPU", ready: "Ready" };
 
-// ---- fit & deploy ----
-// For the selected model: what it is (from the Hub), then one table per
-// configured provider — GPU, VRAM, $/h, a fits/tight/no verdict, cold-start
-// behaviour — with a Deploy button per row that names the cost before it
-// commits anything.
-function renderFit(sec, loading) {
-  [...sec.children].forEach(x => { if (!x.classList.contains("sec-t")) x.remove(); });
-  if (!DEPLOY.model) {
-    sec.append(emptyState("search", "Pick a model above",
-      "Every configured provider's GPUs get checked against it and priced per hour."));
-    return;
-  }
-  // A one-line "inspecting…" card that is then replaced by a header, a six
-  // cell spec strip and a GPU table is a ~400px jump. The waiting state is
-  // the SHAPE of the answer, so the step settles instead of leaping.
-  if (loading || !DEPLOY.inspect) { sec.append(fitSkeleton(DEPLOY.model)); return; }
-  const r = DEPLOY.inspect;
+// ---- the deploy sheet ------------------------------------------------------
+async function openDeploySheet(id) {
+  DEPLOY.model = id;
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  const head = el("div","ds-head");
+  head.append(orgMark(_orgOf(id)));
+  const ht = el("div","ds-ht");
+  const nm = el("div","ds-name", shortId(id)); nm.title = id; ht.append(nm);
+  if (_orgOf(id)) ht.append(el("div","ds-org", orgName(_orgOf(id))));
+  head.append(ht);
+  s.append(head);
+  const body = el("div","ds-body"); s.append(body);
+  // the waiting state is the shape of the answer: three readings, three rows
+  const sk = el("div","ds-skel");
+  const f0 = el("div","mstats ds-facts");
+  for (let i = 0; i < 3; i++) { const c = el("div","mstat"); c.append(el("i","sk sk-num"), el("b","sk sk-lbl")); f0.append(c); }
+  sk.append(f0, el("div","ds-lbl", "Finding the best GPU for it…"));
+  for (let i = 0; i < 3; i++) sk.append(el("div","sk ds-skrow"));
+  body.append(sk);
+  showModal();
+  let r;
+  try { r = await api("/api/deploy/inspect?" + q({ model: id })); } catch (e) { r = { ok: false, error: e.message }; }
+  // closed, or another model opened while this one was being inspected
+  if (DEPLOY.model !== id || !document.getElementById("modal").className || s.firstChild !== head) return;
+  DEPLOY.inspect = r;
+  paintDeploySheet(body, id, r);
+}
+function paintDeploySheet(body, id, r) {
+  body.innerHTML = "";
   if (r.ok === false) {
-    const p = el("div","probe bad"); const h = el("div","ph2");
-    h.append(el("span","dot2 bad"), document.createTextNode("Couldn't inspect " + DEPLOY.model));
-    p.append(h, el("div","pe", errText(r))); sec.append(p); return;
+    body.append(el("div","ds-err", "Couldn't read " + id + " from the Hub — " + errText(r)));
+    const f = el("div","ds-foot"); f.append(btn("Close", "gho", hideModal), btn("Try again", "pri", () => openDeploySheet(id)));
+    body.append(f); return;
   }
   const m = r.model || {};
   if (r.hf_token_set != null) DEPLOY.hfToken = !!r.hf_token_set;
-  if (gatedBlocked(m)) {
-    const n = el("div","hf-notice on"); n.id = "hf-notice";
-    const h = el("div","hn-h");
-    h.append(el("span","t2 amb", "gated · " + (m.gated_kind === "manual" ? "manual" : "auto")));
-    h.append(el("b", null, m.id + " needs a Hugging Face token"));
-    n.append(h);
-    n.append(el("div","hn-b", m.gated_kind === "manual"
-      ? "The repo owner approves access by hand — request it on the model page, which can take days, then paste a token here."
-      : "Open the model page, click Agree while signed in — access is instant — then paste a read token here."));
-    const links = el("div","hn-l");
-    links.append(extLink("b", "Open the model page ↗", "https://huggingface.co/" + m.id));
-    n.append(links);
-    n.append(hfTokenForm(refreshGating));
-    sec.append(n);
+  const facts = el("div","mstats ds-facts");
+  facts.append(stat(fmtParams(m.params_b), "params"),
+               stat(m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : "—", "GPU memory"),
+               stat(m.context_len ? fmtCtx(m.context_len) : "—", "context"));
+  body.append(facts);
+  if (m.vllm_ok === false)
+    body.append(el("div","ds-caution", "vLLM doesn't list this architecture (" + (m.reason || "unsupported") + ") — the deploy may fail."));
+  // A big model's first start is mostly a download, and the GPU bills while
+  // it happens. Say so before the button, in minutes and dollars, not after.
+  if (m.est_vram_gb != null && m.est_vram_gb >= 60) {
+    const gb = Math.round(m.est_vram_gb * 0.85);           // weights are most of the estimate
+    const lo = Math.max(3, Math.round(gb / 25)), hi = Math.max(lo + 2, Math.round(gb / 10));
+    const cold = el("div","ds-cold"); cold.id = "ds-cold";
+    cold.append(el("b", null, "First start: ~" + gb + " GB of weights to pull onto the GPU"),
+                el("span", null, " — expect " + lo + "–" + hi + " minutes before it answers, billed at the GPU rate. "
+                  + "Every cold start after scaling to zero pays that again."));
+    body.append(cold);
   }
-  const card = el("div","card2");
-  const h = el("div","dp-mh");
-  h.append(el("span","dp-mid", m.id));
-  const gc2 = gatedChip(m); if (gc2) h.append(gc2);
-  h.append(tag2(m.vllm_ok ? "vllm ok" : m.vllm_ok === false ? "vllm: " + (m.reason || "unsupported") : "vllm unknown",
-                m.vllm_ok ? "acc" : m.vllm_ok === false ? "amb" : "", m.reason || ""));
-  card.append(h);
-  const lcd = el("div","lcd tight");
-  lcdCell(lcd, fmtParams(m.params_b), "params", "");
-  lcdCell(lcd, m.dtype || "—", "dtype", "dim");
-  lcdCell(lcd, m.context_len ? fmtCtx(m.context_len) : "—", "context", "dim");
-  lcdCell(lcd, m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : "—", "est. vram", "hot");
-  lcdCell(lcd, m.license || "—", "license", "dim");
-  if (m.downloads != null) lcdCell(lcd, fmtTok(m.downloads), "downloads", "dim");
-  card.append(lcd);
-  if ((m.architectures || []).length) card.append(el("div","note2", m.architectures.join(", ")));
-  sec.append(card);
-  if (!(r.fits || []).length) {
-    sec.append(zero("No configured provider",
-      "Add a key to a GPU provider above and this fills with every GPU that fits, priced per hour."));
-    return;
-  }
-  // scoped to one provider → one table, no grouping; "All" keeps the groups
-  // a provider that can't run is not offered a GPU group at all
-  const runnable = r.fits.filter(f => provReady(DEPLOY.providers.find(x => x.id === f.provider)));
-  const fits = DEPLOY.provider === "all" ? runnable : runnable.filter(f => f.provider === DEPLOY.provider);
-  const blocked = r.fits.length - runnable.length;
-  if (!fits.length) {
-    const p = DEPLOY.providers.find(x => x.id === DEPLOY.provider) || {};
-    if (!provReady(p)) {
-      sec.append(emptyState("socket", reqShort(p), "Install it to deploy here — see the provider card above.",
-        btn("Install", "pri", () => openInstallSheet(p))));
-      return;
+
+  // Where it can run. Only providers that can actually deploy offer a GPU,
+  // only cards that hold it and are in stock, and only the shardings vLLM
+  // can use (1, 2, 4, 8) — a T4 ×7 is a price, not an option.
+  const runnable = (r.fits || []).filter(f => provReady(DEPLOY.providers.find(x => x.id === f.provider)));
+  const opts = [];
+  runnable.forEach(f => (f.gpus || []).forEach(g => {
+    if (g.verdict === "no" || g.available === false) return;
+    if (g.count > 1 && ![2, 4, 8].includes(g.count)) return;
+    opts.push({ f, g });
+  }));
+  const isRec = o => !!(r.recommended && o.f.provider === r.recommended.provider && o.g.provider_id === r.recommended.gpu);
+  const price = o => o.g.price_per_hour == null ? 1e9 : o.g.price_per_hour;
+  opts.sort((a, b) => (isRec(b) - isRec(a)) || ((a.g.verdict === "fits" ? 0 : 1) - (b.g.verdict === "fits" ? 0 : 1))
+    || (price(a) - price(b)) || ((b.g.total_vram_gb || 0) - (a.g.total_vram_gb || 0)));
+  if (!opts.length) { body.append(noGpuPanel(m, r, runnable)); return; }
+
+  let sel = opts[0];
+  const sec = el("div","ds-sec");
+  sec.append(el("div","ds-lbl", "Runs on"));
+  const list = el("div","ds-gpus"); sec.append(list);
+  body.append(sec);
+  const SHOW = 3; let all = false;
+  const paintList = () => {
+    list.innerHTML = "";
+    let shown = all ? opts : opts.slice(0, SHOW);
+    if (!shown.includes(sel)) shown = shown.concat([sel]);
+    shown.forEach(o => {
+      const p = DEPLOY.providers.find(x => x.id === o.f.provider) || {};
+      const row = el("button","ds-gpu" + (o === sel ? " on" : "")); row.type = "button";
+      row.setAttribute("aria-pressed", o === sel ? "true" : "false");
+      row.append(el("span","ds-radio"), providerMark(p.logo || o.f.provider, o.f.display_name));
+      const t = el("span","ds-gt");
+      t.append(el("b", null, gpuName(o.g)), el("span", null, (o.f.display_name || o.f.provider) + " · " + fmtGb(o.g.total_vram_gb)));
+      row.append(t);
+      if (isRec(o)) row.append(el("span","ds-best", "best value"));
+      if (o.g.verdict === "tight") { const v = el("span","ds-tight", "tight fit"); v.title = o.g.reason || "under 15% headroom"; row.append(v); }
+      row.append(el("span","ds-price", o.g.price_per_hour == null ? "—" : fmtRate(o.g.price_per_hour)));
+      row.onclick = () => { sel = o; paintList(); paintGo(); };
+      list.append(row);
+    });
+    if (opts.length > SHOW) {
+      const more = el("button","ds-more", all ? "Fewer" : "Show " + (opts.length - SHOW) + " more"); more.type = "button";
+      more.onclick = () => { all = !all; paintList(); };
+      list.append(more);
     }
-    sec.append(zero("Nothing to fit on " + (p.display_name || DEPLOY.provider),
-      "This provider has no key yet, or its catalogue didn't answer. Pick another above, or choose All."));
-    return;
+  };
+
+  // a gated repo: the one place the token is asked for, right where it blocks
+  let gate = null;
+  if (gatedBlocked(m)) {
+    gate = el("div","ds-gate");
+    gate.append(el("b", null, "This model is gated"));
+    gate.append(el("div","ds-gsub", m.gated_kind === "manual"
+      ? "The owner approves access by hand. Request it on the model page, then paste a Hugging Face token."
+      : "Click Agree on the model page while signed in — access is instant — then paste a read token."));
+    gate.append(extLink("a-link", "Open the model page ↗", "https://huggingface.co/" + m.id));
+    gate.append(hfTokenForm(() => { gate.remove(); gate = null; refreshGating(); paintGo(); }));
+    body.append(gate);
   }
-  if (blocked && DEPLOY.provider === "all")
-    sec.append(el("div","note2", blocked + " provider" + (blocked === 1 ? "" : "s") + " hidden — a package needs installing (see the cards above)."));
-  fits.forEach(f => sec.append(fitTable(f, m)));
+
+  // the rest is optional, and labelled in words
+  const adv = el("details","ds-adv"); adv.append(el("summary", null, "Options"));
+  const ag = el("div","ds-advgrid");
+  const field = (label, node) => { const w = el("label","ds-field"); w.append(el("span","ds-fl", label), node); ag.append(w); };
+  const ctxI = input(m.context_len ? "model default (" + fmtCtx(m.context_len) + ")" : "model default");
+  ctxI.type = "number"; ctxI.min = "512"; field("Max context (tokens)", ctxI);
+  const engS = el("select","in"); field("Serving engine", engS);
+  const trc = document.createElement("input"); trc.type = "checkbox";
+  const tl = el("label","chk ds-chk"); tl.append(trc, document.createTextNode("Trust remote code"));
+  tl.title = "only for models that ship their own Python code"; ag.append(tl);
+  adv.append(ag);
+  body.append(adv);
+
+  // Opt-in, never assumed: switching the model mantis uses is a change to
+  // the whole tool, and a deploy can come up and still not answer. When it is
+  // ticked, the server only switches after the model answers a real prompt.
+  const useC = document.createElement("input"); useC.type = "checkbox"; useC.checked = false;
+  const ul = el("label","ds-use"); ul.append(useC, el("span", null, "Switch mantis to it once it answers a test prompt"));
+  body.append(ul);
+  const note = el("div","ds-note"); body.append(note);
+
+  const foot = el("div","ds-foot");
+  const go = btn("Deploy", "pri", () => doDeploy()); go.classList.add("ds-go");
+  foot.append(btn("Cancel", "gho", hideModal), go);
+  body.append(foot);
+
+  const paintEngines = () => {
+    const cur = engS.value;
+    engS.innerHTML = "";
+    (sel.f.engines && sel.f.engines.length ? sel.f.engines : ["vllm"]).forEach(e => { const o = el("option", null, e); o.value = e; engS.append(o); });
+    if ([...engS.options].some(o => o.value === cur)) engS.value = cur;
+  };
+  const paintGo = () => {
+    const rate = sel.g.price_per_hour;
+    go.textContent = "Deploy" + (rate != null ? " · " + fmtRate(rate) : "");
+    go.disabled = !!gate;
+    go.title = gate ? "save a Hugging Face token first" : "";
+    note.innerHTML = "";
+    note.classList.toggle("warn", !sel.f.scale_to_zero);
+    note.append(el("span", null, sel.f.scale_to_zero
+      ? "Scales to zero when idle — you pay only while it serves; the first request after a pause waits for a cold start."
+      : "Always on — it bills every hour until you stop it."));
+    if (sel.f.public_by_default) note.append(el("span", null, " Its URL is reachable by anyone who has it."));
+    paintEngines();
+  };
+  async function doDeploy() {
+    if (go.disabled) return;
+    go.disabled = true; go.textContent = "Starting…";
+    const o = {};
+    if (ctxI.value) o.max_model_len = ctxI.value;
+    if (trc.checked) o.trust_remote_code = true;
+    const engine = engS.value || "vllm";
+    const display = { gpu_label: gpuName(sel.g) + " " + fmtGb(sel.g.total_vram_gb), price_per_hour: sel.g.price_per_hour,
+                      provider_name: sel.f.display_name || sel.f.provider };
+    let res;
+    try {
+      res = await post("/api/deploy/up", { provider: sel.f.provider, model: m.id, gpu: sel.g.provider_id, engine,
+                                           opts: o, use_when_ready: useC.checked, display });
+    } catch (e) { res = { ok: false, error: e.message }; }
+    if (!res.ok) { toast(errText(res), true); paintGo(); return; }
+    hideModal();
+    trackJob({ id: res.job, kind: "deploy", status: "running", stage: "prepare", started_at: Date.now() / 1000,
+               meta: { provider: sel.f.provider, model: m.id, gpu: sel.g.provider_id, engine,
+                       use_when_ready: useC.checked, ...display } });
+    toast(res.existing ? shortId(m.id) + " is already deploying" : "Deploying " + shortId(m.id));
+    const sc = document.querySelector("#deploy .scroll"); if (sc) sc.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  paintList(); paintGo();
+  setTimeout(() => go.focus(), 30);
 }
-// The waiting shape for one model's fit: the same header, the same six spec
-// cells, the same GPU rows — drawn empty. Sized off the real thing so the
-// section does not change height when the answer lands.
-function fitSkeleton(id) {
-  const w = el("div","dp-skel");
-  const card = el("div","card2");
-  const h = el("div","dp-mh");
-  h.append(el("span","dp-mid", id || ""));
-  h.append(el("span","sk sk-tag"));
-  card.append(h);
-  const lcd = el("div","lcd tight");
-  for (let i = 0; i < 6; i++) {
-    const c = el("div","lc");
-    c.append(el("i","sk sk-num"), el("b","sk sk-lbl"));
-    lcd.append(c);
+// Nothing to offer: say which of the three reasons it is, and the one action
+// that fixes it — never a bare "nothing fits".
+function noGpuPanel(m, r, runnable) {
+  const w = el("div","ds-none");
+  const ready = DEPLOY.providers.filter(p => p.configured && provReady(p));
+  if (!ready.length) {
+    w.append(el("b", null, "Connect a GPU provider to deploy it"));
+    w.append(el("div","ds-gsub", "Paste one API key — prices and the best GPU for this model show up right here."));
+    const rows = el("div","ds-provs");
+    // the one you have already started setting up is the shortest way there
+    const order = DEPLOY.providers.slice().sort((a, b) => (b.configured ? 1 : 0) - (a.configured ? 1 : 0));
+    order.forEach(p => {
+      const row = el("div","ds-prov");
+      row.append(providerMark(p.logo || p.id, p.display_name));
+      const t = el("span","ds-gt"); t.append(el("b", null, p.display_name || p.id), el("span", null, providerDescriptor(p))); row.append(t);
+      if (p.configured && !provReady(p)) row.append(btn("Install", "pri", () => openInstallSheet(p)));
+      else row.append(btn(p.configured ? "Check key" : "Add key", p.configured ? "" : "pri", () => openAddKey(p.id)));
+      rows.append(row);
+    });
+    w.append(rows);
+    return w;
   }
-  card.append(lcd);
-  w.append(card);
-  const box = el("div","card2 dp-fitbox");
-  const bh = el("div","dp-mh");
-  bh.append(el("span","sk sk-mark"), el("span","sk sk-name"));
-  box.append(bh);
-  // one row per GPU the page is about to draw. Six is what a configured
-  // provider actually returns; three left the shape 140px short of the answer
-  // once the rail took a column's width out of the page, and the step jumped.
-  for (let i = 0; i < 6; i++) box.append(el("div","sk sk-row"));
-  w.append(box);
+  const errs = (r.fits || []).filter(f => f.error);
+  if (!runnable.length || errs.length === (r.fits || []).length) {
+    w.append(el("b", null, "Couldn't get GPU prices"));
+    w.append(el("div","ds-gsub", errs.map(f => (f.display_name || f.provider) + ": " + f.error).join(" · ") || "The providers didn't answer."));
+    const f = el("div","ds-foot"); f.append(btn("Try again", "pri", () => openDeploySheet(m.id))); w.append(f);
+    return w;
+  }
+  const biggest = Math.max(0, ...runnable.flatMap(f => (f.gpus || []).map(g => g.total_vram_gb || 0)));
+  w.append(el("b", null, "Nothing on offer can hold it"));
+  w.append(el("div","ds-gsub", "It needs about " + fmtGb(m.est_vram_gb) + "; the largest card your providers rent right now has "
+    + fmtGb(biggest) + ". A quantized version of the model, or another provider, would fit."));
   return w;
 }
-function fitTable(f, m) {
-  const p = DEPLOY.providers.find(x => x.id === f.provider) || {};
-  const box = el("div","card2 dp-fitbox");
-  const head = el("div","dp-mh");
-  head.append(providerMark(p.logo || f.provider, f.display_name));
-  head.append(el("span","dp-mid", f.display_name || f.provider));
-  head.append(tag2(f.scale_to_zero ? "scale to zero" : "always warm", f.scale_to_zero ? "acc" : "amb"));
-  if (f.public_by_default) head.append(tag2("public endpoint", "amb", "reachable by anyone with the URL"));
-  const sp = el("span"); sp.style.flex = "1"; head.append(sp);
-  const eng = el("select","in");
-  (f.engines && f.engines.length ? f.engines : ["vllm"]).forEach(e => { const o = el("option", null, e); o.value = e; eng.append(o); });
-  const engL = el("label","dp-eng"); engL.append(document.createTextNode("engine"), eng); head.append(engL);
-  box.append(head);
-  if (f.error) { box.append(el("div","pe", f.error)); return box; }
 
-  // advanced — every knob DeployOpts has; blank means the adapter's default
-  const A = {};
-  const adv = el("details","dp-adv"); adv.append(el("summary", null, "advanced · context, parallelism, replicas, gated token"));
-  const grid = el("div","dp-advgrid");
-  const field = (k, node, label) => { A[k] = node; const w = el("label","dp-field"); w.append(el("span","kh-l", label || k), node); grid.append(w); };
-  const num = (k, ph, val, label) => { const i = input(ph); i.type = "number"; i.min = "0"; if (val != null) i.value = val; field(k, i, label); };
-  num("max_model_len", m.context_len ? "≤ " + m.context_len : "tokens");
-  num("tensor_parallel", "defaults to gpu count");
-  const quant = el("select","in");
-  ["", "fp8", "awq", "gptq", "int8", "bitsandbytes"].forEach(v => { const o = el("option", null, v || "none"); o.value = v; quant.append(o); });
-  field("quantization", quant);
-  num("min_replicas", "0 = scale to zero", f.scale_to_zero ? 0 : 1);
-  num("max_replicas", "", 1);
-  num("idle_timeout_s", "seconds", 300, "idle timeout (s)");
-  if (m.gated) { const hf = input("HF token with access to this repo", true); hf.autocomplete = "off"; field("hf_token", hf, "HF_TOKEN · gated repo"); }
-  const trc = document.createElement("input"); trc.type = "checkbox"; A.trust_remote_code = trc;
-  const tl = el("label","chk"); tl.append(trc, document.createTextNode("trust_remote_code")); grid.append(tl);
-  adv.append(grid); box.append(adv);
-
-  const gpus = f.gpus || [];
-  if (!gpus.length) { box.append(el("div","browse-empty", "No GPU in this catalogue is large enough for this model.")); return box; }
-  const gg = el("div","dp-ggrid");
-  gpus.forEach(g => {
-    const card = el("div","gcard" + (g.verdict === "no" ? " no" : ""));
-    const gt = el("div","gt", g.family && g.family !== "other" ? g.family : (g.display || g.provider_id));
-    gt.append(el("small", null, fmtGb(g.total_vram_gb) + (g.count > 1 ? " · " + g.count + "×" + g.vram_gb : "") + (g.region ? " · " + g.region : "")));
-    gt.title = g.display || g.provider_id; card.append(gt);
-    const gp = el("div","gp"); gp.append(document.createTextNode(g.price_per_hour == null ? "—" : "$" + (g.price_per_hour < 1 ? g.price_per_hour.toFixed(3) : g.price_per_hour.toFixed(2))));
-    if (g.price_per_hour != null) gp.append(el("small", null, " /h")); card.append(gp);
-    const gm = el("div","gm");
-    const vd = el("span","vd " + g.verdict, g.verdict);
-    vd.title = g.reason || (g.verdict === "tight" ? "under 15% headroom" : g.verdict === "fits" ? "fits with headroom" : "");
-    gm.append(vd, el("span", null, g.verdict === "no" ? (g.reason || "too small") : (f.scale_to_zero ? "from zero · first request waits" : "warm · billed while idle")));
-    card.append(gm);
-    const ga = el("div","ga");
-    if (g.verdict !== "no") {
-      const b = btn("Deploy", "pri", () => confirmDeploy(f, g, m, eng.value, A));
-      if (g.available === false) { b.disabled = true; b.title = "no capacity right now"; }
-      // a gated repo with no token would fail the moment the GPU is paid for —
-      // the button says so instead of the job dying at 0s
-      if (gatedBlocked(m)) { b.disabled = true; b.textContent = "Needs HF token"; b.title = "gated repo · save a Hugging Face token above to deploy"; }
-      else if (!provReady(p)) { b.disabled = true; b.textContent = "Needs package"; b.title = reqShort(p); }
-      ga.append(b);
-      if (new URLSearchParams(location.search).get("confirm") === g.provider_id && !document.getElementById("modal").className)
-        setTimeout(() => confirmDeploy(f, g, m, eng.value, A), 60);
-    } else ga.append(el("span","mgo", "won't fit"));
-    card.append(ga);
-    gg.append(card);
+// ---- jobs and the Active cards ---------------------------------------------
+const DEP_DISMISS_KEY = "mantis-deploy-dismissed";
+function dismissedJobs() {
+  try { return new Set(JSON.parse(sessionStorage.getItem(DEP_DISMISS_KEY) || "[]")); } catch (e) { return new Set(); }
+}
+function dismissJob(id) {
+  const s = dismissedJobs(); s.add(id);
+  try { sessionStorage.setItem(DEP_DISMISS_KEY, JSON.stringify([...s])); } catch (e) { /* private mode */ }
+  renderActive();
+}
+function trackJob(j) {
+  DEPLOY.jobs = [j].concat((DEPLOY.jobs || []).filter(x => x.id !== j.id));
+  renderActive(); paintDeployReads(); kickDeployPoll(true);
+}
+// One card per deployment, with whatever job is acting on it folded in; a
+// deploy that has not created anything yet is a card of its own.
+function activeItems() {
+  const gone = dismissedJobs();
+  const items = [], byDep = new Map();
+  (DEPLOY.deployments || []).forEach(d => {
+    if (d.status === "deleted") return;
+    const it = { key: d.id, d, job: null, down: null, conn: null };
+    byDep.set(d.id, it); items.push(it);
   });
-  box.append(gg);
-  return box;
-}
-function collectOpts(A) {
-  const o = {};
-  Object.entries(A).forEach(([k, i]) => {
-    if (i.type === "checkbox") { if (i.checked) o[k] = true; }
-    else if (i.value !== "" && i.value != null) o[k] = i.value;
+  (DEPLOY.jobs || []).forEach(j => {
+    if (gone.has(j.id)) return;
+    const it = j.deployment_id ? byDep.get(j.deployment_id) : null;
+    if (j.kind === "teardown") { if (it && j.status === "running") it.down = j; return; }
+    if (j.kind === "connect") { if (it && (j.status === "running" || (j.status === "error" && !it.conn))) it.conn = j; return; }
+    if (j.kind !== "deploy") return;
+    if (j.status === "cancelled") return;          // asked to stop, and stopped
+    if (it) { if (!it.job || j.status === "running") it.job = j; return; }
+    if (j.status === "done") return;
+    items.push({ key: "job:" + j.id, d: null, job: j, down: null });
   });
-  return o;
+  // what needs you first: a failure, then anything moving, then what's up
+  const rank = it => it.job && it.job.status === "error" ? 0
+    : (it.job && it.job.status === "running") || it.down || (it.conn && it.conn.status === "running") ? 1 : it.d && it.d.is_live ? 2 : 3;
+  const when = it => (it.job && it.job.started_at) || (it.d && it.d.created_at) || 0;
+  items.sort((a, b) => rank(a) - rank(b) || when(b) - when(a));
+  return items;
 }
-const _orgOf = id => { const i = String(id || "").indexOf("/"); return i > 0 ? String(id).slice(0, i) : ""; };
-// The pairing: model (org mark) → provider (vendor mark). Used by the confirm
-// sheet, the progress sheet and, small, by every deployment row.
-function pairHeader(modelId, providerId, providerName, caption, small) {
-  const h = el("div","pair" + (small ? " sm" : ""));
-  const L = el("div","pside");
-  L.append(orgMark(_orgOf(modelId)));
-  if (!small) { const lt = el("div","pt"); const slash = String(modelId).indexOf("/");
-    lt.append(el("div","pn mono", slash > 0 ? modelId.slice(slash + 1) : modelId)); if (slash > 0) lt.append(el("div","pc", modelId.slice(0, slash))); L.append(lt); }
-  const C = el("div","parrow"); C.append(el("b", null, "→")); if (!small) C.append(document.createTextNode("deploys to"));
-  const p = DEPLOY.providers.find(x => x.id === providerId) || {};
-  const R = el("div","pside");
-  R.append(bigMark(p.logo || providerId, providerName));
-  if (!small) { const rt = el("div","pt"); rt.append(el("div","pn", providerName || providerId)); if (caption) rt.append(el("div","pc", caption)); R.append(rt); }
-  h.append(L, C, R);
-  return h;
-}
-const fmtIdle = s => { s = parseInt(s || "0", 10) || 0; return s >= 60 ? Math.round(s / 60) + " min" : s + " s"; };
-// The confirmation sheet — the pairing as the headline, the spec as tiles,
-// the cost as the number you can't miss, advanced knobs behind a disclosure.
-function confirmDeploy(f, g, m, engine, A) {
-  const base = collectOpts(A);
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(pairHeader(m.id, f.provider, f.display_name || f.provider, [g.region, engine].filter(Boolean).join(" · ")));
-  // sheet-local advanced inputs, pre-filled from the panel's values
-  const S = {};
-  const adv = el("details","dp-adv"); adv.append(el("summary", null, "Advanced · parallelism, quantization, idle timeout, token"));
-  const grid = el("div","dp-advgrid");
-  const field = (k, node, label) => { S[k] = node; const w = el("label","dp-field"); w.append(el("span","kh-l", label || k), node); grid.append(w); };
-  const num = (k, ph, label) => { const i = input(ph); i.type = "number"; i.min = "0"; if (base[k] != null) i.value = base[k]; field(k, i, label); };
-  num("tensor_parallel", "defaults to " + (g.count || 1), "tensor parallel");
-  const quant = el("select","in"); ["", "fp8", "awq", "gptq", "int8", "bitsandbytes"].forEach(v => { const o = el("option", null, v || "none"); o.value = v; quant.append(o); });
-  quant.value = base.quantization || ""; field("quantization", quant);
-  num("idle_timeout_s", "seconds", "idle timeout (s)"); if (S.idle_timeout_s.value === "") S.idle_timeout_s.value = 300;
-  num("max_model_len", m.context_len ? "≤ " + m.context_len : "tokens", "max model len");
-  if (m.gated) {
-    const hf = input("HF token with access to this repo", true); hf.autocomplete = "off"; if (base.hf_token) hf.value = base.hf_token;
-    field("hf_token", hf, "HF_TOKEN · gated repo");
-    const sv = el("div","dp-field"); sv.style.gridColumn = "1 / -1";
-    sv.append(hfTokenForm(() => { refreshGating(); go.disabled = false; go.textContent = "Deploy to " + (f.display_name || f.provider); gateNote.remove(); }));
-    grid.append(sv);
-  }
-  const trc = document.createElement("input"); trc.type = "checkbox"; trc.checked = !!base.trust_remote_code; S.trust_remote_code = trc;
-  const tl = el("label","chk"); tl.append(trc, document.createTextNode("trust_remote_code")); grid.append(tl);
-  adv.append(grid);
-  const mn = Math.max(0, parseInt(base.min_replicas || (f.scale_to_zero ? "0" : "1"), 10) || 0);
-  const mx = Math.max(1, parseInt(base.max_replicas || "1", 10) || 1);
-  const z = f.scale_to_zero && mn === 0;
-  // spec tiles
-  const tiles = el("div","spec-grid");
-  const tile = (label, value, hint, pillNode) => { const t = el("div","tile"); t.append(el("div","tl", label)); const v = el("div","tv", value); if (pillNode) v.append(pillNode); t.append(v); if (hint) t.append(el("div","th2", hint)); tiles.append(t); return t; };
-  tile("GPU", (g.family && g.family !== "other" ? g.family : (g.display || g.provider_id)) + (g.count > 1 ? " ×" + g.count : ""), fmtGb(g.total_vram_gb) + (g.count > 1 ? " total · " + g.vram_gb + " GB each" : ""));
-  tile("Engine", engine, base.engine_version ? "pinned " + base.engine_version : "latest image");
-  const rt = tile("Replicas", mn + "–" + mx, z ? null : "always warm"); if (z) { const h = el("div","th2"); h.append(pill("scales to zero", "", "acc")); rt.append(h); }
-  const ctxTile = tile("Context", base.max_model_len ? fmtCtx(parseInt(base.max_model_len, 10)) : "model default", m.context_len ? "model max " + fmtCtx(m.context_len) : null);
-  s.append(tiles);
-  // cost — the headline
-  const rate = g.price_per_hour;
-  const run = rate == null ? null : rate * mx;
-  const idle = z ? 0 : (rate == null ? null : rate * Math.max(1, mn));
-  const cb = el("div","cost-big"); cb.append(el("b", null, run == null ? "—" : fmtRate(run).replace("/h", "")), el("span", null, "/h while running")); s.append(cb);
-  const sub = el("div","cost-sub");
-  const idleLine = el("span", null, "");
-  const setIdle = () => { idleLine.textContent = z ? "idle $0.00/h · scales to zero after " + fmtIdle(S.idle_timeout_s.value) : "idle " + (idle == null ? "unknown" : fmtRate(idle)) + " · always warm, keeps billing"; idleLine.className = z ? "" : "warnline"; };
-  setIdle(); S.idle_timeout_s.oninput = setIdle;
-  sub.append(idleLine, el("span", null, f.scale_to_zero ? "~2–4 min first request (cold start)" : "no cold start · warm"));
-  s.append(sub);
-  s.append(adv);
-  S.max_model_len.oninput = () => { ctxTile.querySelector(".tv").textContent = S.max_model_len.value ? fmtCtx(parseInt(S.max_model_len.value, 10) || 0) : "model default"; };
-  if (f.public_by_default) {
-    const b = el("div","banner"); b.style.margin = "0 0 14px";
-    b.append(document.createTextNode("This provider's endpoint is reachable by anyone with the URL. Keep the auth env var set and tear down when you're done."));
-    s.append(b);
-  }
-  const gateNote = el("div","banner"); gateNote.style.margin = "0 0 14px";
-  if (gatedBlocked(m)) {
-    gateNote.append(document.createTextNode(m.id + " is gated (" + (m.gated_kind === "manual" ? "owner approval" : "click Agree, instant") +
-      ") — save a Hugging Face token under Advanced first."));
-    s.insertBefore(gateNote, adv);
-  }
-  const foot = el("div","cta"); foot.style.marginTop = "4px";
-  const go = btn("Deploy to " + (f.display_name || f.provider), "pri", async () => {
-    go.disabled = true; go.textContent = "Starting…";
-    const opts = { ...base, ...collectOpts(S) };
-    if (!S.trust_remote_code.checked) delete opts.trust_remote_code;
-    try {
-      const r = await post("/api/deploy/up", { provider: f.provider, model: m.id, gpu: g.provider_id, engine, opts });
-      if (r.ok) openJobSheet(r.job, { kind: "deploy", model: m.id, provider: f.display_name || f.provider, providerId: f.provider, gpu: g.display || g.provider_id, caption: [g.display || g.provider_id, g.region, engine].filter(Boolean).join(" · ") });
-      else { toast(errText(r), true); go.disabled = false; go.textContent = "Deploy to " + (f.display_name || f.provider); }
-    } catch (e) { toast(e.message, true); go.disabled = false; go.textContent = "Deploy to " + (f.display_name || f.provider); }
-  });
-  if (gatedBlocked(m)) { go.disabled = true; go.title = "gated repo · save a Hugging Face token first"; adv.open = true; }
-  foot.append(go, btn("Cancel", "gho", hideModal));
-  s.append(foot);
-  showModal();
-  const sheet = s.parentElement; sheet.tabIndex = -1;
-  sheet.onkeydown = e => { if (e.key === "Enter" && !["TEXTAREA","SELECT"].includes(e.target.tagName) && !go.disabled) { e.preventDefault(); go.click(); } };
-  setTimeout(() => sheet.focus(), 30);
-}
-
-// ---- the job sheet: progress lines streamed from a background job ----
-let jobPollT = null;
-function stopJobPoll() { if (jobPollT) { clearInterval(jobPollT); jobPollT = null; } }
-function openJobSheet(jobId, ctx) {
-  stopJobPoll();
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  if (ctx.kind === "deploy" && ctx.providerId) {
-    s.append(el("h3", null, "Deploying"));
-    s.append(pairHeader(ctx.model, ctx.providerId, ctx.provider, ctx.caption || ctx.gpu));
-  } else {
-    s.append(el("h3", null, (ctx.kind === "teardown" ? "Tearing down " : "Deploying ") + ctx.model));
-    s.append(el("div","sub", [ctx.provider, ctx.gpu].filter(Boolean).join(" · ") + " · job " + jobId));
-  }
-  const lcd = el("div","lcd tight");
-  const st = el("div","hot"); const stI = el("i", null, "running"); st.append(stI, document.createTextNode("status"));
-  const ep = el("div","dim"); const elI = el("i", null, "0s"); ep.append(elI, document.createTextNode("elapsed"));
-  lcd.append(st, ep); s.append(lcd);
-  // Progress, not a log. Every line the provider reports IS a step: the ones
-  // behind you are ticked, the newest one is live, and the raw stream stays
-  // available underneath for when something goes wrong. The steps are the
-  // provider's own words — nothing is invented or guessed at.
-  const steps = el("ol","dp-steps"); s.append(steps);
-  const logWrap = el("details","dp-logbox");
-  logWrap.append(el("summary", null, "Provider output"));
-  const log = el("div","log dp-log", "starting…"); logWrap.append(log);
-  s.append(logWrap);
-  const done = el("div"); s.append(done);
-  let drawn = 0;
-  const paintSteps = (lines, running) => {
-    // append only what is new, so finished steps never re-render or flicker
-    for (let i = drawn; i < lines.length; i++) {
-      const li = el("li","dp-step");
-      li.append(el("span","dp-stepm"), el("span","dp-stept", lines[i]));
-      steps.append(li);
-    }
-    drawn = lines.length;
-    [...steps.children].forEach((li, i) => {
-      const live = running && i === lines.length - 1;
-      li.classList.toggle("live", live);
-      li.classList.toggle("did", !live);
-    });
-  };
-  const tick = async () => {
-    let j;
-    try { j = await api("/api/deploy/job?" + q({ id: jobId })); } catch (e) { return; }
-    if (!j.ok) { stopJobPoll(); stI.textContent = "lost"; st.className = ""; log.textContent = j.error || "job not found"; return; }
-    elI.textContent = fmtDur(j.elapsed_s);
-    const lines = j.lines || [];
-    log.textContent = lines.join("\n") || "waiting for the provider…";
-    log.scrollTop = log.scrollHeight;
-    paintSteps(lines.length ? lines : ["waiting for the provider…"], j.status === "running");
-    if (j.status === "running") return;
-    stopJobPoll();
-    stI.textContent = j.status; st.className = j.status === "done" ? "hot" : "";
-    done.innerHTML = "";
-    if (j.status === "error") {
-      done.append(el("div","pe", (j.error || "failed") + (j.hint ? " — " + j.hint : "")));
-      const f = el("div","cta"); f.append(btn("Close", "gho", hideModal)); done.append(f);
-    } else if (ctx.kind === "teardown") {
-      done.append(el("div","note2", "Deleted on the provider and marked deleted here. Billing for it has stopped."));
-      const f = el("div","cta"); f.append(btn("Close", "pri", hideModal)); done.append(f);
-    } else renderDeployDone(done, j.result || {});
-    refreshDeployments(false).then(() => { if (ctx.kind === "deploy" && j.result) highlightDeployment(j.result.id); });
-    loadOverview();
-  };
-  tick(); jobPollT = setInterval(tick, 1500);
-  showModal(true);
-}
-function renderDeployDone(box, d) {
-  box.innerHTML = "";
-  // The end of the flow says it ARRIVED, then what to do next — a bare table
-  // of fields reads as a spec dump, not as a finish.
-  const hd = el("div","dp-done");
-  hd.append(el("span","dp-donem"));
-  hd.append(el("b", null, "Deployed and reachable"));
-  hd.append(el("span","dp-donex", "The endpoint is live — point mantis at it, or copy a line for somewhere else."));
-  box.append(hd);
-  const dl = el("dl","kvs");
-  kvRow(dl, "status", (d.status || "?").replace(/_/g, " "));
-  kvRow(dl, "endpoint", d.endpoint_url || "pending");
-  kvRow(dl, "model=", d.served_model_name || d.model || "—");
-  kvRow(dl, "auth", depEnv(d));
-  box.append(dl);
-  if (d.message) box.append(el("div","note2", d.message));
-  const f = el("div","cta");
-  f.append(btn("Use this model", "pri", () => useDeployment(d, box)));
-  if (d.endpoint_url) {
-    f.append(btn("Copy shell", "", () => copyText(shellLine(d), "shell line")));
-    f.append(btn("Copy Python", "", () => copyText(pyLine(d), "python snippet")));
-  }
-  f.append(btn("Close", "gho", hideModal));
-  box.append(f);
-  // the obvious next action is also the one the keyboard lands on
-  const use = f.querySelector(".b.pri");
-  if (use) setTimeout(() => use.focus(), 30);
-}
-// Connect: the server re-checks /models (retrying a cold start), then makes
-// this endpoint the current model + backend for the SDK and the terminal.
-async function useDeployment(d, box) {
-  // optimistic: the top bar shows the new model at once; a failure puts it back
-  const prev = OVERVIEW.current, prevHost = OVERVIEW.hosting;
-  OVERVIEW.current = { model: d.served_model_name || d.model, backend: d.endpoint_url };
-  OVERVIEW.hosting = { kind: "selfhost", label: "deployment · " + (d.name || d.provider) };
-  renderTopStatus(OVERVIEW);
-  let r;
-  try { r = await post("/api/deploy/connect", { id: d.id }); }
-  catch (e) { OVERVIEW.current = prev; OVERVIEW.hosting = prevHost; renderTopStatus(OVERVIEW); toast(e.message, true); return; }
-  if (!r.ok) { OVERVIEW.current = prev; OVERVIEW.hosting = prevHost; renderTopStatus(OVERVIEW); toast(errText(r), true); return; }
-  toast("current model → " + r.model);
-  loadOverview();
-  if (!box) return;
-  box.innerHTML = "";
-  const dl = el("dl","kvs");
-  kvRow(dl, "model", r.model || "—"); kvRow(dl, "backend", r.backend || "—");
-  kvRow(dl, "auth env", r.api_key_env || "none");
-  box.append(dl);
-  box.append(el("div","note2", "The next mantis launch and any MantisAgentOptions() without a model use this."));
-  const jb = jsonBox("paste into a shell", {}, null); jb.pre.textContent = r.shell || shellLine({ ...d, ...r, endpoint_url: r.backend }); box.append(jb.box);
-  const jp = jsonBox("or in python", {}, null); jp.pre.textContent = r.python || pyLine({ ...d, endpoint_url: r.backend, served_model_name: r.model }); box.append(jp.box);
-  const f = el("div","cta");
-  f.append(btn("Copy shell", "", () => copyText(jb.pre.textContent, "shell line")));
-  f.append(btn("Copy Python", "", () => copyText(jp.pre.textContent, "python snippet")));
-  f.append(btn("Close", "gho", hideModal));
-  box.append(f);
-}
-
-// ---- deployments table ----
-function highlightDeployment(id) {
-  const row = document.querySelector('#dp-deps [data-key="' + CSS.escape(String(id)) + '"]');
-  if (!row) return;
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
-  row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 1600);
-}
-async function refreshDeployments(refresh) {
-  const tbl = document.getElementById("dp-deps"); if (!tbl) return;
-  let r;
-  try { r = await api("/api/deploy/list" + (refresh ? "?refresh=1" : "")); } catch (e) { return; }
-  DEPLOY.deployments = r.deployments || [];
-  renderDeployments(tbl);
-}
-function renderDeployments(tbl) {
-  const deps = DEPLOY.deployments;
+function renderActive() {
+  const sec = document.getElementById("dp-active"); if (!sec) return;
+  const box = document.getElementById("dp-cards");
+  const items = activeItems();
+  sec.style.display = items.length ? "" : "none";
+  patchList(box, items, it => it.key, it => {
+    const d = it.d || {}, j = it.job || {}, dn = it.down || {};
+    const cn = it.conn || {};
+    return [d.status, d.endpoint_url, d.in_use, d.is_live, JSON.stringify(d.cost || null), d.message,
+            j.status, j.stage, j.deployment_id, j.last_line, j.error, j.connected, j.connect_error, dn.status,
+            cn.status, cn.last_line, cn.error, cn.id];
+  }, (card, it) => depCard(card, it));
   paintSubs();
-  if (!deps.length) {
-    tbl.innerHTML = "";
-    tbl.append(emptyState("deploy", "No deployments yet",
-      "Pick a model below, choose a GPU that fits, and it runs here.",
-      btn("Pick a model", "pri", () => {
-        const m = document.getElementById("dp-models");
-        if (m) m.scrollIntoView({ behavior: "smooth", block: "start" });
-        const i = document.querySelector("#deploy .find input"); if (i) setTimeout(() => i.focus(), 320);
-      })));
+}
+// ---- usage ------------------------------------------------------------
+// What each deployment did: throughput, requests, boot vs serving, and what
+// the GPU time cost — from the container's own log, which the provider serves
+// without touching the endpoint. A chart that scraped the endpoint would wake
+// a scaled-to-zero GPU, or keep an idle one billing for as long as the tab
+// stayed open.
+const USAGE = { id: null, hours: 24, data: null, req: 0, timer: null };
+const USAGE_WINDOWS = [[6, "6h"], [24, "24h"], [168, "7d"]];
+const usageDeps = () => (DEPLOY.deployments || []).filter(d => d.endpoint_url && d.status !== "deleted");
+async function loadUsage() {
+  const sec = document.getElementById("dp-usage"); if (!sec) return;
+  const deps = usageDeps();
+  if (!deps.length) { sec.style.display = "none"; return; }
+  sec.style.display = "";
+  if (!deps.some(d => d.id === USAGE.id)) USAGE.id = (deps.find(d => d.in_use) || deps[0]).id;
+  const my = ++USAGE.req;
+  if (!USAGE.data || USAGE.data.id !== USAGE.id || USAGE.data.hours !== USAGE.hours) paintUsage(sec, null);
+  let r;
+  try { r = await api("/api/deploy/usage?" + q({ id: USAGE.id, hours: USAGE.hours })); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (my !== USAGE.req || !document.getElementById("dp-usage")) return;
+  USAGE.data = r;
+  paintUsage(sec, r);
+  clearTimeout(USAGE.timer);
+  USAGE.timer = setTimeout(() => { if (curView === "deploy" && !document.hidden) loadUsage(); }, 60000);
+}
+function paintUsage(sec, r) {
+  [...sec.children].forEach(c => { if (!c.classList.contains("sec-t")) c.remove(); });
+  const deps = usageDeps();
+  const bar = el("div","us-bar");
+  if (deps.length > 1) {
+    const dc = el("div","fchips us-deps");
+    deps.forEach(d => {
+      const c = el("button","fchip" + (d.id === USAGE.id ? " on" : ""));
+      c.append(_orgOf(d.model) ? orgMark(_orgOf(d.model)) : fillMark(el("span","omark"), "selfhost", d.model),
+               document.createTextNode(shortId(d.model)));
+      c.onclick = () => { USAGE.id = d.id; loadUsage(); };
+      dc.append(c);
+    });
+    bar.append(dc);
+  } else {
+    const d = deps[0];
+    bar.append(el("span","us-note", "From " + shortId(d.model) + "'s own container log — reading it never wakes the GPU."));
+  }
+  bar.append(el("span","sp"));
+  const wc = el("div","fchips");
+  USAGE_WINDOWS.forEach(([h, lab]) => {
+    const c = el("button","fchip" + (h === USAGE.hours ? " on" : ""), lab);
+    c.onclick = () => { USAGE.hours = h; loadUsage(); };
+    wc.append(c);
+  });
+  bar.append(wc);
+  sec.append(bar);
+  if (!r) { const sk = el("div","tiles"); for (let i = 0; i < 4; i++) sk.append(el("div","tile flat us-sk")); sec.append(sk); return; }
+  if (!r.ok) {
+    sec.append(el("div","us-empty", r.supported === false
+      ? "This provider has no log API, so there's nothing to chart here — its own console has the numbers."
+      : "Couldn't read the log: " + errText(r)));
     return;
   }
-  let rows = tbl.querySelector(".dp-rows");
-  if (!rows) {
-    tbl.innerHTML = "";
-    const list = el("div","list");
-    const head = el("div","dp-drow head");
-    ["", "name", "model", "gpu", "status", "endpoint", "$ / h", "age", ""].forEach(x => head.append(el("span", null, x)));
-    rows = el("div","dp-rows"); list.append(head, rows); tbl.append(list);
+  const S = r.summary || {};
+  const since = r.since, until = r.until, span = until - since;
+  const winLab = (USAGE_WINDOWS.find(([h]) => h === USAGE.hours) || [0, USAGE.hours + "h"])[1];
+  // one binning for every chart on the panel, so a spike lines up across them
+  const BINS = USAGE.hours <= 6 ? 36 : USAGE.hours <= 24 ? 48 : 56;
+  const binOf = t => Math.max(0, Math.min(BINS - 1, Math.floor((t - since) / span * BINS)));
+  const genPk = new Array(BINS).fill(0), promptPk = new Array(BINS).fill(0);
+  const reqN = new Array(BINS).fill(0), errN = new Array(BINS).fill(0);
+  (r.stats || []).forEach(x => { const b = binOf(x[0]); genPk[b] = Math.max(genPk[b], x[2]); promptPk[b] = Math.max(promptPk[b], x[1]); });
+  (r.requests || []).forEach(x => { const b = binOf(x[0]); reqN[b]++; if (x[1] >= 400) errN[b]++; });
+  const tps = v => v >= 100 ? Math.round(v) : +v.toFixed(1);
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+
+  // ---- the four readings ----------------------------------------------
+  const tiles = el("div","tiles");
+  tile(tiles, "trace", "Generating", S.gen_tps_now ? String(tps(S.gen_tps_now)) : "Idle", S.gen_tps_now ? "tok/s" : null,
+    S.gen_tps_peak ? "peak " + tps(S.gen_tps_peak) + " tok/s · " + fmtTok(S.tokens_out) + " out, " + fmtTok(S.tokens_in) + " in"
+                   : "nothing generated in " + winLab,
+    (r.stats || []).length ? sparkLine(genPk) : "");
+  tile(tiles, "msg", "Requests · " + winLab, fmt(S.requests), null,
+    (S.requests ? (S.errors ? S.errors + " failed" : "none failed") : "nothing served") + " · " + plural(S.wakes || 0, "wake"),
+    S.requests ? sparkBars(reqN) : "");
+  const readyPct = S.gpu_s ? Math.round(100 * S.serving_s / S.gpu_s) : 0;
+  tile(tiles, "clock", "GPU time · " + winLab, S.gpu_s ? fmtDur(S.gpu_s) : "0m", null,
+    S.gpu_s ? fmtDur(S.booting_s) + " booting · " + readyPct + "% ready" : "no container ran", "");
+  tile(tiles, "spend", "Billed · " + winLab, S.cost_usd != null ? fmtUsd(S.cost_usd) : "—", null,
+    S.usd_per_m_out != null ? fmtUsd(S.usd_per_m_out) + " per 1M tokens out"
+      : S.rate_per_hour != null ? "at " + fmtRate(S.rate_per_hour) + " while a container is up" : "no rate on record", "");
+  sec.append(tiles);
+
+  // ---- containers: booting vs ready, and every request on top ----------
+  const tl = el("div","card us-full");
+  cardHead(tl, "deploy", "Containers", plural(S.wakes || 0, "start") +
+    (S.median_boot_s != null ? " · boot median " + fmtDur(S.median_boot_s) : ""));
+  // the one conclusion the chart supports, said once: GPU time that served
+  // almost nothing was paid for by wakes and idle windows, not by work
+  if (S.wakes > 1 && S.requests <= S.wakes * 2 && S.gpu_s > 1800) {
+    const n = el("div","us-note");
+    n.innerHTML = "<b>" + plural(S.requests, "request") + " across " + plural(S.wakes, "wake") + ".</b> " +
+      "Each wake boots for ~" + esc(fmtDur(S.median_boot_s || 0)) + " and then idles until the scale-down window runs out — that is most of the bill.";
+    tl.append(n);
   }
-  patchList(rows, deps, d => d.id, d => [d.status, d.endpoint_url, d.cost, d.message, d.name, d.updated_at, d.is_live], (row, d) => {
-    const p = DEPLOY.providers.find(x => x.id === d.provider) || {};
-    row = row || el("div"); row.innerHTML = ""; row.className = "dp-drow" + (d.is_live ? "" : " off");
-    const mk = el("span","pair sm"); mk.append(orgMark(_orgOf(d.model)), el("span","parrow"), bigMark(p.logo || d.provider, p.display_name || d.provider));
-    mk.querySelector(".parrow").append(el("b", null, "→")); mk.title = d.model + " → " + (p.display_name || d.provider); row.append(mk);
-    const nm = el("span","dp-dn", d.name || d.id); nm.title = d.id + " · " + (p.display_name || d.provider); row.append(nm);
-    const mdl = el("span","dp-dm", d.model); mdl.title = "model= " + (d.served_model_name || d.model); row.append(mdl);
-    row.append(el("span","dp-dg", d.gpu ? (d.gpu.display || d.gpu.provider_id) + " · " + fmtGb(d.gpu.total_vram_gb) : "—"));
-    const stw = el("span","dp-ds");
-    stw.append(el("span","dot2 " + (DEP_STATE[d.status] || "")), document.createTextNode(String(d.status || "?").replace(/_/g, " ")));
-    stw.title = d.message || ""; row.append(stw);
-    const ep = el("span","dp-de");
-    if (d.endpoint_url) {
-      const a = el("span","mono clk", d.endpoint_url.replace(/^https?:\/\//, ""));
-      a.title = "copy " + d.endpoint_url; a.onclick = () => copyText(d.endpoint_url, "endpoint"); ep.append(a);
-    } else ep.append(el("span","mgo", "—"));
-    row.append(ep);
-    const c = d.cost || {};
-    const listRate = d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null;
-    const ce = el("span","dp-dc", c.per_hour_usd != null
-      ? fmtRate(c.per_hour_usd) + (c.accrued_usd != null ? " · " + fmtUsd(c.accrued_usd) : "")
-      : (listRate != null && d.is_live ? fmtRate(listRate) + "*" : "—"));
-    ce.title = c.basis || (listRate != null ? "* list price of the GPU" : "the provider didn't say");
-    row.append(ce);
-    row.append(el("span","dp-da", d.created_at ? ago(d.created_at) : ""));
-    const acts = el("span","dp-dx");
-    if (d.is_live) acts.append(btn("Use", "pri", () => useDeployment(d)));
-    acts.append(btn("Logs", "gho", () => openLogs(d)));
-    if (d.status !== "deleted" && d.status !== "deleting") acts.append(btn("Teardown", "gho dan", () => confirmTeardown(d)));
-    row.append(acts);
-    return row;
+  tl.append(usageTimeline(r, since, until));
+  const lg = el("div","us-leg");
+  lg.innerHTML = '<span><i class="bt"></i>Booting</span><span><i></i>Ready to serve</span><span><i class="rq"></i>Request</span>';
+  tl.append(lg);
+  sec.append(tl);
+
+  // ---- throughput and requests ------------------------------------------
+  const slot = fmtDur(span / BINS);
+  const g = el("div","us-grid");
+  const tc = el("div","card");
+  cardHead(tc, "trace", "Throughput", "tokens/s · peak per " + slot);
+  if ((r.stats || []).length) {
+    tc.append(usageLines(genPk, promptPk, since, until));
+    const l2 = el("div","us-leg");
+    l2.innerHTML = '<span><i class="ln"></i>Generation</span><span><i class="ln p"></i>Prompt</span>';
+    tc.append(l2);
+  } else tc.append(el("div","us-empty", "Nothing generated in " + winLab + " — vLLM logs throughput only while it is working."));
+  const rc = el("div","card");
+  cardHead(rc, "msg", "Requests", "per " + slot);
+  if (S.requests) rc.append(usageBars(reqN, errN, since, until));
+  else rc.append(el("div","us-empty", "No requests in " + winLab + "."));
+  g.append(tc, rc);
+  sec.append(g);
+}
+// The time axis is HTML, not SVG text: the plots stretch to any width
+// (preserveAspectRatio none), which would stretch their lettering with them.
+function usageAxis(since, until) {
+  const ax = el("div","us-ax");
+  const span = until - since, n = 4;
+  const lab = t => { const d = new Date(t * 1000);
+    return span > 2 * 86400 ? d.toLocaleDateString([], { weekday: "short", day: "numeric" })
+                            : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+  for (let i = 0; i <= n; i++) {
+    const s = el("span", null, i === n ? "now" : lab(since + span * i / n));
+    s.style.left = (100 * i / n) + "%"; ax.append(s);
+  }
+  return ax;
+}
+function usageTip(box) { const t = el("div","tip"); t.style.display = "none"; box.append(t); return t; }
+function placeTip(box, tip, px) {
+  const w = box.clientWidth, tw = tip.offsetWidth || 160;
+  tip.style.left = Math.max(0, Math.min(w - tw, px - tw / 2)) + "px";
+}
+const hhmm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function usageTimeline(r, since, until) {
+  const W = 1000, H = 44, lane = 22, top = 16, span = until - since;
+  const X = t => Math.max(0, Math.min(W, (t - since) / span * W));
+  let out = "";
+  (r.sessions || []).forEach((s, i) => {
+    const a = X(s.start), b = X(s.ready != null ? s.ready : s.end), c = X(s.end);
+    // booting and ready are one container, split by a 1-unit surface gap
+    if (b - a > 0.3) out += `<rect class="bt" x="${a.toFixed(1)}" y="${top}" width="${Math.max(0.8, b - a - (s.ready != null ? 1 : 0)).toFixed(1)}" height="${lane}" rx="2"/>`;
+    if (s.ready != null && c - b > 0.3) out += `<rect class="sv" x="${(b + 1).toFixed(1)}" y="${top}" width="${Math.max(0.8, c - b - 1).toFixed(1)}" height="${lane}" rx="2"/>`;
+    out += `<rect class="hit" data-i="${i}" x="${Math.max(0, a - 3).toFixed(1)}" y="0" width="${Math.max(8, c - a + 6).toFixed(1)}" height="${H}"/>`;
   });
+  (r.requests || []).forEach(x => {
+    const px = X(x[0]).toFixed(1);
+    out += `<line class="rq${x[1] >= 400 ? " bad" : ""}" x1="${px}" y1="3" x2="${px}" y2="${top - 3}"/>`;
+  });
+  const box = el("div","us-chart tl");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="containers over time, booting and ready">${out}</svg>`;
+  const tip = usageTip(box);
+  box.querySelectorAll(".hit").forEach(h => {
+    h.onmousemove = ev => {
+      const s = r.sessions[+h.dataset.i];
+      tip.innerHTML = "<b>" + hhmm(s.start) + (s.open ? " → now" : " → " + hhmm(s.end)) + "</b>" +
+        "<span>" + (s.boot_s != null ? "booted in " + fmtDur(s.boot_s) : "still booting") +
+        " · up " + fmtDur(s.end - s.start) + " · " + s.requests + " request" + (s.requests === 1 ? "" : "s") + "</span>";
+      tip.style.display = "";
+      placeTip(box, tip, ev.clientX - box.getBoundingClientRect().left);
+    };
+    h.onmouseleave = () => { tip.style.display = "none"; };
+  });
+  const wrap = el("div"); wrap.append(box, usageAxis(since, until));
+  return wrap;
+}
+function usageLines(gen, prompt, since, until) {
+  const W = 1000, H = 132, PT = 10, PB = 1, n = gen.length, span = until - since;
+  const max = Math.max(1, ...gen, ...prompt);
+  const X = i => (i + 0.5) / n * W, Y = v => PT + (H - PT - PB) * (1 - v / max);
+  const path = a => "M" + a.map((v, i) => X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(" L");
+  const box = el("div","us-chart");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="tokens per second over time">` +
+    `<line class="grid" x1="0" y1="${Y(max).toFixed(1)}" x2="${W}" y2="${Y(max).toFixed(1)}"/>` +
+    `<line class="grid" x1="0" y1="${Y(max / 2).toFixed(1)}" x2="${W}" y2="${Y(max / 2).toFixed(1)}"/>` +
+    `<line class="base" x1="0" y1="${H - PB}" x2="${W}" y2="${H - PB}"/>` +
+    `<path class="a1" d="${path(gen)} L${X(n - 1).toFixed(1)},${H - PB} L${X(0).toFixed(1)},${H - PB} Z"/>` +
+    `<path class="l2" d="${path(prompt)}"/><path class="l1" d="${path(gen)}"/>` +
+    `<line class="xh" x1="0" y1="${PT}" x2="0" y2="${H - PB}" style="display:none"/></svg>`;
+  box.append(el("div","us-y", Math.round(max) + " tok/s"));
+  const tip = usageTip(box), svg = box.querySelector("svg"), xh = box.querySelector(".xh");
+  svg.onmousemove = ev => {
+    const rc = svg.getBoundingClientRect(); if (!rc.width) return;
+    const i = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - rc.left) / rc.width * n)));
+    xh.setAttribute("x1", X(i).toFixed(1)); xh.setAttribute("x2", X(i).toFixed(1)); xh.style.display = "";
+    tip.innerHTML = '<i style="background:var(--s1)"></i><b>' + (+gen[i].toFixed(1)) + "</b> gen" +
+      '<i style="background:var(--s2)"></i><b>' + (+prompt[i].toFixed(1)) + "</b> prompt" +
+      "<span>" + hhmm(since + span * i / n) + "</span>";
+    tip.style.display = ""; placeTip(box, tip, X(i) / W * rc.width);
+  };
+  svg.onmouseleave = () => { xh.style.display = "none"; tip.style.display = "none"; };
+  const wrap = el("div"); wrap.append(box, usageAxis(since, until));
+  return wrap;
+}
+function usageBars(reqN, errN, since, until) {
+  const W = 1000, H = 132, PT = 10, n = reqN.length, bw = W / n, span = until - since;
+  const max = Math.max(1, ...reqN);
+  let bars = "";
+  reqN.forEach((v, i) => {
+    if (!v) return;
+    const h = Math.max(4, v / max * (H - PT));
+    bars += `<rect class="br" x="${(i * bw + 1).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" rx="2"/>`;
+  });
+  const box = el("div","us-chart");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="requests per time slot">` +
+    `<line class="base" x1="0" y1="${H}" x2="${W}" y2="${H}"/>${bars}</svg>`;
+  box.append(el("div","us-y", max + " max"));
+  const tip = usageTip(box), svg = box.querySelector("svg");
+  svg.onmousemove = ev => {
+    const rc = svg.getBoundingClientRect(); if (!rc.width) return;
+    const i = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - rc.left) / rc.width * n)));
+    tip.innerHTML = "<b>" + reqN[i] + "</b> request" + (reqN[i] === 1 ? "" : "s") +
+      (errN[i] ? " · " + errN[i] + " failed" : "") + "<span>" + hhmm(since + span * i / n) + "</span>";
+    tip.style.display = ""; placeTip(box, tip, (i + 0.5) / n * rc.width);
+  };
+  svg.onmouseleave = () => { tip.style.display = "none"; };
+  const wrap = el("div"); wrap.append(box, usageAxis(since, until));
+  return wrap;
+}
+const DC_STATE = {
+  launching: ["run", "Deploying"], stopping: ["run", "Stopping"], failed: ["bad", "Failed"], waking: ["run", "Waking"],
+  running: ["ok", "Running"], scaled_to_zero: ["ok", "Idle"], starting: ["run", "Starting"],
+  pending: ["run", "Pending"], building: ["run", "Building"], deleting: ["run", "Stopping"],
+  paused: ["pend", "Paused"], unknown: ["", "Unknown"],
+};
+function depCard(card, it) {
+  card = card || el("div"); card.innerHTML = "";
+  const d = it.d, j = it.job, down = it.down, conn = it.conn;
+  const waking = !!(conn && conn.status === "running");
+  const meta = (j && j.meta) || {};
+  const model = d ? d.model : (meta.model || (j && j.target) || "");
+  const pid = d ? d.provider : meta.provider;
+  const p = DEPLOY.providers.find(x => x.id === pid) || {};
+  const flying = !!(j && j.status === "running");
+  const failed = !!(j && j.status === "error");
+  const state = down ? "stopping" : flying ? "launching" : failed ? "failed" : waking ? "waking" : (d ? d.status : "unknown");
+  card.className = "dcard" + (failed || state === "failed" ? " bad" : "") + (d && d.in_use ? " inuse" : "");
+  card.dataset.key = it.key;
+
+  const hd = el("div","dc-h");
+  // no org in the id (an adopted app mantis never recorded a model for):
+  // the server glyph, not a question mark
+  hd.append(_orgOf(model) ? orgMark(_orgOf(model)) : fillMark(el("span","omark"), "selfhost", model));
+  const tt = el("div","dc-t");
+  const nm = el("div","dc-n", shortId(model)); nm.title = model; tt.append(nm);
+  const rate = d ? depRate(d) : (meta.price_per_hour != null ? meta.price_per_hour : null);
+  // a GPU nobody recorded is left out, not printed as "unknown 0 GB"
+  const knownGpu = d && d.gpu && d.gpu.provider_id !== "unknown" && d.gpu.total_vram_gb;
+  const gpuTxt = knownGpu ? gpuName(d.gpu) + " " + fmtGb(d.gpu.total_vram_gb) : d ? "" : (meta.gpu_label || meta.gpu || "");
+  const sub = el("div","dc-s");
+  sub.append(providerMark(p.logo || pid, p.display_name || pid));
+  sub.append(el("span", null, [p.display_name || meta.provider_name || pid, gpuTxt, rate != null ? fmtRate(rate) : null]
+    .filter(Boolean).join(" · ")));
+  tt.append(sub); hd.append(tt);
+  const [cls, label] = DC_STATE[state] || ["", String(state || "?").replace(/_/g, " ")];
+  const pill2 = el("span","dc-st " + cls); pill2.append(el("i"), document.createTextNode(label));
+  if (d && d.message && !flying) pill2.title = d.message;
+  hd.append(pill2);
+  card.append(hd);
+
+  if (flying) card.append(stageTrack(j));
+  else if (waking) {
+    // a cold start, said as one: what is happening, how long so far
+    const w = el("div","dc-now");
+    w.append(el("span", null, "Waking a replica so mantis can use it — a cold start"));
+    const clock = el("b","dc-clock", fmtClock(Date.now() / 1000 - (conn.started_at || Date.now() / 1000)));
+    clock.dataset.t0 = String(conn.started_at || Date.now() / 1000); w.append(clock);
+    card.append(w);
+    if (conn.last_line) { const ll = el("div","dc-last", conn.last_line); ll.title = conn.last_line; card.append(ll); }
+  }
+  else if (down) card.append(el("div","dc-line", "Deleting it on " + (p.display_name || pid) + "…"));
+  else if (failed) {
+    const e = el("div","dc-err"); e.append(el("b", null, j.error || "The deploy failed"));
+    if (j.hint) e.append(el("span", null, j.hint));
+    card.append(e);
+    if (j.deployment_id && d && d.status !== "deleted")
+      card.append(el("div","dc-warn", "It was created on " + (p.display_name || pid) + " and may still be billing — stop it unless you'll retry."));
+  } else if (d) {
+    const ep = el("div","dc-ep");
+    if (d.endpoint_url) {
+      const u = el("span","dc-url", d.endpoint_url.replace(/^https?:\/\//, "")); u.title = d.endpoint_url;
+      const cp = btn("Copy", "gho", () => copyText(d.endpoint_url, "endpoint")); cp.classList.add("dc-copy");
+      ep.append(u, cp);
+    } else ep.append(el("span","dc-url dim", d.message === "no endpoint URL recorded"
+      ? "No endpoint on record \u2014 mantis can't call it. Forget it here, or stop it on " + (p.display_name || pid) + "."
+      : d.message || "no endpoint yet"));
+    card.append(ep);
+    const facts = el("div","dc-facts");
+    if (d.created_at) facts.append(el("span", null, (d.is_live ? "up " : "created ") + fmtDur(Date.now() / 1000 - d.created_at)));
+    if (d.engine) facts.append(el("span", null, d.engine));
+    if (j && j.connect_error) facts.append(el("span","amb", j.connect_error));
+    if (conn && conn.status === "error") facts.append(el("span","amb", "couldn't switch mantis to it — " + (conn.error || "it didn't answer")));
+    card.append(facts);
+  }
+
+  const foot = el("div","dc-foot");
+  const usable = !!(d && d.is_live && !down && !flying && !waking);
+  if (d && d.in_use && !down) foot.append(el("span","dc-inuse", "In use by mantis"));
+  else if (usable) { const u = btn("Use in mantis", "pri", () => useDeployment(d, u)); foot.append(u); }
+  if (failed && meta.model) foot.append(btn("Try again", "pri", () => retryJob(j)));
+  if (usable) foot.append(btn("Try it", "gho", () => openTry(d)));
+  const logId = d ? d.id : (j && j.deployment_id);
+  if (logId && !down) foot.append(btn("Logs", "gho", () => openLogs(d || { id: logId, provider: pid, model })));
+  foot.append(el("span","dc-sp"));
+  const dead = d && !d.endpoint_url && ["unknown", "failed", "paused", "deleted"].includes(d.status) && !flying && !waking;
+  if (dead) foot.append(btn("Forget", "gho", async () => {
+    let r; try { r = await post("/api/deploy/forget", { id: d.id }); } catch (e) { r = { ok: false, error: e.message }; }
+    if (!r.ok) { toast(errText(r), true); return; }
+    toast("Forgot " + shortId(d.model || d.id)); syncDeploy(false);
+  }));
+  else if (d && !down && d.status !== "deleting") foot.append(btn("Stop", "gho dan", () => confirmTeardown(d)));
+  else if (flying && !d) {
+    // nothing rented yet: stopping costs nothing and needs no confirmation
+    const c = btn("Cancel", "gho", () => cancelJob(j, c)); foot.append(c);
+  }
+  else if (failed && !d) foot.append(btn("Dismiss", "gho", () => dismissJob(j.id)));
+  card.append(foot);
+  return card;
+}
+function stageTrack(j) {
+  const w = el("div","dc-stage");
+  const cur = Math.max(0, STAGES.findIndex(([k]) => k === (j.stage || "prepare")));
+  const tr = el("div","dc-track");
+  STAGES.forEach(([k, lab], i) => {
+    const s = el("div","dc-step" + (i < cur ? " did" : i === cur ? " cur" : ""));
+    s.append(el("i"), el("span", null, lab));
+    tr.append(s);
+  });
+  w.append(tr);
+  const now = el("div","dc-now");
+  now.append(el("span", null, STAGE_TEXT[j.stage || "prepare"] || "Working"));
+  const clock = el("b","dc-clock", fmtClock(Date.now() / 1000 - (j.started_at || Date.now() / 1000)));
+  clock.dataset.t0 = String(j.started_at || Date.now() / 1000);
+  now.append(clock);
+  w.append(now);
+  // while it boots, the container's own latest line beats the manager's
+  // "waiting for the endpoint…" — that is what tells you weights are loading
+  const line = j.boot_line || j.last_line;
+  if (line) { const ll = el("div","dc-last", line); ll.title = line; w.append(ll); }
+  return w;
+}
+async function cancelJob(j, b) {
+  if (b) { b.disabled = true; b.textContent = "Cancelling…"; }
+  let r;
+  try { r = await post("/api/deploy/cancel", { job: j.id }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { toast(errText(r), true); if (b) { b.disabled = false; b.textContent = "Cancel"; } return; }
+  j.status = "cancelled";
+  if (r.teardown) trackJob({ id: r.teardown, kind: "teardown", status: "running", deployment_id: j.deployment_id,
+                             started_at: Date.now() / 1000, meta: {} });
+  else { renderActive(); paintDeployReads(); }
+  toast("Cancelled " + shortId((j.meta || {}).model || j.target));
+}
+async function retryJob(j) {
+  const m = j.meta || {};
+  let r;
+  try {
+    r = await post("/api/deploy/up", { provider: m.provider, model: m.model, gpu: m.gpu, engine: m.engine || "vllm",
+      opts: {}, use_when_ready: !!m.use_when_ready,
+      display: { gpu_label: m.gpu_label, price_per_hour: m.price_per_hour, provider_name: m.provider_name } });
+  } catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { toast(errText(r), true); return; }
+  dismissJob(j.id);
+  trackJob({ id: r.job, kind: "deploy", status: "running", stage: "prepare", started_at: Date.now() / 1000, meta: { ...m } });
+}
+
+// ---- keeping it current ----------------------------------------------------
+// While anything is moving the page asks every 2.5s (the event stream usually
+// beats it); at rest, every 20s. A provider can change a deployment's state
+// on its own — scale it to zero, fail a replica — so the page also asks the
+// providers themselves, once on arrival and every minute while something is
+// in a transitional state.
+let depPollT = null, depTickT = null, depProvAt = 0;
+const DEP_MOVING = ["pending", "building", "starting", "deleting"];
+function kickDeployPoll(now) {
+  if (depPollT) { if (!now) return; clearTimeout(depPollT); depPollT = null; }
+  const loop = async () => {
+    depPollT = null;
+    if (curView !== "deploy") return;
+    if (!document.hidden) {
+      const moving = (DEPLOY.deployments || []).some(d => DEP_MOVING.includes(d.status));
+      await syncDeploy(moving && Date.now() - depProvAt > 60000);
+    }
+    const busy = (DEPLOY.jobs || []).some(j => j.status === "running");
+    depPollT = setTimeout(loop, busy ? 2500 : 20000);
+  };
+  depPollT = setTimeout(loop, now ? 600 : 2500);
+  if (!depTickT) depTickT = setInterval(() => {
+    if (curView !== "deploy" || document.hidden) return;
+    const t = Date.now() / 1000;
+    document.querySelectorAll(".dc-clock[data-t0]").forEach(c => { c.textContent = fmtClock(t - parseFloat(c.dataset.t0)); });
+  }, 1000);
+}
+async function syncDeploy(providers) {
+  if (providers) depProvAt = Date.now();
+  let jr, lr;
+  try {
+    [jr, lr] = await Promise.all([api("/api/deploy/jobs"), api("/api/deploy/list" + (providers ? "?refresh=1" : ""))]);
+  } catch (e) { return; }
+  const was = new Map((DEPLOY.jobs || []).map(j => [j.id, j.status]));
+  if (jr && jr.ok) DEPLOY.jobs = jr.jobs || [];
+  if (lr && lr.deployments) DEPLOY.deployments = lr.deployments;
+  renderActive(); paintDeployReads();
+  // a deploy that just finished: say so wherever the user is looking
+  (DEPLOY.jobs || []).forEach(j => {
+    if (was.get(j.id) !== "running" || j.status === "running") return;
+    const name = shortId((j.meta || {}).model || j.target);
+    if (j.kind === "deploy" && j.status === "done") { toast("✓ " + name + " is live" + (j.connected ? " — mantis is using it" : "")); loadOverview(); }
+    else if (j.kind === "deploy" && j.status === "error") toast(name + " failed — " + (j.error || "see its card"), true);
+    else if (j.kind === "teardown" && j.status === "done") toast("Stopped " + name);
+    else if (j.kind === "connect" && j.status === "done") { toast("mantis now uses " + ((j.meta || {}).model || "it")); loadOverview(); }
+    else if (j.kind === "connect" && j.status === "error") toast("couldn't switch — " + (j.error || "it didn't answer"), true);
+  });
+}
+function paintDeployReads() {
+  const w = document.getElementById("dp-reads"); if (!w) return;
+  w.innerHTML = "";
+  const deps = DEPLOY.deployments || [];
+  const up = deps.filter(d => d.status === "running");
+  const booting = deps.filter(d => d.status === "starting");
+  const asleep = deps.filter(d => d.status === "scaled_to_zero");
+  // The burn is what is billing NOW: a container serving or booting. An app
+  // scaled to zero costs nothing until something wakes it, so it is counted
+  // as asleep, never as burn. Rates are the providers' own; an endpoint with
+  // no rate is unpriced, never free.
+  const billing = up.concat(booting);
+  const priced = billing.filter(d => depRate(d) != null);
+  const burn = priced.reduce((a, d) => a + depRate(d), 0);
+  const unpriced = billing.length - priced.length;
+  const live = billing;
+  const ready = DEPLOY.providers.filter(p => p.configured && provReady(p)).length;
+  const flying = (DEPLOY.jobs || []).filter(j => j.kind === "deploy" && j.status === "running").length;
+  const reads = [{ v: up.length, k: "running" }];
+  if (booting.length) reads.push({ v: booting.length, k: "booting" });
+  if (asleep.length) reads.push({ v: asleep.length, k: "asleep" });
+  if (flying) reads.push({ v: flying, k: "deploying" });
+  if (priced.length) reads.push({ v: fmtRate(burn), k: unpriced ? "burn · " + unpriced + " unpriced" : "burn" });
+  else if (live.length) reads.push({ v: "—", k: "burn · unpriced" });
+  reads.push({ v: ready + " of " + DEPLOY.providers.length, k: "providers ready" });
+  pageReads(w, reads, "Pick a model — it's two clicks to a running endpoint.",
+    "Rates are the providers' own list prices; nothing here is billed by mantis.");
+}
+
+// ---- use, logs, stop -------------------------------------------------------
+// Connect: the server re-checks /models (retrying a cold start), then makes
+// this endpoint the current model + backend for the SDK and the terminal.
+async function useDeployment(d, b) {
+  // Connect is a job: a scaled-to-zero replica takes a cold start to wake,
+  // and the card shows that wake with a clock — a button cannot.
+  if (b) { b.disabled = true; b.textContent = "Waking…"; }
+  let r;
+  try { r = await post("/api/deploy/connect", { id: d.id, job: true }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { toast(errText(r), true); if (b) { b.disabled = false; b.textContent = "Use in mantis"; } return; }
+  trackJob({ id: r.job, kind: "connect", status: "running", deployment_id: d.id, started_at: Date.now() / 1000, meta: {} });
+  if (d.status === "scaled_to_zero") toast("Waking " + shortId(d.model) + " — a cold start takes a few minutes");
+}
+// "Does it actually answer?" — one real request against the endpoint, with
+// the reply, how long it took and how fast it generated. Nothing else on the
+// page proves the thing works; the green dot only says the provider thinks so.
+function openTry(d) {
+  const s = document.getElementById("sheet"); s.innerHTML = "";
+  const h = el("div","lg-h");
+  h.append(el("h3", null, "Try it"), el("span","lg-sub", shortId(d.model) + " · " + provName(d.provider)));
+  s.append(h);
+  const row = el("div","tr-row");
+  const i = input("Ask it something"); i.value = "Say hello in one short sentence.";
+  const go = btn("Send", "pri", () => send());
+  row.append(i, go); s.append(row);
+  const out = el("div","tr-out"); s.append(out);
+  const stamp = el("div","tr-stats"); s.append(stamp);
+  const open = () => document.getElementById("modal").className && s.firstChild === h;
+  let t0 = 0, tick = null;
+  async function send() {
+    if (go.disabled) return;
+    go.disabled = true; go.textContent = "Waiting…";
+    out.className = "tr-out wait"; stamp.innerHTML = "";
+    t0 = Date.now();
+    out.textContent = "Waiting for " + shortId(d.model) + " to answer…";
+    const idleNote = d.status === "scaled_to_zero" ? " It's scaled to zero, so a replica has to wake first — that can take a few minutes." : "";
+    tick = setInterval(() => { if (!open()) { clearInterval(tick); return; }
+      out.textContent = "Waiting for " + shortId(d.model) + " to answer… " + fmtClock((Date.now() - t0) / 1000) + idleNote; }, 500);
+    let r;
+    try { r = await post("/api/deploy/try", { id: d.id, prompt: i.value }); } catch (e) { r = { ok: false, error: e.message }; }
+    clearInterval(tick);
+    if (!open()) return;
+    go.disabled = false; go.textContent = "Send";
+    if (!r.ok) { out.className = "tr-out bad"; out.textContent = errText(r); return; }
+    out.className = "tr-out"; out.textContent = r.reply || "(an empty reply)";
+    stamp.append(stat(r.latency_s != null ? r.latency_s.toFixed(r.latency_s < 10 ? 2 : 1) + "s" : "—", "to answer"),
+                 stat(r.tokens_per_s != null ? r.tokens_per_s : "—", "tokens / s"),
+                 stat(r.completion_tokens != null ? r.completion_tokens : "—", "tokens"));
+  }
+  i.onkeydown = e => { if (e.key === "Enter") send(); };
+  showModal(true);
+  setTimeout(() => { i.focus(); i.select(); }, 30);
 }
 async function openLogs(d) {
   const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(el("h3", null, "Logs · " + (d.name || d.id)));
-  s.append(el("div","sub", d.provider + " · " + d.model));
-  const bar = el("div"); bar.style = "display:flex;gap:8px;align-items:center;margin-bottom:8px";
-  const tail = el("select","in"); [100, 200, 500, 1000].forEach(n => { const o = el("option", null, "last " + n); o.value = n; tail.append(o); }); tail.value = "200";
-  const rb = btn("Refresh", "", () => load());
-  const st = el("span","refresh"); bar.append(tail, rb, st); s.append(bar);
-  const log = el("div","log dp-log", "loading…"); log.style.maxHeight = "60vh"; s.append(log);
+  const h = el("div","lg-h");
+  h.append(el("h3", null, "Logs"), el("span","lg-sub", shortId(d.model || d.name || d.id) + " · " + provName(d.provider)));
+  h.append(el("span","dc-sp"));
+  const st = el("span","lg-st", "");
+  const follow = document.createElement("input"); follow.type = "checkbox"; follow.checked = true;
+  const fl = el("label","chk lg-follow"); fl.append(follow, document.createTextNode("Follow"));
+  fl.title = "fetch new lines every few seconds and stay at the bottom";
+  const log = el("pre","lg-body", "Loading…");
+  h.append(st, fl, btn("Copy", "gho", () => copyText(log.textContent, "logs")));
+  s.append(h, log);
+  let t = null, first = true;
+  const open = () => document.getElementById("modal").className && s.firstChild === h;
   const load = async () => {
-    rb.disabled = true; st.textContent = "fetching…";
-    try {
-      const r = await api("/api/deploy/logs?" + q({ id: d.id, tail: tail.value }));
-      if (r.ok) { log.textContent = (r.lines || []).join("\n") || "(no output yet)"; st.textContent = (r.lines || []).length + " lines"; log.scrollTop = log.scrollHeight; }
-      else { log.textContent = r.supported === false ? "This provider has no logs API. " + (r.hint || "") : errText(r); st.textContent = ""; }
-    } catch (e) { log.textContent = e.message; }
-    finally { rb.disabled = false; }
+    clearTimeout(t);
+    if (!open()) return;
+    let r;
+    try { r = await api("/api/deploy/logs?" + q({ id: d.id, tail: 500 })); } catch (e) { r = { ok: false, error: e.message }; }
+    if (!open()) return;
+    if (r.ok) {
+      const pinned = first || log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+      log.textContent = (r.lines || []).join("\n") || "No output yet — a booting container can take a minute to say anything.";
+      if (pinned) log.scrollTop = log.scrollHeight;
+      first = false;
+      st.textContent = (r.lines || []).length + " lines · " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } else {
+      log.textContent = r.supported === false
+        ? "This provider doesn't expose logs through its API. " + (r.hint || "") : errText(r);
+      follow.checked = false; fl.style.display = "none"; st.textContent = "";
+    }
+    if (follow.checked) t = setTimeout(load, 4000);
   };
-  tail.onchange = load;
+  follow.onchange = () => { if (follow.checked) load(); else clearTimeout(t); };
   showModal(true); load();
 }
 function confirmTeardown(d) {
-  const c = d.cost || {};
-  const rate = c.per_hour_usd != null ? c.per_hour_usd : (d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null);
+  const rate = depRate(d);
   const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(el("h3", null, "Tear down " + (d.name || d.id) + "?"));
-  s.append(el("div","sub", d.provider + " · " + d.model + (d.gpu ? " · " + (d.gpu.display || d.gpu.provider_id) : "")));
-  const cost = el("div","dp-cost");
-  cost.innerHTML = rate != null
-    ? "This stops <b>" + esc(fmtRate(rate)) + "</b>" + (c.accrued_usd != null ? " · " + esc(fmtUsd(c.accrued_usd)) + " accrued so far" : "") + "."
-    : "The provider didn't report a rate for this deployment; it stops whatever it was billing.";
-  s.append(cost);
-  s.append(el("div","note2", "Deletes the endpoint on the provider and marks it deleted here. The model weights are not affected."));
-  const foot = el("div","cta");
-  const go = btn("Tear down", "dan", async () => {
-    go.disabled = true;
-    // optimistic: the row reads "deleting" now; rolled back if the request fails
-    const prev = { status: d.status, is_live: d.is_live };
-    d.status = "deleting"; d.is_live = false;
-    const tbl = document.getElementById("dp-deps"); if (tbl) renderDeployments(tbl);
-    const rollback = () => { d.status = prev.status; d.is_live = prev.is_live; if (tbl) renderDeployments(tbl); go.disabled = false; };
-    try {
-      const r = await post("/api/deploy/down", { id: d.id });
-      if (r.ok) openJobSheet(r.job, { kind: "teardown", model: d.name || d.model, provider: d.provider });
-      else { toast(errText(r), true); rollback(); }
-    } catch (e) { toast(e.message, true); rollback(); }
+  s.append(el("h3", null, "Stop " + shortId(d.model) + "?"));
+  const bits = ["This deletes the endpoint on " + provName(d.provider)
+    + (rate != null ? " and stops billing " + fmtRate(rate) + "." : ".")];
+  if (d.in_use) bits.push("mantis is using it right now — pick another model afterwards.");
+  bits.push("The model's weights are untouched; deploying it again takes a couple of minutes.");
+  s.append(el("div","sub ds-stopsub", bits.join(" ")));
+  const foot = el("div","ds-foot");
+  const go = btn("Stop and delete", "dan", async () => {
+    go.disabled = true; go.textContent = "Stopping…";
+    let r;
+    try { r = await post("/api/deploy/down", { id: d.id }); } catch (e) { r = { ok: false, error: e.message }; }
+    if (!r.ok) { toast(errText(r), true); go.disabled = false; go.textContent = "Stop and delete"; return; }
+    hideModal();
+    trackJob({ id: r.job, kind: "teardown", status: "running", deployment_id: d.id, started_at: Date.now() / 1000, meta: {} });
   });
-  go.classList.add("armed");
-  foot.append(go, btn("Cancel", "gho", hideModal));
+  foot.append(btn("Cancel", "gho", hideModal), go);
   s.append(foot);
   showModal();
 }
@@ -4371,7 +5219,7 @@ function renderTopStatus(o) {
   const hostEl = document.getElementById("railhost");
   if (hostEl && o.home) hostEl.textContent = (o.cwd || o.home).replace(/^\/Users\/[^/]+/, "~").split("/").pop() || "local";
   if (hostEl) hostEl.title = o.cwd || o.home || "";
-  if (curView === "home") setCrumb(fmt(o.session_count) + " sessions · " + fmt(o.project_count) + " projects");
+  if (curView === "home") setCrumb();
   const ver = document.getElementById("railver");
   if (ver && o.version) { ver.textContent = "v" + o.version; ver.title = "mantis " + o.version; }
   railCounts(o);
@@ -4423,15 +5271,22 @@ async function loadOverview() {
 // Sessions, what is live while you are in Deploy. They are painted from data
 // the pages already fetched, so opening the rail costs no request.
 // ==========================================================================
-const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","config"];
+const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","memory","config"];
 const PAGE_NAMES = { home: "Overview", models: "My models", deploy: "Deploy", sessions: "Sessions",
-                     activity: "Activity", mcp: "MCP", skills: "Skills", config: "Config" };
+                     activity: "Activity", mcp: "MCP", skills: "Skills", memory: "Memory", config: "Config" };
 let curView = "home", SUB_OPEN = true;
 // what each expandable page has under it, if it has anything yet
 function subRows(v) {
-  if (v === "models") return (FAMS || []).map(f => ({
-    key: f.id, label: f.label, mark: famMark(f.id, f.logo, f.label),
-    dot: f.ready ? "ok" : "", cur: f.is_current, go: () => openFamily(f.id) }));
+  if (v === "models") {
+    const rows = (FAMS || []).map(f => ({
+      key: f.id, label: f.label, mark: famMark(f.id, f.logo, f.label),
+      dot: f.ready ? "ok" : "", cur: f.is_current, go: () => openFamily(f.id) }));
+    // what you deployed yourself leads, the way it leads the grid
+    const deps = (MSTATE && MSTATE.deployments) || [];
+    if (deps.length) rows.unshift({ key: "selfhost", label: "Self-hosted", mark: hostMark(),
+      dot: "run", cur: deps.some(d => d.in_use), go: () => openFamily("selfhost") });
+    return rows;
+  }
   if (v === "sessions") return (PROJECTS || []).slice(0, 5).map(p => ({
     // the directory is what you recognise a project by; a prompt-derived
     // title is the fallback for the ones that are only a session folder
@@ -4550,8 +5405,16 @@ function showTab(name) {
   revealGroup(name);         // never leave the page you asked for folded away
   const b = document.querySelector('#nav button[data-v="' + name + '"]');
   if (!b) return;
-  const same = curView === name;
+  const same = curView === name, prev = curView;
   curView = name;
+  const DOCS = ["skills", "memory"];
+  document.getElementById("shell").classList.toggle("flow", DOCS.includes(name));
+  // the two document pages share one editor and its element ids: only the
+  // page on screen keeps its DOM (a pending edit is saved first)
+  if (!same && [name, prev].some(v => DOCS.includes(v))) {
+    flushSkillSave();
+    DOCS.filter(v => v !== name).forEach(v => { const p = document.getElementById(v + "pad"); if (p) p.innerHTML = ""; });
+  }
   if (!same) SUB_OPEN = true;        // moving to a page opens its rows
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === name));
@@ -4565,6 +5428,7 @@ function showTab(name) {
   if (name === "activity") loadActivity();
   if (name === "deploy") loadDeploy();
   if (name === "skills") loadSkills();
+  if (name === "memory") loadMemory();
   if (name === "mcp") loadMcp();
   if (name === "config") loadConfig();
 }
@@ -4669,7 +5533,7 @@ paintIcons();
 // letter does the same by name (g o · g s · g a · g m · g d · g p · g k · g c), `/`
 // drops into whatever search the current page has, ⌘K opens the palette.
 let chord = null, chordT = null;
-const CHORDS = { o: "home", s: "sessions", a: "activity", m: "models", d: "deploy", p: "mcp", k: "skills", c: "config" };
+const CHORDS = { o: "home", s: "sessions", a: "activity", m: "models", d: "deploy", p: "mcp", k: "skills", y: "memory", c: "config" };
 function focusSearch() {
   const v = document.querySelector(".view.on");
   const inp = curView === "sessions" ? document.getElementById("sessfind")
@@ -4692,7 +5556,7 @@ window.addEventListener("keydown", e => {
   }
   if (e.key === "g") { chord = "g"; chordT = setTimeout(() => (chord = null), 900); return; }
   if (e.key === "/") { if (focusSearch()) e.preventDefault(); return; }
-  const i = "12345678".indexOf(e.key);
+  const i = "123456789".indexOf(e.key);
   if (i >= 0) { showTab(VIEWS[i]); e.preventDefault(); }
 });
 // ---- reactive refresh ----
@@ -4714,7 +5578,7 @@ async function refreshLive(force) {
     }
     if (curView === "activity") await loadActivity(true);
     if (curView === "sessions") { await loadProjects(); if (curProject) await loadSessions(curProject); }
-    if (curView === "deploy" && !document.getElementById("modal").className) await refreshDeployments(false);
+    if (curView === "deploy") await syncDeploy(false);
     await p;
   } catch (e) { /* transient — the next tick retries */ }
   finally { refreshing = false; }
@@ -4800,9 +5664,8 @@ window.addEventListener("hashchange", () => {
   // handled the tab it set the hash to, so don't reload it a second time.
   if (VIEWS.includes(t) && t !== curView) { if (t === "models") MODEL_TAB = tabFromHash(); showTab(t); return; }
   if (t === "deploy" && curView === "deploy") {
-    const org = location.hash.slice(1).split("/")[2] || "all";
+    const org = hashOrg() || "all";
     if (org !== DEPLOY.org) { DEPLOY.org = org; renderOrgPills(); paintModels(); }
-    if ((sub || "all") !== DEPLOY.provider) setDeployProvider(sub || "all");
     return;
   }
   // a family tab picked from the URL while Models is already open
@@ -4818,6 +5681,48 @@ window.addEventListener("hashchange", () => {
 // refresh while you're reading leaves the scroll and the selection alone.
 let curProject = null, curSession = null, PROJECTS = [], SESSIONS = [];
 const UUIDISH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^[0-9a-f]{12,}$/i;
+// A READING: a number you compare against the same number on the card beside
+// this one. Tabular, so the digits line up down the column; the label under it
+// rather than beside it, so the value is what the eye lands on first.
+// ---- dated snapshots -------------------------------------------------------
+// OpenAI ships gpt-5.4 AND gpt-5.4-2026-03-05, gpt-4o AND three dated 4o's:
+// the alias and the pin it currently points at. Listing both as peers doubled
+// the grid with cards that are, today, the same model — you scan past six
+// near-identical gpt-4o tiles to reach anything else.
+//
+// A model is a snapshot of another ONLY when stripping a trailing date leaves
+// an id THE SAME PROVIDER also serves. That test is what keeps Anthropic's
+// claude-opus-4-5-20251101 a model in its own right — there is no undated
+// claude-opus-4-5 to fold it under — and it leaves ids that merely contain
+// digits, like grok-4.20-0309-non-reasoning or kimi-k2-0905-preview, alone.
+const SNAP_RE = /^(.+?)-(\d{4}-\d{2}-\d{2}|\d{8})$/;
+const snapKey = a => a.model + "\u0000" + a.pid;
+function foldSnapshots(rows) {
+  const byKey = new Map();
+  rows.forEach(r => byKey.set(snapKey(r), r));
+  rows.forEach(r => {
+    const mt = SNAP_RE.exec(r.model);
+    if (!mt) return;
+    const base = byKey.get(mt[1] + "\u0000" + r.pid);
+    if (!base || base === r) return;
+    r.snapOf = snapKey(base);
+    (base.snaps = base.snaps || []).push(r);
+  });
+  // each base is immediately followed by its own snapshots, so opening one
+  // grows the grid in place instead of scattering cards down the page
+  const out = [];
+  rows.forEach(r => {
+    if (r.snapOf) return;
+    out.push(r);
+    (r.snaps || []).forEach(sn => out.push(sn));
+  });
+  return out;
+}
+const stat = (v, label, cls) => {
+  const w = el("div","mstat" + (cls ? " " + cls : ""));
+  w.append(el("b", null, String(v)), el("span", null, label));
+  return w;
+};
 const pill = (v, label, cls) => { const p = el("span","pill" + (cls ? " " + cls : "")); p.append(el("b", null, String(v))); if (label) p.append(document.createTextNode(label)); return p; };
 async function loadProjects() {
   const { projects } = await api("/api/projects");
@@ -4835,17 +5740,20 @@ async function loadProjects() {
     (card, pr) => {
       card = card || el("div"); card.innerHTML = ""; card.className = "pcard" + (curProject && curProject.digest === pr.digest ? " on" : "");
       const title = pr.title && !UUIDISH.test(pr.title) ? pr.title : (pr.first_prompt || "project · " + pr.digest.slice(0, 8));
-      const t = el("div","t", title); t.title = title; card.append(t);
-      const s = el("div","s", pr.path || pr.digest); s.title = pr.path || pr.digest; card.append(s);
-      const m = el("div","m");
-      m.append(pill(pr.session_count, " session" + (pr.session_count===1?"":"s")));
-      m.append(pill(ago(pr.last_activity), ""));
-      if (pr.usd_est != null) m.append(pill("≈" + fmtUsd(pr.usd_est), "", "acc"));
-      else if (pr.tokens_est) m.append(pill("≈" + fmtTok(pr.tokens_est), " tok"));
+      const t = el("div","t", title); card.append(t);
+      // the path is how you tell two same-named projects apart — on hover
+      card.title = pr.path || pr.digest;
+      const m = el("div","mmeta");
+      m.append(el("span", null, pr.session_count + " session" + (pr.session_count===1?"":"s")),
+               el("span", null, ago(pr.last_activity)));
+      if (pr.usd_est != null) m.append(el("span", null, "≈" + fmtUsd(pr.usd_est)));
+      else if (pr.tokens_est) m.append(el("span", null, "≈" + fmtTok(pr.tokens_est) + " tokens"));
       card.append(m);
       card.onclick = () => selectProject(pr.digest);
       return card;
     });
+  // an empty middle pane saying "pick a project" is a click the page can make
+  if (!curProject && projects.length && window.innerWidth > 1000) selectProject(projects[0].digest);
 }
 function selectProject(digest) {
   const pr = PROJECTS.find(p => p.digest === digest); if (!pr) return;
@@ -4873,14 +5781,12 @@ async function loadSessions(pr) {
       const title = s.display_title && !UUIDISH.test(s.display_title) ? s.display_title : "session · " + s.session_id.slice(0, 8);
       const t = el("div","t", title); t.title = title; card.append(t);
       if (s.last_prompt && s.last_prompt !== s.first_prompt) { const lp = el("div","s sans", s.last_prompt); lp.title = s.last_prompt; card.append(lp); }
-      const m = el("div","m");
-      m.append(pill(s.message_count || 0, " msg"));
-      m.append(pill(ago(s.modified_at), ""));
-      if (s.usd_est != null) m.append(pill("≈" + fmtUsd(s.usd_est), "", "acc"));
-      else if (s.tokens_est) m.append(pill("≈" + fmtTok(s.tokens_est), " tok"));
-      if (s.model) { const mp = pill(s.model, "", "mono"); mp.title = "priced as the current model — transcripts record no model"; m.append(mp); }
+      const m = el("div","mmeta");
+      m.append(el("span", null, (s.message_count || 0) + " messages"), el("span", null, ago(s.modified_at)));
+      if (s.usd_est != null) m.append(el("span", null, "≈" + fmtUsd(s.usd_est)));
+      else if (s.tokens_est) m.append(el("span", null, "≈" + fmtTok(s.tokens_est) + " tokens"));
       card.append(m);
-      card.append(el("div","s", s.session_id));
+      card.title = s.session_id + (s.model ? " · priced as " + s.model : "");
       card.onclick = () => selectSession(s.session_id);
       return card;
     });
@@ -5138,7 +6044,10 @@ function markSvg(m) {
 }
 function fillMark(w, pid, label) {
   const m = MARKS[pid];
-  if (m && m.svg) {
+  if (pid === "selfhost" && !(m && m.svg)) {
+    // your own server has no vendor: it wears the Self-hosted family's glyph
+    w.innerHTML = HOST_SVG; w.classList.add("mm-hostmark");
+  } else if (m && m.svg) {
     w.innerHTML = markSvg(m);
     if (m.tint) w.style.color = m.tint;
   } else {
@@ -5156,7 +6065,17 @@ function providerMark(pid, label) { return fillMark(el("span","mark2"), pid, lab
 // not a family at all and gets nothing, the way the Deploy page's All pill
 // gets nothing.
 function famMark(fid, logo, label) {
-  return fid === "oss" ? anyMark() : providerMark(logo || fid, label);
+  return fid === "oss" ? anyMark() : fid === "selfhost" ? hostMark() : providerMark(logo || fid, label);
+}
+// Yours, on your GPUs: three stacked server blades on the same pixel grid,
+// in the accent — the one family on the page you are paying by the hour for.
+const HOST_SVG = '<svg viewBox="0 0 13 13" shape-rendering="crispEdges" aria-hidden="true">' +
+  '<rect x="0" y="0" width="13" height="3"/><rect x="0" y="5" width="13" height="3"/>' +
+  '<rect x="0" y="10" width="13" height="3"/></svg>';
+function hostMark() {
+  const w = el("span","mark2 mm-hostmark");
+  w.innerHTML = HOST_SVG;
+  return w;
 }
 // Not a vendor: four blocks, 6px on a 7px pitch, 13px of ink — the same ink
 // every real mark is normalised to — in neutral ink rather than a colour.
@@ -5186,6 +6105,10 @@ async function loadAuthFamilies(box) {
   catch (e) { r = { ok: false, error: e.message, families: [] }; }
   AUTH.families = r.families || [];
   renderAuthCards(box, r);
+  // a method just changed under an open Connect sheet: repaint it in place,
+  // and let the model grid pick up what is now usable
+  if (CONNECT.fam && connectOpen()) { paintConnect(); CONNECT.dirty = true; }
+  fillLockStrips();
 }
 // What the models page knows: endpoints, key envs, live model lists.
 let MSTATE = {};
@@ -5561,6 +6484,7 @@ function metaBit(label, value, sub, mono) {
 function authMethodForm(d, m) {
   const f = el("div","ap-form");
   const out = el("div");
+  if (m.cli_login) { f.append(cliLoginFlow(d, m, out), out); return f; }
   if (m.kind === "oauth") { f.append(oauthFlow(d, m, out), out); return f; }
   const inputs = {};
   const grid = el("div","ap-fields");
@@ -5577,9 +6501,20 @@ function authMethodForm(d, m) {
     w.append(help);
     grid.append(w);
   });
-  if ((m.fields || []).length) f.append(grid);
-  if (m.kind === "cloud" && m.status.source === "cli")
-    f.append(el("div","ap-note", "Ambient credentials detected — " + (m.status.hint || "leave the fields blank to use them")));
+  // credentials already on this machine: the one thing to do is use them, so
+  // the override fields wait behind a link instead of filling the panel
+  const ambient = m.kind === "cloud" && m.status.source === "cli";
+  if (ambient)
+    f.append(el("div","ap-note", "Found on this machine — " + (m.status.hint || "no fields to fill")));
+  if ((m.fields || []).length) {
+    if (ambient) {
+      grid.style.display = "none";
+      const alt = el("button","cn-more", "Use different credentials");
+      alt.onclick = e => { e.stopPropagation(); grid.style.display = ""; alt.remove(); };
+      f.append(alt);
+    }
+    f.append(grid);
+  }
   const acts = el("div","ap-acts");
   const check = btn("Check reachability", "gho", async () => {
     check.disabled = true; check.textContent = "Reaching…"; out.innerHTML = "";
@@ -5639,6 +6574,39 @@ function probeBox(ok, text) {
   return p;
 }
 // OAuth: start → open the URL → paste what comes back → finish.
+// A login another CLI already holds (Codex's ChatGPT sign-in): nothing to type
+// here — use it when it's found, otherwise say the one command that makes it.
+function cliLoginFlow(d, m, out) {
+  const w = el("div");
+  const step = el("div","ap-note", m.status.hint || "");
+  step.style.display = step.textContent ? "" : "none";
+  w.append(step);
+  const acts = el("div","ap-acts");
+  if (m.status.configured) {
+    const use = btn(m.status.active ? "Test" : "Use this", "pri", async () => {
+      use.disabled = true; out.innerHTML = "";
+      try {
+        if (!m.status.active) {
+          const r = await post("/api/auth/set", { family: m.family, method: m.id, values: {} });
+          if (!r.ok) { out.append(probeBox(false, r.message || errText(r))); return; }
+        }
+        const v = await post("/api/auth/validate", { family: m.family, method: m.id });
+        out.append(probeBox(v.ok, v.ok
+          ? "Connected" + (v.latency_ms != null ? " · " + v.latency_ms + "ms" : "") + ((v.models || []).length ? " · " + v.models.slice(0, 3).join(", ") : "")
+          : (v.message || errText(v))));
+        loadAuthFamilies(document.getElementById("auth-cards")); loadOverview();
+      } catch (e) { out.append(probeBox(false, e.message)); }
+      finally { use.disabled = false; }
+    });
+    acts.append(use);
+  } else {
+    const cmd = el("code", null, m.cli_login);
+    acts.append(document.createTextNode("Run "), cmd, document.createTextNode(" in a terminal, then reopen this."));
+  }
+  if (m.docs_url) { const dl = extLink("ac-doc", "↗", m.docs_url); dl.title = "Provider docs"; acts.append(dl); }
+  w.append(acts);
+  return w;
+}
 function oauthFlow(d, m, out) {
   const w = el("div");
   // the card already states what this method is; only say what's NEW here
@@ -5694,34 +6662,158 @@ function oauthFlow(d, m, out) {
   w.append(acts, paste);
   return w;
 }
-// A locked model row lands here with the family's recommended method open.
-function unlockFamily(uiFam) {
-  showTab("models");
+// A locked model lands on the Connect sheet: every way this family can be
+// reached, not just a key field. Claude alone has five — a subscription, an
+// API key, Bedrock, Vertex, Azure — and the one you already have credentials
+// for is the one that opens first.
+const CONNECT = { fam: null, sel: null, want: null, dirty: false };
+const connectOpen = () => !!document.getElementById("modal").className &&
+  !!document.querySelector("#sheet .cn-h");
+// the maker of the pipe, where it is one — the cloud a method goes through
+const METHOD_ORG = { bedrock: "amazon", vertex: "google", azure: "microsoft", azure_openai: "microsoft" };
+const METHOD_BLURB = {
+  oauth: "Use your Claude Pro or Max plan — sign in once, no key to manage.",
+  chatgpt: "Use the ChatGPT plan the Codex CLI is signed in with — no key to manage.",
+  api_key: "Pay per token with a key from the provider's console.",
+  bedrock: "Bill through your AWS account, with your own IAM and region.",
+  vertex: "Bill through Google Cloud, in your own project and region.",
+  azure: "Bill through Azure AI Foundry on your own endpoint.",
+  azure_openai: "Bill through your Azure OpenAI resource.",
+};
+function methodMark(f, m) {
+  const org = METHOD_ORG[m.id];
+  if (org) return orgMark(org);
+  // an open-model provider is its own vendor and wears its own mark
+  const own = MARKS[m.id] || m.id === "selfhost" || m.id === "ollama";
+  return fillMark(el("span","omark"), own ? m.id : (f.logo || f.family), own ? m.label : f.label);
+}
+function methodRank(f, m) {
+  return m.id === CONNECT.want ? -1 : m.status.active ? 0 : m.status.configured ? 1 : m.kind === "oauth" ? 2 : m.id === f.recommended ? 3 : 4;
+}
+// How each method is said in a sentence ("your Claude plan, an API key,
+// Bedrock…"), as opposed to its row title in the sheet.
+const METHOD_SAY = { oauth: "your Claude plan", chatgpt: "your ChatGPT plan", api_key: "an API key", bedrock: "Bedrock", vertex: "Vertex",
+                     azure: "Azure", azure_openai: "Azure OpenAI" };
+const orList = xs => xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " or " + xs[xs.length - 1];
+// The strip over a family that isn't connected: every way in, in one line,
+// and — when this machine already holds credentials for one of them — that
+// one, named, because then connecting is a single click.
+function fillLockStrips() {
+  document.querySelectorAll(".mm-lock").forEach(w => {
+    const fid = w.dataset.fam;
+    const f = (AUTH.families || []).find(x => x.ui_family === fid || x.family === fid);
+    const label = (f && f.label) || TAB_LABEL_FOR[fid] || fid;
+    const ms = (f && f.methods) || [];
+    w.innerHTML = "";
+    // the family's own mark; the clouds you could go through are the sheet's
+    // business — a row of other vendors' logos here read as a sponsor strip
+    const marks = el("span","ml-marks");
+    marks.append(fillMark(el("span","omark"), (f && f.logo) || fid, label));
+    const t = el("div","ml-t");
+    t.append(el("div","ml-h", label + " isn\u2019t connected"));
+    const d = el("div","ml-d");
+    const found = ms.find(m => m.status && m.status.configured && !m.status.active);
+    if (found) {
+      d.append(el("b", null, found.label + " credentials found"),
+               document.createTextNode(" on this machine \u2014 nothing to paste, and every model below is ready."));
+    } else {
+      d.textContent = ms.length > 1
+        ? "Connect with " + orList(ms.map(m => METHOD_SAY[m.id] || m.label)) + "."
+        : "Add a key and every model below is ready.";
+    }
+    t.append(d);
+    const go = btn(found ? "Use " + found.label.replace(/^Amazon |^Google /, "") : "Connect " + label, "pri",
+                   () => unlockFamily(fid, found ? found.id : null));
+    w.append(marks, t, go);
+  });
+}
+async function openConnectSheet(uiFam, want) {
+  // from Overview the methods have not been fetched yet — fetch, then open
+  if (!(AUTH.families || []).length) {
+    try { AUTH.families = (await api("/api/auth/families")).families || []; } catch (e) { /* toast below */ }
+  }
   const f = AUTH.families.find(x => x.ui_family === uiFam || x.family === uiFam);
   if (!f) { toast("no setup for that family yet", true); return; }
-  AUTH.method[f.family] = f.recommended || f.active || null;
-  const land = () => {
-    const card = document.getElementById("auth-" + f.family);
-    if (!card) return false;
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1400);
-    const i = card.querySelector("input"); if (i) setTimeout(() => i.focus(), 340);
-    return true;
-  };
-  if (!land()) setTimeout(land, 400);
+  // a card for one provider inside a many-provider family (DeepSeek under
+  // Open models) opens on that provider's own method, listed first
+  CONNECT.want = (f.methods || []).some(m => m.id === want) ? want : null;
+  CONNECT.all = false;
+  const ms = (f.methods || []).slice().sort((a, b) => methodRank(f, a) - methodRank(f, b));
+  CONNECT.fam = f.family; CONNECT.dirty = false;
+  CONNECT.sel = (ms[0] || {}).id || null;
+  paintConnect();
+  showModal(true);
+}
+function paintConnect() {
+  const f = AUTH.families.find(x => x.family === CONNECT.fam); if (!f) return;
+  const s = document.getElementById("sheet");
+  // what the last save/test said survives the repaint that follows it
+  const kept = s.querySelector(".cn-row.on .probe");
+  s.innerHTML = "";
+  // Open models is eleven separate vendors, not five ways into one: a
+  // DeepSeek card asks about DeepSeek, and the rest wait behind one link
+  const one = f.family === "oss" && CONNECT.want && !CONNECT.all
+    ? (f.methods || []).find(m => m.id === CONNECT.want) : null;
+  const h = el("div","cn-h");
+  h.append(one ? methodMark(f, one) : fillMark(el("span","bigmark"), f.logo || f.family, f.label));
+  if (one) h.firstChild.classList.add("bigmark");
+  const ht = el("div");
+  ht.append(el("div","fn", "Connect " + (one ? one.label : f.label)));
+  const n = (f.methods || []).length;
+  ht.append(el("div","fd", one ? "One key, and every " + one.label + " model on this page is ready to use."
+    : f.family === "oss" ? n + " providers \u2014 each one its own key, or your own machine."
+    : n > 1 ? n + " ways in \u2014 pick the one you already pay for. One is active at a time; switch whenever."
+    : "One way in."));
+  h.append(ht);
+  s.append(h);
+  const list = el("div","cn-list");
+  const rows = one ? [one] : (f.methods || []).slice().sort((a, b) => methodRank(f, a) - methodRank(f, b));
+  rows.forEach(m => {
+    const on = m.id === CONNECT.sel;
+    const row = el("div","cn-row" + (on ? " on" : "") + (m.status.active ? " act" : ""));
+    const top = el("button","cn-top");
+    top.setAttribute("aria-expanded", on ? "true" : "false");
+    top.append(methodMark(f, m));
+    const tt = el("span","cn-tt");
+    tt.append(el("span","cn-l", m.label));
+    tt.append(el("span","cn-d", METHOD_BLURB[m.id] || m.description || ""));
+    top.append(tt);
+    const tag = m.status.active ? ["ok", "Active"] : m.status.configured ? ["found", "Credentials found"]
+              : m.kind === "oauth" ? ["rec", "No key needed"] : m.id === f.recommended ? ["rec", "Recommended"] : null;
+    if (tag) top.append(el("span","cn-tag " + tag[0], tag[1]));
+    top.onclick = () => { CONNECT.sel = on ? null : m.id; paintConnect(); };
+    row.append(top);
+    if (on) {
+      const body = el("div","cn-body");
+      body.append(authMethodForm(f, m));
+      if (kept) body.append(kept);
+      row.append(body);
+    }
+    list.append(row);
+  });
+  s.append(list);
+  if (one) {
+    const more = el("button","cn-more", "Other open-model providers \u2192");
+    more.onclick = () => { CONNECT.all = true; CONNECT.sel = null; paintConnect(); };
+    s.append(more);
+  }
+}
+function unlockFamily(uiFam, want) {
+  openConnectSheet(uiFam, want);
 }
 
 // ---- models & hosting ----
 // Context windows read as "200k", not "200000" — the unit people actually say.
-const fmtCtx = (n) => n >= 1000000 ? (n/1000000).toFixed(n % 1000000 ? 1 : 0) + "m"
+// 1,048,576 is "1m", not "1.0m" — a window reads the way it is marketed
+const fmtCtx = (n) => n >= 1000000 ? String(+(n/1000000).toFixed(1)) + "m"
                     : n >= 1000 ? Math.round(n/1000) + "k" : String(n);
 // The selected family tab on the Models page, mirrored in the hash as
 // #models/claude so a refresh or a shared link lands on the same tab. The
 // URL carries the name people say; the code carries the catalog's family id.
-const TAB_SLUG = { anthropic: "claude", google: "gemini", xai: "grok", oss: "open" };
+const TAB_SLUG = { anthropic: "claude", google: "gemini", xai: "grok", oss: "open", selfhost: "self-hosted" };
 // the words the tabs print, so the trail says a family the same way the tab does
 const TAB_LABEL_FOR = { openai: "OpenAI", anthropic: "Claude", google: "Gemini",
-                        xai: "Grok", oss: "Open models" };
+                        xai: "Grok", oss: "Open models", selfhost: "Self-hosted" };
 const TAB_FAM = Object.fromEntries(Object.entries(TAB_SLUG).map(([k, v]) => [v, k]));
 const tabFromHash = () => { const [t, sub] = location.hash.slice(1).split("/"); return t === "models" && sub ? (TAB_FAM[sub] || sub) : "all"; };
 let MODEL_TAB = tabFromHash();
@@ -5758,15 +6850,19 @@ function nowRunning(pad, m) {
   const info = (m.model_info || {})[cur] || {};
   const price = info.price || (prov ? (prov.prices || {})[cur] : null);
 
+  // your own deployment: the model's org wears the mark, and the route is
+  // where it runs and on what, not a provider you rent tokens from
+  const dep = (m.deployments || []).find(d => d.in_use);
   const top = el("div","now-top");
-  top.append(fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
+  top.append(dep ? orgMark(_orgOf(cur)) : fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
   const t = el("div","now-t");
   const id = el("div","now-id", cur); id.title = cur; t.append(id);
   // the route in, said once: who serves it and how mantis authenticates there
   const via = [];
-  if (local) via.push("local \u00b7 Ollama");
+  if (dep) via.push("self-hosted on " + (PROV_SHORT[dep.provider] || dep.provider) + (dep.gpu ? " \u00b7 " + gpuName(dep.gpu) : ""));
+  else if (local) via.push("local \u00b7 Ollama");
   else if (prov) via.push("via " + (prov.label || prov.id));
-  if (prov && !local) {
+  if (prov && !local && !dep) {
     const how = prov.auth === "oauth" ? "subscription" : prov.auth === "env" ? "API key"
               : prov.key_source === "cli" ? "detected credentials"
               : prov.key_source ? "API key" : null;
@@ -5800,8 +6896,8 @@ function nowRunning(pad, m) {
       out.push({ head: "Recently used" });
       recents.forEach(a => out.push({
         label: a.model, mark: fillMark(el("span","omark"), a.pid, a.label),
-        side: a.enabled ? null : "needs a key",
-        title: a.enabled ? "switch to " + a.model + " \u00b7 " + a.label : a.label + " needs a key",
+        side: a.enabled ? null : "not connected",
+        title: a.enabled ? "switch to " + a.model + " \u00b7 " + a.label : a.label + " is not connected",
         run: () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam),
       }));
       out.push({ head: "Everything else" });
@@ -5820,7 +6916,12 @@ function nowRunning(pad, m) {
       c.querySelector("b").textContent += "*"; }
     facts.append(c);
   }
-  facts.append(pricePill(price));
+  if (dep) {
+    const r = depRate(dep);
+    const q = pill(fmtRate(r), r != null ? " GPU" : " rate not quoted", "mono");
+    q.title = "billed by " + (PROV_SHORT[dep.provider] || dep.provider) + " while a replica is up \u2014 not per token";
+    facts.append(q);
+  } else facts.append(pricePill(price));
   if (info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; facts.append(c); }
   if (info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; facts.append(c); }
   if (info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; facts.append(c); }
@@ -5963,96 +7064,9 @@ function popMenu(label, items, opts) {
 // scores or ranks — it lays the same facts out in the same order for each one
 // and lets the reader compare, because a "best model" number is one this
 // machine has no way to compute.
-const CMP = { pins: [], max: 3, rows: [] };
 // Every model this page knows about, so the hero can offer them without
 // rebuilding the list it already built.
 let MM_ROWS = [];
-function togglePin(key) {
-  const i = CMP.pins.indexOf(key);
-  if (i >= 0) CMP.pins.splice(i, 1);
-  else if (CMP.pins.length >= CMP.max) { toast("three at a time \u2014 unpin one first", true); return; }
-  else CMP.pins.push(key);
-  paintPins();
-}
-const cmpKey = a => a.model + "\u0000" + a.pid;
-const cmpRow = key => (CMP.rows || []).find(a => cmpKey(a) === key);
-function paintPins() {
-  document.querySelectorAll("#modelspad .mmcard").forEach(c => {
-    const k = c.dataset.model + "\u0000" + c.dataset.pid;
-    const b = c.querySelector(".mm-pin");
-    if (!b) return;
-    const on = CMP.pins.includes(k);
-    b.classList.toggle("on", on);
-    b.setAttribute("aria-pressed", on ? "true" : "false");
-    b.textContent = on ? "Pinned" : "Compare";
-  });
-  const bar = document.getElementById("cmp-bar"); if (!bar) return;
-  bar.classList.toggle("on", CMP.pins.length > 0);
-  bar.innerHTML = "";
-  if (!CMP.pins.length) return;
-  bar.append(el("span","cmp-n", CMP.pins.length + " pinned"));
-  const chips = el("div","cmp-chips");
-  CMP.pins.forEach(k => {
-    const a = cmpRow(k); if (!a) return;
-    const c = el("span","cmp-chip");
-    c.append(document.createTextNode(a.model));
-    const x = el("button","cmp-x", "\u00d7");
-    x.title = "unpin " + a.model;
-    x.setAttribute("aria-label", "unpin " + a.model);
-    x.onclick = () => togglePin(k);
-    c.append(x);
-    chips.append(c);
-  });
-  bar.append(chips);
-  bar.append(btn("Compare", "pri", showCompare));
-  bar.append(btn("Clear", "gho", () => { CMP.pins = []; paintPins(); }));
-}
-function showCompare() {
-  const rows = CMP.pins.map(cmpRow).filter(Boolean);
-  if (!rows.length) return;
-  const sh = document.getElementById("sheet"); sh.innerHTML = "";
-  const head = el("div","cs-h");
-  const ht = el("div","ft");
-  ht.append(el("div","fn", "Compare " + rows.length + " model" + (rows.length === 1 ? "" : "s")));
-  ht.append(el("div","fd sans", "The same facts in the same order for each. Nothing here is ranked."));
-  head.append(ht);
-  sh.append(head);
-  const grid = el("div","cmp-grid");
-  grid.style.setProperty("--cmp-cols", "132px repeat(" + rows.length + ", minmax(0, 1fr))");
-  const txt = (v, cls) => el("div","cmp-v" + (cls ? " " + cls : ""), v);
-  const line = (k, cells) => {
-    const r = el("div","cmp-r");
-    r.append(el("div","cmp-k", k));
-    cells.forEach(c => r.append(c));
-    grid.append(r);
-  };
-  const h = el("div","cmp-r");
-  h.append(el("div","cmp-k", ""));
-  rows.forEach(a => {
-    const c = el("div","cmp-h");
-    c.append(fillMark(el("span","omark"), a.pid, a.label));
-    const b = el("b", null, a.model); b.title = a.model; c.append(b);
-    h.append(c);
-  });
-  grid.append(h);
-  line("Served by", rows.map(a => txt(a.label)));
-  line("Context", rows.map(a => a.info.ctx ? txt(fmtCtx(a.info.ctx), "mono") : txt("not recorded", "dim")));
-  line("$ / 1M in", rows.map(a => a.price ? (a.price.free ? txt("free", "mono") : txt("$" + price2(a.price.in), "mono"))
-                                          : txt("no price row", "dim")));
-  line("$ / 1M out", rows.map(a => a.price ? (a.price.free ? txt("free", "mono") : txt("$" + price2(a.price.out), "mono"))
-                                           : txt("no price row", "dim")));
-  [["Tool calling", "tools"], ["Effort control", "effort"], ["Emits reasoning", "thinking"]].forEach(([lab, k]) =>
-    line(lab, rows.map(a => a.info[k] ? txt("yes") : txt("\u2014", "dim"))));
-  line("Ready to use", rows.map(a => a.enabled ? txt("yes") : txt("needs a key", "dim")));
-  sh.append(grid);
-  const foot = el("div","cs-foot");
-  rows.forEach(a => foot.append(btn((a.enabled ? "Use " : "Unlock ") + a.model, "gho", () => {
-    hideModal();
-    if (a.enabled) useModel(a.model, a.backend); else unlockFamily(a.fam);
-  })));
-  sh.append(foot);
-  showModal(true);
-}
 
 // ---- one model, as a card -------------------------------------------------
 // The SAME component the Deploy picker draws — .mcard with its mark square,
@@ -6072,7 +7086,9 @@ function pricePill(p) {
   return q;
 }
 function myModelCard(a, fid, cur, famName) {
-  const on = a.model === cur;
+  // a deployment is current when mantis points at ITS endpoint; a rented
+  // model of the same id is not, even though the names match
+  const on = a.dep ? !!a.dep.in_use : (a.model === cur && !MM_SELFCUR);
   const card = el("div","mcard mmcard" + (on ? " on" : "") + (a.enabled ? "" : " locked"));
   const pr = a.price;
   card.dataset.fam = fid;
@@ -6081,50 +7097,82 @@ function myModelCard(a, fid, cur, famName) {
   card.dataset.state = a.enabled ? "ready" : "locked";
   if (a.local) card.dataset.local = "1";
   card.dataset.free = (pr && pr.free) || a.local ? "1" : "";
+  if (a.snapOf) { card.dataset.snapof = a.snapOf; card.dataset.snap = "1"; }
+  if (a.dep) card.dataset.dep = a.dep.id;
   card.dataset.q = (a.model + " " + a.label + " " + (famName || fid) + " " + a.pid + " " +
+    (a.dep ? "self-hosted selfhost deployed gpu " : "") +
     (a.info.ctx ? Math.round(a.info.ctx/1000) + "k" : "") + (pr && pr.free ? " free" : "") +
     (a.local ? " local ollama" + (a.local.loaded ? " loaded" : "") : "")).toLowerCase();
 
   // the model id is the title; who serves it is the caption under it
   const head = el("div","mh");
-  head.append(fillMark(el("span","omark"), a.pid, a.label));
+  // self-hosted: the model's maker wears the mark, since the provider only
+  // rents the GPU — that part is the caption
+  head.append(a.dep ? orgMark(_orgOf(a.model)) : fillMark(el("span","omark"), a.pid, a.label));
   const tt = el("div","mtt");
   const t = el("div","mt", a.model); t.title = a.model; tt.append(t);
   const o = el("div","mo", a.label); o.title = a.label; tt.append(o);
   head.append(tt);
   card.append(head);
 
-  // the facts, each said once
-  const pills = el("div","mp2");
-  if (a.info.ctx) {
-    const c = pill(fmtCtx(a.info.ctx), " context");
-    if (a.info.ctx_learned) { c.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned);
-      c.querySelector("b").textContent += "*"; }
-    pills.append(c);
+  // THE READINGS. What it can hold, and what it charges going in and coming
+  // out — the numbers you actually pick a model on, each in the same place on
+  // every card so a row can be compared straight across.
+  const stats = el("div","mstats");
+  const cs = stat(a.info.ctx ? fmtCtx(a.info.ctx) : "—", "context", a.info.ctx ? "" : "mute");
+  if (a.info.ctx_learned) {
+    cs.querySelector("b").textContent += "*";
+    cs.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned);
   }
-  pills.append(pricePill(pr));
-  // readiness is printed ONLY when it is not "ready": every card that can be
-  // used already says so with its action, and a grid of "ready" pills would
-  // drown the one card that needs a key
-  if (!a.enabled && !on) { const w = pill("needs a key", "", "amb"); w.title = "connect this family to use it"; pills.append(w); }
-  card.append(pills);
-  const caps = el("div","mp2");
-  if (a.info.tools) { const c = el("span","cap","tools"); c.title = "native tool calling"; caps.append(c); }
-  if (a.info.effort) { const c = el("span","cap","effort"); c.title = "reasoning-effort control"; caps.append(c); }
-  if (a.info.thinking) { const c = el("span","cap","thinks"); c.title = "emits reasoning"; caps.append(c); }
-  if (a.local && a.local.loaded) { const c = el("span","cap ok","loaded"); c.title = "in memory now"; caps.append(c); }
-  if (caps.childElementCount) card.append(caps);
+  stats.append(cs);
+  // A card with one price-tile, not two, still fills its row: the tile spans
+  // the space the in/out pair would take, so no card ends in a hole.
+  if (a.dep) {
+    const r = depRate(a.dep);
+    const g = stat(fmtRate(r), r != null ? "GPU while running" : "rate not quoted", "span2" + (r != null ? "" : " mute"));
+    g.title = "you pay " + (PROV_SHORT[a.dep.provider] || a.dep.provider) + " by the hour for the GPU, not per token";
+    stats.append(g);
+  } else if (pr && pr.free) {
+    const f = stat("Free", a.local ? "runs on your machine" : "no API charge", "acc span2");
+    f.title = "your hardware, no API charge";
+    stats.append(f);
+  } else if (pr) {
+    const i = stat("$" + price2(pr.in), "in / 1M");
+    const o = stat("$" + price2(pr.out), "out / 1M");
+    i.title = "$" + pr.in + " per 1M input tokens"
+            + (pr.cache_read != null ? " · cache read $" + pr.cache_read : "");
+    o.title = "$" + pr.out + " per 1M output tokens";
+    stats.append(i, o);
+  } else {
+    const q = stat("—", "no price listed", "mute span2"); q.title = "no row in the price table"; stats.append(q);
+  }
+  card.append(stats);
 
-  // the foot: the pixel motif on the left, the pin, then the one action
-  const foot = el("div","mm-foot");
-  const key = a.model + "\u0000" + a.pid;
-  const pin = el("button","mm-pin" + (CMP.pins.includes(key) ? " on" : ""),
-                 CMP.pins.includes(key) ? "Pinned" : "Compare");
-  pin.setAttribute("aria-pressed", CMP.pins.includes(key) ? "true" : "false");
-  pin.title = "hold this one next to another";
-  pin.onclick = ev => { ev.stopPropagation(); togglePin(key); };
-  foot.append(pin);
-  if (!on) foot.append(el("span","mm-act", a.enabled ? "use →" : "unlock →"));
+  // THE QUIET LINE — state, never a capability list. "tools · effort" was on
+  // nearly every card in the grid, and a fact true of everything tells you
+  // nothing about any one of them; unexplained, it just read as noise. What
+  // is left here is only what differs card to card and changes what you do:
+  // it is loaded, it needs a key, it has dated pins, or it is one.
+  const meta = el("div","mmeta");
+  if (a.local && a.local.loaded) { const c = el("span","ok", "loaded"); c.title = "in memory now"; meta.append(c); }
+  // readiness is printed ONLY when it is not "ready": every card that can be
+  // used already says so with its action, and a grid of "ready" marks would
+  // drown the one card that needs a key
+  if (a.dep && a.dep.status === "starting") { const z = el("span","amb", "booting"); z.title = "a container is loading the weights \u2014 billing now"; meta.append(z); }
+  if (a.dep && a.dep.status === "scaled_to_zero") { const z = el("span", null, "asleep"); z.title = "scaled to zero \u2014 the first request wakes a replica"; meta.append(z); }
+  if (!a.enabled && !on) { const w = el("span","amb", "not connected"); w.title = "subscription, API key or your cloud \u2014 connect this family to use it"; meta.append(w); }
+  if (meta.childElementCount) card.append(meta);
+
+  // The foot: one action, as a real button. The card is still clickable as a
+  // whole — the button's click simply bubbles to it — but a word with an arrow
+  // did not look like something you could press. The current model gets none:
+  // its Current tag already says it.
+  const foot = el("div","mfoot");
+  if (!on) {
+    const go = el("button","mbtn" + (a.enabled ? "" : " amb"), a.enabled ? "Use model" : "Connect");
+    go.title = a.enabled ? "switch mantis to " + a.model : "choose how mantis reaches " + (famName || fid);
+    foot.append(go);
+  }
   card.append(foot);
   // the current model wears the same slanted tag the provider cards wear, so
   // the two pages mark "in use" in one language
@@ -6136,8 +7184,37 @@ function myModelCard(a, fid, cur, famName) {
   }
   // `unlock` deep-links into this family's setup with its recommended method
   // already chosen — the same link the locked row used to carry
-  card.onclick = () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(fid);
+  card.onclick = () => a.dep ? useSelfhosted(a, card.querySelector(".mbtn"))
+    : a.enabled ? useModel(a.model, a.backend) : unlockFamily(fid, a.pid);
   return card;
+}
+// Switching to your own deployment goes through the same connect job the
+// Deploy page uses — it re-checks the endpoint and waits out a cold start —
+// and the wait is shown on the card's own button, with a clock.
+let MM_SELFCUR = false;
+async function useSelfhosted(a, b) {
+  if (!b || b.disabled) return;
+  const say = t => { b.textContent = t; };
+  b.disabled = true; say("Connecting\u2026");
+  let r;
+  try { r = await post("/api/deploy/connect", { id: a.dep.id, job: true }); } catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { toast(errText(r), true); b.disabled = false; say("Use model"); return; }
+  const t0 = Date.now();
+  for (;;) {
+    await sleep(1000);
+    if (!b.isConnected) return;
+    let j;
+    try { j = await api("/api/deploy/job?" + q({ id: r.job })); } catch (e) { continue; }
+    if (j.status === "running") {
+      const s = (Date.now() - t0) / 1000;
+      say((s > 8 ? "Waking " : "Connecting ") + fmtClock(s));
+      continue;
+    }
+    if (j.status === "done") { toast("\u2713 mantis now runs " + shortId(a.model) + " on your " + gpuName(a.dep.gpu)); loadModels(); return; }
+    toast((j.error || "couldn't reach the endpoint") + (j.hint ? " \u2014 " + j.hint : ""), true);
+    b.disabled = false; say("Use model");
+    return;
+  }
 }
 let modelsReq = 0;
 async function loadModels() {
@@ -6157,14 +7234,16 @@ async function loadModels() {
     const served = new Set();
     (m.providers || []).forEach(pv => (pv.models || []).forEach(x => served.add(x)));
     ((m.ollama || {}).models || []).forEach(o => served.add(o.name));
+    (m.deployments || []).forEach(d => served.add(d.served_model_name || d.model));
     pageReads(pad, [
       { v: fmt(served.size), k: "models" },
-      { v: (m.families || []).length, k: "families", opt: 2 },
+      { v: (m.families || []).length + ((m.deployments || []).length ? 1 : 0), k: "families", opt: 2 },
     ], "What you are running, and what else you could.",
        "Windows and prices come from the SDK's own tables, not from the provider.");
   }
 
   MSTATE = m;
+  paintSubs();
   // ---- what you are running ----------------------------------------------
   nowRunning(pad, m);
 
@@ -6213,17 +7292,33 @@ async function loadModels() {
     model: om.name, label: "local · " + fmtBytes(om.size), pid: "ollama",
     fam: "oss", backend: oll.base_url, enabled: true, info: info[om.name] || {}, local: om,
     price: (info[om.name] || {}).price || { in: 0, out: 0, free: true } }));
+  // what you deployed yourself: its own family, first, because it is the one
+  // you are paying for by the hour whether you use it or not
+  const deps = m.deployments || [];
+  MM_SELFCUR = deps.some(d => d.in_use);
+  if (deps.length) {
+    famOrder.unshift("selfhost"); famLabel.selfhost = "Self-hosted";
+    deps.forEach(d => { const id = d.served_model_name || d.model;
+      allModels.push({ model: id, label: (PROV_SHORT[d.provider] || d.provider) + " \u00b7 " + gpuName(d.gpu),
+        pid: d.provider, fam: "selfhost", backend: d.endpoint_url, enabled: true,
+        info: info[id] || {}, price: null, dep: d }); });
+  }
+  const folded = foldSnapshots(allModels);
+  allModels.length = 0; folded.forEach(x => allModels.push(x));
+  // the grid's own counts describe the CARDS it shows, so they count the
+  // aliases; the snapshots behind them are reached from the alias itself
+  const nPrimary = allModels.filter(a => !a.snapOf).length;
   if (allModels.length) {
     const nFam = new Set(allModels.map(a => a.fam)).size;
-    const sec = section(pad, "Choose a model", allModels.length + " across " + nFam + " famil" + (nFam===1?"y":"ies"));
+    const sec = section(pad, "Choose a model", nPrimary + " across " + nFam + " famil" + (nFam===1?"y":"ies"));
     // Family tabs: one pill per family (plus Local for what Ollama has pulled),
     // each carrying its count. "All" keeps the grouped view; a family tab
     // narrows to that family and drops the group headers. The choice lives in
     // the hash (#models/claude) so a refresh or a pasted link keeps it.
-    const TAB_LABEL = { oss: "Open models" };
-    const tabs = [{ id: "all", label: "All", n: allModels.length }];
+    const TAB_LABEL = { oss: "Open models", selfhost: "Self-hosted" };
+    const tabs = [{ id: "all", label: "All", n: nPrimary }];
     famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
-      const n = allModels.filter(a => a.fam === fid).length;
+      const n = allModels.filter(a => a.fam === fid && !a.snapOf).length;
       if (n) tabs.push({ id: fid, label: TAB_LABEL[fid] || famLabel[fid] || fid, n, logo: famLogo[fid] });
     });
     const nLocal = allModels.filter(a => a.local).length;
@@ -6254,7 +7349,7 @@ async function loadModels() {
     const find = findBox("Filter — gpt, claude, grok, 200k, free, local…  ( / )");
     find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1";
     bar.append(find.wrap);
-    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","needs a key"], ["free","free / local"]];
+    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","not connected"], ["free","free / local"]];
     let mode = "all";
     const chips = el("div","fchips");
     FILTERS.forEach(([k, lab]) => {
@@ -6292,11 +7387,21 @@ async function loadModels() {
       const fh = el("div","mm-glabel"); fh.dataset.fam = fid;
       fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));
       fh.append(document.createTextNode(famLabel[fid] || fid));
-      fh.append(el("span","mm-gn", rows.length + " model" + (rows.length===1?"":"s")));
+      const nr = rows.filter(a => !a.snapOf).length;
+      fh.append(el("span","mm-gn", nr + " model" + (nr===1?"":"s")));
       const grid = el("div","mm-grid"); grid.dataset.fam = fid;
       rows.forEach(a => grid.append(myModelCard(a, fid, cur, famLabel[fid] || fid)));
-      list.append(fh, grid);
-      groups.push([fh, grid]);
+      // a whole family behind one connection says so once, above its cards;
+      // Open models is many vendors with a key each, so it never gets one
+      let lock = null;
+      if (fid !== "oss" && fid !== "selfhost" && rows.every(a => !a.enabled)) {
+        lock = el("div","mm-lock"); lock.dataset.fam = fid;
+        grid.classList.add("famlock");
+      }
+      list.append(fh);
+      if (lock) list.append(lock);
+      list.append(grid);
+      groups.push([fh, grid, lock]);
     });
     // The same cards, in one grid, when the question is not "whose is it".
     // They are MOVED, never rebuilt, so a card keeps its band, its tag and
@@ -6317,7 +7422,8 @@ async function loadModels() {
     allModels.forEach(a => { byId[a.model + "\u0000" + a.pid] = a; });
     resort = () => {
       const flatOn = MODEL_SORT !== "family";
-      groups.forEach(([fh, g]) => { fh.classList.toggle("mm-off", flatOn); g.classList.toggle("mm-off", flatOn); });
+      groups.forEach(([fh, g, lock]) => { fh.classList.toggle("mm-off", flatOn); g.classList.toggle("mm-off", flatOn);
+        if (lock) lock.classList.toggle("mm-off", flatOn); });
       flatH.classList.toggle("on", flatOn); flat.classList.toggle("on", flatOn);
       if (!flatOn) {
         groups.forEach(([, g]) => {
@@ -6341,9 +7447,7 @@ async function loadModels() {
       apply();
     };
     sec.append(list);
-    CMP.rows = allModels;
     MM_ROWS = allModels;      // the hero's Switch menu reads these too
-    const cmpBar = el("div","cmp-bar"); cmpBar.id = "cmp-bar"; sec.append(cmpBar);
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
       let shown = 0;
@@ -6352,7 +7456,11 @@ async function loadModels() {
         const okQ = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
         const okF = mode === "all" || (mode === "free" ? !!r.dataset.free : r.dataset.state === mode);
         const okT = MODEL_TAB === "all" || (MODEL_TAB === "local" ? !!r.dataset.local : r.dataset.fam === MODEL_TAB);
-        const on = okQ && okF && okT;
+        // A dated snapshot is never on the grid by itself — its alias stands
+        // for it, with no label saying so. Only a search reaches one, because
+        // typing a date has to be able to find it.
+        const okS = !r.dataset.snap || !!q;
+        const on = okQ && okF && okT && okS;
         r.style.display = on ? "" : "none";
         r.classList.remove("kb");
         if (on) { shown++; perFam[r.dataset.fam] = (perFam[r.dataset.fam] || 0) + 1; }
@@ -6360,10 +7468,11 @@ async function loadModels() {
       // one family selected → the group label is noise; "All" keeps it. A
       // group with nothing left in it takes its grid down too, or the page
       // keeps its gaps.
-      groups.forEach(([fh, grid]) => {
+      groups.forEach(([fh, grid, lock]) => {
         const n = perFam[fh.dataset.fam] || 0;
         fh.style.display = (MODEL_TAB === "all" && n) ? "" : "none";
         grid.style.display = n ? "" : "none";
+        if (lock) lock.style.display = n ? "" : "none";
       });
       // a flat ordering has no families to label
       const fh2 = document.getElementById("mm-flath");
@@ -6375,9 +7484,9 @@ async function loadModels() {
       else if (e) e.remove();
     };
     applyModelFilter = apply;
+    fillLockStrips();
     find.input.oninput = apply;
     resort();                 // lays the cards out, then filters them
-    paintPins();
     // Keyboard: / focuses (global handler), ↑↓ walk the visible cards, Enter switches to one.
     let kbi = -1;
     const visible = () => [...list.querySelectorAll(".mmcard")].filter(r => r.style.display !== "none");
@@ -6469,7 +7578,8 @@ async function loadModels() {
 function pageHead(pad, title, count, desc, actions) {
   const h = el("div","page-h");
   const t = el("h1","page-t"); t.append(document.createTextNode(title));
-  if (count != null) t.append(el("span","count", String(count)));
+  // the readings line under the title carries the count — a chip beside the
+  // title said the same number a second time
   h.append(t);
   if (actions && actions.length) { const a = el("div","page-a"); actions.forEach(x => a.append(x)); h.append(a); }
   pad.append(h);
@@ -6489,8 +7599,9 @@ function pageReads(pad, reads, clause, note) {
     if (x.title) d.title = x.title;
     r.append(d);
   });
-  if (clause) { const c = el("span","page-rc", clause); c.title = clause; r.append(c); }
-  if (note) { const n = el("span","page-rn", "\u24d8"); n.title = note; r.append(n); }
+  // No sentence under a title: the readings say the situation, and the
+  // honesty note rides as the row's own tooltip instead of an ⓘ to hover.
+  if (note || clause) r.title = [clause, note].filter(Boolean).join(" — ");
   if (r.childElementCount) pad.append(r);
   return r;
 }
@@ -6508,17 +7619,6 @@ function section(pad, title, filePath) {
 // the one live detail. They say what this place is FOR, so an empty page
 // still teaches instead of shrugging.
 const ART = {
-  // an idle GPU card in its rack, power line dark until something runs
-  deploy: '<svg viewBox="0 0 140 100" fill="none" aria-hidden="true">' +
-    '<rect x="18" y="26" width="104" height="46" rx="7" stroke="currentColor" stroke-width="2" opacity=".28"/>' +
-    '<rect x="28" y="36" width="60" height="26" rx="4" stroke="currentColor" stroke-width="2" opacity=".45"/>' +
-    '<path d="M34 44h20M34 50h28M34 56h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".35"/>' +
-    '<circle cx="103" cy="42" r="4" stroke="currentColor" stroke-width="2" opacity=".45"/>' +
-    '<circle cx="103" cy="56" r="4" fill="var(--accent)" opacity=".9"/>' +
-    '<path d="M18 49H4M122 49h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".3"/>' +
-    '<path d="M52 72v10M88 72v10M40 82h60" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".22"/>' +
-    '</svg>',
-  // an empty socket waiting for a model to be plugged in
   socket: '<svg viewBox="0 0 140 100" fill="none" aria-hidden="true">' +
     '<rect x="40" y="24" width="60" height="52" rx="10" stroke="currentColor" stroke-width="2" opacity=".3"/>' +
     '<circle cx="58" cy="44" r="5" stroke="currentColor" stroke-width="2" opacity=".45"/>' +
@@ -6682,7 +7782,18 @@ function skillMatches(sk) {
       .toLowerCase().includes(t));
 }
 let skillsReq = 0;
-async function loadSkills() {
+// ---- the skills workspace ------------------------------------------------
+// A list of pages on the left, the open page on the right — edited in place
+// the way a document is, not through a form in a modal. The title and the
+// one-line description are typed where they are read; the properties the
+// loader cares about sit in a property block under them; the body is blocks
+// you click into, with "/" for a new kind of block. Every change saves on
+// its own, a moment after you stop typing.
+const SKW = { kind: "skill", cur: null, draft: null, blocks: [], raw: false, timer: null, saving: false, dirty: false, status: "" };
+const SKILL_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "Task"];
+const slugify = t => (t || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const skKey = x => x.scope + "/" + x.slug;
+async function loadSkills(want) {
   const pad = document.getElementById("skillspad");
   const my = ++skillsReq;
   if (!pad.childElementCount) skeleton(pad);
@@ -6691,200 +7802,733 @@ async function loadSkills() {
   catch (e) { if (my !== skillsReq) return; pad.innerHTML = ""; pad.append(el("div","empty","Error: " + e.message)); return; }
   if (my !== skillsReq) return;
   pad.innerHTML = "";
-  const reload = () => loadSkills();
   SKILLS.all = [...(sk.global || []), ...(sk.project || [])];
   SKILLS.tools = sk.tools_seen || [];
   SKILLS.dirs = { global: sk.global_dir, project: sk.project_dir };
-  const c = sk.counts || { total: SKILLS.all.length, always: 0, on_demand: 0, global: 0, project: 0 };
-
-  pageHead(pad, "Skills", c.total || null, null,
-    [btn("New skill", "pri", () => openSkillEditor(null, "global", reload))]);
+  const c = sk.counts || { total: SKILLS.all.length, always: 0, on_demand: 0 };
+  pageHead(pad, "Skills", null, null, [btn("New skill", "pri", () => newSkill("global"))]);
   pageReads(pad, [
     { v: c.always || 0, k: "always loaded" },
     { v: c.on_demand || 0, k: "on demand" },
   ], "Playbooks the agent opens when a task matches.",
      "Always-loaded skills go into every prompt; on-demand ones are opened by name.");
-  const pills = el("div","sk-state");
-  pills.append(pill(c.always, " always loaded", c.always ? "acc" : ""));
-  pills.append(pill(c.on_demand, " on demand"));
-  pills.append(pill(c.global, " global"));
-  pills.append(pill(c.project, " from this repo", c.project ? "blu" : ""));
-  pad.append(pills);
-
-  if (!c.total) {
+  if (!c.total && !SKW.draft) {
     pad.append(emptyState("skill", "No skills yet",
       "A skill is a SKILL.md the agent reads when the task matches — your deploy steps, your review rules.",
-      btn("New skill", "pri", () => openSkillEditor(null, "global", reload))));
+      btn("New skill", "pri", () => newSkill("global"))));
     return;
   }
-  const bar = el("div","filters");
-  const find = findBox("Search skills — name, description, tool…  ( / )");
-  find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1"; find.input.value = SKILLS.q;
-  find.input.oninput = () => { SKILLS.q = find.input.value; paint(); };
-  bar.append(find.wrap);
-  const chips = el("div","fchips");
-  SKILL_FILTERS.forEach(([k, lab]) => {
-    const ch = el("button","fchip" + (k === SKILLS.filter ? " on" : ""), lab);
-    ch.onclick = () => { SKILLS.filter = k; chips.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === ch)); paint(); };
-    chips.append(ch);
+  const wrap = el("div","skx");
+  const list = el("div","skx-list"); list.id = "skx-list";
+  const doc = el("div","skx-doc"); doc.id = "skx-doc";
+  wrap.append(list, doc);
+  pad.append(wrap);
+  // which page is open: what was asked for, else the hash, else what was open, else the first
+  const fromHash = () => { const [, sc, sl] = location.hash.slice(1).split("/"); return sc && sl ? sc + "/" + sl : null; };
+  const pick = want || fromHash() || (SKW.cur && skKey(SKW.cur));
+  const hit = SKILLS.all.find(x => skKey(x) === pick);
+  if (SKW.draft) { paintSkillList(); paintSkillDoc(); }
+  else openSkillPage(hit || SKILLS.all[0]);
+}
+function skillMatchesQ(x) {
+  const ql = (SKILLS.q || "").trim().toLowerCase();
+  return !ql || ql.split(/\s+/).every(t =>
+    (x.name + " " + (x.description || "") + " " + (x.category || "") + " " + (x.tools || []).join(" ") + " " + x.scope)
+      .toLowerCase().includes(t));
+}
+function paintSkillList() {
+  const list = document.getElementById("skx-list"); if (!list || curView !== "skills") return;
+  const keepFocus = document.activeElement && document.activeElement.closest && document.activeElement.closest(".skx-find");
+  list.innerHTML = "";
+  const top = el("div","skx-top");
+  const find = el("label","skx-find");
+  find.append(el("span","skx-fi", "⌕"));
+  const i = document.createElement("input"); i.placeholder = "Search skills"; i.value = SKILLS.q || "";
+  i.oninput = () => { SKILLS.q = i.value; paintSkillList(); };
+  find.append(i);
+  const add = el("button","skx-add", "+"); add.title = "New skill"; add.onclick = () => newSkill("global");
+  top.append(find, add);
+  list.append(top);
+  if (keepFocus) setTimeout(() => { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 0);
+  const curK = SKW.cur ? skKey(SKW.cur) : null;
+  [["global", "Global"], ["project", "This project"]].forEach(([sc, lab]) => {
+    const rows = SKILLS.all.filter(x => x.scope === sc && skillMatchesQ(x));
+    const draftHere = SKW.draft && SKW.draft.scope === sc;
+    if (!rows.length && !draftHere && (SKILLS.q || sc === "global")) return;
+    const g = el("div","skx-g");
+    const gh = el("div","skx-gh"); gh.append(el("span", null, lab), el("span","skx-gn", String(rows.length)));
+    const ga = el("button","skx-gadd", "+"); ga.title = "New skill in " + lab.toLowerCase(); ga.onclick = () => newSkill(sc);
+    gh.append(ga);
+    g.append(gh);
+    if (draftHere) {
+      const d = el("button","skx-i on");
+      d.append(skillGlyph(SKW.draft.name || "untitled"), el("span","skx-in" + (SKW.draft.name ? "" : " ph"), SKW.draft.name || "Untitled"));
+      g.append(d);
+    }
+    rows.forEach(x => {
+      const b = el("button","skx-i" + (!SKW.draft && skKey(x) === curK ? " on" : ""));
+      b.append(skillGlyph(x.name), el("span","skx-in", x.name));
+      if (x.always_load) { const dot = el("span","skx-al"); dot.title = "always loaded"; b.append(dot); }
+      b.title = x.description || x.name;
+      b.onclick = () => openSkillPage(x);
+      g.append(b);
+    });
+    if (!rows.length && !draftHere) g.append(el("div","skx-none", "Nothing here yet"));
+    list.append(g);
   });
-  bar.append(chips); pad.append(bar);
-  const grid = el("div","sk-grid"); pad.append(grid);
-  const paint = () => {
-    const rows = SKILLS.all.filter(skillMatches);
-    if (!rows.length) {
-      grid.innerHTML = "";
-      grid.append(emptyState("search", "No skill matches", "Try another filter, or a shorter search."));
+}
+function flushSkillSave() { if (SKW.dirty) { clearTimeout(SKW.timer); return saveSkillNow(); } return Promise.resolve(); }
+async function openSkillPage(x) {
+  await flushSkillSave();
+  SKW.draft = null; SKW.cur = x || null; SKW.raw = false; SKW.kind = "skill";
+  SKW.blocks = x ? splitBlocks(x.body || "") : [];
+  if (x) { const h = "skills/" + skKey(x); if (location.hash !== "#" + h) history.replaceState(null, "", "#" + h); }
+  paintSkillList(); paintSkillDoc();
+}
+async function newSkill(scope) {
+  await flushSkillSave();
+  showTab("skills");
+  SKW.cur = null; SKW.raw = false; SKW.kind = "skill";
+  SKW.draft = { scope, name: "", description: "", category: "", always_load: false, tools: [], body: "" };
+  SKW.blocks = [""];
+  if (!document.getElementById("skx-doc")) { await loadSkills(); return; }
+  paintSkillList(); paintSkillDoc();
+  const t = document.querySelector(".skx-title"); if (t) t.focus();
+}
+const skDoc = () => SKW.draft || SKW.cur;
+function setSkillStatus(s) {
+  SKW.status = s;
+  const e = document.getElementById("skx-status"); if (!e) return;
+  e.textContent = s; e.className = "skx-status" + (s === "Saved" ? " ok" : /n't|taken|failed/i.test(s) ? " bad" : "");
+}
+function touchSkill() {
+  SKW.dirty = true; setSkillStatus("Editing…");
+  clearTimeout(SKW.timer);
+  SKW.timer = setTimeout(saveSkillNow, 700);
+}
+async function saveSkillNow() {
+  // the Memory page edits on the same surface; its saves go to its own routes
+  if (SKW.kind !== "skill") return saveMemNow();
+  const d = skDoc(); if (!d || !SKW.dirty) return;
+  if (!(d.name || "").trim()) { setSkillStatus("Give it a title to save"); return; }
+  if (SKW.saving) { clearTimeout(SKW.timer); SKW.timer = setTimeout(saveSkillNow, 300); return; }
+  SKW.saving = true; SKW.dirty = false; setSkillStatus("Saving…");
+  const body = SKW.raw ? d.body : joinBlocks(SKW.blocks);
+  d.body = body;
+  let r;
+  try {
+    r = await post("/api/skill", { scope: d.scope, name: d.name.trim(), description: d.description || "", body,
+      category: d.category || "", always_load: !!d.always_load, tools: d.tools || [], slug: SKW.draft ? undefined : d.slug });
+  } catch (e) { r = { ok: false, error: e.message }; }
+  SKW.saving = false;
+  if (!r.ok) {
+    SKW.dirty = true;
+    setSkillStatus(r.exists ? "That name is taken — pick another" : "Couldn't save — " + (r.error || "error"));
+    return;
+  }
+  if (SKW.draft) {
+    // the draft is a real skill now: it keeps this slug from here on
+    const made = { ...SKW.draft, slug: r.slug, path: r.path, raw: "" };
+    SKILLS.all.push(made);
+    SKW.draft = null; SKW.cur = made;
+    const h = "skills/" + skKey(made); history.replaceState(null, "", "#" + h);
+    paintSkillList();
+    const fp = document.getElementById("skx-file"); if (fp) fp.textContent = made.path;
+  } else paintSkillList();
+  setSkillStatus(SKW.dirty ? "Editing…" : "Saved");
+}
+
+// ---- the page -----------------------------------------------------------
+function paintSkillDoc() {
+  const doc = document.getElementById("skx-doc"); if (!doc || curView !== "skills") return;
+  doc.innerHTML = "";
+  const d = skDoc();
+  if (!d) { doc.append(el("div","skx-empty", "Pick a skill, or make a new one.")); return; }
+  const draft = !!SKW.draft;
+  // the bar: where this page lives, whether it is saved, and its menu
+  const bar = el("div","skx-bar");
+  bar.append(el("span","skx-crumb", (d.scope === "project" ? "This project" : "Global") + " / " + (d.name || "Untitled")));
+  bar.append(el("span","sp"));
+  const st = el("span","skx-status"); st.id = "skx-status"; bar.append(st);
+  const more = popMenu("⋯", () => [
+    { label: SKW.raw ? "Edit as blocks" : "Edit as markdown", run: () => toggleSkillRaw() },
+    ...(SKW.draft ? [] : [
+      { label: "Copy file path", run: () => copyText(skDoc().path, "path") },
+      { label: "Delete skill…", run: () => confirmSkillDelete(), title: "removes its folder" },
+    ]),
+  ], { title: "more" });
+  more.classList.add("skx-more");
+  bar.append(more);
+  doc.append(bar);
+
+  const page = el("div","skx-page");
+  page.append(skillGlyph(d.name || "untitled"));
+  // title and description are typed where they are read
+  const title = el("div","skx-title"); title.contentEditable = "plaintext-only";
+  title.dataset.ph = "Untitled"; title.textContent = d.name || "";
+  title.oninput = () => {
+    d.name = title.textContent.replace(/\n/g, " ");
+    const cr = bar.querySelector(".skx-crumb");
+    if (cr) cr.textContent = (d.scope === "project" ? "This project" : "Global") + " / " + (d.name || "Untitled");
+    const g = page.querySelector(".sglyph"); if (g) g.replaceWith(skillGlyph(d.name || "untitled"));
+    touchSkill();
+  };
+  title.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); desc.focus(); } };
+  const desc = el("div","skx-desc"); desc.contentEditable = "plaintext-only";
+  desc.dataset.ph = "When should the agent reach for this? One line.";
+  desc.textContent = d.description || "";
+  desc.oninput = () => { d.description = desc.textContent.replace(/\n/g, " "); touchSkill(); };
+  desc.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); editBlock(0, "start"); } };
+  page.append(title, desc);
+  page.append(skillProps(d, draft));
+  const body = el("div","skx-body"); body.id = "skx-body";
+  page.append(body);
+  doc.append(page);
+  paintBlocks();
+  setSkillStatus(draft ? (d.name ? SKW.status : "Draft — saves once it has a title") : (SKW.dirty ? "Editing…" : "Saved"));
+}
+// Notion's property block: a label column, a value you edit in place.
+function skillProps(d, draft) {
+  const box = el("div","skx-props");
+  const row = (ic, label, val) => {
+    const r = el("div","skx-pr");
+    const l = el("div","skx-pl"); l.append(icon(ic), document.createTextNode(label));
+    const v = el("div","skx-pv"); v.append(val);
+    r.append(l, v); box.append(r);
+  };
+  const seg = (opts, cur, set) => {
+    const w = el("div","skx-seg");
+    opts.forEach(([k, lab, tip]) => {
+      const b = el("button", k === cur ? "on" : null, lab);
+      if (tip) b.title = tip;
+      b.onclick = () => { set(k); w.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); };
+      w.append(b);
+    });
+    return w;
+  };
+  row("clock", "Loading", seg([[false, "On demand", "opened by name when a task matches"],
+                               [true, "Always loaded", "injected into every session's prompt"]],
+    !!d.always_load, v => { d.always_load = v; touchSkill(); paintSkillList(); }));
+  if (draft) row("home", "Scope", seg([["global", "Global", "every project"], ["project", "This project", "travels with the repo"]],
+    d.scope, v => { d.scope = v; paintSkillList(); touchSkill(); }));
+  else row("home", "Scope", el("span","skx-ro", d.scope === "project" ? "This project" : "Global"));
+  const cat = document.createElement("input"); cat.className = "skx-inp"; cat.placeholder = "Empty";
+  cat.value = d.category || "";
+  cat.oninput = () => { d.category = cat.value; touchSkill(); };
+  row("skills", "Category", cat);
+  // tools: the chosen ones as chips, the rest one click away
+  const tw = el("div","skx-tools");
+  const paintTools = () => {
+    tw.innerHTML = "";
+    (d.tools || []).forEach(t => {
+      const c = el("span","skx-tag", t);
+      const x = el("button","skx-tx", "×"); x.title = "remove " + t;
+      x.onclick = () => { d.tools = d.tools.filter(y => y !== t); paintTools(); touchSkill(); };
+      c.append(x); tw.append(c);
+    });
+    const all = [...new Set([...SKILL_TOOLS, ...(SKILLS.tools || [])])].filter(t => !(d.tools || []).includes(t));
+    if (all.length) {
+      const m = popMenu((d.tools || []).length ? "+" : "Any tool · restrict", () => all.map(t => ({
+        label: t, run: () => { d.tools = [...(d.tools || []), t]; paintTools(); touchSkill(); } })),
+        { title: "restrict which tools this skill may use", align: "left" });
+      m.classList.add("skx-tadd");
+      tw.append(m);
+    }
+  };
+  paintTools();
+  row("tool", "Tools", tw);
+  const fp = el("span","skx-file", draft ? ((SKILLS.dirs || {})[d.scope] || "") + "/" + (slugify(d.name) || "…") + "/SKILL.md" : d.path);
+  fp.id = "skx-file";
+  if (!draft) { fp.title = "copy the path"; fp.onclick = () => copyText(d.path, "path"); }
+  row("folder", "File", fp);
+  return box;
+}
+function toggleSkillRaw() {
+  const d = skDoc(); if (!d) return;
+  if (SKW.raw) { SKW.blocks = splitBlocks(d.body || ""); SKW.raw = false; }
+  else { d.body = joinBlocks(SKW.blocks); SKW.raw = true; }
+  paintBlocks();
+}
+function confirmSkillDelete() {
+  const d = SKW.cur; if (!d) return;
+  const bar = document.querySelector(".skx-bar"); if (!bar) return;
+  const c = el("div","skx-confirm");
+  c.append(el("span", null, "Delete “" + d.name + "”? Its folder is removed from disk."));
+  c.append(el("span","sp"));
+  c.append(btn("Delete", "dan", async () => {
+    const r = await post("/api/skill/delete", { scope: d.scope, slug: d.slug }).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) { toast(r.error || "failed", true); return; }
+    toast("deleted " + d.name);
+    SKW.cur = null; SKW.dirty = false; history.replaceState(null, "", "#skills");
+    loadSkills();
+  }), btn("Cancel", "gho", () => c.remove()));
+  bar.after(c);
+}
+
+// ---- blocks ---------------------------------------------------------------
+// The body is markdown, cut into the blocks you would see: a paragraph, a
+// heading, a list, a fenced code block. A block renders until you click it;
+// then it is its own text, in place, at the size it reads at.
+function splitBlocks(src) {
+  const out = []; let cur = [], fence = false;
+  const flush = () => { if (cur.length) { out.push(cur.join("\n")); cur = []; } };
+  String(src || "").replace(/\r/g, "").split("\n").forEach(line => {
+    if (/^\s*```/.test(line)) {
+      if (!fence) { flush(); cur.push(line); fence = true; return; }
+      cur.push(line); fence = false; flush(); return;
+    }
+    if (fence) { cur.push(line); return; }
+    if (!line.trim()) { flush(); return; }
+    if (/^#{1,6}\s/.test(line) || /^(-{3,}|\*{3,})\s*$/.test(line)) { flush(); out.push(line); return; }
+    cur.push(line);
+  });
+  flush();
+  return out.length ? out : [""];
+}
+const joinBlocks = bs => bs.filter((b, i) => b.trim() || i < bs.length - 1).join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+const blockKind = t => /^```/.test(t) ? "code" : /^# /.test(t) ? "h1" : /^## /.test(t) ? "h2" : /^#{3,6} /.test(t) ? "h3"
+  : /^\s*([-*]|\d+\.)\s/.test(t) ? "list" : /^>/.test(t) ? "quote" : "p";
+function paintBlocks() {
+  const body = document.getElementById("skx-body"); if (!body) return;
+  body.innerHTML = "";
+  const d = skDoc();
+  if (SKW.raw) {
+    const ta = el("textarea","skx-raw"); ta.value = d.body || ""; ta.spellcheck = false;
+    const grow = () => { ta.style.height = "auto"; ta.style.height = Math.max(240, ta.scrollHeight) + "px"; };
+    ta.oninput = () => { d.body = ta.value; grow(); touchSkill(); };
+    body.append(ta); setTimeout(grow, 0);
+    return;
+  }
+  SKW.blocks.forEach((t, i) => body.append(blockView(t, i)));
+  // the page's tail: clicking under the last block writes a new one
+  const tail = el("div","skx-tail");
+  tail.onclick = () => {
+    const last = SKW.blocks.length - 1;
+    if (SKW.blocks[last] && SKW.blocks[last].trim()) { SKW.blocks.push(""); paintBlocks(); editBlock(last + 1, "start"); }
+    else editBlock(last, "end");
+  };
+  body.append(tail);
+}
+function blockView(t, i) {
+  const w = el("div","skx-b k-" + blockKind(t));
+  w.dataset.i = String(i);
+  const add = el("button","skx-plus", "+"); add.title = "add a block below";
+  add.onclick = e => { e.stopPropagation(); SKW.blocks.splice(i + 1, 0, ""); paintBlocks(); editBlock(i + 1, "start"); };
+  w.append(add);
+  const c = el("div","skx-bc md");
+  if (t.trim()) {
+    c.innerHTML = md(t);
+    // "- [ ] x" is a to-do: a real checkbox, and ticking it edits the markdown
+    let n = 0;
+    c.querySelectorAll("li").forEach(li => {
+      const f = li.firstChild;
+      const m = f && f.nodeType === 3 && /^\s*\[( |x|X)\]\s?/.exec(f.textContent);
+      if (!m) return;
+      const k = n++, done = m[1] !== " ";
+      f.textContent = f.textContent.slice(m[0].length);
+      const box = el("button","skx-chk" + (done ? " on" : ""), done ? "\u2713" : "");
+      box.title = done ? "mark not done" : "mark done";
+      box.onclick = e => {
+        e.stopPropagation();
+        let j = -1;
+        SKW.blocks[i] = SKW.blocks[i].replace(/^(\s*(?:[-*]|\d+\.)\s+)\[( |x|X)\]/gm, (all, pre, st) =>
+          ++j === k ? pre + (st === " " ? "[x]" : "[ ]") : all);
+        touchSkill(); paintBlocks();
+      };
+      li.classList.add("todo"); if (done) li.classList.add("done");
+      // the text in its own span, so a done item strikes its words, not its box
+      const tx = el("span","skx-tt"); while (li.firstChild) tx.append(li.firstChild);
+      li.append(box, tx);
+    });
+  }
+  else { c.classList.add("ph"); c.textContent = i === 0 && SKW.blocks.length === 1 ? "Write the playbook — steps, commands, gotchas. Type “/” for blocks." : ""; }
+  w.append(c);
+  w.onclick = e => { if (e.target.closest("a")) return; editBlock(i, "end"); };
+  return w;
+}
+const SLASH = [
+  ["Text", "", "p"], ["Heading 1", "# ", "h1"], ["Heading 2", "## ", "h2"], ["Heading 3", "### ", "h3"],
+  ["Bulleted list", "- ", "list"], ["Numbered list", "1. ", "list"], ["To-do", "- [ ] ", "list"],
+  ["Quote", "> ", "quote"], ["Code", "```\n\n```", "code"], ["Divider", "---", "p"],
+];
+function editBlock(i, where) {
+  const body = document.getElementById("skx-body"); if (!body) return;
+  if (i < 0 || i >= SKW.blocks.length) return;
+  const w = body.querySelector('.skx-b[data-i="' + i + '"]'); if (!w) return;
+  const ta = el("textarea","skx-ta k-" + blockKind(SKW.blocks[i]));
+  ta.value = SKW.blocks[i]; ta.rows = 1; ta.spellcheck = true;
+  const grow = () => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+  const w2 = el("div","skx-b editing"); w2.dataset.i = String(i); w2.append(ta);
+  w.replaceWith(w2);
+  let menu = null, done = false;
+  const commit = () => {
+    if (done) return; done = true;
+    closeSlash();
+    if (SKW.blocks[i] !== ta.value) { SKW.blocks[i] = ta.value; touchSkill(); }
+    const v = blockView(SKW.blocks[i], i);
+    if (w2.isConnected) w2.replaceWith(v);
+  };
+  const go = (j, at) => { commit(); editBlock(j, at); };
+  const closeSlash = () => { if (menu) { menu.remove(); menu = null; } };
+  const openSlash = () => {
+    closeSlash();
+    const qv = ta.value.slice(1).toLowerCase();
+    const items = SLASH.filter(([l]) => l.toLowerCase().includes(qv));
+    if (!items.length) return;
+    menu = el("div","pmenu left skx-slash"); menu.setAttribute("role", "menu");
+    menu.append(el("div","pmenu-h", "Blocks"));
+    items.forEach(([l, pre], k) => {
+      const b = el("button","pmenu-i" + (k === 0 ? " on" : ""));
+      b.append(el("span","pmenu-t", l));
+      b.onmousedown = e => { e.preventDefault(); choose(pre); };
+      menu.append(b);
+    });
+    w2.append(menu);
+  };
+  const choose = pre => {
+    closeSlash();
+    ta.value = pre;
+    ta.className = "skx-ta k-" + blockKind(pre);
+    const at = pre.startsWith("```") ? 4 : pre.length;
+    if (pre === "---") { SKW.blocks[i] = "---"; SKW.blocks.splice(i + 1, 0, ""); done = true; touchSkill(); paintBlocks(); editBlock(i + 1, "start"); return; }
+    ta.setSelectionRange(at, at); grow(); touchSkill();
+  };
+  ta.oninput = () => {
+    grow();
+    ta.className = "skx-ta k-" + blockKind(ta.value);
+    if (/^\/[\w ]*$/.test(ta.value)) openSlash(); else closeSlash();
+    SKW.blocks[i] = ta.value; touchSkill();
+  };
+  ta.onkeydown = e => {
+    const v = ta.value, s = ta.selectionStart, en = ta.selectionEnd;
+    if (menu && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter")) {
+      const rows = [...menu.querySelectorAll(".pmenu-i")];
+      let k = rows.findIndex(r => r.classList.contains("on"));
+      if (e.key === "Enter") { e.preventDefault(); rows[k].onmousedown(new MouseEvent("mousedown")); return; }
+      k = Math.max(0, Math.min(rows.length - 1, k + (e.key === "ArrowDown" ? 1 : -1)));
+      rows.forEach((r, x) => r.classList.toggle("on", x === k)); e.preventDefault(); return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); if (menu) closeSlash(); else { commit(); } return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); SKW.blocks[i] = v; clearTimeout(SKW.timer); SKW.dirty = true; saveSkillNow(); return; }
+    const kind = blockKind(v);
+    if (e.key === "Enter" && !e.shiftKey && kind !== "code") {
+      const lineStart = v.lastIndexOf("\n", s - 1) + 1;
+      const line = v.slice(lineStart, v.indexOf("\n", s) < 0 ? v.length : v.indexOf("\n", s));
+      const lm = /^(\s*)([-*]|\d+\.)(\s+\[[ xX]\])?\s/.exec(line);
+      if (lm && kind === "list") {
+        e.preventDefault();
+        // an empty item ends the list and starts a paragraph under it
+        if (!line.slice(lm[0].length).trim()) {
+          ta.value = (v.slice(0, lineStart).replace(/\n$/, "") + v.slice(lineStart + line.length)).trimEnd();
+          SKW.blocks[i] = ta.value; SKW.blocks.splice(i + 1, 0, ""); done = true; touchSkill(); paintBlocks(); editBlock(i + 1, "start");
+          return;
+        }
+        const num = /^\d+/.test(lm[2]) ? (parseInt(lm[2], 10) + 1) + "." : lm[2];
+        const next = "\n" + lm[1] + num + (lm[3] ? " [ ]" : "") + " ";
+        ta.setRangeText(next, s, en, "end"); ta.oninput(); return;
+      }
+      // Enter splits the block at the caret, the way a document does
+      e.preventDefault();
+      SKW.blocks[i] = v.slice(0, s).trimEnd();
+      SKW.blocks.splice(i + 1, 0, v.slice(en).trimStart());
+      done = true; touchSkill(); paintBlocks(); editBlock(i + 1, "start");
       return;
     }
-    grid.querySelectorAll(".zero").forEach(x => x.remove());
-    patchList(grid, rows, x => x.scope + "/" + x.slug,
-      x => [x.name, x.description, x.always_load, (x.tools || []).join(","), x.path],
-      (card, x) => {
-        card = card || el("div"); card.innerHTML = ""; card.className = "skcard";
-        const h = el("div","sk-h");
-        h.append(skillGlyph(x.name));
-        const t = el("div","sk-t");
-        t.append(el("div","sk-n", x.name));
-        t.append(el("div","sk-p", x.path));
-        h.append(t);
-        card.append(h);
-        card.append(el("div","sk-d", x.description || "(no description)"));
-        const tags = el("div","sk-tags");
-        tags.append(tag2(x.scope === "project" ? "This project" : "Global", x.scope === "project" ? "blu" : ""));
-        tags.append(tag2(x.always_load ? "Always loaded" : "On demand", x.always_load ? "vio" : ""));
-        if (x.category) tags.append(tag2(x.category, ""));
-        card.append(tags);
-        if ((x.tools || []).length) {
-          const tl = el("div","sk-tools");
-          x.tools.slice(0, 5).forEach(tool => tl.append(el("span","chip", tool)));
-          if (x.tools.length > 5) tl.append(el("span","chip more", "+" + (x.tools.length - 5)));
-          card.append(tl);
-        }
-        const acts = el("div","sk-acts");
-        acts.append(btn("Edit", "gho", e => { e.stopPropagation(); openSkillEditor(x, x.scope, reload); }));
-        const del = btn("Delete", "gho dan", null);
-        del.onclick = e => { e.stopPropagation(); armDelete(del, () => deleteSkill(x, reload)); };
-        acts.append(del);
-        card.append(acts);
-        card.onclick = () => openSkillSheet(x, reload);
-        return card;
-      });
+    if (e.key === "Backspace" && s === 0 && en === 0 && i > 0) {
+      e.preventDefault();
+      const prev = SKW.blocks[i - 1], at = prev.length;
+      SKW.blocks[i - 1] = v.trim() ? (prev ? prev + "\n" + v : v) : prev;
+      SKW.blocks.splice(i, 1); done = true; touchSkill(); paintBlocks(); editBlock(i - 1, at);
+      return;
+    }
+    if (e.key === "ArrowUp" && v.lastIndexOf("\n", s - 1) < 0 && i > 0) { e.preventDefault(); go(i - 1, "end"); return; }
+    if (e.key === "ArrowDown" && v.indexOf("\n", en) < 0 && i < SKW.blocks.length - 1) { e.preventDefault(); go(i + 1, "start"); return; }
   };
-  paint();
+  ta.onblur = () => setTimeout(commit, 0);
+  // focus NOW, not on the next tick: a fast typist's first keys after Enter
+  // otherwise land in the block they just left
+  grow(); ta.focus();
+  const at = where === "start" ? 0 : typeof where === "number" ? where : ta.value.length;
+  ta.setSelectionRange(at, at);
 }
-async function deleteSkill(sk, reload) {
+// ==========================================================================
+// MEMORY — what the agent is told every session, and what it remembers.
+// The same split Claude Code makes, on the same document surface as Skills:
+//   Instructions — human-written, loaded into every session: your personal
+//     MANTIS.md, the repo's AGENTS.md / MANTIS.md / rules, MANTIS.local.md.
+//   Memory — what the agent wrote down: the MEMORY.md index it reads at the
+//     start of each session, and one file per memory.
+// A standard instruction file that doesn't exist yet is listed anyway, and
+// typing into it creates it — "where do I put this?" answered by the list.
+// ==========================================================================
+const MEMW = { data: null, docs: [] };
+const MEM_TYPES = [["user", "User", "who you are and how you like to work"],
+                   ["feedback", "Feedback", "a correction or a confirmed approach"],
+                   ["project", "Project", "ongoing work, goals, constraints"],
+                   ["reference", "Reference", "where to find something"]];
+const TIER_SAY = { user: "Personal · every project", project: "Project · shared with the team",
+                   local: "Project · only you", managed: "Organization" };
+let memReq = 0;
+async function loadMemory(want) {
+  const pad = document.getElementById("memorypad");
+  const my = ++memReq;
+  if (!pad.childElementCount) skeleton(pad);
+  let m;
+  try { m = await api("/api/memory"); }
+  catch (e) { if (my !== memReq) return; pad.innerHTML = ""; pad.append(el("div","empty","Error: " + e.message)); return; }
+  if (my !== memReq) return;
+  MEMW.data = m;
+  MEMW.docs = memDocs(m);
+  pad.innerHTML = "";
+  pageHead(pad, "Memory", null, null, [btn("New memory", "pri", () => newMemory())]);
+  const loaded = (m.instructions || []).filter(x => x.loaded);
+  const kb = loaded.reduce((a, x) => a + x.bytes, 0) + ((m.index || {}).content || "").length;
+  pageReads(pad, [
+    { v: loaded.length, k: "instruction file" + (loaded.length === 1 ? "" : "s") + " loaded" },
+    { v: (m.entries || []).length, k: "memories" },
+    { v: "~" + fmt(Math.round(kb / 4)), k: "tokens every session" },
+  ], "What the agent is told every session, and what it remembers.",
+     "Instructions and the MEMORY.md index are read at the start of every session; each memory is opened when it is relevant.");
+  const wrap = el("div","skx");
+  const list = el("div","skx-list"); list.id = "skx-list";
+  const doc = el("div","skx-doc"); doc.id = "skx-doc";
+  wrap.append(list, doc);
+  pad.append(wrap);
+  const fromHash = () => { const parts = location.hash.slice(1).split("/"); return parts[0] === "memory" && parts[1] ? decodeURIComponent(parts.slice(1).join("/")) : null; };
+  const pick = want || fromHash() || (SKW.kind !== "skill" && SKW.cur && SKW.cur.key);
+  const first = MEMW.docs.find(d => d.kind === "instr" && d.loaded) || MEMW.docs[0];
+  openMemDoc(MEMW.docs.find(d => d.key === pick) || first);
+}
+function memDocs(m) {
+  const out = [];
+  (m.instructions || []).forEach(x => out.push({ ...x, key: "i:" + x.id, kind: "instr", name: x.label, body: x.content }));
+  const ix = m.index || {};
+  out.push({ key: "index", kind: "index", name: "MEMORY.md", path: ix.path, exists: ix.exists, body: ix.content || "", lines: ix.lines });
+  (m.entries || []).forEach(e => out.push({ ...e, key: "m:" + e.slug, kind: "entry" }));
+  return out;
+}
+function memMatches(d) {
+  const ql = (MEMW.q || "").trim().toLowerCase();
+  return !ql || ql.split(/\s+/).every(t => ((d.name || "") + " " + (d.description || "") + " " + (d.type || "") + " " + (d.body || "")).toLowerCase().includes(t));
+}
+function paintMemList() {
+  const list = document.getElementById("skx-list"); if (!list || curView !== "memory") return;
+  const keepFocus = document.activeElement && document.activeElement.closest && document.activeElement.closest(".skx-find");
+  list.innerHTML = "";
+  const top = el("div","skx-top");
+  const find = el("label","skx-find");
+  find.append(el("span","skx-fi", "⌕"));
+  const i = document.createElement("input"); i.placeholder = "Search memory"; i.value = MEMW.q || "";
+  i.oninput = () => { MEMW.q = i.value; paintMemList(); };
+  find.append(i);
+  const add = el("button","skx-add", "+"); add.title = "New memory"; add.onclick = () => newMemory();
+  top.append(find, add);
+  list.append(top);
+  if (keepFocus) setTimeout(() => { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }, 0);
+  const curK = SKW.draft ? "draft" : SKW.cur && SKW.cur.key;
+  const item = (d, lab, side, cls) => {
+    const b = el("button","skx-i mem-i" + (d.key === curK ? " on" : "") + (cls ? " " + cls : ""));
+    b.append(memMark(d), el("span","skx-in", lab));
+    if (side) b.append(side);
+    b.title = d.kind === "instr" ? d.path : (d.description || d.name);
+    b.onclick = () => openMemDoc(d);
+    return b;
+  };
+  const group = (title, note) => {
+    const g = el("div","skx-g");
+    const gh = el("div","skx-gh"); gh.append(el("span", null, title));
+    if (note) gh.append(el("span","skx-gn", note));
+    g.append(gh); list.append(g);
+    return g;
+  };
+  const ins = MEMW.docs.filter(d => d.kind === "instr" && memMatches(d));
+  if (ins.length) {
+    const g = group("Instructions", "every session");
+    ins.forEach(d => {
+      let side = null;
+      if (d.loaded) { side = el("span","skx-al"); side.title = "loaded into every session"; }
+      else if (!d.exists) { side = el("span","mem-new", "create"); }
+      g.append(item(d, d.name, side, d.exists ? "" : "ghost"));
+    });
+  }
+  const ents = MEMW.docs.filter(d => d.kind === "entry" && memMatches(d));
+  const ix = MEMW.docs.find(d => d.kind === "index");
+  const g2 = group("Memory", String(ents.length));
+  const ga = el("button","skx-gadd", "+"); ga.title = "New memory"; ga.onclick = () => newMemory();
+  g2.querySelector(".skx-gh").append(ga);
+  if (ix && memMatches(ix)) { const s = el("span","mem-side", (ix.lines || 0) + " lines"); g2.append(item(ix, "MEMORY.md", s)); }
+  if (SKW.draft && SKW.kind === "entry") {
+    const b = el("button","skx-i on"); b.append(skillGlyph(SKW.draft.name || "untitled"),
+      el("span","skx-in" + (SKW.draft.name ? "" : " ph"), SKW.draft.name || "Untitled")); g2.append(b);
+  }
+  ents.forEach(d => g2.append(item(d, d.name, el("span","mem-side", d.type))));
+  if (!ents.length && !(SKW.draft && SKW.kind === "entry")) g2.append(el("div","skx-none", MEMW.q ? "No memory matches" : "Nothing remembered yet"));
+}
+function memMark(d) {
+  if (d.kind === "entry") return skillGlyph(d.name || d.slug || "memory");
+  const w = el("span","sglyph mem-mk");
+  w.append(icon(d.kind === "index" ? "trace" : d.tier === "user" ? "home" : d.tier === "local" ? "key" : "folder"));
+  return w;
+}
+async function openMemDoc(d) {
+  await flushSkillSave();
+  SKW.draft = null; SKW.cur = d || null; SKW.raw = false; SKW.dirty = false;
+  SKW.kind = d ? d.kind : "entry";
+  SKW.blocks = d ? splitBlocks(d.body || "") : [""];
+  if (d) { const h = "memory/" + encodeURIComponent(d.key); if (location.hash !== "#" + h) history.replaceState(null, "", "#" + h); }
+  paintMemList(); paintMemDoc();
+}
+async function newMemory() {
+  await flushSkillSave();
+  if (curView !== "memory") { showTab("memory"); await new Promise(r => setTimeout(r, 400)); }
+  SKW.cur = null; SKW.raw = false; SKW.kind = "entry"; SKW.dirty = false;
+  SKW.draft = { kind: "entry", name: "", description: "", type: "project", body: "" };
+  SKW.blocks = [""];
+  paintMemList(); paintMemDoc();
+  const t = document.querySelector(".skx-title"); if (t) t.focus();
+}
+function paintMemDoc() {
+  const doc = document.getElementById("skx-doc"); if (!doc || curView !== "memory") return;
+  doc.innerHTML = "";
+  const d = skDoc();
+  if (!d) { doc.append(el("div","skx-empty", "Pick a file or a memory.")); return; }
+  const entry = d.kind === "entry", draft = !!SKW.draft;
+  const ro = d.kind === "instr" && !d.writable;
+  const bar = el("div","skx-bar");
+  const where = d.kind === "instr" ? "Instructions" : "Memory";
+  const crumb = el("span","skx-crumb", where + " / " + (d.name || "Untitled"));
+  bar.append(crumb, el("span","sp"));
+  const st = el("span","skx-status"); st.id = "skx-status"; bar.append(st);
+  const more = popMenu("⋯", () => [
+    ...(ro ? [] : [{ label: SKW.raw ? "Edit as blocks" : "Edit as markdown", run: () => toggleSkillRaw() }]),
+    ...(skDoc() && skDoc().path ? [{ label: "Copy file path", run: () => copyText(skDoc().path, "path") }] : []),
+    // read at open time: a draft becomes a real memory on its first save
+    ...(entry && !SKW.draft ? [{ label: "Delete memory…", run: () => confirmMemDelete() }] : []),
+  ], { title: "more" });
+  more.classList.add("skx-more");
+  bar.append(more);
+  doc.append(bar);
+
+  const page = el("div","skx-page");
+  page.append(memMark(d));
+  const title = el("div","skx-title");
+  const desc = el("div","skx-desc");
+  if (entry) {
+    // a memory is named and hooked like a skill: both are typed in place
+    title.contentEditable = "plaintext-only"; title.dataset.ph = "Untitled"; title.textContent = d.name || "";
+    title.oninput = () => { d.name = title.textContent.replace(/\n/g, " "); crumb.textContent = "Memory / " + (d.name || "Untitled"); touchSkill(); };
+    title.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); desc.focus(); } };
+    desc.contentEditable = "plaintext-only"; desc.dataset.ph = "One-line hook — how the agent decides this is relevant later.";
+    desc.textContent = d.description || "";
+    desc.oninput = () => { d.description = desc.textContent.replace(/\n/g, " "); touchSkill(); };
+    desc.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); editBlock(0, "start"); } };
+  } else {
+    title.textContent = d.name;
+    desc.textContent = d.kind === "index"
+      ? "The index the agent reads at the start of every session — one line per memory, linking to its file."
+      : d.about;
+  }
+  page.append(title, desc);
+  page.append(memProps(d, draft));
+  if (ro) {
+    const body = el("div","skx-body md mem-ro"); body.innerHTML = md(d.body || "*(empty)*"); page.append(body);
+  } else {
+    const body = el("div","skx-body"); body.id = "skx-body"; page.append(body);
+  }
+  doc.append(page);
+  if (!ro) paintBlocks();
+  if (!ro && d.kind === "instr" && !d.exists) {
+    const ph = document.querySelector("#skx-body .skx-bc.ph");
+    if (ph) ph.textContent = "Empty — start typing and " + d.name + " is created. Type “/” for blocks.";
+  }
+  setSkillStatus(ro ? "Read-only" : draft ? (d.name ? SKW.status : "Draft — saves once it has a title")
+    : d.kind === "instr" && !d.exists ? "Not created yet" : "Saved");
+}
+function memProps(d, draft) {
+  const box = el("div","skx-props");
+  const row = (ic, label, val) => {
+    const r = el("div","skx-pr");
+    const l = el("div","skx-pl"); l.append(icon(ic), document.createTextNode(label));
+    const v = el("div","skx-pv"); v.append(val);
+    r.append(l, v); box.append(r);
+  };
+  const say = (t, cls) => el("span","skx-ro" + (cls ? " " + cls : ""), t);
+  const tok = b => "~" + fmt(Math.round((b || 0) / 4)) + " tokens";
+  if (d.kind === "instr") {
+    row("clock", "In context", d.loaded ? say("Loaded every session · " + tok(d.bytes), "ok")
+      : d.exists ? say("Not loaded from this folder") : say("Not created yet"));
+    row("home", "Scope", say(TIER_SAY[d.tier] || d.tier));
+    if (d.imported_by) row("skills", "Imported by", say(d.imported_by));
+  } else if (d.kind === "index") {
+    const n = (d.body || "").split("\n").filter(x => x.trim()).length;
+    row("clock", "In context", say("Loaded every session · " + tok((d.body || "").length), "ok"));
+    row("trace", "Lines", say(n + (n > 150 ? " — past ~150 it stops being cheap to load; fold topics into sub-indexes" : ""), n > 150 ? "warn" : ""));
+  } else {
+    const w = el("div","skx-seg");
+    MEM_TYPES.forEach(([k, lab, tip]) => {
+      const b = el("button", k === (d.type || "project") ? "on" : null, lab); b.title = tip;
+      b.onclick = () => { d.type = k; w.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); touchSkill(); paintMemList(); };
+      w.append(b);
+    });
+    row("skills", "Type", w);
+    const ix = (MEMW.docs.find(x => x.kind === "index") || {}).body || "";
+    if (!draft) row("trace", "In the index", say(ix.includes(d.slug + ".md") ? "Listed in MEMORY.md" : "Not listed — the agent won't see it", ix.includes(d.slug + ".md") ? "ok" : "warn"));
+    else row("trace", "In the index", say("Added to MEMORY.md when it saves"));
+  }
+  const fp = el("span","skx-file", d.path || (MEMW.data ? MEMW.data.memory_dir + "/" + (slugify(d.name) || "…") + ".md" : ""));
+  fp.id = "skx-file";
+  if (d.path) { fp.title = "copy the path"; fp.onclick = () => copyText(d.path, "path"); }
+  row("folder", "File", fp);
+  return box;
+}
+async function saveMemNow() {
+  const d = skDoc(); if (!d || !SKW.dirty) return;
+  if (d.kind === "entry" && !(d.name || "").trim()) { setSkillStatus("Give it a title to save"); return; }
+  if (SKW.saving) { clearTimeout(SKW.timer); SKW.timer = setTimeout(saveSkillNow, 300); return; }
+  SKW.saving = true; SKW.dirty = false; setSkillStatus("Saving…");
+  const body = SKW.raw ? d.body : joinBlocks(SKW.blocks);
+  d.body = body;
+  let r;
   try {
-    const r = await post("/api/skill/delete", { scope: sk.scope, slug: sk.slug });
-    if (r.ok) { toast("deleted " + sk.name); hideModal(); reload(); } else toast(r.error || "failed", true);
-  } catch (e) { toast(e.message, true); }
+    if (d.kind === "instr") r = await post("/api/memory/file", { id: d.id, content: body });
+    else if (d.kind === "index") r = await post("/api/memory/index", { content: body });
+    else r = await post("/api/memory/entry", { slug: SKW.draft ? undefined : d.slug, name: d.name.trim(),
+      description: d.description || "", type: d.type || "project", body });
+  } catch (e) { r = { ok: false, error: e.message }; }
+  SKW.saving = false;
+  if (!r.ok) {
+    SKW.dirty = true;
+    setSkillStatus(r.exists ? "That name is taken — pick another" : "Couldn't save — " + (r.error || "error"));
+    return;
+  }
+  if (d.kind === "instr" && !d.exists) { d.exists = true; paintMemList(); }
+  if (SKW.draft) {
+    // a new memory is real now, with its line in the index
+    const made = { ...SKW.draft, slug: r.slug, path: r.path, key: "m:" + r.slug };
+    MEMW.docs.push(made);
+    const ix = MEMW.docs.find(x => x.kind === "index");
+    if (ix) ix.body = (ix.body.trim() ? ix.body.trimEnd() + "\n" : "") + "- [" + made.name.trim() + "](memory/" + r.slug + ".md)" +
+      (made.description ? " — " + made.description : "") + "\n";
+    SKW.draft = null; SKW.cur = made;
+    history.replaceState(null, "", "#memory/" + encodeURIComponent(made.key));
+    const fp = document.getElementById("skx-file"); if (fp) fp.textContent = r.path;
+  }
+  paintMemList();
+  setSkillStatus(SKW.dirty ? "Editing…" : "Saved");
 }
-// The detail sheet: what the agent is told, then the raw file behind a toggle.
-function openSkillSheet(sk, reload) {
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  const h = el("div","cs-h");
-  h.append(skillGlyph(sk.name));
-  const ht = el("div","ft");
-  ht.append(el("div","fn", sk.name));
-  ht.append(el("div","fd", sk.path));
-  h.append(ht);
-  s.append(h);
-  const tags = el("div","sk-tags"); tags.style.marginBottom = "12px";
-  tags.append(tag2(sk.scope === "project" ? "This project" : "Global", sk.scope === "project" ? "blu" : ""));
-  tags.append(tag2(sk.always_load ? "Always loaded" : "On demand", sk.always_load ? "vio" : ""));
-  if (sk.category) tags.append(tag2(sk.category, ""));
-  (sk.tools || []).forEach(t => tags.append(el("span","chip", t)));
-  s.append(tags);
-  const dl = el("dl","kvs");
-  kvRow(dl, "description", sk.description || "—", false);
-  kvRow(dl, "loading", sk.always_load ? "Injected into every session" : "Opened when the task matches", false);
-  if ((sk.tools || []).length) kvRow(dl, "tools", sk.tools.join(", "));
-  s.append(dl);
-  const bodyBox = el("div","sk-body md");
-  bodyBox.innerHTML = md(sk.body || "*(empty)*");
-  s.append(bodyBox);
-  const det = el("details","cs-guide");
-  det.append(el("summary", null, "Source"));
-  const pre = el("pre","sk-raw"); pre.textContent = sk.raw || sk.body || "";
-  const gb = el("div","cs-gb"); gb.append(pre); det.append(gb);
-  s.append(det);
-  const foot = el("div","cs-foot");
-  foot.append(btn("Edit", "pri", () => openSkillEditor(sk, sk.scope, reload)));
-  const del = btn("Delete", "gho dan", null);
-  del.onclick = () => armDelete(del, () => deleteSkill(sk, reload));
-  foot.append(del, btn("Close", "gho", hideModal));
-  s.append(foot);
-  showModal(true);
-  trapFocus(s.parentElement);
-}
-const SKILL_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "Task"];
-const slugify = t => (t || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-// Create / edit: the fields, then the body with a live preview beside it.
-function openSkillEditor(sk, scope, reload) {
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(el("h3", null, sk ? "Edit skill" : "New skill"));
-  const pathLine = el("div","sub");
-  s.append(pathLine);
-  const scopeSel = el("select","in");
-  [["global", "Global · every project"], ["project", "This project · travels with the repo"]].forEach(([v, l]) => {
-    const o = el("option", null, l); o.value = v; scopeSel.append(o);
-  });
-  scopeSel.value = sk ? sk.scope : scope || "global";
-  const name = input("Deploy checklist"); name.value = sk ? sk.name : "";
-  const desc = input("One line — when should the agent reach for this?");
-  desc.value = sk ? (sk.description || "") : "";
-  const cat = input("Category (optional)"); cat.value = sk ? (sk.category || "") : "";
-  const always = document.createElement("input"); always.type = "checkbox";
-  always.checked = !!(sk && sk.always_load);
-  const alwaysL = el("label","chk"); alwaysL.append(always, document.createTextNode("Always load into every session"));
-  const nameErr = el("div","sk-err");
-  const showPath = () => {
-    const sl = sk ? sk.slug : slugify(name.value);
-    const dir = (SKILLS.dirs || {})[scopeSel.value] || (scopeSel.value === "project" ? ".mantis/skills" : "~/.mantis-agent/skills");
-    pathLine.textContent = sl ? dir + "/" + sl + "/SKILL.md" : dir + "/…/SKILL.md";
-    const bad = !sk && name.value.trim() && !sl;
-    nameErr.textContent = bad ? "Use letters, numbers, spaces or dashes — that name has no slug." : "";
-    return !bad;
-  };
-  name.oninput = showPath; scopeSel.onchange = showPath;
-  const f1 = el("div","sk-frow"); f1.append(fieldWrap("Name", name), fieldWrap("Scope", scopeSel));
-  const f2 = el("div","sk-frow"); f2.append(fieldWrap("Description", desc), fieldWrap("Category", cat));
-  s.append(f1, nameErr, f2);
-  const toolSet = new Set((sk && sk.tools) || []);
-  const tools = el("div","sk-tsel");
-  [...new Set([...SKILL_TOOLS, ...(SKILLS.tools || [])])].forEach(t => {
-    const c = el("button","fchip" + (toolSet.has(t) ? " on" : ""), t);
-    c.onclick = () => { if (toolSet.has(t)) toolSet.delete(t); else toolSet.add(t); c.classList.toggle("on"); };
-    tools.append(c);
-  });
-  s.append(fieldWrap("Allowed tools", tools));
-  const ta = el("textarea","in sk-ed");
-  ta.placeholder = "The how-to the agent reads. Markdown: steps, commands, gotchas.";
-  ta.value = sk ? (sk.body || "") : "";
-  const prev = el("div","sk-prev md");
-  const draw = () => { prev.innerHTML = md(ta.value || "*Nothing yet — the preview shows what the agent will read.*"); };
-  ta.oninput = draw; draw();
-  const split = el("div","sk-split"); split.append(ta, prev);
-  s.append(fieldWrap("Body", split));
-  const foot = el("div","cs-foot");
-  const save = btn(sk ? "Save changes" : "Create skill", "pri", async () => {
-    if (!name.value.trim()) { toast("name required", true); name.focus(); return; }
-    if (!showPath()) { name.focus(); return; }
-    save.disabled = true;
-    try {
-      const r = await post("/api/skill", { scope: scopeSel.value, name: name.value, description: desc.value,
-        body: ta.value, category: cat.value, always_load: always.checked,
-        tools: [...toolSet], slug: sk ? sk.slug : undefined });
-      if (r.ok) { toast(sk ? "saved " + name.value.trim() : "created " + name.value.trim()); hideModal(); reload(); }
-      else toast(r.error || "failed", true);
-    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
-  });
-  foot.append(save, alwaysL, btn("Cancel", "gho", hideModal));
-  s.append(foot);
-  showPath();
-  showModal(true);
-  trapFocus(s.parentElement);
-  setTimeout(() => (sk ? ta : name).focus(), 60);
+function confirmMemDelete() {
+  const d = SKW.cur; if (!d || d.kind !== "entry") return;
+  const bar = document.querySelector("#memorypad .skx-bar"); if (!bar) return;
+  const c = el("div","skx-confirm");
+  c.append(el("span", null, "Forget “" + d.name + "”? Its file and its line in MEMORY.md are removed."), el("span","sp"));
+  c.append(btn("Delete", "dan", async () => {
+    const r = await post("/api/memory/entry/delete", { slug: d.slug }).catch(e => ({ ok: false, error: e.message }));
+    if (!r.ok) { toast(r.error || "failed", true); return; }
+    toast("forgot " + d.name);
+    SKW.cur = null; SKW.dirty = false; history.replaceState(null, "", "#memory");
+    loadMemory();
+  }), btn("Cancel", "gho", () => c.remove()));
+  bar.after(c);
 }
 function fieldWrap(label, node) {
   const w = el("label","dp-field");
@@ -6898,122 +8542,11 @@ function fieldWrap(label, node) {
 // Credentials arrive masked from the server; "Reveal" re-fetches the raw entry
 // on demand so a screenshot of this page never leaks a token by default.
 const SCOPE_TAG = { global: "", project: "acc", settings: "blu" };
-function jsonBox(title, obj, extra) {
-  const w = el("div","jsonbox");
-  const h = el("div","jh"); h.append(el("span","jt", title));
-  if (extra) h.append(extra);
-  w.append(h);
-  const pre = el("pre"); pre.textContent = JSON.stringify(obj, null, 2); w.append(pre);
-  return { box: w, pre };
-}
 function kvRow(dl, key, value, mono) {
   dl.append(el("dt", null, key));
   const dd = el("dd", mono === false ? "wrap" : null);
   if (value && value.nodeType) dd.append(value); else dd.textContent = value;
   dl.append(dd);
-}
-function mcpDetail(sv, body, reload) {
-  let revealed = null;                       // raw entry once the user asks
-  const dl = el("dl","kvs");
-  const render = () => {
-    const e = revealed || sv.entry || {};
-    dl.innerHTML = "";
-    kvRow(dl, "transport", sv.transport);
-    kvRow(dl, "defined in", sv.display_path || sv.path);
-    if (e.command) kvRow(dl, "command", String(e.command));
-    if (e.args && e.args.length) kvRow(dl, "args", e.args.map(String).join(" "));
-    if (e.url) kvRow(dl, "url", String(e.url));
-    ["env","headers"].forEach(k => {
-      const v = e[k];
-      if (v && typeof v === "object" && Object.keys(v).length) {
-        const box = el("div");
-        Object.entries(v).forEach(([kk, vv]) => {
-          const line = el("div");
-          line.append(document.createTextNode(kk + " = "));
-          line.append(el("span", revealed ? null : "secret", String(vv)));
-          box.append(line);
-        });
-        kvRow(dl, k, box);
-      }
-    });
-    const known = { command:1, args:1, url:1, env:1, headers:1, type:1 };
-    Object.keys(e).forEach(k => { if (!known[k]) kvRow(dl, k, typeof e[k] === "string" ? e[k] : JSON.stringify(e[k])); });
-    jb.pre.textContent = JSON.stringify(e, null, 2);
-    revBtn.textContent = revealed ? "Hide secrets" : "Reveal secrets";
-    revBtn.classList.toggle("on", !!revealed);
-  };
-  const revBtn = btn("Reveal secrets", "gho", async () => {
-    if (revealed) { revealed = null; render(); return; }
-    try {
-      const r = await api("/api/mcp/entry?" + q({ name: sv.name, scope: sv.scope }));
-      if (!r.ok) { toast(r.error || "cannot read that entry", true); return; }
-      revealed = r.entry; render();
-    } catch (e) { toast(e.message, true); }
-  });
-  const jb = jsonBox("config json", sv.entry || {}, sv.secrets && sv.secrets.length ? revBtn : null);
-  body.append(dl, jb.box);
-  render();
-
-  // Live probe: connect for real and show what the server exposes. The buttons
-  // sit above their own output, so a result never reads as belonging to the row
-  // below it.
-  const acts = el("div"); acts.style = "display:flex;gap:8px;margin-top:14px;flex-wrap:wrap";
-  const probeWrap = el("div");
-  body.append(acts, probeWrap);
-  const testBtn = btn("Test connection", "", async () => {
-    testBtn.disabled = true; testBtn.textContent = "Connecting…";
-    probeWrap.innerHTML = "";
-    try {
-      const r = await post("/api/mcp/test", { name: sv.name });
-      const p = el("div","probe " + (r.ok ? "ok" : "bad"));
-      const h = el("div","ph2");
-      h.append(el("span","dot2 " + (r.ok ? "ok" : "bad")));
-      h.append(document.createTextNode(r.ok
-        ? "Connected · " + (r.tools || []).length + " tool" + ((r.tools||[]).length===1?"":"s") + " · " + r.ms + "ms"
-        : "Failed to connect" + (r.ms != null ? " · " + r.ms + "ms" : "")));
-      p.append(h);
-      if (r.ok) {
-        const g = el("div","toolgrid");
-        (r.tools || []).forEach(t => { const k = el("span","tk", t.name); if (t.description) k.title = t.description; g.append(k); });
-        p.append(g);
-        if (!(r.tools || []).length) p.append(el("div","zd","The server connected but exposes no tools."));
-      } else p.append(el("div","pe", r.error || "unknown error"));
-      probeWrap.append(p);
-    } catch (e) { toast(e.message, true); }
-    finally { testBtn.disabled = false; testBtn.textContent = "Test connection"; }
-  });
-  acts.append(testBtn);
-  if (sv.editable) acts.append(btn("Edit JSON", "", () => openMcpEditor(sv, reload)));
-}
-async function openMcpEditor(sv, reload) {
-  let entry = sv.entry || {};
-  try {
-    const r = await api("/api/mcp/entry?" + q({ name: sv.name, scope: sv.scope }));
-    if (r.ok) entry = r.entry;                     // edit the real thing, not the mask
-  } catch (e) { /* fall back to the redacted copy */ }
-  const s = document.getElementById("sheet"); s.innerHTML = "";
-  s.append(el("h3", null, "Edit " + sv.name));
-  s.append(el("div","sub", sv.display_path || sv.path));
-  const ta = el("textarea","in");
-  ta.style = "width:100%;min-height:230px;line-height:1.55;resize:vertical";
-  ta.value = JSON.stringify(entry, null, 2);
-  s.append(ta);
-  const foot = el("div","cta");
-  const save = btn("Save changes", "pri", async () => {
-    let parsed;
-    try { parsed = JSON.parse(ta.value); }
-    catch (e) { toast("that isn't valid JSON: " + e.message, true); return; }
-    save.disabled = true;
-    try {
-      const r = await post("/api/mcp", { scope: sv.scope, name: sv.name, entry: parsed });
-      if (r.ok) { toast("saved " + sv.name); hideModal(); reload(); }
-      else toast(r.error || "failed", true);
-    } catch (e) { toast(e.message, true); } finally { save.disabled = false; }
-  });
-  foot.append(save, btn("Cancel", "gho", hideModal));
-  s.append(foot);
-  showModal(true);
-  setTimeout(() => ta.focus(), 60);
 }
 // One field that takes whatever the user already has on their clipboard: the
 // {"mcpServers": …} blob every MCP README ships, a lone entry object, a shell
@@ -7042,7 +8575,7 @@ function mcpComposer(onDone) {
         r = await post("/api/mcp", { scope: scope.value, name: nm, entry: entryFromText(text) });
         if (r.ok) r.added = [nm];
       }
-      if (r.ok) { toast("added " + (r.added || []).join(", ")); ta.value = ""; name.value = ""; onDone(); }
+      if (r.ok) { toast("added " + (r.added || []).join(", ")); ta.value = ""; name.value = ""; onDone(r.added || []); }
       else toast(r.error || "failed", true);
     } catch (e) { toast(e.message, true); } finally { add.disabled = false; }
   });
@@ -7062,6 +8595,16 @@ function entryFromText(s) {
   const p = s.split(/\s+/);
   return { command: p[0], args: p.slice(1) };
 }
+// ---- MCP: a board of connections --------------------------------------------
+// An MCP server is a connection, and the page reads like one: a card per
+// server that says whether it answers, how fast, and which tools it hands
+// the agent — then a sheet with the tools in full and the configuration.
+// Every server is connected once when the page opens (one real handshake +
+// tools/list, torn straight down) so each card's status is an answer, not a
+// guess. A project's stdio servers are left alone until the file is trusted:
+// connecting would run their command.
+const MCPW = { data: null, tests: {}, q: "", revealed: {}, tab: "tools", toolQ: "", open: null };
+const MCP_SCOPE_SAY = { global: "Global · every project", project: "This project", settings: "From settings.json · read-only here" };
 let mcpReq = 0;
 async function loadMcp() {
   const pad = document.getElementById("mcppad");
@@ -7071,31 +8614,11 @@ async function loadMcp() {
   try { mc = await api("/api/mcp"); }
   catch (e) { if (my !== mcpReq) return; pad.innerHTML = ""; pad.append(el("div","empty","Error: " + e.message)); return; }
   if (my !== mcpReq) return;
+  MCPW.data = mc;
   pad.innerHTML = "";
-  const reload = () => loadMcp();
-
-  const composer = mcpComposer(reload);
-  const openComposer = () => {
-    const on = composer.classList.toggle("on");
-    addBtn.textContent = on ? "Cancel" : "Add server";
-    addBtn.classList.toggle("pri", !on);
-    if (on) composer.querySelector("textarea").focus();
-  };
-  // one filled button per job: with no servers the empty state carries it, so
-  // the header's copy stays quiet rather than shouting the same thing twice
-  const addBtn = btn("Add server", mc.servers.length ? "pri" : "gho", openComposer);
-  const stdioN = mc.servers.filter(s => s.transport === "stdio").length;
-  pageHead(pad, "MCP servers", mc.servers.length, null, [addBtn]);
-  if (mc.servers.length) {
-    pageReads(pad, [
-      { v: stdioN, k: "local" },
-      { v: mc.servers.length - stdioN, k: "remote" },
-    ], null, "A project's .mcp.json is attacker-controlled data until you trust it.");
-  }
-  pad.append(composer);
-
-  // Project .mcp.json is attacker-controlled data — offer the trust gate here
-  // rather than making the user go find the terminal command.
+  pageHead(pad, "MCP servers", null, null, [btn("Add server", mc.servers.length ? "pri" : "gho", () => openMcpAdd())]);
+  const reads = el("div"); reads.id = "mcp-reads"; pad.append(reads);
+  paintMcpReads();
   if (mc.project_exists && !mc.project_trusted) {
     const b = el("div","banner");
     const txt = el("div","sp");
@@ -7104,59 +8627,369 @@ async function loadMcp() {
     b.append(txt);
     b.append(btn("Trust this file", "", async () => {
       try { const r = await post("/api/mcp/trust", {});
-        if (r.ok) { toast("trusted this project's .mcp.json"); reload(); } else toast(r.error||"failed", true); }
+        if (r.ok) { toast("trusted this project's .mcp.json"); loadMcp(); } else toast(r.error || "failed", true); }
       catch (e) { toast(e.message, true); }
     }));
     pad.append(b);
   }
-
   if (!mc.servers.length) {
     pad.append(emptyState("mcp", "No MCP servers configured",
       "Add one to give the agent tools it doesn't ship with — GitHub, a database, your API.",
-      btn("Add server", "pri", () => { if (!composer.classList.contains("on")) openComposer(); })));
+      btn("Add server", "pri", () => openMcpAdd())));
     return;
   }
-
-  const find = findBox("Filter servers — name, command, url…");
-  if (mc.servers.length > 5) pad.append(find.wrap);
-
-  const byScope = { global: [], project: [], settings: [] };
-  mc.servers.forEach(sv => (byScope[sv.scope] || (byScope[sv.scope] = [])).push(sv));
-  const files = { global: mc.global_file, project: mc.project_file, settings: "settings.json" };
-  const labels = { global: "Global · every project", project: "Project · this repo",
-                   settings: "settings.json · read-only here" };
-  ["global","project","settings"].forEach(scope => {
-    const list = byScope[scope] || [];
-    if (!list.length && scope === "settings") return;
-    const sec = section(pad, labels[scope], files[scope]);
-    if (!list.length) { sec.append(zero("Nothing here yet", "Servers added with the “" + scope +
-      "” scope land in " + files[scope] + ".")); return; }
-    const box = el("div","list");
-    list.forEach(sv => {
-      const withheld = (mc.withheld || []).includes(sv.name);
-      const tags = [{ text: sv.transport, cls: sv.transport === "stdio" ? "" : "blu" }];
-      if (withheld) tags.push({ text: "needs trust", cls: "amb" });
-      const acts = [];
-      if (sv.editable) {
-        acts.push(btn("Edit", "gho", () => openMcpEditor(sv, reload)));
-        const del = btn("Delete", "gho dan", null);
-        del.onclick = () => armDelete(del, async () => {
-          try { const r = await post("/api/mcp/delete", { scope: sv.scope, name: sv.name });
-            if (r.ok) { toast("removed " + sv.name); reload(); } else toast(r.error||"failed", true); }
-          catch (e) { toast(e.message, true); }
-        });
-        acts.push(del);
-      }
-      const row = listRow({
-        name: sv.name, sub: sv.detail, dot: withheld ? "warn" : "ok", tags, actions: acts,
-        build: (body) => mcpDetail(sv, body, reload),
-      });
-      row.dataset.q = (sv.name + " " + sv.detail + " " + sv.transport + " " + sv.scope).toLowerCase();
-      box.append(row);
-    });
-    sec.append(box);
+  if (mc.servers.length > 4) {
+    const find = findBox("Search servers and tools");
+    find.input.value = MCPW.q;
+    find.input.oninput = () => { MCPW.q = find.input.value; paintMcpCards(); };
+    pad.append(find.wrap);
+  }
+  const board = el("div"); board.id = "mcx-board"; pad.append(board);
+  paintMcpCards();
+  // deep link: #mcp/<name> opens that server's sheet
+  const want = decodeURIComponent(location.hash.slice(1).split("/")[1] || "");
+  const hit = want && mc.servers.find(s => s.name === want);
+  if (hit) openMcpSheet(hit);
+  // connect to everything once, three at a time
+  const todo = mc.servers.filter(s => !MCPW.tests[s.name] && !mcpWithheld(s));
+  let k = 0;
+  const next = async () => { const s = todo[k++]; if (!s) return; await testMcp(s.name); return next(); };
+  Promise.all([next(), next(), next()]);
+}
+const mcpWithheld = s => ((MCPW.data || {}).withheld || []).includes(s.name);
+function paintMcpReads() {
+  const w = document.getElementById("mcp-reads"); if (!w || !MCPW.data) return;
+  w.innerHTML = "";
+  const sv = MCPW.data.servers || [];
+  const done = sv.map(s => MCPW.tests[s.name]).filter(t => t && !t.pending);
+  const ok = done.filter(t => t.ok);
+  const tools = ok.reduce((a, t) => a + (t.tools || []).length, 0);
+  const reads = [{ v: sv.length, k: "server" + (sv.length === 1 ? "" : "s") }];
+  if (done.length) reads.push({ v: ok.length + " of " + sv.length, k: "connected" });
+  if (ok.length) reads.push({ v: tools, k: "tools for the agent" });
+  pageReads(w, reads, null, "Each server is connected once when this page opens: one handshake and tools/list, then closed.");
+}
+async function testMcp(name, force) {
+  if (!force && MCPW.tests[name] && !MCPW.tests[name].pending) return MCPW.tests[name];
+  MCPW.tests[name] = { pending: true };
+  repaintMcp(name);
+  let r;
+  try { r = await post("/api/mcp/test", { name }); } catch (e) { r = { ok: false, error: e.message }; }
+  MCPW.tests[name] = r;
+  repaintMcp(name);
+  return r;
+}
+function repaintMcp(name) {
+  if (curView !== "mcp") return;
+  paintMcpReads();
+  const s = (MCPW.data.servers || []).find(x => x.name === name);
+  const old = document.querySelector('.mcx[data-name="' + CSS.escape(name) + '"]');
+  if (s && old) old.replaceWith(mcpCard(s));
+  if (MCPW.open === name && mcpSheetOpen()) paintMcpSheet(s);
+}
+// what a server IS, in one short line: the host it talks to, or the command it runs
+function mcpWhere(s) {
+  const e = s.entry || {};
+  if (e.url) { try { const u = new URL(String(e.url)); return u.host + (u.pathname !== "/" ? u.pathname : ""); } catch (x) { return String(e.url); } }
+  if (e.command) {
+    const base = String(e.command).split("/").pop();
+    const arg = (e.args || []).map(String).find(a => !a.startsWith("-"));
+    return base + (arg ? " " + (arg.includes("/") && !arg.startsWith("@") ? arg.split("/").pop() : arg) : "");
+  }
+  return s.detail || "";
+}
+function mcpState(s) {
+  if (mcpWithheld(s)) return ["warn", "Needs trust"];
+  const t = MCPW.tests[s.name];
+  if (!t) return ["", "Not checked"];
+  if (t.pending) return ["run", "Connecting"];
+  return t.ok ? ["ok", "Connected"] : ["bad", "Failed"];
+}
+function mcpHint(err) {
+  return /401|403|unauthor|forbidden/i.test(err) ? "The server refused the credentials — check the key in its headers or env."
+    : /ENOENT|not found|No such file/i.test(err) ? "The command isn't installed on this machine, or isn't on PATH."
+    : /timed? ?out|Timeout/i.test(err) ? "Nothing answered in time — is it running, and is the URL right?"
+    : /connect|refused|ECONN/i.test(err) ? "Nothing is listening there — start the server, or fix the URL."
+    : "It didn't answer the MCP handshake.";
+}
+function mcpPill(s) {
+  const [cls, lab] = mcpState(s);
+  const p = el("span","mcx-st " + cls);
+  p.append(el("i"), document.createTextNode(lab));
+  return p;
+}
+function paintMcpCards() {
+  const board = document.getElementById("mcx-board"); if (!board) return;
+  board.innerHTML = "";
+  const ql = MCPW.q.trim().toLowerCase();
+  const match = s => !ql || ql.split(/\s+/).every(t => (s.name + " " + s.detail + " " + s.transport + " " +
+    ((MCPW.tests[s.name] || {}).tools || []).map(x => x.name).join(" ")).toLowerCase().includes(t));
+  let shown = 0;
+  ["global", "project", "settings"].forEach(sc => {
+    const rows = (MCPW.data.servers || []).filter(s => s.scope === sc && match(s));
+    if (!rows.length) return;
+    shown += rows.length;
+    const sec = section(board, MCP_SCOPE_SAY[sc]);
+    const file = sc === "global" ? MCPW.data.global_file : sc === "project" ? MCPW.data.project_file : "settings.json";
+    sec.querySelector(".sec-t").title = file;
+    const grid = el("div","mcx-grid");
+    rows.forEach(s => grid.append(mcpCard(s)));
+    sec.append(grid);
   });
-  wireFind(find.input, pad, "No server matches that filter.");
+  if (!shown) board.append(emptyState("search", "No server matches", "Try a server name, a host, or a tool name."));
+}
+function mcpCard(s) {
+  const c = el("div","mcx"); c.dataset.name = s.name;
+  c.tabIndex = 0; c.setAttribute("role", "button");
+  const t = MCPW.tests[s.name];
+  const h = el("div","mcx-h");
+  h.append(skillGlyph(s.name));
+  const tt = el("div","mcx-tt");
+  tt.append(el("div","mcx-n", s.name));
+  const w = el("div","mcx-w", mcpWhere(s)); w.title = s.detail; tt.append(w);
+  h.append(tt, mcpPill(s));
+  c.append(h);
+  const b = el("div","mcx-b");
+  if (mcpWithheld(s)) b.append(el("div","mcx-note", "From this project's .mcp.json — trust the file to run it."));
+  else if (!t || t.pending) { const r = el("div","mcx-chips"); for (let i = 0; i < 4; i++) r.append(el("span","mcx-chip sk")); b.append(r); }
+  else if (!t.ok) { b.append(el("div","mcx-note bad", mcpHint(t.error || ""))); const e = el("div","mcx-err", t.error || ""); e.title = t.error || ""; b.append(e); }
+  else {
+    const tools = t.tools || [];
+    const r = el("div","mcx-chips");
+    tools.slice(0, 5).forEach(x => { const ch = el("span","mcx-chip", x.name); ch.title = x.description || x.name; r.append(ch); });
+    if (tools.length > 5) r.append(el("span","mcx-chip more", "+" + (tools.length - 5)));
+    if (!tools.length) r.append(el("span","mcx-note", "Connected, but it exposes no tools."));
+    b.append(r);
+  }
+  c.append(b);
+  const f = el("div","mcx-f");
+  const facts = [s.transport === "stdio" ? "local command" : s.transport.toUpperCase()];
+  if (t && t.ok) facts.push((t.tools || []).length + " tool" + ((t.tools || []).length === 1 ? "" : "s"), t.ms + " ms");
+  f.append(el("span","mcx-facts", facts.join(" · ")));
+  f.append(el("span","sp"));
+  if (!mcpWithheld(s)) {
+    const tb = btn(t && !t.pending ? "Test again" : "Test", "gho", e => { e.stopPropagation(); testMcp(s.name, true); });
+    if (t && t.pending) tb.disabled = true;
+    f.append(tb);
+  }
+  f.append(btn("Open", "gho", e => { e.stopPropagation(); openMcpSheet(s); }));
+  c.append(f);
+  c.onclick = () => openMcpSheet(s);
+  c.onkeydown = e => { if (e.key === "Enter") openMcpSheet(s); };
+  return c;
+}
+
+// ---- the sheet: one server, its tools and its configuration -------------
+const mcpSheetOpen = () => !!document.getElementById("modal").className && !!document.querySelector("#sheet .mcs-h");
+function openMcpSheet(s, tab) {
+  MCPW.open = s.name; MCPW.tab = tab || "tools"; MCPW.toolQ = ""; MCPW.editing = false;
+  history.replaceState(null, "", "#mcp/" + encodeURIComponent(s.name));
+  paintMcpSheet(s);
+  showModal(true);
+  if (!MCPW.tests[s.name] && !mcpWithheld(s)) testMcp(s.name);
+}
+function paintMcpSheet(s) {
+  if (!s) return;
+  const sh = document.getElementById("sheet");
+  const keepQ = sh.querySelector(".mcs-find input");
+  const hadFocus = keepQ && document.activeElement === keepQ;
+  sh.innerHTML = "";
+  const t = MCPW.tests[s.name];
+  const h = el("div","mcs-h");
+  h.append(skillGlyph(s.name));
+  const tt = el("div","mcx-tt");
+  tt.append(el("div","mcs-n", s.name));
+  const w = el("div","mcx-w", s.detail); w.title = s.detail; tt.append(w);
+  h.append(tt, mcpPill(s));
+  sh.append(h);
+  // the line under the title says the result of the last handshake
+  const line = el("div","mcs-line");
+  if (t && t.ok) line.textContent = "Connected in " + t.ms + " ms · " + (t.tools || []).length + " tools · " + (s.transport === "stdio" ? "runs a local command" : s.transport.toUpperCase() + " · remote");
+  else if (t && !t.pending) line.textContent = mcpHint(t.error || "");
+  else if (mcpWithheld(s)) line.textContent = "Waiting for you to trust this project's .mcp.json.";
+  else line.textContent = "Connecting…";
+  if (!mcpWithheld(s) && !(t && t.pending)) {
+    const again = el("button","mcx-link", "Test again"); again.onclick = () => testMcp(s.name, true); line.append(again);
+  }
+  sh.append(line);
+  // a segmented control, not two words: which view is open has to be obvious
+  const tabs = el("div","skx-seg mcs-tabs"); tabs.setAttribute("role", "tablist");
+  [["tools", "Tools", t && t.ok ? (t.tools || []).length : null], ["config", "Configuration", null]].forEach(([k, lab, n]) => {
+    const c = el("button", MCPW.tab === k ? "on" : null, lab);
+    c.setAttribute("role", "tab"); c.setAttribute("aria-selected", MCPW.tab === k ? "true" : "false");
+    if (n != null) c.append(el("span","mcs-tn2", String(n)));
+    c.onclick = () => { MCPW.tab = k; MCPW.editing = false; paintMcpSheet(s); };
+    tabs.append(c);
+  });
+  sh.append(tabs);
+  const body = el("div","mcs-body");
+  sh.append(body);
+  if (MCPW.tab === "tools") mcpToolsTab(body, s, t, hadFocus);
+  else mcpConfigTab(body, s);
+}
+function mcpToolsTab(body, s, t, hadFocus) {
+  if (mcpWithheld(s)) { body.append(el("div","us-empty", "Trust the project's .mcp.json to connect and see its tools.")); return; }
+  if (!t || t.pending) { for (let i = 0; i < 4; i++) { const r = el("div","mcs-tool sk"); r.append(el("span","mcs-tn"), el("span","mcs-td")); body.append(r); } return; }
+  if (!t.ok) {
+    const e = el("div","mcp-err");
+    e.append(el("b", null, "It didn't connect"), el("span", null, t.error || "unknown error"), el("span","mcp-hint", mcpHint(t.error || "")));
+    body.append(e);
+    return;
+  }
+  const tools = t.tools || [];
+  if (!tools.length) { body.append(el("div","us-empty", "It connected, but it exposes no tools.")); return; }
+  const list = el("div","mcs-tools");
+  if (tools.length > 6) {
+    const f = el("label","skx-find mcs-find");
+    f.append(el("span","skx-fi", "⌕"));
+    const i = document.createElement("input"); i.placeholder = "Filter " + tools.length + " tools"; i.value = MCPW.toolQ;
+    i.oninput = () => { MCPW.toolQ = i.value; fill(); };
+    f.append(i); body.append(f);
+    if (hadFocus) setTimeout(() => i.focus(), 0);
+  }
+  body.append(list);
+  const fill = () => {
+    list.innerHTML = "";
+    const ql = MCPW.toolQ.trim().toLowerCase();
+    tools.filter(x => !ql || (x.name + " " + (x.description || "")).toLowerCase().includes(ql)).forEach(x => {
+      const r = el("div","mcs-tool");
+      r.append(el("div","mcs-tn", x.name));
+      if (x.description) r.append(el("div","mcs-td", x.description));
+      if ((x.params || []).length) {
+        const ps = el("div","mcs-ps");
+        x.params.forEach(p => {
+          const c = el("span","mcs-p" + (p.required ? " req" : ""));
+          c.append(document.createTextNode(p.name));
+          if (p.type) c.append(el("i", null, p.type));
+          c.title = p.required ? "required" : "optional";
+          ps.append(c);
+        });
+        r.append(ps);
+      }
+      list.append(r);
+    });
+    if (!list.childElementCount) list.append(el("div","skx-none", "No tool matches"));
+  };
+  fill();
+}
+function mcpConfigTab(body, s) {
+  const raw = MCPW.revealed[s.name];
+  const e = raw || s.entry || {};
+  if (MCPW.editing) { body.append(mcpEditor(s)); return; }
+  const dl = el("div","skx-props mcs-props");
+  const row = (label, val) => {
+    const r = el("div","skx-pr");
+    r.append(el("div","skx-pl", label));
+    const v = el("div","skx-pv"); v.append(val); r.append(v); dl.append(r);
+  };
+  const mono = t => { const x = el("span","mcx-mono", t); x.title = t; return x; };
+  row("Transport", el("span", null, s.transport === "stdio" ? "stdio · runs a local command" : s.transport === "sse" ? "SSE · remote" : "HTTP · remote"));
+  if (e.url) row("URL", mono(String(e.url)));
+  if (e.command) row("Command", mono([e.command].concat(e.args || []).map(String).join(" ")));
+  ["headers", "env"].forEach(k => {
+    const v = e[k];
+    if (!v || typeof v !== "object" || !Object.keys(v).length) return;
+    const w = el("div","mcp-kv");
+    Object.entries(v).forEach(([kk, vv]) => {
+      const line = el("div","mcp-kvr");
+      line.append(el("span","mcp-k", kk), el("span","mcp-v" + (raw ? "" : " secret"), String(vv)));
+      w.append(line);
+    });
+    row(k === "env" ? "Environment" : "Headers", w);
+  });
+  const fp = mono(s.display_path || s.path); fp.classList.add("mcs-file"); fp.onclick = () => copyText(s.display_path || s.path, "path");
+  row("File", fp);
+  body.append(dl);
+  const pre = el("pre","mcp-json"); pre.textContent = JSON.stringify(e, null, 2);
+  body.append(pre);
+  const acts = el("div","cs-foot mcs-foot");
+  if (s.editable) acts.append(btn("Edit", "pri", () => { MCPW.editing = true; paintMcpSheet(s); }));
+  if ((s.secrets || []).length && s.editable) acts.append(btn(raw ? "Hide secrets" : "Reveal secrets", "gho", () => toggleMcpReveal(s)));
+  acts.append(btn("Copy JSON", "gho", () => copyText(JSON.stringify({ [s.name]: e }, null, 2), "configuration")));
+  acts.append(el("span","sp"));
+  if (s.editable) {
+    const del = btn("Remove server", "gho dan", null);
+    del.onclick = () => armDelete(del, async () => {
+      try { const r = await post("/api/mcp/delete", { scope: s.scope, name: s.name });
+        if (r.ok) { toast("removed " + s.name); delete MCPW.tests[s.name]; hideModal(); history.replaceState(null, "", "#mcp"); loadMcp(); }
+        else toast(r.error || "failed", true); }
+      catch (err) { toast(err.message, true); }
+    });
+    acts.append(del);
+  } else acts.append(el("span","mcx-note", "Defined in settings.json — edit it there."));
+  body.append(acts);
+}
+async function toggleMcpReveal(s) {
+  if (MCPW.revealed[s.name]) { delete MCPW.revealed[s.name]; paintMcpSheet(s); return; }
+  try {
+    const r = await api("/api/mcp/entry?" + q({ name: s.name, scope: s.scope }));
+    if (!r.ok) { toast(r.error || "cannot read that entry", true); return; }
+    MCPW.revealed[s.name] = r.entry; paintMcpSheet(s);
+  } catch (e) { toast(e.message, true); }
+}
+function mcpEditor(s) {
+  const w = el("div","mcp-ed");
+  const ta = el("textarea","skx-raw mcp-ta"); ta.spellcheck = false;
+  ta.value = JSON.stringify(MCPW.revealed[s.name] || s.entry || {}, null, 2);
+  const grow = () => { ta.style.height = "auto"; ta.style.height = Math.max(180, ta.scrollHeight) + "px"; };
+  // edit the real entry, not the mask: a save must never write "••••" back
+  api("/api/mcp/entry?" + q({ name: s.name, scope: s.scope })).then(r => { if (r.ok) { ta.value = JSON.stringify(r.entry, null, 2); grow(); } }).catch(() => {});
+  ta.oninput = () => { grow(); err.textContent = ""; };
+  const err = el("div","mcp-jerr");
+  const acts = el("div","cs-foot mcs-foot");
+  const save = btn("Save", "pri", async () => {
+    let parsed;
+    try { parsed = JSON.parse(ta.value); } catch (e) { err.textContent = "That isn't valid JSON — " + e.message; return; }
+    save.disabled = true;
+    try {
+      const r = await post("/api/mcp", { scope: s.scope, name: s.name, entry: parsed });
+      if (r.ok) {
+        toast("saved " + s.name); MCPW.editing = false; delete MCPW.revealed[s.name]; delete MCPW.tests[s.name];
+        await loadMcp();
+        const fresh = MCPW.data.servers.find(x => x.name === s.name);
+        if (fresh) { MCPW.tab = "config"; paintMcpSheet(fresh); }
+      } else err.textContent = r.error || "failed";
+    } catch (e) { err.textContent = e.message; } finally { save.disabled = false; }
+  });
+  acts.append(save, btn("Cancel", "gho", () => { MCPW.editing = false; paintMcpSheet(s); }));
+  ta.onkeydown = ev => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === "s") { ev.preventDefault(); save.click(); }
+    if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); MCPW.editing = false; paintMcpSheet(s); }
+  };
+  w.append(ta, err, acts);
+  setTimeout(() => { grow(); ta.focus(); }, 0);
+  return w;
+}
+function openMcpAdd() {
+  if (curView !== "mcp") showTab("mcp");
+  MCPW.open = null;
+  const sh = document.getElementById("sheet"); sh.innerHTML = "";
+  const h = el("div","mcs-h");
+  h.append(el("div","mcs-n", "Add a server"));
+  sh.append(h);
+  sh.append(el("div","mcs-line", "Paste whatever the server's README gives you — a whole mcpServers block, one entry, a command, or a URL."));
+  const comp = mcpComposer(async added => {
+    hideModal();
+    await loadMcp();
+    const s = added && added[0] && MCPW.data.servers.find(x => x.name === added[0]);
+    if (s) openMcpSheet(s);
+  });
+  comp.classList.add("on", "mcs-comp");
+  sh.append(comp);
+  const ex = el("div","mcs-ex");
+  ex.append(el("div","mcs-exh", "Or start from an example"));
+  [["Remote server", "https://mcp.example.com/mcp"],
+   ["Local command", "npx -y @modelcontextprotocol/server-filesystem ~/Documents"],
+   ["Config block", '{ "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } } }']
+  ].forEach(([lab, text]) => {
+    const r = el("button","mcp-ex");
+    r.append(el("span","mcp-exl", lab), el("span","mcx-mono mcp-ext", text));
+    r.onclick = () => { const ta = comp.querySelector("textarea"); ta.value = text; ta.focus(); };
+    ex.append(r);
+  });
+  sh.append(ex);
+  showModal(true);
+  setTimeout(() => { const ta = comp.querySelector("textarea"); if (ta) ta.focus(); }, 30);
 }
 
 // ---- config ----
@@ -7187,16 +9020,24 @@ async function loadConfig() {
       "settings.json will show up here with the layer it came from."));
   } else {
     const t = el("div","cfg");
-    keys.forEach(k => {
+    const addRow = (k, v) => {
       const row = el("div","kv");
-      row.append(el("div","ck", k));
-      row.append(el("div","cv", fmtVal(merged[k])));
+      row.append(el("div","ck", k), el("div","cv", fmtVal(v)));
       t.append(row);
+    };
+    keys.forEach(k => {
+      const v = merged[k];
+      // a flat object (env, permissions) reads as its own keys, one per row —
+      // a JSON block with a lone "env" in the gutter reads as a dump
+      if (v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every(x => x == null || typeof x !== "object")) {
+        Object.keys(v).sort().forEach(sub => addRow(k + "." + sub, v[sub]));
+      } else addRow(k, v);
     });
     pad.append(t);
   }
 
-  const laySec = section(pad, "Layers · later overrides earlier");
+  const laySec = section(pad, "Layers");
+  laySec.querySelector(".sec-t").title = "user, then project, then local — a later layer overrides an earlier one";
   ["user","project","local"].forEach(src => {
     const layer = (c.layers||{})[src] || {};
     const d = el("details","layer");
@@ -7223,7 +9064,7 @@ loadProjects().catch(e => document.getElementById("projects").append(el("div","e
     // land with the project and session cards selected, not just the transcript
     jumpToSession(qs.get("cwd"), qs.get("session"));
   }
-  else if (["sessions","activity","models","deploy","skills","mcp","config"].includes(t.split("/")[0])) showTab(t.split("/")[0]);
+  else if (["sessions","activity","models","deploy","skills","memory","mcp","config"].includes(t.split("/")[0])) showTab(t.split("/")[0]);
   else { refreshCrumb(); loadHome(); }   // default landing
 }
 </script>

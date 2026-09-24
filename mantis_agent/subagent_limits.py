@@ -103,6 +103,9 @@ __all__ = [
     "current_depth",
     "current_spawn_context",
     "default_cpu_cap",
+    "default_subagent_concurrency",
+    "is_local_backend",
+    "subagent_concurrency_cap",
     "env_var_for",
     "reset_shared_limiter",
     "set_shared_limiter",
@@ -277,6 +280,129 @@ def default_cpu_cap() -> int:
 
     cpu = os.cpu_count() or 2
     return max(1, min(16, cpu - 2))
+
+
+#: Parallel-subagent defaults when nothing is configured. A single local GPU
+#: (Ollama / llama.cpp / LM Studio / a vLLM on localhost) serves children
+#: through ``OLLAMA_NUM_PARALLEL``-style slots: past ~2 they just queue, each
+#: one multiplies KV-cache memory, and they evict the parent's cached prompt
+#: prefix. Hosted endpoints scale horizontally, so they keep the wider cap.
+LOCAL_SUBAGENT_CONCURRENCY = 2
+HOSTED_SUBAGENT_CONCURRENCY = 8
+
+_LOCAL_HOSTNAMES = frozenset({
+    "localhost", "localhost.localdomain", "0.0.0.0", "::", "host.docker.internal",
+})
+
+
+def _backend_url(provider: Any = None, backend: Optional[str] = None,
+                 model: Optional[str] = None) -> str:
+    """Best-effort URL the children will talk to."""
+
+    if backend:
+        return str(backend)
+    if provider is not None:
+        client = getattr(provider, "client", None)
+        url = getattr(client, "base_url", None) or getattr(provider, "base_url", None)
+        if url:
+            return str(url)
+    if model:
+        try:
+            from .routing import resolve_backend  # noqa: PLC0415
+
+            return resolve_backend(model)
+        except Exception:  # noqa: BLE001 — routing must never break a spawn
+            return ""
+    return ""
+
+
+def is_local_backend(provider: Any = None, backend: Optional[str] = None,
+                     model: Optional[str] = None) -> bool:
+    """True when subagents would share one self-hosted inference server —
+    a loopback / private-network host (Ollama, llama.cpp, LM Studio, a local
+    vLLM), rather than a hosted API. Ollama Cloud tags (``*-cloud``) proxied
+    through the local daemon run remotely, so they count as hosted."""
+
+    m = (model or "").lower()
+    if m.endswith("-cloud") or m.endswith(":cloud"):
+        return False
+    url = _backend_url(provider, backend, model).strip()
+    if not url or "://" not in url:
+        return False
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host in _LOCAL_HOSTNAMES or host.endswith(".local") or host.endswith(".localhost"):
+        return True
+    import ipaddress  # noqa: PLC0415
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def default_subagent_concurrency(provider: Any = None, backend: Optional[str] = None,
+                                 model: Optional[str] = None) -> int:
+    """The parallel-subagent cap when nothing is configured — see
+    :data:`LOCAL_SUBAGENT_CONCURRENCY`."""
+
+    if is_local_backend(provider, backend, model):
+        return LOCAL_SUBAGENT_CONCURRENCY
+    return HOSTED_SUBAGENT_CONCURRENCY
+
+
+def subagent_concurrency_cap(
+    *,
+    provider: Any = None,
+    backend: Optional[str] = None,
+    model: Optional[str] = None,
+    explicit: Optional[int] = None,
+    env: Optional[Mapping[str, str]] = None,
+    settings: Optional[Mapping[str, Any]] = None,
+) -> int:
+    """How many ``task`` children may run at once.
+
+    explicit (code) > ``MANTIS_SUBAGENT_MAX_CONCURRENT`` > settings
+    ``subagents.maxConcurrentAgents`` > backend-aware default. ``auto`` means
+    the CPU-derived cap. Clamped like every other ceiling. ``settings=None``
+    reads the user/project/local settings files (a broken file is ignored)."""
+
+    def _value(raw: Any) -> Optional[int]:
+        if raw is None:
+            return None
+        if _is_auto(raw):
+            return default_cpu_cap()
+        num = _coerce_number(raw)
+        return None if num is None else int(_clamp("max_concurrent_agents", int(num)))
+
+    got = _value(explicit)
+    if got is not None:
+        return got
+    source = os.environ if env is None else env
+    got = _value(source.get(_META["max_concurrent_agents"][1]))
+    if got is not None:
+        return got
+    if settings is None:
+        try:
+            from .settings import load_settings  # noqa: PLC0415
+
+            settings = load_settings(["user", "project", "local"])
+        except Exception:  # noqa: BLE001 — a bad settings file must not break spawning
+            settings = {}
+    block = settings.get(SETTINGS_BLOCK) if isinstance(settings, Mapping) else None
+    if isinstance(block, Mapping):
+        got = _value(block.get(_META["max_concurrent_agents"][0],
+                               block.get("max_concurrent_agents")))
+        if got is not None:
+            return got
+    return default_subagent_concurrency(provider, backend, model)
 
 
 def _coerce_number(value: Any) -> Optional[float]:

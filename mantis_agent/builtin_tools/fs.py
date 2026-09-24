@@ -19,9 +19,11 @@ so a runaway ``find /`` or a huge log can't blow up the context window.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import re
+import shutil
 import signal
 import time
 from collections.abc import Callable
@@ -206,6 +208,162 @@ def _human_size(n: int) -> str:
     return f"{n:.1f} TB"
 
 
+def _executor_cap(default: int) -> int:
+    """The char cap the executor will hold this call's result to (it shrinks
+    with the model's context window), or ``default`` when the tool is called
+    directly. Self-limiting to it lets a tool cut cleanly and say how to get
+    the rest, instead of the executor's backstop eliding the middle."""
+    from ..streaming.executor import tool_result_char_cap  # noqa: PLC0415
+
+    return tool_result_char_cap() or default
+
+
+# Shell output keeps more tail than head: the failing test summary, the last
+# compiler error and the exit status are at the end.
+_SHELL_HEAD_RATIO = 0.4
+# Full outputs of truncated foreground commands, saved so the model can grep or
+# read the elided middle. Oldest pruned past this many — per agent scope (see
+# TOOL_SCOPE), so a subagent's churn can't delete a file the parent's model was
+# just told about.
+_MAX_SAVED_OUTPUTS = 20
+_SAVED_OUTPUTS: list[str] = []
+_SAVED_OUTPUTS_BY_SCOPE: dict[str, list[str]] = {"__global__": _SAVED_OUTPUTS}
+# One spill file never grows past this; the cut is marked in the file.
+_SPILL_MAX_BYTES = 20 * 1024 * 1024
+# The spill directory: private (0700) and per process, under the mantis state
+# dir — NOT the system temp dir, which the sandbox binds read-write into every
+# sandboxed child. Created lazily, removed at exit.
+_SPILL_DIR: list[str | None] = [None]
+
+
+def _spill_session() -> str:
+    return f"bash-output-{os.getpid()}"
+
+
+def _spill_dir() -> str | None:
+    d = _SPILL_DIR[0]
+    if d and os.path.isdir(d):
+        return d
+    first = d is None
+    try:
+        from ..sandbox_tmpdir import private_tmpdir  # noqa: PLC0415
+
+        d = str(private_tmpdir(_spill_session()))
+    except Exception:  # noqa: BLE001 — fall back to a private mkdtemp
+        import tempfile  # noqa: PLC0415
+
+        try:
+            d = tempfile.mkdtemp(prefix="mantis-bash-out-")
+        except OSError:
+            return None
+    _SPILL_DIR[0] = d
+    if first:
+        import atexit  # noqa: PLC0415
+
+        atexit.register(_cleanup_spills)
+    return d
+
+
+def _cleanup_spills() -> None:
+    """Remove every saved output and the spill directory. Never raises."""
+    for paths in _SAVED_OUTPUTS_BY_SCOPE.values():
+        while paths:
+            try:
+                os.unlink(paths.pop())
+            except OSError:
+                pass
+    d = _SPILL_DIR[0]
+    if d:
+        shutil.rmtree(d, ignore_errors=True)
+        try:
+            from ..sandbox_tmpdir import cleanup  # noqa: PLC0415
+
+            cleanup(_spill_session())  # drops the owner record too
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _new_spill_file(prefix: str) -> tuple[int, str] | None:
+    """``(fd, path)`` of a fresh 0600 file in the private spill dir, or None."""
+    import tempfile  # noqa: PLC0415
+
+    d = _spill_dir()
+    if d is None:
+        return None
+    try:
+        return tempfile.mkstemp(prefix=prefix, suffix=".log", dir=d)
+    except OSError:
+        return None
+
+
+def _register_saved_output(path: str) -> None:
+    saved = _SAVED_OUTPUTS_BY_SCOPE.setdefault(_scope(), [])
+    saved.append(path)
+    while len(saved) > _MAX_SAVED_OUTPUTS:
+        try:
+            os.unlink(saved.pop(0))
+        except OSError:
+            pass
+
+
+def _spill_cut_marker(dropped: int) -> bytes:
+    return f"\n… [saved output cut at {_SPILL_MAX_BYTES:,} bytes — {dropped:,} more bytes not saved]\n".encode()
+
+
+def _save_full_output(text: str) -> str | None:
+    """Write ``text`` (capped at ``_SPILL_MAX_BYTES``) to a private spill file
+    and return its path (None on any failure — saving is a convenience, never
+    a reason to fail the command)."""
+    made = _new_spill_file("mantis-bash-")
+    if made is None:
+        return None
+    fd, path = made
+    data = text.encode("utf-8", "replace")
+    if len(data) > _SPILL_MAX_BYTES:
+        data = data[:_SPILL_MAX_BYTES] + _spill_cut_marker(len(data) - _SPILL_MAX_BYTES)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    except OSError:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return None
+    _register_saved_output(path)
+    return path
+
+
+def _truncate_shell(body: str, *, prefix: str = "", suffix: str = "",
+                    full_output_path: str | None = None) -> str:
+    """Head + tail truncation for shell output, sized to the executor's cap.
+
+    ``prefix`` / ``suffix`` (a status header, the ``[exit code: N]`` line) are
+    kept verbatim OUTSIDE the truncated body so they can never be elided. When
+    the body is cut, the note names a file holding the full text: the caller's
+    ``full_output_path`` (a background shell's log) or a freshly saved copy.
+    The result fits the cap — the executor's backstop never has to re-cut it
+    (which could elide the note naming that file)."""
+    from ..streaming.executor import truncate_middle  # noqa: PLC0415
+
+    room = _executor_cap(_MAX_OUTPUT) - len(prefix) - len(suffix)
+    if len(body) <= room:
+        return f"{prefix}{body}{suffix}"
+    path = full_output_path or _save_full_output(body)
+    hint = (
+        f"Full output saved to {path} — grep it, or read_file it with offset/limit."
+        if path
+        else "Re-run with a filter (grep / head / tail) to see the middle."
+    )
+    note = f"[{len(body):,} characters of output elided. {hint}]"
+    if room < len(note) + 400:
+        # Too little room for head + tail + note: the pointer to the full
+        # output is the one thing worth keeping.
+        return f"{prefix}{note}{suffix}"
+    kept = truncate_middle(body, room, head_ratio=_SHELL_HEAD_RATIO, hint=hint)
+    return f"{prefix}{kept}{suffix}"
+
+
 def _truncate(text: str, limit: int = _MAX_OUTPUT) -> str:
     if len(text) <= limit:
         return text
@@ -236,12 +394,19 @@ def _missing_file_error(path: str, p: Path) -> FileNotFoundError:
     return FileNotFoundError(f"no such file: {path}{_path_suggestion(p)}")
 
 
-_LINE_NUM_PREFIX_RE = re.compile(r"(?m)^\s*\d+\t")
+# Spaces only (read_file right-justifies with spaces): ``\s`` would also eat
+# newlines, merging a blank line into the next numbered one.
+_LINE_NUM_PREFIX_RE = re.compile(r"(?m)^ *\d+\t")
 
 
 def _strip_line_numbers(s: str) -> str:
     """Remove ``<num>\\t`` prefixes that ``read_file`` adds to each line — models
-    constantly copy that numbered output straight into an edit's old_string."""
+    constantly copy that numbered output straight into an edit's old_string.
+    Only when EVERY non-empty line carries one: a partial hit is real content
+    (TSV rows, ``1\\tfoo`` data), not a copied read_file excerpt."""
+    lines = s.split("\n")
+    if not all(_LINE_NUM_PREFIX_RE.match(ln) for ln in lines if ln.strip()):
+        return s
     return _LINE_NUM_PREFIX_RE.sub("", s)
 
 
@@ -257,24 +422,391 @@ def _reconcile_old_string(old_string: str, text: str) -> str:
     return old_string
 
 
+def _numbered_block(lines: list[str], first: int) -> str:
+    """``lines`` rendered in read_file's ``<num>\\t<text>`` format."""
+    width = len(str(first + len(lines) - 1))
+    return "\n".join(f"{str(first + i).rjust(width)}\t{ln[:_MAX_LINE]}"
+                     for i, ln in enumerate(lines))
+
+
 def _not_found_hint(old_string: str, text: str, path: str) -> str:
     """An *actionable* edit-miss error. A model that gets only 'not found' tends
     to retry blindly; pointing it at the likely cause (stale/auto-formatted text,
-    whitespace) and the nearest real line lets it self-correct in one step."""
+    whitespace) and the closest real block — numbered exactly like read_file, so
+    it can be copied verbatim — lets it self-correct in one step."""
     import difflib
 
-    probe = next((ln.strip() for ln in old_string.splitlines() if ln.strip()), "")
     hint = (
         f"old_string not found in {path}. The file's text differs from what you "
         f"expected (whitespace, or it changed). Read the file again to copy the "
         f"exact current text before editing."
     )
-    if probe:
-        lines = text.splitlines()
-        near = difflib.get_close_matches(probe, [ln.strip() for ln in lines], n=1, cutoff=0.6)
-        if near:
-            hint += f" Closest line in the file is: {near[0]!r}"
+    old_lines = _old_lines(old_string)[0]
+    if not any(ln.strip() for ln in old_lines):
+        return hint
+    file_lines = text.split("\n")
+    # The numbered closest-block hint only for modest old_strings: past ~40 lines
+    # a block hint is too long to be useful and the search isn't worth it.
+    if len(file_lines) <= _FUZZY_MAX_LINES and len(old_lines) <= _HINT_MAX_OLD_LINES:
+        scores = _window_scores(file_lines, old_lines, 0.5)
+        if scores:
+            start = scores[0][1]
+            block = file_lines[start:start + min(len(old_lines), 40)]
+            return (
+                f"{hint} Closest block in the file (lines {start + 1}-"
+                f"{start + len(block)}; copy the text after each number+tab "
+                f"exactly):\n{_numbered_block(block, start + 1)}"
+            )
+    probe = next((ln.strip() for ln in old_lines if ln.strip()), "")[:_SIM_LINE_CAP]
+    near = difflib.get_close_matches(
+        probe, [ln.strip()[:_SIM_LINE_CAP] for ln in file_lines[:_FUZZY_MAX_LINES * 4]],
+        n=1, cutoff=0.6)
+    if near:
+        hint += f" Closest line in the file is: {near[0]!r}"
     return hint
+
+
+# -- tolerant edit matching ---------------------------------------------------
+# Small open models constantly get an edit's whitespace slightly wrong (tabs vs
+# spaces, one indent level off, trailing blanks) or paraphrase one token. Rather
+# than bounce the edit and force a re-read, ``_apply_edit`` runs a cascade of
+# progressively looser matchers; each stage is accepted ONLY when it finds
+# exactly one match (or replace_all is set, for the non-fuzzy stages), and the
+# result names the rule that fired so the behaviour stays transparent.
+
+_FUZZY_MAX_LINES = 5000     # fuzzy / closest-block search only on files this size
+_FUZZY_THRESHOLD = 0.9      # min similarity for a fuzzy block match
+_FUZZY_MARGIN = 0.05        # best must beat any other (non-overlapping) block by this
+_FUZZY_EXACT_LINES = 0.7    # fuzzy also needs this share of lines identical (stripped)
+_FUZZY_PEAKS = 6            # candidate blocks scored char-level after the token prefilter
+_FUZZY_BUDGET_S = 0.5       # wall-clock cap on the char-level scoring
+_HINT_MAX_OLD_LINES = 40    # numbered closest-block hint only for old_strings this size
+_SIM_LINE_CAP = 400         # chars per line fed to char-level similarity
+
+
+def _old_lines(old: str) -> tuple[list[str], bool]:
+    """``old`` split into lines, plus whether it ended with a newline (the final
+    newline is part of the matched region, not an extra empty line)."""
+    ends_nl = old.endswith("\n")
+    return (old[:-1] if ends_nl else old).split("\n"), ends_nl
+
+
+def _match_line_numbers(text: str, needle: str, limit: int = 10) -> list[int]:
+    out: list[int] = []
+    start = 0
+    while len(out) < limit:
+        i = text.find(needle, start)
+        if i < 0:
+            break
+        out.append(text.count("\n", 0, i) + 1)
+        start = i + len(needle)
+    return out
+
+
+def _ambiguous(path: str, count: int, lines: list[int], how: str = "") -> ValueError:
+    at = ", ".join(map(str, lines[:10])) + (", …" if count > len(lines[:10]) else "")
+    return ValueError(
+        f"old_string is not unique in {path}{how} ({count} matches, at lines {at}) "
+        f"— add more surrounding context or pass replace_all=true"
+    )
+
+
+def _line_matches(file_lines: list[str], old_lines: list[str],
+                  key: Callable[[str], str]) -> list[int]:
+    """Start indexes of non-overlapping whole-line matches of ``old_lines`` in
+    ``file_lines`` under the normalisation ``key``."""
+    want = [key(ln) for ln in old_lines]
+    keys = [key(ln) for ln in file_lines]
+    n = len(want)
+    out: list[int] = []
+    i = 0
+    while i <= len(keys) - n:
+        if keys[i] == want[0] and keys[i:i + n] == want:
+            out.append(i)
+            i += n
+        else:
+            i += 1
+    return out
+
+
+def _splice_lines(text: str, starts: list[int], n: int, ends_nl: bool,
+                  new_for: Callable[[int], str]) -> str:
+    """Replace the ``n``-line blocks beginning at each of ``starts``."""
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    for ln in text.split("\n"):
+        spans.append((pos, pos + len(ln)))
+        pos += len(ln) + 1
+    for s in sorted(starts, reverse=True):
+        a, b = spans[s][0], spans[s + n - 1][1]
+        if ends_nl and b < len(text):
+            b += 1  # old_string ended with a newline — it's part of the region
+        text = text[:a] + new_for(s) + text[b:]
+    return text
+
+
+def _leading_ws(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" \t"))]
+
+
+def _ws_convert(old_ws: list[str], block_ws: list[str]) -> Callable[[str], str]:
+    """How to re-express the model's leading whitespace in the file's: a
+    tabs↔spaces conversion ONLY when it's unambiguous — ``old_string`` indents
+    uniformly with one kind and the matched block uniformly with the other, and
+    the spaces side has a clear unit (≥2). Anything else is left alone (the
+    caller then just shifts by a constant prefix); guessing an indent unit from
+    content lines is what used to mangle docstrings, hanging indents and YAML."""
+    import math  # noqa: PLC0415
+
+    old_ws = [w for w in old_ws if w]
+    block_ws = [w for w in block_ws if w]
+    if not old_ws or not block_ws:
+        return lambda w: w
+
+    def _unit(ws: list[str]) -> int:
+        u = 0
+        for w in ws:
+            u = math.gcd(u, len(w))
+        return u
+
+    def _all(ws: list[str], ch: str) -> bool:
+        return all(set(w) == {ch} for w in ws)
+
+    if _all(old_ws, " ") and _all(block_ws, "\t") and (u := _unit(old_ws)) >= 2:
+        def _to_tabs(w: str) -> str:
+            if set(w) != {" "}:
+                return w
+            return "\t" * (len(w) // u) + " " * (len(w) % u)
+        return _to_tabs
+    if _all(old_ws, "\t") and _all(block_ws, " ") and (u := _unit(block_ws)) >= 2:
+        def _to_spaces(w: str) -> str:
+            body = w.lstrip("\t")
+            return " " * (u * (len(w) - len(body))) + body
+        return _to_spaces
+    return lambda w: w
+
+
+def _reindent(new: str, old_lines: list[str], block: list[str]) -> str:
+    """Shift every non-blank line of ``new`` by the CONSTANT prefix delta between
+    the first matched ``old_lines`` line's leading whitespace and the file
+    ``block``'s (after an unambiguous tabs↔spaces conversion, see
+    ``_ws_convert``). Relative indentation inside ``new`` — string bodies,
+    hanging indents, odd YAML scalars — is preserved exactly. A no-op when the
+    indentation already agrees."""
+    pairs = [(o, f) for o, f in zip(old_lines, block, strict=False) if o.strip() and f.strip()]
+    if not pairs or all(_leading_ws(o) == _leading_ws(f) for o, f in pairs):
+        return new
+    conv = _ws_convert([_leading_ws(o) for o, _ in pairs], [_leading_ws(f) for _, f in pairs])
+    o_ws, f_ws = conv(_leading_ws(pairs[0][0])), _leading_ws(pairs[0][1])
+    n = 0  # length of the common prefix
+    while n < min(len(o_ws), len(f_ws)) and o_ws[n] == f_ws[n]:
+        n += 1
+    cut, add = len(o_ws) - n, f_ws[n:]
+    out = []
+    for ln in new.split("\n"):
+        if not ln.strip():
+            out.append(ln)
+            continue
+        ws = conv(_leading_ws(ln))
+        body = ln.lstrip(" \t")
+        if ws.startswith(o_ws):
+            ws = f_ws + ws[len(o_ws):]
+        else:  # shallower than the anchor: strip what's there, down to 0
+            ws = add + ws[min(cut, len(ws)):]
+        out.append(ws + body)
+    return "\n".join(out)
+
+
+_TOKEN_RE = re.compile(r"\w+|[^\w\s]+")
+
+
+def _block_similarity(a: list[str], b: list[str]) -> float:
+    """Char-level similarity of two equal-length line blocks, computed line by
+    line (whitespace-stripped, length-weighted). Per-line ``ratio()`` stays
+    cheap where one ratio over the joined block is quadratic in its size."""
+    import difflib  # noqa: PLC0415
+
+    sm = difflib.SequenceMatcher(None, autojunk=False)
+    num = den = 0.0
+    for x, y in zip(a, b, strict=False):
+        x, y = x.strip()[:_SIM_LINE_CAP], y.strip()[:_SIM_LINE_CAP]
+        w = len(x) + len(y)
+        if not w:
+            continue
+        den += w
+        if x == y:
+            num += w
+        else:
+            sm.set_seqs(x, y)
+            num += sm.ratio() * w
+    return num / den if den else 0.0
+
+
+def _exact_line_share(a: list[str], b: list[str]) -> tuple[float, int]:
+    """``(share, differing)``: how many non-blank line pairs are identical after
+    ``strip()``, and how many differ."""
+    pairs = [(x.strip(), y.strip()) for x, y in zip(a, b, strict=False) if x.strip() or y.strip()]
+    diff = sum(1 for x, y in pairs if x != y)
+    return ((len(pairs) - diff) / len(pairs) if pairs else 0.0), diff
+
+
+def _window_scores(file_lines: list[str], old_lines: list[str],
+                   floor: float) -> list[tuple[float, int]]:
+    """``(similarity, start)`` for the best ``len(old_lines)``-line windows of
+    the file scoring ≥ ``floor`` (whitespace ignored), best first.
+
+    Two-phase so it stays linear on big files: a token-bag overlap computed for
+    EVERY window with a sliding counter, then the char-level
+    ``_block_similarity`` only around the few best non-overlapping peaks —
+    under a wall-clock budget (this runs off the event loop, but still)."""
+    n = len(old_lines)
+    total = len(file_lines) - n + 1
+    if n == 0 or total <= 0:
+        return []
+    want: dict[str, int] = {}
+    for ln in old_lines:
+        for t in _TOKEN_RE.findall(ln[:_SIM_LINE_CAP]):
+            want[t] = want.get(t, 0) + 1
+    want_total = sum(want.values())
+    if not want_total:
+        return []
+    toks = [_TOKEN_RE.findall(ln[:_SIM_LINE_CAP]) for ln in file_lines]
+    have: dict[str, int] = {}
+    overlap = size = 0
+
+    def _add(line: list[str], d: int) -> None:
+        nonlocal overlap, size
+        for t in line:
+            c = have.get(t, 0)
+            if d > 0 and c < want.get(t, 0):
+                overlap += 1
+            elif d < 0 and c <= want.get(t, 0):
+                overlap -= 1
+            have[t] = c + d
+        size += d * len(line)
+
+    for ln in toks[:n - 1]:
+        _add(ln, 1)
+    token_score: list[float] = []
+    for i in range(total):
+        _add(toks[i + n - 1], 1)
+        token_score.append(2 * overlap / (size + want_total))
+        _add(toks[i], -1)
+
+    # Peaks: best token score first, suppressing windows overlapping a pick.
+    peaks: list[int] = []
+    for i in sorted(range(total), key=lambda k: (-token_score[k], k)):
+        if len(peaks) >= _FUZZY_PEAKS or token_score[i] < floor / 2:
+            break
+        if all(abs(i - p) >= n for p in peaks):
+            peaks.append(i)
+
+    deadline = time.monotonic() + _FUZZY_BUDGET_S
+    best: dict[int, float] = {}
+    for p in peaks:
+        for i in range(max(0, p - 2), min(total, p + 3)):
+            if i in best:
+                continue
+            if time.monotonic() > deadline:
+                break
+            best[i] = _block_similarity(file_lines[i:i + n], old_lines)
+    out = [(r, i) for i, r in best.items() if r >= floor]
+    out.sort(key=lambda t: (-t[0], t[1]))
+    return out
+
+
+def _apply_edit(text: str, old: str, new: str, replace_all: bool,
+                path: str) -> tuple[str, str]:
+    """Apply one edit to LF-normalised ``text`` via the matching cascade.
+    Returns ``(updated_text, rule_note)``; the note is "" for an exact match.
+    Raises ``ValueError`` (with an actionable hint) on a miss or ambiguity."""
+    old = old.replace("\r\n", "\n")
+    new = new.replace("\r\n", "\n")
+
+    # 1. exact  2. read_file line-number prefixes stripped
+    candidate, note = old, ""
+    count = text.count(old)
+    stripped = _strip_line_numbers(old)
+    if count == 0 and stripped != old and stripped in text:
+        candidate, count, note = stripped, text.count(stripped), "matched after stripping copied line numbers"
+    if count:
+        if count > 1 and not replace_all:
+            raise _ambiguous(path, count, _match_line_numbers(text, candidate))
+        return text.replace(candidate, new), note
+
+    # Line-based stages work on the numbered-prefix-free form when every line
+    # carried one (a copied read_file excerpt with the whitespace also off).
+    # (``_strip_line_numbers`` only strips when every line carried one.)
+    old_lines, ends_nl = _old_lines(stripped)
+    if not any(ln.strip() for ln in old_lines):
+        raise ValueError(_not_found_hint(old, text, path))
+    file_lines = text.split("\n")
+    n = len(old_lines)
+
+    # 3. trailing whitespace ignored  4. indentation ignored (new re-indented)
+    for key, how, reindent in ((str.rstrip, "ignoring trailing whitespace", False),
+                               (str.strip, "ignoring indentation", True)):
+        starts = _line_matches(file_lines, old_lines, key)
+        if not starts:
+            continue
+        if len(starts) > 1 and not replace_all:
+            raise _ambiguous(path, len(starts), [s + 1 for s in starts], f" when {how}")
+
+        def _new_for(s: int, _re: bool = reindent) -> str:
+            return _reindent(new, old_lines, file_lines[s:s + n]) if _re else new
+
+        suffix = f", {len(starts)} places" if len(starts) > 1 else ""
+        return _splice_lines(text, starts, n, ends_nl, _new_for), f"matched {how}{suffix}"
+
+    # 5. unique fuzzy block — never for replace_all (it could hit near-misses).
+    if (not replace_all and len(file_lines) <= _FUZZY_MAX_LINES
+            and sum(1 for ln in old_lines if ln.strip()) >= 2):
+        scores = _window_scores(file_lines, old_lines, _FUZZY_THRESHOLD - _FUZZY_MARGIN)
+        if scores and scores[0][0] >= _FUZZY_THRESHOLD:
+            best_r, best = scores[0]
+            rival = next(((r, i) for r, i in scores[1:] if abs(i - best) >= n), None)
+            if rival and rival[0] >= best_r - _FUZZY_MARGIN:
+                raise ValueError(
+                    f"old_string not found exactly in {path}, and it is ambiguous: "
+                    f"similar blocks at lines {best + 1} and {rival[1] + 1}. Read the "
+                    f"file and copy the exact text of the one you mean."
+                )
+            # Char similarity alone lets a stale/rewritten block through (every
+            # line one typo off still scores high); most lines must be identical.
+            share, differing = _exact_line_share(file_lines[best:best + n], old_lines)
+            if share >= _FUZZY_EXACT_LINES:
+                updated = _splice_lines(
+                    text, [best], n, ends_nl,
+                    lambda s: _reindent(new, old_lines, file_lines[s:s + n]))
+                return updated, (f"fuzzy-matched lines {best + 1}-{best + n}, {best_r:.0%} "
+                                 f"similar, {differing} line{'s' * (differing != 1)} differed")
+
+    raise ValueError(_not_found_hint(old, text, path))
+
+
+# -- line endings / BOM -------------------------------------------------------
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _read_for_edit(p: Path) -> tuple[str, str, bool]:
+    """``(lf_text, newline, has_bom)``: the file decoded with its line endings
+    normalised to LF for matching, plus what to restore on write."""
+    raw = p.read_bytes()
+    bom = raw.startswith(_UTF8_BOM)
+    s = raw[len(_UTF8_BOM):].decode("utf-8", "replace") if bom else raw.decode("utf-8", "replace")
+    crlf = s.count("\r\n")
+    lf = s.count("\n") - crlf
+    if crlf > lf:
+        return s.replace("\r\n", "\n"), "\r\n", bom
+    if lf == 0 and crlf == 0 and "\r" in s:  # classic-Mac CR-only file
+        return s.replace("\r", "\n"), "\r", bom
+    return s.replace("\r\n", "\n"), "\n", bom
+
+
+def _encode_for_write(text: str, newline: str, bom: bool) -> bytes:
+    if newline != "\n":
+        text = text.replace("\n", newline)
+    return (_UTF8_BOM if bom else b"") + text.encode("utf-8")
 
 
 def _coerce_int(value: object, *, default: int, lo: int | None = None,
@@ -481,6 +1013,7 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
         start_new_session=True,
     )
     sink = BASH_OUTPUT_SINK.get()
+    spills: list[str | None] = [None, None]
     try:
         if sink is None:
             stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_bytes), timeout)
@@ -488,7 +1021,7 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
             # Opt-in live output: same process, same timeout, same kill —
             # only the read side differs (incremental, bounded, forwarded).
             stdout, stderr = await asyncio.wait_for(
-                _pump_streams(proc, stdin_bytes, sink), timeout
+                _pump_streams(proc, stdin_bytes, sink, spills), timeout
             )
     except (TimeoutError, asyncio.TimeoutError):
         await _kill_process_group(proc)
@@ -498,9 +1031,22 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
             f"for dev servers/watchers): {command}"
         ) from None
 
-    raw_out, new_cwd = _extract_cwd_marker(stdout.decode("utf-8", "replace"))
+    body, new_cwd = _shell_body(stdout, stderr)
     if new_cwd:
         _bash_cwd()["cwd"] = new_cwd
+    # The streaming path's buffers are bounded; if either stream overflowed,
+    # rebuild the full output from its raw tee file so the saved copy is full.
+    full_path = await asyncio.to_thread(_save_spilled_output, spills, stdout, stderr) \
+        if any(spills) else None
+    # The exit status goes after the (possibly truncated) body, never inside it.
+    status = f"\n[exit code: {proc.returncode}]" if proc.returncode != 0 else ""
+    return (_truncate_shell(body, suffix=status, full_output_path=full_path).lstrip()
+            or f"(no output, exit code {proc.returncode})")
+
+
+def _shell_body(stdout: bytes, stderr: bytes) -> tuple[str, str | None]:
+    """Captured bytes → (model-facing body, final ``$PWD`` from the marker)."""
+    raw_out, new_cwd = _extract_cwd_marker(stdout.decode("utf-8", "replace"))
     out = _strip_terminal_controls(raw_out)
     err = _strip_terminal_controls(stderr.decode("utf-8", "replace"))
     parts = []
@@ -508,10 +1054,30 @@ async def bash(command: str, timeout: int = 120, stdin: str = "",
         parts.append(out)
     if err:
         parts.append(err if not out else f"\n[stderr]\n{err}")
-    body = "".join(parts).rstrip()
-    if proc.returncode != 0:
-        body = f"{body}\n[exit code: {proc.returncode}]".lstrip()
-    return _truncate(body) or f"(no output, exit code {proc.returncode})"
+    return "".join(parts).rstrip(), new_cwd
+
+
+def _save_spilled_output(spills: list[str | None], stdout: bytes, stderr: bytes) -> str | None:
+    """Rebuild the full body from the streaming tee files (falling back to the
+    in-memory bytes for a stream that never overflowed), save it, and delete
+    the raw tee files. Returns the saved path, or None."""
+    raw: list[bytes] = []
+    for path, fallback in zip(spills, (stdout, stderr)):
+        if not path:
+            raw.append(fallback)
+            continue
+        try:
+            with open(path, "rb") as fh:
+                raw.append(fh.read())
+        except OSError:
+            raw.append(fallback)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    body, _ = _shell_body(raw[0], raw[1])
+    return _save_full_output(body)
 
 
 async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
@@ -534,28 +1100,64 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
 
 # Bounds for the streaming path's in-memory copy of the output. ``communicate``
 # buffers unboundedly; here we keep the first ``_STREAM_HEAD_BYTES`` (more than
-# ``_truncate`` will ever return) plus a small tail (the trailing ``$PWD``
-# marker line must survive) and count what fell between.
+# ``_truncate_shell`` will ever return) plus a tail big enough for its tail
+# share (the failing summary and the trailing ``$PWD`` marker line must
+# survive) and count what fell between.
 _STREAM_HEAD_BYTES = _MAX_OUTPUT * 4
-_STREAM_TAIL_BYTES = 8192
+_STREAM_TAIL_BYTES = _MAX_OUTPUT * 2
 _STREAM_READ_SIZE = 4096
 
 
 class _BoundedBuf:
-    """Head + tail byte buffer with a dropped-bytes counter."""
+    """Head + tail byte buffer with a dropped-bytes counter.
 
-    __slots__ = ("_head", "_tail", "_dropped")
+    The first time bytes would be dropped, everything seen so far and every
+    later chunk is also teed to a private spill file (capped at
+    ``_SPILL_MAX_BYTES``), so "full output saved to …" is actually full."""
+
+    __slots__ = ("_head", "_tail", "_dropped", "_spill_fd", "_spill_path",
+                 "_spill_written", "_spill_skipped")
 
     def __init__(self) -> None:
         self._head = bytearray()
         self._tail = bytearray()
         self._dropped = 0
+        self._spill_fd: int | None = None
+        self._spill_path: str | None = None
+        self._spill_written = 0
+        self._spill_skipped = 0
+
+    def _tee(self, chunk: bytes) -> None:
+        if self._spill_fd is None or not chunk:
+            return
+        take = min(len(chunk), _SPILL_MAX_BYTES - self._spill_written)
+        try:
+            if take > 0:
+                os.write(self._spill_fd, chunk[:take])
+                self._spill_written += take
+        except OSError:
+            self._close_spill_fd()
+            self._drop_spill()
+            return
+        self._spill_skipped += len(chunk) - take
+
+    def _start_spill(self) -> None:
+        made = _new_spill_file("mantis-bash-stream-")
+        if made is None:
+            return
+        self._spill_fd, self._spill_path = made
+        self._tee(bytes(self._head))
+        self._tee(bytes(self._tail))
 
     def append(self, chunk: bytes) -> None:
+        self._tee(chunk)
         room = _STREAM_HEAD_BYTES - len(self._head)
         if room >= len(chunk):
             self._head += chunk
             return
+        if self._spill_fd is None and self._spill_path is None:
+            self._start_spill()
+            self._tee(chunk)
         if room > 0:
             self._head += chunk[:room]
             chunk = chunk[room:]
@@ -563,6 +1165,33 @@ class _BoundedBuf:
         self._tail += chunk
         if len(self._tail) > _STREAM_TAIL_BYTES:
             del self._tail[: len(self._tail) - _STREAM_TAIL_BYTES]
+
+    def _close_spill_fd(self) -> None:
+        if self._spill_fd is not None:
+            try:
+                os.close(self._spill_fd)
+            except OSError:
+                pass
+            self._spill_fd = None
+
+    def _drop_spill(self) -> None:
+        if self._spill_path is not None:
+            try:
+                os.unlink(self._spill_path)
+            except OSError:
+                pass
+        self._spill_path = ""  # "" = tried and gave up; don't restart
+
+    def finish_spill(self) -> str | None:
+        """Close the spill file (marking a size cut) and return its path, or
+        None when nothing was dropped / spilling failed. The caller owns it."""
+        if self._spill_fd is not None and self._spill_skipped:
+            try:
+                os.write(self._spill_fd, _spill_cut_marker(self._spill_skipped))
+            except OSError:
+                pass
+        self._close_spill_fd()
+        return self._spill_path or None
 
     def value(self) -> bytes:
         if not self._dropped:
@@ -580,6 +1209,7 @@ def _without_marker_lines(text: str) -> str:
 
 async def _pump_streams(
     proc: asyncio.subprocess.Process, stdin_bytes: bytes, sink: BashOutputSink,
+    spills: list[str | None] | None = None,
 ) -> tuple[bytes, bytes]:
     """Feed stdin, read stdout/stderr concurrently in chunks, forward each
     decoded chunk to ``sink`` and return the (bounded) captured bytes — the
@@ -642,12 +1272,35 @@ async def _pump_streams(
 
     out_buf, err_buf = _BoundedBuf(), _BoundedBuf()
     assert proc.stdout is not None and proc.stderr is not None
-    await asyncio.gather(
-        feed_stdin(),
-        pump(proc.stdout, out_buf, True),
-        pump(proc.stderr, err_buf, False),
-    )
-    await proc.wait()
+    try:
+        await asyncio.gather(
+            feed_stdin(),
+            pump(proc.stdout, out_buf, True),
+            pump(proc.stderr, err_buf, False),
+        )
+        await proc.wait()
+    except BaseException:
+        # Timeout / cancel: nobody will read the tee files.
+        for buf in (out_buf, err_buf):
+            path = buf.finish_spill()
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        raise
+    # Raw (untruncated) copies of any stream that overflowed the buffers —
+    # ``(stdout_path, stderr_path)``, None where the buffer kept everything.
+    paths = (out_buf.finish_spill(), err_buf.finish_spill())
+    if spills is not None:
+        spills[:] = paths
+    else:
+        for path in paths:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
     return out_buf.value(), err_buf.value()
 
 
@@ -1001,10 +1654,13 @@ async def bash_output(bash_id: str) -> str:
         body = _strip_terminal_controls(new_bytes.decode("utf-8", "replace")).strip()
     except OSError:
         body = ""
-    header = f"[{bash_id} · {status}] {entry['cmd']}"
+    cmd = entry["cmd"]
+    if len(cmd) > 200:  # the header is kept verbatim — don't let it eat the cap
+        cmd = cmd[:200] + "…"
+    header = f"[{bash_id} · {status}] {cmd}"
     if not body:
         return f"{header}\n{'(no new output)' if pos > 0 else '(no output yet)'}"
-    return _truncate(f"{header}\n{body}")
+    return _truncate_shell(body, prefix=f"{header}\n", full_output_path=entry["log"])
 
 
 # ANSI/terminal control: CSI sequences, OSC strings, and the alt-screen /
@@ -1064,9 +1720,10 @@ def _diff_stat(old: str, new: str) -> tuple[int, int]:
     return adds, removes
 
 
-def _edit_summary(verb: str, path: str, old: str, new: str) -> str:
+def _edit_summary(verb: str, path: str, old: str, new: str, note: str = "") -> str:
     """A Claude-Code-style one-liner + diff: ``Updated foo.py · +3 -1`` then the
-    unified diff so the UI can show exactly what changed."""
+    unified diff so the UI can show exactly what changed. ``note`` (e.g. which
+    tolerant-matching rule fired) is appended to the header in parentheses."""
     adds, removes = _diff_stat(old, new)
     stat = []
     if adds:
@@ -1074,6 +1731,8 @@ def _edit_summary(verb: str, path: str, old: str, new: str) -> str:
     if removes:
         stat.append(f"-{removes}")
     head = f"{verb} {path}" + (f" · {' '.join(stat)}" if stat else "")
+    if note:
+        head += f" ({note})"
     diff = _unified_diff(old, new, path)
     return f"{head}\n{diff}" if diff else head
 
@@ -1256,15 +1915,31 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
     if not chunk:
         return f"(file has {len(lines)} lines; offset {offset} is past the end)"
     width = len(str(start + len(chunk) - 1))
-    out = "\n".join(
-        f"{str(start + i).rjust(width)}\t{ln[:_MAX_LINE]}" for i, ln in enumerate(chunk)
-    )
-    # Cap total returned text: a file of many medium-length lines can otherwise
-    # return tens of MB (limit × _MAX_LINE) and blow up the context window even
-    # though each line is individually truncated.
-    out = _truncate(out, _MAX_READ_OUTPUT)
-    if start - 1 + len(chunk) < len(lines):
-        out += f"\n… [{len(lines) - (start - 1 + len(chunk))} more lines]"
+    # Cap total returned text on a line boundary: a file of many medium-length
+    # lines can otherwise return tens of MB (limit × _MAX_LINE), and under an
+    # executor the cap shrinks with the model's context window — a 2000-line
+    # default read would be the whole window of an 8k model. The notice names
+    # the exact offset to continue from.
+    cap = _executor_cap(_MAX_READ_OUTPUT)
+    budget = cap - 300  # room for the notice
+    rows: list[str] = []
+    used = 0
+    for i, ln in enumerate(chunk):
+        row = f"{str(start + i).rjust(width)}\t{ln[:_MAX_LINE]}"
+        if rows and used + len(row) + 1 > budget:
+            break
+        rows.append(row)
+        used += len(row) + 1
+    out = "\n".join(rows)
+    end = start + len(rows) - 1
+    if len(rows) < len(chunk):
+        out += (
+            f"\n… [output capped at {cap:,} chars — showing lines {start}-{end} of "
+            f"{len(lines)}. Continue with read_file(path, offset={end + 1}, "
+            f"limit={len(rows)})]"
+        )
+    elif end < len(lines):
+        out += f"\n… [{len(lines) - end} more lines — continue with offset={end + 1}]"
     return out
 
 
@@ -1293,13 +1968,20 @@ async def write_file(path: str, content: str) -> str:
 
     p = resolve_path(path)
     _check_write_guard(p)  # don't blind-overwrite an unseen / externally-changed file
-    old = ""
+    old, newline, bom = "", "\n", False
     if p.exists() and p.is_file():
-        old = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+        old, newline, bom = await anyio.to_thread.run_sync(lambda: _read_for_edit(p))
+    # Keep an existing CRLF / BOM file's conventions when the new content is
+    # clean LF (models always emit LF) — don't silently flip every line ending.
+    keep_style = "\r" not in content and (newline != "\n" or bom)
+    bom = bom and not content.startswith("\ufeff")
 
     def _write() -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, "utf-8")
+        if keep_style:
+            p.write_bytes(_encode_for_write(content, newline, bom))
+        else:
+            p.write_text(content, "utf-8")
 
     await anyio.to_thread.run_sync(_write)
     _record_seen(p)  # we just wrote it — subsequent writes/edits are fine
@@ -1333,20 +2015,14 @@ async def edit_file(
             "and would corrupt the file. Use write_file to replace the whole file."
         )
 
-    text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
-    old_string = _reconcile_old_string(old_string, text)  # auto-fix copied line numbers
-    count = text.count(old_string)
-    if count == 0:
-        raise ValueError(_not_found_hint(old_string, text, path))
-    if count > 1 and not replace_all:
-        raise ValueError(
-            f"old_string is not unique in {path} ({count} matches) — add more "
-            f"context or pass replace_all=true"
-        )
-    updated = text.replace(old_string, new_string)
-    await anyio.to_thread.run_sync(lambda: p.write_text(updated, "utf-8"))
+    # Operate in LF; write back with the file's own line ending + BOM.
+    text, newline, bom = await anyio.to_thread.run_sync(lambda: _read_for_edit(p))
+    # The fuzzy/closest-block search is CPU work — keep it off the event loop.
+    updated, note = await anyio.to_thread.run_sync(
+        lambda: _apply_edit(text, old_string, new_string, bool(replace_all), path))
+    await anyio.to_thread.run_sync(lambda: p.write_bytes(_encode_for_write(updated, newline, bom)))
     _record_seen(p)
-    return _edit_summary("Updated", str(p), text, updated)
+    return _edit_summary("Updated", str(p), text, updated, note)
 
 
 @tool(is_read_only=False, is_concurrency_safe=False)
@@ -1371,9 +2047,11 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
     if not p.exists():
         raise _missing_file_error(path, p)
 
-    text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
+    # Operate in LF; write back with the file's own line ending + BOM.
+    text, newline, bom = await anyio.to_thread.run_sync(lambda: _read_for_edit(p))
     original = text
     applied = 0
+    notes: list[str] = []
     for i, e in enumerate(edits):
         if not isinstance(e, dict) or "old_string" not in e or "new_string" not in e:
             raise ValueError(f"edit #{i + 1} must have old_string and new_string")
@@ -1385,21 +2063,18 @@ async def multi_edit(path: str, edits: list[dict]) -> str:
                 f"replace the whole file."
             )
         replace_all = bool(e.get("replace_all", False))
-        old = _reconcile_old_string(old, text)  # auto-fix copied line numbers
-        count = text.count(old)
-        if count == 0:
-            raise ValueError(f"edit #{i + 1}: " + _not_found_hint(old, text, path))
-        if count > 1 and not replace_all:
-            raise ValueError(
-                f"edit #{i + 1}: old_string not unique ({count} matches) — add "
-                f"context or set replace_all"
-            )
-        text = text.replace(old, new)
+        try:
+            text, note = await anyio.to_thread.run_sync(
+                lambda: _apply_edit(text, old, new, replace_all, path))  # noqa: B023
+        except ValueError as exc:
+            raise ValueError(f"edit #{i + 1}: {exc}") from None
+        if note:
+            notes.append(f"edit #{i + 1} {note}")
         applied += 1
 
-    await anyio.to_thread.run_sync(lambda: p.write_text(text, "utf-8"))
+    await anyio.to_thread.run_sync(lambda: p.write_bytes(_encode_for_write(text, newline, bom)))
     _record_seen(p)
-    return _edit_summary("Updated", str(p), original, text)
+    return _edit_summary("Updated", str(p), original, text, "; ".join(notes))
 
 
 # ---------------------------------------------------------------------------
@@ -1555,7 +2230,11 @@ async def grep(
 
     rg = await _have_rg()
     if rg:
-        cmd = ["rg", "--color=never"]
+        # --max-columns: a minified bundle / lockfile line can be megabytes;
+        # rg then prints a "[… omitted]" preview instead of flooding the
+        # result (the Python fallback caps each line at ``_MAX_LINE``).
+        cmd = ["rg", "--color=never", "--max-columns", str(_RG_MAX_COLUMNS),
+               "--max-columns-preview"]
         if mode == "files_with_matches":
             cmd.append("--files-with-matches")
         elif mode == "count":
@@ -1574,16 +2253,36 @@ async def grep(
             cmd += ["--glob", glob]
         if file_type:
             cmd += ["--type", file_type]
-        cmd += ["--", pattern, path]
-        result = await anyio.run_process(cmd, check=False, input=b"")
-        out = result.stdout.decode("utf-8", "replace").rstrip()
-        if result.returncode == 1 and not out:
-            return f"no matches for {pattern!r} in {path}"
-        if result.returncode > 1:
-            err = result.stderr.decode("utf-8", "replace").strip()
-            raise ValueError(err or f"grep failed (exit {result.returncode})")
-        out = _head(out, limit)
-        return _truncate(out, _MAX_OUTPUT)
+        # Resolve against the agent's cwd (like glob/read and the Python
+        # fallback) — handing rg the raw relative path searched the *host
+        # process's* cwd under ``Agent(cwd=...)``. Passing the resolved path
+        # (rather than ``cwd=``) also makes rg print the same paths the
+        # fallback does, so output looks alike whichever backend ran.
+        cmd += ["--", pattern, str(resolve_path(path))]
+        # rg matches a --glob containing a slash (``pkg/*.py``, ``!tests/**``)
+        # relative to its OWN cwd, so it must run in the agent's cwd too —
+        # launched from the host process's cwd those globs silently matched
+        # nothing, unlike the Python fallback.
+        run_cwd = agent_cwd()
+        if run_cwd is not None:
+            run_cwd = os.path.expanduser(run_cwd)
+            if not os.path.isdir(run_cwd):
+                run_cwd = None
+        try:
+            result = await anyio.run_process(cmd, check=False, input=b"", cwd=run_cwd)
+        except (FileNotFoundError, NotADirectoryError):
+            # rg vanished after the cached PATH lookup (or the cwd went away
+            # mid-call) — the Python walk still answers.
+            result = None
+        if result is not None:
+            out = result.stdout.decode("utf-8", "replace").rstrip()
+            if result.returncode == 1 and not out:
+                return f"no matches for {pattern!r} in {path}"
+            if result.returncode > 1:
+                err = result.stderr.decode("utf-8", "replace").strip()
+                raise ValueError(err or f"grep failed (exit {result.returncode})")
+            out = _head(out, limit)
+            return _truncate(out, _MAX_OUTPUT)
 
     return await anyio.to_thread.run_sync(
         _py_grep, pattern, path, glob, ignore_case, mode, context_lines,
@@ -1645,12 +2344,18 @@ _TYPE_EXTS = {
 }
 
 
+_RG_MAX_COLUMNS = 500
+
+
+@functools.cache
+def _rg_on_path() -> bool:
+    return shutil.which("rg") is not None
+
+
 async def _have_rg() -> bool:
-    try:
-        r = await anyio.run_process(["rg", "--version"], check=False, input=b"")
-        return r.returncode == 0
-    except (FileNotFoundError, OSError):
-        return False
+    """Whether ripgrep is installed. A PATH lookup, cached for the process —
+    it used to spawn ``rg --version`` on every single grep call."""
+    return _rg_on_path()
 
 
 def _py_grep(

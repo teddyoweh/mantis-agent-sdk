@@ -98,6 +98,43 @@ def _tui_resolved_model(args: Any) -> tuple[str, str, str | None]:
     return tui.model, tui.backend, tui.api_key
 
 
+def _environment_mcp_servers() -> dict[str, Any]:
+    """Ephemeral HTTP servers supplied by the parent process, never saved.
+
+    Reject malformed configuration without quoting it: it can contain credentials.
+    This deliberately does not opt a headless run into project MCP commands.
+    """
+    raw = os.environ.get("MANTIS_MCP_SERVERS")
+    if raw is None:
+        return {}
+    error = "MANTIS_MCP_SERVERS must be a JSON object of named HTTP servers with url and string headers"
+    try:
+        servers = _json.loads(raw)
+    except ValueError:
+        raise ValueError(error) from None
+    if not isinstance(servers, dict):
+        raise ValueError(error)
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    for name, cfg in servers.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(cfg, dict):
+            raise ValueError(error)
+        url = cfg.get("url")
+        headers = cfg.get("headers", {})
+        if (cfg.get("type") != "http" or "command" in cfg
+                or not isinstance(url, str) or not isinstance(headers, dict)
+                or not all(isinstance(k, str) and isinstance(v, str) for k, v in headers.items())):
+            raise ValueError(error)
+        try:
+            parsed = urlsplit(url)
+            valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError(error)
+    return servers
+
+
 def build_query_options(args: Any, transcript: list[Any] | None = None) -> dict[str, Any]:
     """CLI args → the options dict ``query()`` runs one headless turn from.
 
@@ -152,6 +189,7 @@ def build_query_options(args: Any, transcript: list[Any] | None = None) -> dict[
         # The whole terminal tool belt: a print run that can't edit or run
         # anything is just a chat completion, which is not what -p is for.
         tools=belt,
+        mcp_servers=_environment_mcp_servers(),
         allowed_tools=_split_tool_list(getattr(args, "allowed_tools", None)),
         disallowed_tools=_split_tool_list(getattr(args, "disallowed_tools", None)),
         continue_conversation=bool(getattr(args, "continue_session", False)),

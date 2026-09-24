@@ -324,7 +324,8 @@ print(configured_method("anthropic"))   # 'bedrock'
 | | `vertex` | `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` | `vertex:anthropic` |
 | | `bedrock` | `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE` | `bedrock:anthropic` |
 | | `azure` | `AZURE_ANTHROPIC_ENDPOINT`, `AZURE_ANTHROPIC_API_KEY` | *endpoint* + `/anthropic/v1` |
-| `openai` | `api_key` | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| `openai` | `api_key` | `OPENAI_API_KEY` (or a key `codex login --with-api-key` stored) | `https://api.openai.com/v1` |
+| | `chatgpt` | *(the Codex CLI's ChatGPT login — `codex login`)* | `https://chatgpt.com/backend-api/codex` |
 | | `azure_openai` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` | *endpoint* + `/openai/v1` |
 | `gemini` | `api_key` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Google's OpenAI-compat endpoint |
 | | `vertex` | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, `GOOGLE_APPLICATION_CREDENTIALS` | `vertex:gemini` |
@@ -354,6 +355,29 @@ are the exception: they never activate on detection alone, because a working
 `gcloud` login or `~/.aws` profile usually exists for unrelated reasons, and
 silently billing Claude through a cloud you did not pick is worse than saying
 "no API key". One `auth use claude bedrock` makes it active.
+
+### Logins from the Claude Code and Codex CLIs
+
+mantis looks for the coding CLIs already signed in on the machine, so there is
+nothing to set up twice:
+
+- **Codex, ChatGPT sign-in.** When `~/.codex/auth.json` (or `$CODEX_HOME`)
+  holds a ChatGPT login, the `openai` family gains the `chatgpt` method and
+  `gpt-*` models run on your ChatGPT plan through the Codex backend (the
+  Responses API, streamed). The login is read per request and refreshed
+  shortly before it expires; the rotated token is written back to
+  `auth.json` in Codex's own format, so the `codex` CLI stays signed in. The
+  model picker lists the models your plan serves. An `OPENAI_API_KEY` (env or
+  saved) still wins — pick the plan with `mantis-agent auth use openai chatgpt`.
+  Set `MANTIS_DISABLE_CODEX_LOGIN=1` to leave the Codex login alone entirely.
+- **Codex, API key.** A platform key stored by `codex login --with-api-key`
+  is used as an ordinary `OPENAI_API_KEY`.
+- **Claude Code.** A Claude Code login (the macOS Keychain item, or
+  `~/.claude/.credentials.json`) is *detected, not read*: `auth list` points you
+  at `mantis-agent auth login claude`, which signs mantis in to the same
+  subscription with its own token.
+
+`mantis-agent auth list` shows each detection with the source `cli`.
 
 ### How each cloud route is built
 
@@ -479,6 +503,41 @@ agent = Agent(
 Defaults to `http://localhost:11434`. Native tool use on Llama 3.1+ and Qwen
 2.5+; older models fall back to the XML path automatically. `mantis
 setup-local` installs and launches the daemon for you.
+
+**Context window.** Ollama runs a small default context (2k–4k tokens,
+depending on version) and silently drops the *front* of a longer prompt — the
+system prompt and tool definitions go first. So every request sends
+`options.num_ctx`: the model's capability window, capped at **32768** by
+default because the KV cache grows with the window and 128k OOMs most consumer
+GPUs. The value is fixed per model for the life of the provider (a different
+`num_ctx` makes Ollama reload the model), clamped to the model's trained length
+as reported by `/api/show`, and the engine's compaction plans against it from
+the very first request. A model the capability table doesn't know uses its
+`/api/show` trained length (capped) rather than an 8k guess.
+
+If the model is already loaded (`/api/ps`, newer Ollama) with a window at least
+as large as ours — typically because the daemon runs with a bigger
+`OLLAMA_CONTEXT_LENGTH` — we send that window instead, so your server setting
+wins and the model isn't reloaded. A smaller loaded window (Ollama's 2k–4k
+default) is still raised, since that is the silent-truncation case.
+
+**Ollama Cloud.** Models tagged `-cloud` / `:cloud` (e.g. `gpt-oss:120b-cloud`)
+and anything served from `ollama.com` get no `num_ctx` and no 32k ceiling — the
+window is the provider's, not your GPU's. Compaction plans against the model's
+declared window, or `/api/show`'s when it reports one. `keep_alive` is still sent.
+
+| Knob | Effect |
+|---|---|
+| `MANTIS_OLLAMA_MAX_NUM_CTX` / `OllamaProvider(max_num_ctx=…)` | Raise or lower the cap when you have more (or less) VRAM. |
+| `MANTIS_OLLAMA_NUM_CTX` / `OllamaProvider(num_ctx=…)` | Pin an exact window. **`0` = respect the server**: send no `num_ctx`, and plan against the loaded window from `/api/ps` when available. Use this when you configure the daemon yourself. |
+| `OLLAMA_CONTEXT_LENGTH` | If set *in mantis's own environment* (and nothing above is), we send no `num_ctx` and plan against its value. It's normally set on the daemon, not your shell — in that case use `MANTIS_OLLAMA_NUM_CTX=0`. |
+| `extra={"options": {"num_ctx": …}}` | Per-request override; wins over everything. |
+
+**Keep-alive.** Ollama unloads an idle model after 5 minutes, so a turn after
+a pause pays a cold reload. We send `keep_alive: "30m"`; set
+`MANTIS_OLLAMA_KEEP_ALIVE` (or `OllamaProvider(keep_alive=…)`) to another
+duration, `-1` to keep it resident, `0` to unload after each request, or `off`
+to leave the server default.
 
 ### OpenAI-compatible (vLLM, Together, Fireworks, Groq, OpenRouter, Cerebras, …)
 

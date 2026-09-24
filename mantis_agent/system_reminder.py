@@ -364,7 +364,23 @@ def render_environment_context(
 ) -> str:
     """Compose the ``<env>`` block + git snapshot into the single string that
     becomes the ``environment`` context key. Never raises — best-effort; always
-    returns at least the ``<env>`` block even with no git."""
+    returns at least the ``<env>`` block even with no git.
+
+    ``cwd`` should be the agent's working directory. When omitted it falls back
+    to the active ``AGENT_CWD`` (set for the duration of an ``Agent`` run), and
+    only then to the process cwd — so an ``Agent(cwd=...)`` never describes the
+    host process's directory and its git state to the model."""
+    if cwd is None:
+        try:
+            from .builtin_tools.fs import agent_cwd  # noqa: PLC0415
+
+            cwd = agent_cwd()
+        except Exception:  # noqa: BLE001
+            cwd = None
+    if cwd is not None:
+        import os  # noqa: PLC0415
+
+        cwd = os.path.expanduser(str(cwd))
     try:
         git = build_git_context(cwd=cwd)
     except Exception:  # noqa: BLE001

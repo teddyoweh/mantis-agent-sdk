@@ -342,7 +342,7 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
                    "unlockFamily", 'section(pad, "Providers")', 'authBox.id = "auth-cards"', "acard", "ac-types",
                    "/api/auth/families", "/api/auth/set", "/api/auth/validate",
                    "/api/auth/oauth/start", "/api/auth/oauth/finish", "Sign in with", "Save & test",
-                   "recommended", "detected", "Ambient credentials detected",
+                   "recommended", "Found on this machine", "Use different credentials",
                    "First-party", "Open-source & self-host", "Check reachability", "connected",
                    "chmod 600", "FIRST_PARTY"):
         assert marker in page, marker
@@ -358,7 +358,7 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
     # grouped, and a card that opens a form must not stretch its neighbours
     assert "auth-grid" in page and "align-items: start" in page
     # a locked model row deep-links into its family's setup, not a generic list
-    assert "unlockFamily(fid)" in page and "focusProvider(a.pid)" not in page
+    assert "unlockFamily(fid, a.pid)" in page and "focusProvider(a.pid)" not in page
     js = page.split("<script>")[1]
     panel = js[js.index("function authMethodForm("):js.index("function probeBox(")]
     assert "secret" in panel and "masked" in panel      # fields render masked + saved hints
@@ -414,7 +414,7 @@ def test_provider_card_surface_is_neutral_and_the_active_one_is_pixelated(fake):
     assert "color-mix" not in marks and "style.background" not in marks
     assert "var(--vendor" not in css
     # two type sizes, two weights
-    assert "font-size: 14.5px" in css.split(".ac-h .fn {")[1].split("}")[0]
+    assert "font-size: 16px" in css.split(".ac-h .fn {")[1].split("}")[0]
     assert "font-weight: 400" in css.split(".ac-act {")[1].split("}")[0]
     # 140ms, on hover and expand, and nothing else
     assert "transition: background var(--t)" in base
@@ -440,7 +440,7 @@ def test_opened_card_shows_the_method_control_and_one_filled_action(fake):
         assert stolen not in js and stolen not in css, stolen
     seg = css.split("  .ac-seg {")[1].split("}")[0]
     assert "height: 26px" in seg and "position: relative" in seg and "flex: none" in seg
-    assert ".ac-seg.on { background: var(--accent); color: #fff" in css
+    assert ".ac-seg.on { background: var(--panel); color: var(--ink)" in css
     assert ".ac-seg:focus-visible" in css
     # only the opened card's primary action is filled
     form = js[js.index("function authMethodForm("):js.index("function probeBox(")]
@@ -706,10 +706,10 @@ def test_every_mark_is_optically_normalised_to_one_square():
     assert "justify-content: center" in box and "line-height: 1" in box
     # and the letter is sized to the same .62 ink target the fit viewBox gives
     ltr = css.split("  .ac-h .bigmark.letter {")[1].split("}")[0]
-    assert "font-size: 27px" in ltr and "translateY(-0.9px)" in ltr
+    assert "font-size: 30px" in ltr and "translateY(-0.9px)" in ltr
     assert ".mark2 svg { width: 22px; height: 22px; display: block; }" in css
     # the letter stand-in matches the UI's type scale, centred like the glyphs
-    assert ".bigmark.letter { font-family: var(--sans); font-size: 15px; font-weight: 600" in css
+    assert ".bigmark.letter { font-family: var(--sans); font-size: 16px; font-weight: 600" in css
     assert ".mark2.letter" in css and ".omark.letter" in css
     assert 'w.classList.add("letter")' in js
 
@@ -749,16 +749,66 @@ def test_every_empty_state_has_an_illustration(fake):
     art = re.search(r"const ART = \{(.*?)\n\};", js, re.S)
     assert art, "the ART set is gone"
     body = art.group(1)
-    for name in ("deploy", "socket", "session", "mcp", "skill", "search", "activity"):
+    for name in ("socket", "session", "mcp", "skill", "search", "activity"):
         assert name + ":" in body, name
-    assert body.count("<svg viewBox=") == 7
+    # the deploy rack went with the empty state it drew: the Deployments
+    # section is simply not on screen until it has a deployment in it
+    assert "deploy:" not in body
+    assert body.count("<svg viewBox=") == 6
     for bad in ("http://", "https://", "url(", "xlink", "<image", "<use"):
         assert bad not in body, bad
     assert "currentColor" in body and "var(--accent)" in body
     assert "function emptyState(icon, title, line, action)" in js
-    for call in ('emptyState("deploy", "No deployments yet"', 'emptyState("session", "No sessions yet"',
+    for call in ('emptyState("session", "No sessions yet"',
                  'emptyState("mcp", "No MCP servers configured"', 'emptyState("skill", "No skills yet"',
                  'emptyState("search", "No model matches"', 'emptyState("activity"',
-                 'emptyState("socket", "Add a GPU provider to deploy any model"'):
+                 'emptyState("socket", "No deploy providers registered"'):
         assert call in js, call
     assert ".zero .zart svg" in INDEX_HTML and ".zero .zact" in INDEX_HTML
+
+
+def test_a_locked_model_opens_every_way_in_not_just_a_key_field():
+    """Claude is a subscription, an API key, Bedrock, Vertex or Azure — the
+    card says "Connect", and the sheet lists every method the family has, the
+    one you already hold credentials for first. A card for one open-model
+    vendor opens on that vendor alone."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    card = js.split("function myModelCard(", 1)[1].split("\nfunction ", 1)[0]
+    assert '"Add key"' not in card and '"needs a key"' not in js
+    unlock = js.split("function unlockFamily(uiFam, want) {", 1)[1].split("\n}\n", 1)[0]
+    assert "openConnectSheet(uiFam, want)" in unlock
+    paint = js.split("function paintConnect() {", 1)[1].split("\nfunction ", 1)[0]
+    assert "authMethodForm(f, m)" in paint           # the real forms, oauth included
+    assert '"Credentials found"' in paint and '"Active"' in paint and '"No key needed"' in paint
+    assert 'f.family === "oss" && CONNECT.want' in paint and "Other open-model providers" in paint
+    rank = js.split("function methodRank(f, m) {", 1)[1].split("\n}\n", 1)[0]
+    assert "m.status.active ? 0 : m.status.configured ? 1" in rank
+    # closing the sheet after a change refreshes what the grid can use
+    assert "if (d && curView === \"models\") loadModels();" in js
+
+
+def test_a_locked_family_says_so_once_over_its_grid():
+    """Twelve Claude cards each saying "not connected" in amber is one fact
+    printed twelve times. The family says it once, in a strip over its grid
+    that names every way in, or the credentials this machine already holds."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    css = INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    assert 'if (fid !== "oss" && fid !== "selfhost" && rows.every(a => !a.enabled)) {' in js
+    strip = js.split("function fillLockStrips() {", 1)[1].split("\n}\n", 1)[0]
+    assert 'isn\\u2019t connected' in strip or "isn\u2019t connected" in strip
+    assert "credentials found" in strip and "orList(" in strip
+    assert "unlockFamily(fid, found ? found.id : null)" in strip
+    # under the strip the cards go quiet; sorted flat, they speak again
+    assert ".mm-grid.famlock .mmeta .amb { display: none; }" in css
+    assert "if (lock) lock.classList.toggle(\"mm-off\", flatOn);" in js
+
+
+def test_context_windows_never_print_a_trailing_zero():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    assert 'String(+(n/1000000).toFixed(1)) + "m"' in js

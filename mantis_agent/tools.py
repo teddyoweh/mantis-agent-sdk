@@ -16,6 +16,7 @@ Design
 from __future__ import annotations
 
 import inspect
+import itertools
 import re
 import types
 from collections.abc import Awaitable, Callable
@@ -36,6 +37,8 @@ from .errors import ToolExecutionError
 from .types import ToolResultBlock, ToolUseBlock
 
 ToolFn = Callable[..., Awaitable[Any]]
+# Monotonic surface order for deferred tools (see ``ToolRegistry.to_wire``).
+_SURFACE_SEQ = itertools.count(1)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +55,10 @@ class Tool:
     name, description, input_schema, fn:
         The four things every tool needs.
     is_concurrency_safe:
-        ``True`` (default), ``False``, or a callable ``(input: dict) -> bool``.
+        ``True``, ``False``, or a callable ``(input: dict) -> bool``. Left
+        unset (``None``) it follows ``is_read_only`` — a tool is only assumed
+        safe to overlap other calls when it declares it doesn't write, so a
+        forgotten flag can't let a later read race an earlier write.
         Function-of-input form matches Claude Code's upstream model — two ``bash``
         calls writing to different files can parallelize; same file can't.
     abort_siblings_on_error:
@@ -73,7 +79,7 @@ class Tool:
     description: str
     input_schema: dict[str, Any]
     fn: ToolFn
-    is_concurrency_safe: Callable[[dict], bool] | bool = True
+    is_concurrency_safe: Callable[[dict], bool] | bool | None = None
     abort_siblings_on_error: bool = False
     is_read_only: bool = False
     timeout_s: float | None = None
@@ -82,15 +88,54 @@ class Tool:
     # A dozen MCP servers otherwise cost thousands of tokens per turn, on every
     # turn, whether or not the model was ever going to use them.
     deferred: bool = False
+    # A one- or two-sentence description sent instead of ``description`` when
+    # the wire list is built compact (small context window, or a model on the
+    # prompt-engineered tool path, where every schema char is prompt text).
+    description_short: str | None = None
+    # ``(description, description_short)`` as they were paired when the short
+    # text was attached. ``dataclasses.replace(tool, description=...)`` copies
+    # both the stale short and this pair, so compact mode can tell that the
+    # description moved on without the short and fall back to the full text
+    # (see :meth:`to_wire`). Filled in by ``__post_init__``.
+    _short_for: tuple[str, str] | None = field(default=None, repr=False, compare=False)
+    # Load order once a deferred tool is surfaced (0 = live from the start);
+    # keeps ``ToolRegistry.to_wire`` append-only.
+    _surfaced_seq: int = field(default=0, init=False, repr=False, compare=False)
 
-    def to_wire(self) -> dict[str, Any]:
+    def to_wire(self, *, compact: bool = False) -> dict[str, Any]:
         """JSON-Schema tool definition (Anthropic-shaped). Other providers
-        convert from this — e.g. OpenAI wraps it under ``function``."""
+        convert from this — e.g. OpenAI wraps it under ``function``.
+
+        ``compact=True`` swaps in ``description_short`` when the tool has one;
+        parameter docs stay in the schema either way. A short text is skipped
+        when it is stale — the description was changed after the short was
+        attached (e.g. ``dataclasses.replace(builtin, description=...)``) while
+        the short stayed the same — since it describes the old tool."""
+        description = self.description
+        if compact and self._short_is_current():
+            description = self.description_short  # type: ignore[assignment]
         return {
             "name": self.name,
-            "description": self.description,
+            "description": description,
             "input_schema": self.input_schema,
         }
+
+    def _short_is_current(self) -> bool:
+        short = self.description_short
+        if not short:
+            return False
+        pair = self._short_for
+        # Unpaired, re-paired or a short changed on its own: it's current. Only
+        # a changed description under the SAME short marks it stale.
+        return pair is None or short != pair[1] or self.description == pair[0]
+
+    def __post_init__(self) -> None:
+        if self.description_short and self._short_for is None:
+            self._short_for = (self.description, self.description_short)
+        # Unset concurrency safety follows read-only-ness (Claude Code's
+        # ``isConcurrencySafe`` default): writers serialize unless they opt in.
+        if self.is_concurrency_safe is None:
+            self.is_concurrency_safe = bool(self.is_read_only)
 
     # Backwards-compat shim. v0 used a static ``parallel_safe`` bool.
     @property
@@ -108,10 +153,11 @@ def tool(
     input_schema: dict[str, Any] | dict[str, type] | None = None,
     *,
     name: str | None = None,
-    is_concurrency_safe: Callable[[dict], bool] | bool = True,
+    is_concurrency_safe: Callable[[dict], bool] | bool | None = None,
     abort_siblings_on_error: bool = False,
     is_read_only: bool = False,
     timeout_s: float | None = None,
+    description_short: str | None = None,
     # Deprecated alias, accepted for backwards compat.
     parallel_safe: bool | None = None,
 ) -> Tool | Callable[[ToolFn], Tool]:
@@ -142,10 +188,16 @@ def tool(
 
     Schema for the Pythonic form is auto-derived from type hints. For the
     Claude form, the ``{"a": float}`` dict is mapped to a JSON schema.
+
+    A description taken from the docstring drops its ``Args:``/``Returns:``/
+    ``Raises:`` sections — the per-parameter docs are already in the schema, so
+    sending them in the description too paid for them twice. An explicit
+    ``description`` is used verbatim. ``description_short`` is the compact
+    variant sent to small-context / prompt-engineered models.
     """
 
     # Resolve deprecated parallel_safe alias once.
-    if parallel_safe is not None and is_concurrency_safe is True:
+    if parallel_safe is not None and is_concurrency_safe is None:
         is_concurrency_safe = bool(parallel_safe)
 
     # Disambiguate the three valid first-arg shapes:
@@ -172,9 +224,10 @@ def tool(
             wrapped = _wrap_claude_style_fn(fn)
             return Tool(
                 name=tool_name or fn.__name__,
-                description=tool_desc or (inspect.getdoc(fn) or "").strip(),
+                description=tool_desc or _docstring_description(fn),
                 input_schema=schema,
                 fn=wrapped,
+                description_short=description_short,
                 is_concurrency_safe=is_concurrency_safe,
                 abort_siblings_on_error=abort_siblings_on_error,
                 is_read_only=is_read_only,
@@ -191,9 +244,10 @@ def tool(
             raise TypeError(f"@tool requires async def, got {fn!r}")
         return Tool(
             name=name or fn.__name__,
-            description=description or (inspect.getdoc(fn) or "").strip(),
+            description=description or _docstring_description(fn),
             input_schema=input_schema or _derive_schema(fn),
             fn=fn,
+            description_short=description_short,
             is_concurrency_safe=is_concurrency_safe,
             abort_siblings_on_error=abort_siblings_on_error,
             is_read_only=is_read_only,
@@ -293,56 +347,196 @@ def _derive_schema(fn: ToolFn) -> dict[str, Any]:
     return schema
 
 
-def _parse_docstring_args(doc: str) -> dict[str, str]:
-    """Parse a Google-style ``Args:`` block into ``{param: description}``.
+def _docstring_description(fn: ToolFn) -> str:
+    """The tool description derived from ``fn``'s docstring: the prose, minus
+    the parameter / return / raise sections.
 
-    Recognizes ``name: description`` entries under an ``Args:`` (or
-    ``Arguments:``/``Parameters:``) heading, folding continuation lines (more
-    deeply indented) into the preceding description. Stops at the next
-    section heading (``Returns:``, ``Raises:``, …) or a dedent to column 0.
+    Those sections already reach the model through the schema — each Args
+    entry becomes that property's ``description`` (:func:`_derive_schema`) —
+    so leaving them in the description sent every parameter's docs twice.
+    Falls back to the whole docstring if stripping would leave nothing.
+    """
+
+    doc = (inspect.getdoc(fn) or "").strip()
+    return _strip_docstring_sections(doc) or doc
+
+
+def _strip_docstring_sections(doc: str) -> str:
+    """``doc`` without its Args/Parameters/Returns/Raises/Yields sections
+    (Google ``Args:`` or numpy ``Parameters`` + underline style). Prose after a
+    section — a dedent back to the heading's column (Google), or a blank line
+    then a non-entry line at that column (numpy) — is kept."""
+
+    lines = doc.splitlines()
+    drop: set[int] = set()
+    for name, _numpy, start, end in _doc_sections(lines):
+        if name in _STRIP_SECTIONS:
+            drop.update(range(start, end))
+    kept = [line for n, line in enumerate(lines) if n not in drop]
+    text = "\n".join(line.rstrip() for line in kept)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _parse_docstring_args(doc: str) -> dict[str, str]:
+    """Parse a docstring's parameter section into ``{param: description}``.
+
+    Google style: ``name: description`` (or ``name (type): description``)
+    entries under ``Args:`` / ``Arguments:`` / ``Parameters:`` — indented
+    under the heading, or flush with it. Numpy style: ``name : type`` entries
+    under a ``Parameters`` heading underlined with dashes, description on the
+    following, deeper-indented lines. Continuation lines (indented past the
+    entry) fold into the preceding description. Section boundaries are
+    :func:`_section_end`'s; headings only count at the docstring's base indent
+    and never inside an Example(s) section or a ``::`` literal block.
     """
 
     lines = doc.splitlines()
     out: dict[str, str] = {}
-    in_args = False
-    args_indent = 0
-    current: str | None = None
-    _sections = ("returns:", "return:", "raises:", "yields:", "examples:",
-                 "example:", "note:", "notes:", "attributes:", "see also:")
-    for raw in lines:
-        stripped = raw.strip()
-        indent = len(raw) - len(raw.lstrip())
-        low = stripped.lower()
-        if not in_args:
-            if low in ("args:", "arguments:", "parameters:"):
-                in_args = True
-                args_indent = indent
-                current = None
+    for name, numpy, start, end in _doc_sections(lines):
+        if name not in _PARAM_SECTIONS:
             continue
-        # Inside the Args block.
-        if not stripped:
-            continue
-        # A new top-level section (at or left of the Args heading) ends the block.
-        if indent <= args_indent and low in _sections:
-            break
-        if indent <= args_indent and stripped.endswith(":") and " " not in low.rstrip(":"):
-            break
-        # ``name: description`` starts a new param entry; anything more indented
-        # is a continuation of the current description.
-        m = _ARG_LINE.match(stripped)
-        if m and indent <= args_indent + _ARG_ENTRY_INDENT:
-            current = m.group(1)
-            out[current] = m.group(2).strip()
-        elif current is not None:
-            out[current] = f"{out[current]} {stripped}".strip()
+        entry_re = _NUMPY_ARG_LINE if numpy else _ARG_LINE
+        entry_indent: int | None = None
+        current: str | None = None
+        for raw in lines[start + (2 if numpy else 1):end]:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            indent = _indent(raw)
+            # ``name: description`` at the entries' column starts a new entry;
+            # anything more indented continues the current description.
+            m = entry_re.match(stripped)
+            if m and (entry_indent is None or indent <= entry_indent):
+                entry_indent = indent if entry_indent is None else entry_indent
+                current = m.group(1)
+                out[current] = "" if numpy else (m.group(2) or "").strip()
+            elif current is not None:
+                out[current] = f"{out[current]} {stripped}".strip()
     return out
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _doc_sections(lines: list[str]) -> list[tuple[str, bool, int, int]]:
+    """Top-level ``(section, is_numpy, start, end)`` spans of a docstring.
+
+    A heading only counts at the docstring's base (minimum) indent, so an
+    indented ``Returns:`` continuation line or an ``Args:`` inside an example
+    is text, not a section. Example(s) sections are spanned as a whole (their
+    contents are never scanned for headings) and ``::`` literal blocks are
+    skipped the same way."""
+
+    base = min((_indent(line) for line in lines if line.strip()), default=0)
+    out: list[tuple[str, bool, int, int]] = []
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        head = (_section_heading(lines, i)
+                if raw.strip() and _indent(raw) == base else None)
+        if head is not None:
+            end = _section_end(lines, i, head[1])
+            out.append((head[0], head[1], i, end))
+            i = end
+        elif raw.rstrip().endswith("::"):
+            i = _literal_block_end(lines, i)
+        else:
+            i += 1
+    return out
+
+
+def _literal_block_end(lines: list[str], i: int) -> int:
+    """Index of the first line after the ``::`` literal block opened by
+    ``lines[i]`` — the next non-blank line at or left of its indent."""
+
+    indent = _indent(lines[i])
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or _indent(lines[j]) > indent):
+        j += 1
+    return j
+
+
+def _section_heading(lines: list[str], i: int) -> tuple[str, bool] | None:
+    """``(section, is_numpy)`` if ``lines[i]`` opens a docstring section —
+    ``Args:`` (Google) or ``Parameters`` over a ``----------`` rule (numpy)."""
+
+    low = lines[i].strip().lower()
+    if low.endswith(":") and low[:-1] in _KNOWN_SECTIONS:
+        return low[:-1], False
+    if (low in _KNOWN_SECTIONS and i + 1 < len(lines)
+            and _UNDERLINE.match(lines[i + 1].strip())):
+        return low, True
+    return None
+
+
+def _section_end(lines: list[str], i: int, numpy: bool) -> int:
+    """Index just past the section whose heading is ``lines[i]``.
+
+    Every section ends at the next heading at (or left of) its heading's
+    column. Beyond that:
+
+    - Google, indented entries: a dedent back to the heading's column.
+    - Google, entries flush with the heading (``Args:\nx: the x``): a blank
+      line, or a heading-column line that isn't a ``name: ...`` entry.
+    - Numpy (entries sit at the heading's column): a blank line followed by a
+      heading-column line that isn't entry-shaped — trailing prose.
+    """
+
+    heading_indent = _indent(lines[i])
+    j = i + (2 if numpy else 1)
+    flush = False
+    if not numpy:
+        k = j
+        while k < len(lines) and not lines[k].strip():
+            k += 1
+        flush = (k < len(lines) and _indent(lines[k]) == heading_indent
+                 and _section_heading(lines, k) is None
+                 and _ARG_LINE.match(lines[k].strip()) is not None)
+    after_blank = False
+    while j < len(lines):
+        raw = lines[j]
+        stripped = raw.strip()
+        if not stripped:
+            after_blank = True
+            j += 1
+            continue
+        at_heading_col = _indent(raw) <= heading_indent
+        if at_heading_col:
+            if _section_heading(lines, j) is not None:
+                break
+            if numpy:
+                if after_blank and not _NUMPY_ENTRY.match(stripped):
+                    break
+            elif flush:
+                if after_blank or not _ARG_LINE.match(stripped):
+                    break
+            else:
+                break
+        after_blank = False
+        j += 1
+    return j
+
+
+_PARAM_SECTIONS = frozenset({
+    "args", "arguments", "parameters", "params",
+    "keyword args", "keyword arguments", "other parameters",
+})
+_STRIP_SECTIONS = _PARAM_SECTIONS | {"returns", "return", "raises", "yields", "yield"}
+_KNOWN_SECTIONS = _STRIP_SECTIONS | {
+    "examples", "example", "note", "notes", "attributes", "see also",
+    "warning", "warnings", "references", "todo",
+}
 # ``name: rest`` or ``name (type): rest`` — the leading token of an Args entry.
 _ARG_LINE = re.compile(r"^([A-Za-z_]\w*)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
-# Continuation lines are indented further than the entry itself; entries sit a
-# few columns in from the ``Args:`` heading. Kept loose to tolerate style drift.
-_ARG_ENTRY_INDENT = 8
+# Numpy ``name : type`` (the type is optional).
+_NUMPY_ARG_LINE = re.compile(r"^([A-Za-z_]\w*)\s*(?::\s*(.*))?$")
+# Anything a numpy section's entry line can look like: ``name : type``,
+# ``x, y : float``, or a bare (dotted / generic) type under Returns.
+_NUMPY_ENTRY = re.compile(
+    r"^\*{0,2}[A-Za-z_][\w.]*(?:\[.*\])?(?:\s*,\s*\*{0,2}[A-Za-z_]\w*)*\s*(?::.*)?$"
+)
+_UNDERLINE = re.compile(r"^-{3,}$")
 
 
 _SCALAR_MAP = {
@@ -459,10 +653,18 @@ class ToolRegistry:
             return self._by_name.get(alias)
         return None
 
-    def to_wire(self) -> list[dict[str, Any]]:
+    def to_wire(self, *, compact: bool = False) -> list[dict[str, Any]]:
         """The schemas that go on the wire this turn — deferred tools are
-        excluded until :meth:`surface` loads them."""
-        return [t.to_wire() for t in self._by_name.values() if not t.deferred]
+        excluded until :meth:`surface` loads them. ``compact=True`` sends each
+        tool's ``description_short`` where it has one (see :meth:`Tool.to_wire`)."""
+        # Surfaced tools go LAST, in the order they were loaded, so the list
+        # only ever appends: slotting one back into its registration position
+        # would shift every later schema and invalidate a local server's
+        # prompt (KV prefix) cache. Sorted on the Tool, not the dict, because
+        # an Agent may run from a copy of the registry ``tool_search`` holds.
+        live = [t for t in self._by_name.values() if not t.deferred]
+        live.sort(key=lambda t: t._surfaced_seq)
+        return [t.to_wire(compact=compact) for t in live]
 
     # -- deferred tools -------------------------------------------------------
     #
@@ -488,6 +690,7 @@ class ToolRegistry:
             t = self.resolve(name)
             if t is not None and t.deferred:
                 t.deferred = False
+                t._surfaced_seq = next(_SURFACE_SEQ)
                 out.append(t)
         return out
 

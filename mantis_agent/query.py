@@ -573,7 +573,10 @@ async def query(
     from .compat_query import _apply_response_model  # local: avoid a cycle
 
     opts = _apply_response_model(opts)
-    agent = _agent_from_options(opts)
+    # Pooled HTTP client — see compat_query.query.
+    from .http import sharing_http_clients  # noqa: PLC0415
+    with sharing_http_clients():
+        agent = _agent_from_options(opts)
 
     session_id = opts.get("session_id") or _new_uuid()
     seeds = await _collect_prompt(prompt)
@@ -595,26 +598,7 @@ async def query(
             transcript.write(msg)
         return msg
 
-    # 1) Session-init banner.
-    yield _persist(SDKSystemMessage(
-        model=agent.model,
-        tools=[t.name for t in agent.tools],
-        cwd=opts.get("cwd", ""),
-        permissionMode=opts.get("permission_mode", "default"),
-        agents=opts.get("agents", []),
-        mcp_servers=opts.get("mcp_servers", []),
-        uuid=_new_uuid(),
-        session_id=session_id,
-    ))
-
-    # 2) Seed user messages.
-    for seed in seeds:
-        if isinstance(seed, UserMessage):
-            yield _persist(SDKUserMessage(
-                message=APIUserMessage(content=seed.content),
-                uuid=_new_uuid(),
-                session_id=session_id,
-            ))
+    from .compat_query import _connect_external_mcp, _mcp_init_servers
 
     # 3) Run the agent loop and translate each emitted message.
     is_error = False
@@ -636,20 +620,44 @@ async def query(
         else None
     )
 
-    # Skip-set: ``agent.run_iter`` mutates ``running`` and re-yields the
-    # seed UserMessages we already echoed in step 2. Identity (``id(...)``)
-    # is the cheapest test that "this is the EXACT instance we passed in",
-    # so we don't accidentally drop a freshly-built duplicate.
-    seed_ids = {id(s) for s in seeds}
-    # ``options["messages"]`` seeds PRIOR history (a resumed conversation). It
-    # is deliberately not echoed on the stream the way the new prompt is: a
-    # consumer resuming a session already has those turns, and re-emitting them
-    # would look like the model just said them again.
-    history: list[Message] = list(opts.get("messages") or [])
-    running: list[Message] = [*history, *seeds]
-    seed_ids |= {id(h) for h in history}
-
+    _mcp_mgr = None
+    _stream = None
     try:
+        _mcp_mgr = await _connect_external_mcp(agent, opts)
+        # 1) Session-init banner.
+        yield _persist(SDKSystemMessage(
+            model=agent.model,
+            tools=[t.name for t in agent.tools],
+            cwd=opts.get("cwd", ""),
+            permissionMode=opts.get("permission_mode", "default"),
+            agents=opts.get("agents", []),
+            mcp_servers=_mcp_init_servers(_mcp_mgr),
+            uuid=_new_uuid(),
+            session_id=session_id,
+        ))
+
+        # 2) Seed user messages.
+        for seed in seeds:
+            if isinstance(seed, UserMessage):
+                yield _persist(SDKUserMessage(
+                    message=APIUserMessage(content=seed.content),
+                    uuid=_new_uuid(),
+                    session_id=session_id,
+                ))
+
+        # Skip-set: ``agent.run_iter`` mutates ``running`` and re-yields the
+        # seed UserMessages we already echoed in step 2. Identity (``id(...)``)
+        # is the cheapest test that "this is the EXACT instance we passed in",
+        # so we don't accidentally drop a freshly-built duplicate.
+        seed_ids = {id(s) for s in seeds}
+        # ``options["messages"]`` seeds PRIOR history (a resumed conversation). It
+        # is deliberately not echoed on the stream the way the new prompt is: a
+        # consumer resuming a session already has those turns, and re-emitting them
+        # would look like the model just said them again.
+        history: list[Message] = list(opts.get("messages") or [])
+        running: list[Message] = [*history, *seeds]
+        seed_ids |= {id(h) for h in history}
+
         # Streaming-mode dispatch: yield each SDK-shape message as
         # ``run_iter`` produces it, not after the whole multi-turn loop
         # returns. This matches the Claude Agent SDK contract — consumers
@@ -736,8 +744,14 @@ async def query(
         # Close the stream in THIS task. run_iter holds the tool executor's
         # task group open across its yields, so letting the event loop
         # finalize it later raises "exit cancel scope in a different task".
-        await aclose_stream(_stream)
-        await agent.aclose()
+        try:
+            await aclose_stream(_stream)
+        finally:
+            try:
+                if _mcp_mgr is not None:
+                    await _mcp_mgr.stop()
+            finally:
+                await agent.aclose()
 
     duration_ms = int((time.monotonic() - started_at) * 1000)
 

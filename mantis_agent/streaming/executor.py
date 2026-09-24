@@ -29,9 +29,13 @@ Behavior summary
 * **Concurrency-safe tools** run in parallel, bounded by
   ``MANTIS_AGENT_MAX_TOOL_CONCURRENCY`` (env, default 10) or the
   ``max_concurrency`` constructor arg.
-* **Non-concurrency-safe tools** run serially — one at a time, never
-  overlapping with another non-safe tool (they *can* overlap with safe
-  tools, mirroring upstream's behavior).
+* **Non-concurrency-safe tools** are ordering barriers (Claude Code's
+  semantics, by insertion index): an unsafe call waits for *every* earlier
+  call to finish, and every later call waits for the most recent earlier
+  unsafe call. Consecutive safe calls still overlap, so ``edit_file`` then
+  ``read_file`` in one turn can never see pre-edit state, while three
+  ``grep``s run in parallel. A barrier releases however its call ends
+  (result, error, denial, timeout, cancellation), so waiters never hang.
 * ``Tool.is_concurrency_safe`` may be a bool *or* a callable
   ``(input) -> bool``. Callable form lets ``bash`` say "safe iff paths
   don't conflict" etc.
@@ -57,6 +61,7 @@ reach for ``asyncio.*`` here.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import math
 import os
@@ -80,7 +85,14 @@ from ..tools import Tool, ToolRegistry
 from ..tools import unknown_tool_message as _unknown_tool_message
 from ..types import ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 
-__all__ = ["CanUseToolFn", "StreamingToolExecutor"]
+__all__ = [
+    "CanUseToolFn",
+    "StreamingToolExecutor",
+    "normalize_tool_input",
+    "result_char_budget_for",
+    "tool_result_char_cap",
+    "truncate_middle",
+]
 
 _LOG = logging.getLogger("mantis_agent.streaming.executor")
 _ENC = msgspec.json.Encoder()
@@ -158,6 +170,64 @@ _TOOL_RESULT_CAPS = {
     "bash": 40_000,
     "web_fetch": 40_000,
 }
+
+# The static caps above are sized for a 128k+ model. On an 8k/32k local model a
+# single 60k-char read is the whole window, so when the loop knows its budget
+# the per-result cap shrinks to a slice of it (``result_char_budget_for``) —
+# never below this floor, never above the static cap.
+_MIN_RESULT_CAP = 4_000
+# Share of the conversation's token budget one tool result may take, and the
+# chars-per-token rule of thumb used to turn that into a char cap.
+_RESULT_BUDGET_SHARE = 0.15
+_CHARS_PER_TOKEN = 4
+
+# The effective cap for the tool currently running, set by the executor around
+# ``tool.fn`` so self-limiting tools (read_file, bash) can cut on a clean line
+# boundary with a precise "continue at offset N" notice instead of having the
+# backstop elide their middle. ``None`` outside an executor-dispatched call.
+_RESULT_CHAR_CAP: "contextvars.ContextVar[int | None]" = contextvars.ContextVar(
+    "mantis_tool_result_char_cap", default=None
+)
+
+
+def tool_result_char_cap() -> int | None:
+    """Char cap the executor will apply to the running tool's result, or
+    ``None`` when the tool is called directly (no executor)."""
+    return _RESULT_CHAR_CAP.get()
+
+
+def result_char_budget_for(message_budget_tokens: int | None) -> int | None:
+    """Per-result char budget for a conversation that may use
+    ``message_budget_tokens`` tokens (``Agent._message_budget()``): ~15% of it
+    at ~4 chars/token, floored at 4k chars. ``None`` (= static caps) when the
+    budget is unknown."""
+    if not message_budget_tokens or message_budget_tokens <= 0:
+        return None
+    return max(
+        _MIN_RESULT_CAP,
+        int(message_budget_tokens * _RESULT_BUDGET_SHARE * _CHARS_PER_TOKEN),
+    )
+
+
+def _result_cap(tool_name: str, budget: int | None) -> int:
+    static = _TOOL_RESULT_CAPS.get(tool_name, _DEFAULT_TOOL_RESULT_CAP)
+    if budget is None or budget <= 0:
+        return static
+    return min(static, max(_MIN_RESULT_CAP, budget))
+
+
+# How the model gets at what a truncation dropped, per tool.
+_TRUNCATION_HINTS = {
+    "read_file": "Read the elided range with read_file(path, offset=<line>, limit=<n>).",
+    "bash": (
+        "Re-run with a filter (grep / head / tail), or redirect the output to a "
+        "file and read it in ranges."
+    ),
+    "bash_output": "Filter the command's output (grep / tail) instead of dumping it.",
+}
+_DEFAULT_TRUNCATION_HINT = (
+    "Re-run with a narrower query, a line range, or a filter to see the middle."
+)
 
 
 # WEAK-keyed: an ``id(fn)``-keyed dict poisoned this cache — when a tool
@@ -266,6 +336,160 @@ def _filter_tool_input(fn: Any, input: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in input.items() if k in accepted}
 
 
+# Argument-name aliases: canonical param → the spellings models trained on other
+# harnesses (Claude Code's ``file_path``, SWE-agent's ``old_str``, rg's ``-i``)
+# reach for. Applied only when the tool's signature takes the canonical name, the
+# canonical key is absent, and the alias is NOT itself a real param — so a present
+# key is never overwritten and tools with ``**kwargs`` (MCP, explicit schemas)
+# are never touched. First alias present (in tuple order) wins.
+_ARG_ALIASES: dict[str, tuple[str, ...]] = {
+    "path": ("file_path", "filepath", "filename", "file", "notebook_path",
+             "dir", "directory", "dir_path"),
+    "command": ("cmd", "command_line", "shell_command"),
+    "old_string": ("old_str", "old_text", "search", "find"),
+    "new_string": ("new_str", "new_text", "replace", "replacement"),
+    "content": ("text", "contents", "file_text", "data"),
+    "pattern": ("query", "regex", "search_pattern"),
+    "ignore_case": ("-i", "case_insensitive", "insensitive"),
+    "context_lines": ("-C", "context", "-A", "-B"),
+    "file_type": ("type",),
+}
+
+# Per-tool aliases whose VALUE needs a unit change: tool → {alias: (canonical,
+# transform)}. Claude Code's Bash ``timeout`` is milliseconds; ours is seconds, so
+# only the unambiguous ``timeout_ms`` spelling is converted (a bare ``timeout`` is
+# already our canonical name and is left alone).
+_ARG_TRANSFORMS: dict[str, dict[str, tuple[str, Any]]] = {
+    "bash": {"timeout_ms": ("timeout", lambda ms: max(1, -(-int(float(ms)) // 1000)))},
+}
+
+
+def _apply_arg_aliases(
+    tool_name: str, fn: Any, input: dict[str, Any],
+) -> tuple[dict[str, Any], list[tuple[str, str]]]:
+    """Rename aliased argument keys to the tool's canonical params. Returns the
+    (possibly new) input and the ``(alias, canonical)`` pairs that fired."""
+    accepted = _accepted_params(fn)
+    if accepted is None or not input or all(k in accepted for k in input):
+        return input, []
+    out = dict(input)
+    fired: list[tuple[str, str]] = []
+    for alias, (canonical, transform) in _ARG_TRANSFORMS.get(tool_name, {}).items():
+        if canonical in accepted and canonical not in out and alias in out \
+                and alias not in accepted:
+            try:
+                out[canonical] = transform(out[alias])
+            except (TypeError, ValueError, OverflowError):
+                continue  # unconvertible — leave it for the filter to drop
+            del out[alias]
+            fired.append((alias, canonical))
+    for canonical, aliases in _ARG_ALIASES.items():
+        if canonical not in accepted or canonical in out:
+            continue
+        present = [a for a in aliases if a in out and a not in accepted]
+        if not present:
+            continue
+        value = out.pop(present[0])
+        fired.append((present[0], canonical))
+        if canonical == "context_lines":
+            # ``-A`` / ``-B`` / ``-C`` together: one symmetric window that
+            # covers the widest the model asked for, not whichever came first.
+            for extra in present[1:]:
+                other = out.pop(extra)
+                fired.append((extra, canonical))
+                try:
+                    value = max(int(value), int(other))
+                except (TypeError, ValueError):
+                    pass
+        out[canonical] = value
+    return (out, fired) if fired else (input, [])
+
+
+def normalize_tool_input(
+    tool: Any, input: Any,
+) -> tuple[Any, list[tuple[str, str]]]:
+    """Canonicalize a call's argument NAMES for ``tool`` (``file_path`` → ``path``,
+    ``cmd`` → ``command``, ``timeout_ms`` → seconds). Returns ``(input, fired)``;
+    ``input`` is returned unchanged (same object) when nothing fired.
+
+    The agent loop calls this BEFORE the PreToolUse hook and the permission
+    check, so hooks, deny rules (``Edit(secrets/**)`` binds to ``path``;
+    ``Bash(rm:*)`` to ``command``) and tracing all see exactly the keys the
+    executor will run with — an alias can't slip a call past a rule keyed on
+    the canonical name. Idempotent: an already-canonical input is a no-op, so
+    the executor re-applying it is safe."""
+    if not isinstance(input, dict) or tool is None:
+        return input, []
+    return _apply_arg_aliases(
+        getattr(tool, "name", ""), getattr(tool, "fn", None), input,
+    )
+
+
+def _missing_required(fn: Any, call_input: dict[str, Any]) -> list[str]:
+    """Params ``fn`` requires (no default) that ``call_input`` lacks. Empty for
+    ``**kwargs`` tools — their schema is validated by whoever implements them."""
+    import inspect  # noqa: PLC0415
+
+    if _accepted_params(fn) is None:
+        return []
+    try:
+        params = inspect.signature(fn).parameters
+    except (ValueError, TypeError):
+        return []
+    return [
+        n for n, p in params.items()
+        if p.default is inspect.Parameter.empty
+        and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                       inspect.Parameter.KEYWORD_ONLY)
+        and n not in call_input
+    ]
+
+
+def _expected_params(tool: Any) -> str:
+    """``path (string, required), offset (integer, optional)`` — from the tool's
+    input_schema, else its signature."""
+    schema = getattr(tool, "input_schema", None)
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(props, dict) and props:
+        required = set(schema.get("required") or ())
+        parts = []
+        for name, spec in props.items():
+            jtype = spec.get("type") if isinstance(spec, dict) else None
+            bits = ([jtype] if isinstance(jtype, str) else []) + [
+                "required" if name in required else "optional"
+            ]
+            parts.append(f"{name} ({', '.join(bits)})")
+        return ", ".join(parts)
+    accepted = _accepted_params(getattr(tool, "fn", None))
+    return ", ".join(sorted(accepted)) if accepted else "(unknown)"
+
+
+def _arg_error_message(
+    tool: Any, received: dict[str, Any], call_input: dict[str, Any],
+    missing: list[str], fired: list[tuple[str, str]],
+) -> str:
+    """A tool-result error that teaches: what was missing, what was ignored, what
+    the tool actually takes — so the model's retry is different from its call."""
+    renamed = {a: c for a, c in fired}
+    notes = []
+    for k in received:
+        if k in renamed:
+            notes.append(f"{k} (used as {renamed[k]})")
+        elif k not in call_input:
+            notes.append(f"{k} (ignored — unknown)")
+        else:
+            notes.append(k)
+    head = (
+        f"{tool.name}: missing required argument"
+        f"{'s' if len(missing) > 1 else ''} {', '.join(repr(m) for m in missing)}."
+        if missing else f"{tool.name}: invalid arguments."
+    )
+    return (
+        f"{head} Received: {', '.join(notes) or '(none)'}. "
+        f"Expected: {_expected_params(tool)}."
+    )
+
+
 def _as_block_content(out: Any) -> list[Any] | None:
     """If a tool returned rich content (an ImageBlock / TextBlock, or a list of
     them — e.g. a multimodal ``read_file`` handing back an image), pass it
@@ -278,19 +502,77 @@ def _as_block_content(out: Any) -> list[Any] | None:
     return None
 
 
-def _truncate_tool_result(text: str, tool_name: str) -> str:
-    cap = _TOOL_RESULT_CAPS.get(tool_name, _DEFAULT_TOOL_RESULT_CAP)
+def truncate_middle(
+    text: str,
+    cap: int,
+    *,
+    head_ratio: float = 2 / 3,
+    hint: str = _DEFAULT_TRUNCATION_HINT,
+) -> str:
+    """Keep the head and tail of ``text`` within ``cap`` chars (note included),
+    eliding the middle with a note that says how to get it back. ``head_ratio``
+    is the share of the kept body given to the head — build logs want more
+    tail (the failing summary is at the end)."""
     if len(text) <= cap:
         return text
-    head = cap * 2 // 3
-    tail = cap - head
+    note_fmt = "\n\n… [{dropped:,} characters elided (output truncated) — {total:,} total. {hint}] …\n\n"
+    # Size the body so body + note fits the cap (the note's own digits are
+    # bounded by len(text), so measure with that).
+    note_len = len(note_fmt.format(dropped=len(text), total=len(text), hint=hint))
+    if cap <= note_len:
+        # No room for the note: a hard cut is the only way to honour the cap.
+        return text[: max(0, cap)]
+    body = cap - note_len
+    head = int(body * head_ratio)
+    tail = body - head
     dropped = len(text) - head - tail
-    note = (
-        f"\n\n… [{dropped:,} characters elided — {len(text):,} total. "
-        f"Re-run with a narrower query, a line range, or a filter to see the "
-        f"middle.] …\n\n"
+    note = note_fmt.format(dropped=dropped, total=len(text), hint=hint)
+    return text[:head] + note + (text[-tail:] if tail > 0 else "")
+
+
+def _truncate_tool_result(text: str, tool_name: str, budget: int | None = None) -> str:
+    return truncate_middle(
+        text,
+        _result_cap(tool_name, budget),
+        hint=_TRUNCATION_HINTS.get(tool_name, _DEFAULT_TRUNCATION_HINT),
     )
-    return text[:head] + note + text[-tail:]
+
+
+def _truncate_block_content(blocks: list[Any], tool_name: str, budget: int | None) -> list[Any]:
+    """Apply the text cap to the TextBlocks of a rich result (typical MCP
+    output). Images pass through untouched; over budget, each text block keeps
+    a share of the cap proportional to its size, drawn from one running budget
+    so the text total stays within the cap however many blocks there are. Once
+    the budget is spent, the remaining text blocks collapse into one note."""
+    texts = [b for b in blocks if isinstance(b, TextBlock) and b.text]
+    total = sum(len(b.text) for b in texts)
+    cap = _result_cap(tool_name, budget)
+    if total <= cap:
+        return blocks
+    hint = _TRUNCATION_HINTS.get(tool_name, _DEFAULT_TRUNCATION_HINT)
+    note_fmt = "[… {n:,} more text block(s) ({chars:,} characters) elided (output truncated). {hint}]"
+    # Reserve room for that note up front (digits bounded by ``total``).
+    remaining = cap - len(note_fmt.format(n=len(texts), chars=total, hint=hint))
+    # A per-block floor keeps small blocks readable — but only when every
+    # block's floor fits; 60 floored blocks would otherwise blow the cap 15x.
+    floor = _MIN_RESULT_CAP // 4
+    use_floor = len(texts) * floor <= cap
+    out: list[Any] = []
+    elided_n = elided_chars = 0
+    for b in blocks:
+        if isinstance(b, TextBlock) and b.text:
+            if remaining < 200:  # spent — a sliver of a block helps nobody
+                elided_n += 1
+                elided_chars += len(b.text)
+                continue
+            share = max(floor if use_floor else 200, cap * len(b.text) // total)
+            share = min(share, remaining)
+            b = msgspec.structs.replace(b, text=truncate_middle(b.text, share, hint=hint))
+            remaining -= len(b.text)
+        out.append(b)
+    if elided_n:
+        out.append(TextBlock(text=note_fmt.format(n=elided_n, chars=elided_chars, hint=hint)))
+    return out
 
 
 def _flatten_exception_group(eg: BaseExceptionGroup) -> list[BaseException]:
@@ -327,6 +609,8 @@ class StreamingToolExecutor:
         "_max_concurrency",
         "_sem",
         "_serial_lock",
+        "_done_events",
+        "_last_unsafe_idx",
         "_calls",
         "_executed_calls",
         "_results",
@@ -348,6 +632,7 @@ class StreamingToolExecutor:
         "_completion_closed",
         "_tracer",
         "_trace_parent",
+        "_result_char_budget",
     )
 
     def __init__(
@@ -359,8 +644,13 @@ class StreamingToolExecutor:
         cancellation_signal: "anyio.Event | None" = None,
         tracer: "Any | None" = None,
         trace_parent: "Any | None" = None,
+        result_char_budget: int | None = None,
     ) -> None:
         self._registry = registry
+        # Per-result char budget derived from the model's context window (see
+        # ``result_char_budget_for``). ``None`` keeps the static caps — the
+        # right default when the window is unknown.
+        self._result_char_budget = result_char_budget
         self._can_use_tool = can_use_tool
         # Tracing — set by the agent loop when ``Agent.tracer`` is on. When
         # both are ``None`` the executor pays zero overhead. Each tool
@@ -373,6 +663,11 @@ class StreamingToolExecutor:
         self._sem = anyio.Semaphore(self._max_concurrency)
         # One-at-a-time lock for non-concurrency-safe tools.
         self._serial_lock = anyio.Lock()
+        # Ordering barriers: ``_done_events[i]`` fires when call ``i`` has
+        # finished (any outcome). ``_last_unsafe_idx`` is the newest unsafe
+        # call so later calls know which barrier to wait behind.
+        self._done_events: list[anyio.Event] = []
+        self._last_unsafe_idx: int | None = None
         # Track calls in insertion order.
         self._calls: list[ToolUseBlock] = []
         self._executed_calls: list[ToolUseBlock] = []
@@ -597,6 +892,8 @@ class StreamingToolExecutor:
         self._calls.append(block)
         self._results.append(None)
         self._scopes.append(anyio.CancelScope())
+        done = anyio.Event()
+        self._done_events.append(done)
         # Fast-fail paths — return BEFORE spawning a task. Two flavors,
         # each producing a distinct error message so callers can tell
         # what happened from the ToolResultBlock alone.
@@ -609,6 +906,7 @@ class StreamingToolExecutor:
                     is_error=True,
                 ),
             )
+            done.set()
             return
         if self._aborted:
             self._record_result(
@@ -619,12 +917,27 @@ class StreamingToolExecutor:
                     is_error=True,
                 ),
             )
+            done.set()
             return
+        # Ordering: resolve safety now (insertion time) so the barrier set
+        # is fixed by call index, not by which task happens to run first.
+        # Unknown tools error immediately without touching anything — safe.
+        tool = self._registry.resolve(block.name)
+        safe = tool is None or _is_safe(tool, block.input)
+        if safe:
+            wait_for = (
+                [] if self._last_unsafe_idx is None
+                else [self._done_events[self._last_unsafe_idx]]
+            )
+        else:
+            # Every earlier event — waiting on one already set is free.
+            wait_for = list(self._done_events[:idx])
+            self._last_unsafe_idx = idx
         # Bump pending and clear the idle gate.
         self._pending += 1
         if self._idle_event.is_set():
             self._idle_event = anyio.Event()
-        self._tg.start_soon(self._run_one, idx, block)
+        self._tg.start_soon(self._run_one, idx, block, safe, wait_for)
 
     async def wait_all(self) -> list[ToolResultBlock]:
         """Block until every dispatched tool finishes and return result blocks
@@ -739,7 +1052,13 @@ class StreamingToolExecutor:
     # Internals
     # ------------------------------------------------------------------
 
-    async def _run_one(self, idx: int, block: ToolUseBlock) -> None:
+    async def _run_one(
+        self,
+        idx: int,
+        block: ToolUseBlock,
+        safe: bool = True,
+        wait_for: "list[anyio.Event] | None" = None,
+    ) -> None:
         """One tool's lifetime: lookup → permission → concurrency gate →
         invoke → record result. Never raises out (all errors become
         ``is_error=True`` result blocks).
@@ -771,10 +1090,13 @@ class StreamingToolExecutor:
                 tool_span = None
         try:
             with scope:
-                await self._run_one_inner(idx, block)
+                await self._run_one_inner(idx, block, safe, wait_for or ())
             if scope.cancelled_caught and self._results[idx] is None:
                 self._record_result(idx, self._cancelled_result(block))
         finally:
+            # Release this call's ordering barrier first, whatever happened —
+            # an errored / cancelled call must never strand later waiters.
+            self._done_events[idx].set()
             self._pending -= 1
             if self._pending <= 0:
                 self._pending = 0
@@ -806,7 +1128,13 @@ class StreamingToolExecutor:
                 except Exception:  # noqa: BLE001
                     _LOG.debug("tracer span end failed", exc_info=True)
 
-    async def _run_one_inner(self, idx: int, block: ToolUseBlock) -> None:
+    async def _run_one_inner(
+        self,
+        idx: int,
+        block: ToolUseBlock,
+        safe: bool,
+        wait_for: "Any" = (),
+    ) -> None:
         tool = self._registry.resolve(block.name)
         if tool is None:
             self._record_result(
@@ -845,8 +1173,11 @@ class StreamingToolExecutor:
                 )
                 return
 
-        safe = _is_safe(tool, block.input)
         try:
+            # Ordering barrier (see module docstring). Waited outside the
+            # semaphore so a parked call never holds a parallel slot.
+            for ev in wait_for:
+                await ev.wait()
             if safe:
                 async with self._sem:
                     if self._aborted:
@@ -872,9 +1203,30 @@ class StreamingToolExecutor:
         # Repair a model's loose args before calling: coerce typed values passed
         # as strings ("10" → 10, "true" → True) to the schema type, then drop
         # kwargs the tool doesn't accept (hallucinated extras) — either would
-        # otherwise error the call and burn a turn.
-        coerced = _coerce_to_schema(block.input, getattr(tool, "input_schema", None))
+        # otherwise error the call and burn a turn. Aliased arg names
+        # (``file_path`` → ``path``) are renamed first so they aren't dropped.
+        received = block.input or {}
+        aliased, fired = _apply_arg_aliases(tool.name, tool.fn, received)
+        if fired:
+            _LOG.debug(
+                "tool %r: argument aliases applied: %s", tool.name,
+                ", ".join(f"{a}→{c}" for a, c in fired),
+            )
+        coerced = _coerce_to_schema(aliased, getattr(tool, "input_schema", None))
         call_input = _filter_tool_input(tool.fn, coerced)
+        missing = _missing_required(tool.fn, call_input)
+        if missing:
+            # Not executed — no evidence recorded, no sibling abort (no side
+            # effects happened). The message names what to change.
+            self._record_result(
+                idx,
+                ToolResultBlock(
+                    tool_use_id=block.id,
+                    content=_arg_error_message(tool, received, call_input, missing, fired),
+                    is_error=True,
+                ),
+            )
+            return
         try:
             with anyio.fail_after(timeout) if timeout is not None else nullcontext():
                 # Record only after timeout setup succeeds, immediately before
@@ -882,7 +1234,13 @@ class StreamingToolExecutor:
                 self._executed_calls.append(
                     ToolUseBlock(id=block.id, name=tool.name, input=deepcopy(call_input))
                 )
-                out = await tool.fn(**call_input)
+                cap_token = _RESULT_CHAR_CAP.set(
+                    _result_cap(tool.name, self._result_char_budget)
+                )
+                try:
+                    out = await tool.fn(**call_input)
+                finally:
+                    _RESULT_CHAR_CAP.reset(cap_token)
         except TimeoutError:
             self._record_result(
                 idx,
@@ -899,11 +1257,19 @@ class StreamingToolExecutor:
             raise
         except Exception as e:  # noqa: BLE001 — user code must not crash us
             err = ToolExecutionError(tool.name, block.id, e)
+            content = str(err)
+            renamed = {a for a, _ in fired}
+            if isinstance(e, TypeError) and any(
+                k not in call_input and k not in renamed for k in received
+            ):
+                # Likely an argument-shape error — say what was dropped and
+                # what the tool takes, so the retry isn't identical.
+                content += "\n" + _arg_error_message(tool, received, call_input, [], fired)
             self._record_result(
                 idx,
                 ToolResultBlock(
                     tool_use_id=block.id,
-                    content=str(err),
+                    content=content,
                     is_error=True,
                 ),
             )
@@ -911,7 +1277,12 @@ class StreamingToolExecutor:
             return
 
         rich = _as_block_content(out)
-        content: Any = rich if rich is not None else _truncate_tool_result(_stringify(out), tool.name)
+        budget = self._result_char_budget
+        content: Any = (
+            _truncate_block_content(rich, tool.name, budget)
+            if rich is not None
+            else _truncate_tool_result(_stringify(out), tool.name, budget)
+        )
         self._record_result(
             idx,
             ToolResultBlock(tool_use_id=block.id, content=content),

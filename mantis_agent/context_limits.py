@@ -64,6 +64,10 @@ MIN_CREDIBLE_LIMIT = 1024
 
 _lock = threading.Lock()
 _cache: dict[str, int] | None = None
+# Process-local ceilings a provider *configured* rather than observed (Ollama's
+# ``num_ctx``). Never persisted: they follow the current settings, so writing
+# them to disk would pin a stale window after the user raises the cap.
+_runtime: dict[str, int] = {}
 
 
 def parse_limit(text: object) -> int | None:
@@ -169,27 +173,58 @@ def record_limit(model: str, limit: int, backend: str | None = None) -> bool:
     return True
 
 
+def note_runtime_limit(model: str, limit: int, backend: str | None = None) -> None:
+    """Record the window a provider has configured the server to run with.
+
+    Ollama silently drops the *front* of a prompt that exceeds ``num_ctx`` —
+    there is no error for :func:`record_limit` to learn from — so the adapter
+    announces the window it sends and the engine plans against it. In memory
+    only; stored under the host-scoped key and the bare model key, because the
+    engine does not always know the endpoint (see :func:`learned_limit`).
+    """
+
+    if limit < MIN_CREDIBLE_LIMIT:
+        return
+    with _lock:
+        _runtime[_key(model, backend)] = int(limit)
+        _runtime[_key(model)] = int(limit)
+
+
+def runtime_limit(model: str, backend: str | None = None) -> int | None:
+    """The configured window from :func:`note_runtime_limit`, if any."""
+
+    if backend:
+        hit = _runtime.get(_key(model, backend))
+        if hit:
+            return hit
+    return _runtime.get(_key(model))
+
+
 def effective_window(model: str, declared: int, backend: str | None = None) -> int:
     """The window to plan against: our table, lowered by anything we have seen
-    the endpoint actually enforce."""
+    the endpoint actually enforce, or configured it to run with."""
 
-    seen = learned_limit(model, backend)
-    if not seen:
-        return declared
-    return seen if declared <= 0 else min(declared, seen)
+    window = declared
+    for seen in (learned_limit(model, backend), runtime_limit(model, backend)):
+        if seen:
+            window = seen if window <= 0 else min(window, seen)
+    return window
 
 
 def forget(model: str, backend: str | None = None) -> None:
-    """Drop a learned limit (used by tests and after a tier change)."""
+    """Drop a learned and a configured limit (tests, and after a tier change)."""
 
     with _lock:
         _load().pop(_key(model, backend), None)
+        _runtime.pop(_key(model, backend), None)
+        _runtime.pop(_key(model), None)
 
 
 def _reset_cache_for_tests() -> None:
     global _cache
     with _lock:
         _cache = None
+        _runtime.clear()
 
 
 __all__ = [
@@ -198,5 +233,7 @@ __all__ = [
     "learned_limit",
     "record_limit",
     "effective_window",
+    "note_runtime_limit",
+    "runtime_limit",
     "forget",
 ]

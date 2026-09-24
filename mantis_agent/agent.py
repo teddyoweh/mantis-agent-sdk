@@ -72,7 +72,11 @@ from .permissions import (
 )
 from .compact import Compactor, SimpleCompactor
 from .providers.base import Provider, detect_provider, extra_headers_from_env, resolve
-from .streaming.executor import StreamingToolExecutor
+from .streaming.executor import (
+    StreamingToolExecutor,
+    normalize_tool_input,
+    result_char_budget_for,
+)
 from .tools import ToolRegistry
 from .tracing import Span, Tracer, maybe_start_span
 from .types import (
@@ -80,6 +84,7 @@ from .types import (
     ContentBlock,
     Message,
     SystemMessage,
+    TailProjection,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -144,6 +149,55 @@ def _rejects_default_temperature(provider: Any) -> bool:
 
 _TODO_SENTINEL = "[Current todo list]"
 _TODO_GLYPH = {"completed": "[x]", "in_progress": "[→]", "pending": "[ ]"}
+_TASK_EVIDENCE_PREFIX = "[Current task evidence]"
+
+
+def _call_microcompact(micro: Any, messages: list[Any], **hints: Any) -> bool:
+    """Call a compactor's ``microcompact``, passing the usage/window hints only
+    when it accepts them (custom compactors may take just ``messages``)."""
+    import inspect  # noqa: PLC0415
+
+    try:
+        params = inspect.signature(micro).parameters
+    except (TypeError, ValueError):
+        params = {}
+    accepts_all = any(p.kind is p.VAR_KEYWORD for p in params.values())
+    kw = {k: v for k, v in hints.items() if accepts_all or k in params}
+    return bool(micro(messages, **kw))
+
+
+_TODO_REMINDER_HEAD = f"<system-reminder>\n{_TODO_SENTINEL} — keep it updated"
+
+
+def _is_tail_projection(m: Any) -> bool:
+    """A per-request reminder (todo list / task evidence). Older runs persisted
+    these into history; they are dropped from the provider copy so only the
+    fresh tail projection is sent.
+
+    Matches the exact rendered shape (see :func:`_render_todo_reminder` and
+    :meth:`Agent._tail_projections`), never a substring: an ``@``-mention,
+    ``!cmd`` output or hook context that merely *contains* the sentinel text
+    is real context and must survive."""
+    if isinstance(m, TailProjection):
+        return True
+    if not (isinstance(m, UserMessage) and getattr(m, "isMeta", False)
+            and isinstance(m.content, str)):
+        return False
+    return (m.content.startswith(_TODO_REMINDER_HEAD)
+            or m.content.startswith(_TASK_EVIDENCE_PREFIX + "\n"))
+
+
+def _canonical_call(tool: Any, call: ToolUseBlock) -> ToolUseBlock:
+    """``call`` with its argument names canonicalized for ``tool`` (see
+    :func:`normalize_tool_input`); the same block when nothing was aliased."""
+    normalized, fired = normalize_tool_input(tool, call.input)
+    if not fired:
+        return call
+    _log.debug(
+        "tool %r: argument aliases applied before preflight: %s", call.name,
+        ", ".join(f"{a}→{c}" for a, c in fired),
+    )
+    return ToolUseBlock(id=call.id, name=call.name, input=normalized)
 
 
 def _looks_truncated(raw: Any) -> bool:
@@ -506,6 +560,21 @@ def _is_transient(err: BaseException) -> bool:
         return False
 
 
+def _engine_should_retry(err: BaseException) -> bool:
+    """Whether the ENGINE should re-issue the model call for ``err``.
+
+    One retry authority per error class: an error the HTTP transport already
+    retried — or deliberately declined to (a first-byte timeout, a
+    ``Retry-After`` beyond the cap) — carries ``retried_by_transport`` and goes
+    straight to the fallback model / the caller. The engine keeps what only it
+    can see: stream-level failures (cold-start empty bodies, a drop or idle
+    timeout mid-body) and errors from providers that don't use the retrying
+    transport. See ``mantis_agent.retry``."""
+    from .retry import retried_by_transport  # noqa: PLC0415
+
+    return _is_transient(err) and not retried_by_transport(err)
+
+
 def close_open_tool_calls(
     messages: list[Message], *, note: str = "[interrupted by user]"
 ) -> int:
@@ -607,6 +676,21 @@ _THINK_HARD_KEYWORDS = (
     "think harder", "think hard", "think more", "think deeply",
     "think step by step", "think longer",
 )
+
+
+def _truncation_nudge() -> "UserMessage":
+    """Meta nudge appended after a text-only turn whose stream was cut off
+    (connection drop / body ended mid-block): the kept text is incomplete, so
+    ask for the rest instead of ending the run mid-sentence."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    return UserMessage(
+        content=wrap_system_reminder(
+            "Your previous response was cut off by a dropped connection. Continue "
+            "exactly where it stopped — do not repeat what you already wrote."
+        ),
+        isMeta=True,
+    )
 
 
 def _persist_nudge() -> "UserMessage":
@@ -917,7 +1001,8 @@ class Agent:
     # Retry a model call that fails with a TRANSIENT error (rate limit, 5xx,
     # connection blip) BEFORE any output, with exponential backoff, this many
     # times before falling back / raising. 0 disables. Non-transient errors
-    # (auth, 4xx) are never retried.
+    # (auth, 4xx) are never retried, nor is anything the HTTP transport already
+    # retried (429 / 5xx / connect / first-byte timeout) — see mantis_agent.retry.
     max_retries: int = 2
     extra: dict[str, Any] | None = None
 
@@ -1468,6 +1553,7 @@ class Agent:
                     from .system_reminder import render_environment_context
                     self._env_context = render_environment_context(
                         model=self.model,
+                        cwd=self.cwd,
                         backend=getattr(self.provider, "name", None) or self.backend,
                     ).strip()
                 if self._env_context:
@@ -1814,7 +1900,7 @@ class Agent:
                         if (isinstance(m, UserMessage) and m.isMeta
                                 and isinstance(m.content, str)
                                 and any(path in m.content for path in active_paths)):
-                            self._recall_text = m.content[:12000]
+                            self._recall_text = m.content
                             break
                     text, paths = recall_block(
                         query, already_surfaced=frozenset(active_paths)
@@ -1889,18 +1975,11 @@ class Agent:
             except Exception:  # noqa: BLE001 — rules are best-effort
                 _log.debug("conditional rules skipped", exc_info=True)
 
-        # Todo state — keep the model's plan in view over a long task. Refresh
-        # rather than accumulate: drop any prior todo reminder, append the
-        # current one (isMeta, so UIs filter it from the visible transcript).
-        if self.todos:
-            messages[:] = [
-                m for m in messages
-                if not (isinstance(m, UserMessage) and getattr(m, "isMeta", False)
-                        and isinstance(m.content, str) and _TODO_SENTINEL in m.content)
-            ]
-            todo_msg = UserMessage(content=_render_todo_reminder(self.todos), isMeta=True)
-            messages.append(todo_msg)
-            yield todo_msg
+        # Todo state is NOT written into history here: removing a stale reminder
+        # from mid-history and re-appending it rewrote bytes deep in the prompt,
+        # invalidating local prefix caches (vLLM / llama.cpp / Ollama KV reuse)
+        # from that point on. ``_tail_projections`` renders it per request, at
+        # the tail, instead.
 
         registry: ToolRegistry = self.tools  # type: ignore[assignment]
 
@@ -1981,6 +2060,10 @@ class Agent:
         last_usage: Usage | None = None
         compactions = 0
         _MAX_COMPACTIONS = 5
+        # Continuations granted to text-only turns cut off mid-stream; reset by
+        # any turn that ends cleanly.
+        truncation_continues = 0
+        _MAX_TRUNCATION_CONTINUES = 1
         self._refusal_retried = False
         self._budget_wrapup_done = False
         # Reset persistence / escalation counters for this run.
@@ -2008,8 +2091,13 @@ class Agent:
         from .builtin_tools.fs import AGENT_CWD, TOOL_SCOPE  # noqa: PLC0415
         _scope_token = TOOL_SCOPE.set(self._tool_scope)
         # Scope the file/shell tools to this agent's working directory for the
-        # run, so relative paths land where the model was told they would.
-        _cwd_token = AGENT_CWD.set(self.cwd)
+        # run, so relative paths land where the model was told they would. An
+        # agent without its own cwd (a subagent) inherits the enclosing one —
+        # the <env> block is rendered with that inherited value, so the tools
+        # must resolve against it too.
+        _cwd_token = AGENT_CWD.set(
+            self.cwd if self.cwd is not None else AGENT_CWD.get()
+        )
 
         # Spans are hoisted so the exception guard below can close whichever
         # is still open. The loop's normal-exit paths close them explicitly.
@@ -2091,16 +2179,44 @@ class Agent:
                     and self._is_safe_compaction_point(messages)
                 ):
                     ctx_window = self._message_budget()
-                    usage_now = last_usage or Usage()
+                    usage_now = self._message_usage(last_usage)
+                    self._sync_compactor_window()
                     # Cheap first line: clear old tool-result bodies (no model call).
                     micro = getattr(self._compactor, "microcompact", None)
                     should_micro = getattr(self._compactor, "should_microcompact", None)
+                    # The per-request tail (evidence / todos / recall) is sent
+                    # too — up to several thousand tokens — so the decisions
+                    # below size ``messages`` PLUS it (predicates only; the
+                    # tail is never persisted).
+                    tail_now = self._tail_projections(messages)
                     if micro is not None and should_micro is not None and should_micro(
-                        messages, usage_now, ctx_window
+                        [*messages, *tail_now], usage_now, ctx_window
                     ):
-                        micro(messages)
+                        from .compact import _message_token_estimate  # noqa: PLC0415
+                        est_before = sum(_message_token_estimate(m) for m in messages)
+                        tail_est = sum(_message_token_estimate(m) for m in tail_now)
+                        if _call_microcompact(
+                            micro, messages,
+                            used_tokens=max(
+                                usage_now.input_tokens + usage_now.output_tokens,
+                                est_before + tail_est,
+                            ),
+                            ctx_window=ctx_window,
+                        ):
+                            # The reported usage predates the clear: take off
+                            # what micro freed, so it can avert a summarize —
+                            # but keep the real count rather than falling back
+                            # to the (undercounting) estimate alone.
+                            freed = est_before - sum(
+                                _message_token_estimate(m) for m in messages)
+                            usage_now = msgspec.structs.replace(
+                                usage_now,
+                                input_tokens=max(0, usage_now.input_tokens - max(0, freed)),
+                            )
                     # Fallback: full summarizing compaction when still over threshold.
-                    if await self._compactor.should_compact(messages, usage_now, ctx_window):
+                    if await self._compactor.should_compact(
+                        [*messages, *self._tail_projections(messages)], usage_now, ctx_window
+                    ):
                         # PreCompact hook — fires just before the (lossy) summarization
                         # so integrators can snapshot/persist the full transcript before
                         # it's compressed, or block it to handle compaction themselves.
@@ -2118,19 +2234,9 @@ class Agent:
                                 messages[:] = compacted
                                 compactions += 1
 
-                if self.task_state is not None:
-                    messages[:] = [
-                        m for m in messages
-                        if not (isinstance(m, UserMessage) and m.isMeta
-                                and isinstance(m.content, str)
-                                and m.content.startswith("[Current task evidence]"))
-                    ]
-                    state_msg = UserMessage(
-                        content="[Current task evidence]\n" + self.task_state.render(),
-                        isMeta=True,
-                    )
-                    messages.append(state_msg)
-                    yield state_msg
+                # Task evidence rides the per-request tail projection
+                # (``_tail_projections``), never persisted history — see the todo
+                # note above on prefix-cache stability.
 
                 # Per-turn span — nests under agent.run when tracing is on.
                 turn_span = maybe_start_span(
@@ -2172,6 +2278,15 @@ class Agent:
                     cancellation_signal=self.cancellation_signal,
                     tracer=self.tracer,
                     trace_parent=turn_span,
+                    # Scale per-result caps to the window so one read can't
+                    # swamp a small local model (None = static caps). A known
+                    # window whose overhead already fills it gets the floor
+                    # cap, not the static (largest) caps.
+                    result_char_budget=result_char_budget_for(
+                        max(1, self._message_budget())
+                        if self._effective_context_window() > 0
+                        else None
+                    ),
                 ) as executor:
                     # llm.call span covers just the provider stream — start →
                     # MessageStop. ``first_token_ms`` is filled at the first
@@ -2187,35 +2302,127 @@ class Agent:
                             or self._provider_hint or "",
                         },
                     )
-                    async for ev in self._stream_with_fallback(messages):
-                        assembler.feed(ev)
-                        # Surface raw stream events (token deltas, block start/stop)
-                        # to an optional consumer so a UI can render text live as it
-                        # streams — run_iter itself only yields finalized messages.
-                        if self.on_event is not None:
+                    # Truncation handling. A stream that dies AFTER content
+                    # streamed (connection reset mid-turn, or a body that ends
+                    # with a block never closed) can't be replayed by
+                    # ``_stream_with_fallback``. When nothing closed yet, the
+                    # turn is simply re-streamed (bounded by ``max_retries``).
+                    # Once a block closed, a tool_use may already be RUNNING
+                    # (edits / bash dispatched eagerly), so the turn is kept as
+                    # a partial ``stop_reason="truncated"`` message instead of
+                    # discarding work that already happened.
+                    truncation_attempt = 0
+                    while True:
+                        truncated_by: BaseException | str | None = None
+                        stream_it = self._stream_with_fallback(messages).__aiter__()
+                        while True:
                             try:
-                                self.on_event(ev)
-                            except Exception:  # noqa: BLE001 — a UI callback must never break the loop
-                                _log.debug("on_event callback raised", exc_info=True)
-                        if llm_first_token_ns is None and isinstance(
-                            ev, ContentBlockDelta
+                                ev = await stream_it.__anext__()
+                            except StopAsyncIteration:
+                                break
+                            except Exception as err:  # noqa: BLE001
+                                # Only a transport-shaped failure AFTER content
+                                # streamed is a truncation; anything else (auth,
+                                # 4xx, exhausted pre-content retries) raises.
+                                if not (
+                                    assembler.blocks and _is_transient(err)
+                                ):
+                                    raise
+                                truncated_by = err
+                                break
+                            assembler.feed(ev)
+                            # Surface raw stream events (token deltas, block start/stop)
+                            # to an optional consumer so a UI can render text live as it
+                            # streams — run_iter itself only yields finalized messages.
+                            if self.on_event is not None:
+                                try:
+                                    self.on_event(ev)
+                                except Exception:  # noqa: BLE001 — a UI callback must never break the loop
+                                    _log.debug("on_event callback raised", exc_info=True)
+                            if llm_first_token_ns is None and isinstance(
+                                ev, ContentBlockDelta
+                            ):
+                                llm_first_token_ns = time.monotonic_ns()
+                            if isinstance(ev, ContentBlockStop):
+                                await self._maybe_dispatch_closed_block(
+                                    ev,
+                                    assembler,
+                                    dispatched_indices,
+                                    ordered_calls,
+                                    short_circuit,
+                                    messages_snapshot,
+                                    executor,
+                                )
+                        if truncated_by is None and assembler.has_unclosed():
+                            truncated_by = "stream ended mid-block"
+                        if truncated_by is None:
+                            break
+                        if (
+                            not assembler.has_closed_content()
+                            and not ordered_calls
+                            and truncation_attempt < self.max_retries
+                            # After cancel() the contract is "don't ask the
+                            # model again" — surface the error instead.
+                            and not self.cancellation_signal.is_set()
                         ):
-                            llm_first_token_ns = time.monotonic_ns()
-                        if isinstance(ev, ContentBlockStop):
-                            await self._maybe_dispatch_closed_block(
-                                ev,
-                                assembler,
-                                dispatched_indices,
-                                ordered_calls,
-                                short_circuit,
-                                messages_snapshot,
-                                executor,
+                            # Nothing complete — and nothing dispatched — so the
+                            # turn is safe to re-stream from scratch.
+                            delay = _retry_delay(
+                                truncated_by if isinstance(truncated_by, BaseException)
+                                else StreamProtocolError(truncated_by),
+                                truncation_attempt,
                             )
+                            # Same UI hook as the pre-content retry: live
+                            # consumers already rendered the discarded partial
+                            # text, and a second MessageStart follows.
+                            from . import retry as _retry_mod  # noqa: PLC0415
+                            _cb = _retry_mod.notify
+                            if _cb is not None:
+                                try:
+                                    _cb({"host": self.model,
+                                         "reason": "stream truncated",
+                                         "attempt": truncation_attempt + 1,
+                                         "attempts": self.max_retries,
+                                         "sleep_s": delay})
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            _log.warning(
+                                "stream truncated before any block closed (%s); "
+                                "retrying turn %d/%d in %.1fs",
+                                truncated_by, truncation_attempt + 1,
+                                self.max_retries, delay,
+                            )
+                            if turn_span is not None:
+                                turn_span.set_attributes(
+                                    {"turn.truncation_retries": truncation_attempt + 1}
+                                )
+                            await anyio.sleep(delay)
+                            truncation_attempt += 1
+                            assembler = _AssistantAssembler()
+                            llm_first_token_ns = None
+                            continue
+                        if not assembler.has_closed_content():
+                            # Retries exhausted with nothing usable — surface it.
+                            if isinstance(truncated_by, BaseException):
+                                raise truncated_by
+                            break  # finalize() raises the canonical error
+                        _log.warning(
+                            "stream truncated mid-turn (%s); keeping %d closed "
+                            "block(s), %d tool call(s) already dispatched",
+                            truncated_by, len(assembler._closed), len(ordered_calls),
+                        )
+                        if turn_span is not None:
+                            turn_span.set_attributes({"turn.truncated": True})
+                        break
 
                     # Stream consumed. Finalize the assistant message. Any
                     # inline reasoning the provider didn't peel is split out
                     # here so it never reaches the answer text or the salvage.
-                    assistant = _split_inline_thinking(assembler.finalize())
+                    assistant = _split_inline_thinking(
+                        assembler.finalize_partial()
+                        if truncated_by is not None
+                        else assembler.finalize()
+                    )
 
                     # Salvage tool calls the model emitted as TEXT (JSON object or a
                     # shell code fence) instead of via the structured channel — the
@@ -2339,6 +2546,32 @@ class Agent:
                     tool_uses = [
                         b for b in assistant.content if isinstance(b, ToolUseBlock)
                     ]
+                    if not tool_uses and assistant.stop_reason == "truncated":
+                        # A text-only turn cut off mid-stream is NOT a natural
+                        # stop — the answer likely ends mid-sentence. Ask the
+                        # model to pick up where it left off (bounded, so a
+                        # backend that always drops can't loop forever).
+                        # Only when a step remains: a continuation on the last
+                        # step would turn this stop into a max_steps cutoff.
+                        if (
+                            truncation_continues < _MAX_TRUNCATION_CONTINUES
+                            and step + 1 < effective_max
+                        ):
+                            truncation_continues += 1
+                            nudge = _truncation_nudge()
+                            messages.append(nudge)
+                            yield nudge
+                            if turn_span is not None and self.tracer is not None:
+                                turn_span.set_attributes({"turn.truncation_continued": True})
+                                turn_span.end()
+                                mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                                close_fn = getattr(mirror, "_close", None)
+                                if callable(close_fn):
+                                    close_fn(turn_span)
+                            step += 1
+                            continue
+                    elif assistant.stop_reason != "truncated":
+                        truncation_continues = 0
                     if not tool_uses and self.recover_refusals and not self._refusal_retried:
                         # Bare, no-tool-call refusal? Nudge ONCE with the authorized-
                         # context reminder and re-prompt instead of dead-ending. A
@@ -2646,6 +2879,13 @@ class Agent:
         if tool is None:
             return call, None
 
+        # Canonicalize aliased argument names (``file_path`` → ``path``,
+        # ``cmd`` → ``command``) BEFORE hooks and permissions look at the call.
+        # The executor applies the same aliases, so a rule keyed on the canonical
+        # name must see the canonical key — otherwise ``Edit(secrets/**)`` or
+        # ``Bash(rm:*)`` misses an aliased call that then runs anyway.
+        call = _canonical_call(tool, call)
+
         # Anti-runaway: short-circuit the Nth+ identical call so a stuck model
         # can't re-run the same failing command until it exhausts max_steps.
         if self.max_repeated_tool_calls:
@@ -2693,6 +2933,7 @@ class Agent:
         payload = hr.mutated_input if hr.mutated_input is not None else call.input
         if payload is not call.input:
             call = ToolUseBlock(id=call.id, name=call.name, input=payload)
+            call = _canonical_call(tool, call)
 
         # Permission check. A crashing policy (``can_use_tool`` raising, a
         # broken rule set) is a DENIAL, not a run-killing exception and never
@@ -2718,10 +2959,9 @@ class Agent:
                 # against the MUTATED input before dispatch so an approval of
                 # `ls` can't be smuggled out as an unreviewed `rm -rf`. Fail
                 # closed: a denied/blocked rewrite is denied, not run.
+                updated, _ = normalize_tool_input(tool, decision.updated_input)
                 recheck = _normalize_permission_decision(
-                    await recheck_mutated_input(
-                        tool, decision.updated_input, self.permissions
-                    )
+                    await recheck_mutated_input(tool, updated, self.permissions)
                 )
                 if isinstance(recheck, Deny):
                     decision = recheck
@@ -2729,7 +2969,7 @@ class Agent:
                     call = ToolUseBlock(
                         id=call.id,
                         name=call.name,
-                        input=decision.updated_input,
+                        input=updated,
                     )
 
             if isinstance(decision, Deny):
@@ -2858,8 +3098,10 @@ class Agent:
                     if await self._emergency_compact(messages):
                         _log.warning("context overflow (%r); compacted and retrying", err)
                         continue
-                # Same-model retry on a transient error, with backoff.
-                if _is_transient(err) and attempt < self.max_retries:
+                # Same-model retry on a transient error, with backoff — unless
+                # the transport already spent its retries on it (429 / 5xx /
+                # connect / first-byte timeout): then fall back or raise.
+                if _engine_should_retry(err) and attempt < self.max_retries:
                     delay = _retry_delay(err, attempt)
                     # Same UI treatment as the transport layer: with a TUI hook
                     # installed, surface as an in-place spinner note instead of
@@ -2922,9 +3164,62 @@ class Agent:
         declared = (getattr(cap, "context_window", 0) or 0) if cap is not None else 0
         try:
             from .context_limits import effective_window  # noqa: PLC0415
+            # A provider that configures the window itself (Ollama's num_ctx)
+            # announces it before the first request, not only inside stream().
+            plan = getattr(self.provider, "planned_context_window", None)
+            if callable(plan):
+                plan(self.model, cap)
             return effective_window(self.model, declared, self._endpoint())
         except Exception:  # noqa: BLE001 — never let bookkeeping break a turn
             return declared
+
+    def _compact_tool_wire(self) -> bool:
+        """Send tools' short descriptions (``ToolRegistry.to_wire(compact=True)``)
+        when the model is on a prompt-engineered tool path (B/C — the schemas
+        become prompt text) or the window is small (≤32k).
+
+        Decided once per (model, provider) and memoized: the window estimate
+        moves under us (Ollama's probe refines it after the first request), and
+        flipping the tool text mid-session would bust the provider's prompt /
+        KV cache on every flip. Re-decided only when the model or provider
+        changes (fallback activation, a model switch) or an overflow teaches a
+        new real limit (:meth:`_learn_context_limit` clears the memo)."""
+
+        key = (self.model, id(self.provider))
+        memo = getattr(self, "_compact_wire_memo", None)
+        if memo is None:
+            memo = self._compact_wire_memo = {}
+        # Keyed per model, so a per-run fallback → primary restore gets the
+        # primary's original decision back instead of a re-evaluated one.
+        if key not in memo:
+            memo[key] = self._decide_compact_tool_wire()
+        return memo[key]
+
+    def _decide_compact_tool_wire(self) -> bool:
+        try:
+            if self._prompted_tool_path():
+                return True
+            return 0 < self._effective_context_window() <= 32_768
+        except Exception:  # noqa: BLE001 — a size hint, never a hard failure
+            return False
+
+    def _prompted_tool_path(self) -> bool:
+        """Whether tools reach this model as prompt text (path B/C) rather than
+        native ``tools[]``. Mirrors the providers' own choice: the agent's
+        resolved backend capability (falling back to the provider's, and to
+        the model alone when neither has one) through ``resolve_tool_use_path``,
+        plus the OpenAI-compat adapter's Astra override to path B."""
+
+        cap = self.model_capability
+        backend = self.backend_capability or getattr(self.provider, "backend_capability", None)
+        if cap is not None and not cap.supports_native_tools:
+            return True
+        if backend is not None and not getattr(backend, "supports_native_tools", True):
+            return True
+        return (
+            (getattr(self.provider, "name", "") or "") == "openai_compat"
+            and str(self.model).lower().rsplit("/", 1)[-1].startswith("gpt-6-astra")
+        )
 
     def _prompt_overhead_tokens(self) -> int:
         """Tokens every request spends before a single message: the system
@@ -2942,11 +3237,54 @@ class Agent:
             total += max(1, len(str(self.system)) // 4)
         try:
             if self.tools:
-                import json as _json  # noqa: PLC0415
-                total += len(_json.dumps(self.tools.to_wire())) // 4
+                total += self._tool_wire_tokens()
         except Exception:  # noqa: BLE001 — an estimate, never a hard failure
             pass
         return total
+
+    def _tool_wire_tokens(self) -> int:
+        """Token estimate of this turn's tool schemas, cached.
+
+        Called several times per turn (budget, usage normalization, max_tokens
+        reservation) and each call used to re-serialize every schema. Keyed on
+        a cheap fingerprint rather than a registry version counter because the
+        things that change the wire live on the ``Tool`` objects themselves
+        (``deferred`` / ``_surfaced_seq`` flipped by defer/surface, a
+        reassigned description) and a registry copy can share them."""
+
+        tools = self.tools
+        compact = self._compact_tool_wire()
+        key = (id(tools), compact, tuple(
+            (id(t), t.name, t.deferred, t._surfaced_seq, id(t.description),
+             id(t.description_short), id(t.input_schema))
+            for t in tools
+        ))
+        cached = getattr(self, "_tool_wire_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        import json as _json  # noqa: PLC0415
+        n = len(_json.dumps(tools.to_wire(compact=compact))) // 4
+        self._tool_wire_cache = (key, n)
+        return n
+
+    def _message_usage(self, usage: Usage | None) -> Usage:
+        """``usage`` with the fixed prompt overhead taken out of input_tokens.
+
+        Reported input_tokens already include the system prompt and tool
+        schemas, while compaction thresholds are fractions of
+        ``_message_budget()`` (the window MINUS that overhead). Comparing the
+        raw figure double-counts it: 13k of schemas on a 32k window fired
+        compaction at ~3k tokens of real conversation.
+        """
+
+        if usage is None:
+            return Usage()
+        overhead = self._prompt_overhead_tokens()
+        if not overhead or not usage.input_tokens:
+            return usage
+        return msgspec.structs.replace(
+            usage, input_tokens=max(0, usage.input_tokens - overhead)
+        )
 
     def _message_budget(self) -> int:
         """How much of the context window the conversation may actually use.
@@ -2980,6 +3318,8 @@ class Agent:
             before = learned_limit(self.model, endpoint)
             if not record_limit(self.model, limit, endpoint):
                 return False
+            # A real ceiling is the one window change worth a tool-text flip.
+            self._compact_wire_memo = None
             _log.warning(
                 "learned real context limit for %r: %d tokens (was planning against %s); "
                 "compaction now targets the true ceiling",
@@ -2998,6 +3338,8 @@ class Agent:
             return False
         before = len(messages)
         before_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+        # The overflow may just have taught us a smaller real ceiling.
+        self._sync_compactor_window()
         micro = getattr(self._compactor, "microcompact", None)
         if micro is not None:
             micro(messages)
@@ -3042,6 +3384,7 @@ class Agent:
         try:
             from .compact import _message_token_estimate  # noqa: PLC0415
             used = sum(_message_token_estimate(m) for m in messages)
+            used += self._tail_token_estimate(messages)
             used += self._prompt_overhead_tokens()
         except Exception:  # noqa: BLE001
             return False
@@ -3113,27 +3456,46 @@ class Agent:
                 rf_extra = {}
         return rf_extra, _structured_output_instruction(kind, payload)
 
+    def _tail_projections(self, history: list[Message]) -> list[UserMessage]:
+        """Ephemeral ``isMeta`` reminders appended to THIS request only.
+
+        Everything here changes between requests (task evidence, the live todo
+        list, recall that compaction evicted), so it must sit after the stable
+        history: a byte change at position k invalidates a local server's KV
+        prefix cache from k onward. Persisted ``messages`` never carry them."""
+        tail: list[UserMessage] = []
+        if self.task_state is not None:
+            tail.append(TailProjection(
+                content=_TASK_EVIDENCE_PREFIX + "\n" + self.task_state.render(), isMeta=True
+            ))
+        if self.todos:
+            tail.append(TailProjection(content=_render_todo_reminder(self.todos), isMeta=True))
+        # Dedup on the FULL recall text (still in history → already in view);
+        # only the re-surfaced copy is bounded.
+        if self.include_recall and self._recall_text and not any(
+            isinstance(m, UserMessage) and m.isMeta and m.content == self._recall_text
+            for m in history
+        ):
+            tail.append(TailProjection(content=self._recall_text[:12000], isMeta=True))
+        return tail
+
+    def _tail_token_estimate(self, history: list[Message]) -> int:
+        """Estimated tokens the per-request tail adds on top of ``history`` —
+        counted in every fit/compaction decision, since it is sent too."""
+        try:
+            from .compact import _message_token_estimate  # noqa: PLC0415
+            return sum(_message_token_estimate(m) for m in self._tail_projections(history))
+        except Exception:  # noqa: BLE001 — an estimate must never break the loop
+            return 0
+
     def _provider_stream(self, messages: list[Message]) -> AsyncIterator[StreamEvent]:
         provider_messages = _repair_tool_call_history(messages)
         # Overflow recovery can compact inside the retry loop. Reassemble these
         # bounded projections for every request, not only at outer turn boundaries.
-        if self.task_state is not None:
-            provider_messages = [
-                m for m in provider_messages
-                if not (isinstance(m, UserMessage) and m.isMeta
-                        and isinstance(m.content, str)
-                        and m.content.startswith("[Current task evidence]"))
-            ]
-            provider_messages.append(UserMessage(
-                content="[Current task evidence]\n" + self.task_state.render(), isMeta=True
-            ))
-        if self.include_recall and self._recall_text and not any(
-            isinstance(m, UserMessage) and m.isMeta and m.content == self._recall_text
-            for m in provider_messages
-        ):
-            provider_messages = [*provider_messages, UserMessage(
-                content=self._recall_text, isMeta=True
-            )]
+        provider_messages = [
+            *(m for m in provider_messages if not _is_tail_projection(m)),
+            *self._tail_projections(provider_messages),
+        ]
         # The repair makes this hold by construction; a violation here is an
         # engine bug and must read as one, not as a provider 400.
         _assert_message_invariants(provider_messages)
@@ -3210,7 +3572,8 @@ class Agent:
             "model": self.model,
             "messages": provider_messages,
             "system": system,
-            "tools": self.tools.to_wire() if self.tools else None,
+            "tools": (self.tools.to_wire(compact=self._compact_tool_wire())
+                      if self.tools else None),
             "max_tokens": max_tokens,
             "temperature": self.temperature,
             "extra": provider_extra,
@@ -3261,6 +3624,33 @@ class Agent:
             return not any(isinstance(b, ToolUseBlock) for b in last.content)
         return True
 
+    def _sync_compactor_window(self) -> None:
+        """Tell the compactor the current effective window (it can be learned
+        mid-run). A custom compactor may expose it read-only — skip, don't crash."""
+        if self._compactor is None or not hasattr(self._compactor, "context_window"):
+            return
+        try:
+            self._compactor.context_window = self._effective_context_window()
+        except (AttributeError, TypeError):
+            pass
+
+    def _summary_max_tokens(self) -> int:
+        """``max_tokens`` for the summarize call — the same reservation the
+        compactor sizes its prompt against (``summary_reply_tokens``), capped
+        by the agent's own ``max_tokens``. Uses the effective (learned) window,
+        not the declared one ``self.max_tokens`` was derived from."""
+        from .compact import summary_reply_tokens  # noqa: PLC0415
+
+        budget = getattr(self._compactor, "summary_token_budget", None)
+        if not isinstance(budget, int) or budget <= 0:
+            budget = 2048
+        try:
+            window = int(self._effective_context_window() or 0)
+        except Exception:  # noqa: BLE001 — bookkeeping never breaks a summary
+            window = 0
+        cap = summary_reply_tokens(budget, window)
+        return min(self.max_tokens, cap) if self.max_tokens else cap
+
     async def _summarize(self, prompt: str) -> str:
         """One-shot, tools-less summarization call for the compactor.
 
@@ -3283,7 +3673,10 @@ class Agent:
                 "Respond with the summary text only — never call a tool."
             ),
             "tools": None,
-            "max_tokens": self.max_tokens,
+            # The summary is trimmed to the compactor's budget anyway; asking for
+            # the agent's full max_tokens only makes the call overflow a small
+            # window (prompt + reserved reply > ceiling).
+            "max_tokens": self._summary_max_tokens(),
             "temperature": self.temperature,
             "extra": None,
         }
@@ -3310,7 +3703,7 @@ class Agent:
                         "stream ended without message_start (empty response)")
                 break
             except Exception as err:  # noqa: BLE001
-                if produced or not (_is_transient(err) and attempt < self.max_retries):
+                if produced or not (_engine_should_retry(err) and attempt < self.max_retries):
                     raise
                 await anyio.sleep(_retry_delay(err, attempt))
                 attempt += 1
@@ -3458,6 +3851,53 @@ class _AssistantAssembler:
         return AssistantMessage(
             content=ordered,
             stop_reason=self.stop_reason,
+            usage=self.usage,
+        )
+
+    def has_unclosed(self) -> bool:
+        """A block was started but its ContentBlockStop never arrived."""
+        return any(i not in self._closed for i in self.blocks)
+
+    def has_closed_content(self) -> bool:
+        """At least one non-empty block streamed to completion (ContentBlockStop
+        seen). A closed EMPTY text block (OpenAI-compat translators open one
+        before tool_calls) is not content — keeping it would hand the next
+        request an empty text block, which Anthropic rejects."""
+        return any(
+            i in self._closed and not self._is_empty_text(self.blocks[i])
+            for i in self.blocks
+        )
+
+    @staticmethod
+    def _is_empty_text(b: "_BlockBuilder") -> bool:
+        return b.kind == "text" and not "".join(b.text_parts).strip()
+
+    def finalize_partial(self) -> AssistantMessage:
+        """Materialize what a TRUNCATED stream (connection drop / cut off
+        mid-block) managed to complete, instead of discarding the turn.
+
+        Keeps every fully-closed block (bar empty text). Drops unclosed thinking / tool_use /
+        passthrough blocks — a half-streamed tool call was never dispatched
+        and its JSON is incomplete. An unclosed TEXT block is kept when
+        non-empty: it's prose the model (and the user, via live deltas)
+        already saw, and dropping it would make the next turn repeat itself.
+        ``stop_reason`` is ``"truncated"`` so consumers can tell this turn
+        apart from a clean ``end_turn`` / ``tool_use``.
+
+        Callers only use this once ``has_closed_content()`` holds, so the
+        result is never empty."""
+        ordered: list[ContentBlock] = []
+        for i in sorted(self.blocks):
+            b = self.blocks[i]
+            if self._is_empty_text(b):
+                continue
+            if i in self._closed:
+                ordered.append(b.to_block())
+            elif b.kind == "text":
+                ordered.append(b.to_block())
+        return AssistantMessage(
+            content=ordered,
+            stop_reason="truncated",
             usage=self.usage,
         )
 

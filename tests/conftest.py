@@ -33,6 +33,33 @@ def _no_env_context(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_cli_logins(monkeypatch, tmp_path_factory):
+    """Hide the developer's real Codex / Claude Code logins from the suite.
+
+    ``cli_logins`` reads ``~/.codex/auth.json`` and the macOS Keychain; without
+    this a machine with ``codex login`` done would enable OpenAI (and reroute
+    it to the ChatGPT backend) in tests that expect no credential at all.
+    Tests that exercise detection point ``CODEX_HOME`` / ``CLAUDE_CONFIG_DIR``
+    at their own fixtures."""
+    empty = tmp_path_factory.mktemp("no-cli-logins")
+    monkeypatch.setenv("CODEX_HOME", str(empty / "codex"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(empty / "claude"))
+    monkeypatch.delenv("MANTIS_DISABLE_CODEX_LOGIN", raising=False)
+    from mantis_agent import cli_logins as _cl  # noqa: PLC0415
+    monkeypatch.setattr(_cl, "_claude_keychain_entry", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _clear_runtime_context_limits():
+    """Forget process-local context windows a provider announced (Ollama's
+    ``num_ctx``) so one test's window never shrinks another's planning."""
+    from mantis_agent import context_limits as _cl  # noqa: PLC0415
+    _cl._runtime.clear()
+    yield
+    _cl._runtime.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_deploy_registry():
     """Restore ``mantis_agent.deploy.base.DEPLOY_PROVIDERS`` after every test.
 

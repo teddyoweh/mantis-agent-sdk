@@ -101,9 +101,13 @@ def test_actual_execution_updates_task_context_without_breaking_pairs():
     assert any('check-1' in str(getattr(m, 'content', '')) for m in provider.snapshots[1])
     for snapshot in provider.snapshots:
         _assert_message_invariants(snapshot)
+    # Evidence is a per-request tail projection, never persisted history
+    # (mid-history rewrites break local prefix caches).
     reminders = [m for m in messages if isinstance(m, UserMessage)
                  and isinstance(m.content, str) and m.content.startswith('[Current task evidence]')]
-    assert len(reminders) == 1
+    assert reminders == []
+    for snapshot in provider.snapshots:
+        assert str(snapshot[-1].content).startswith('[Current task evidence]')
 
 
 def test_recall_can_return_after_context_eviction(monkeypatch):

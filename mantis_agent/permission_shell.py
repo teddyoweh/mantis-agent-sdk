@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import functools
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 
-__all__ = ["ShellDecomposition", "ShellSegment", "decompose"]
+__all__ = ["ShellDecomposition", "ShellSegment", "classify_bash_readonly", "decompose"]
 
 
 # ---------------------------------------------------------------------------
@@ -708,3 +709,421 @@ def decompose(command: str) -> ShellDecomposition:
         confident=not seen,
         reason="; ".join(seen[:3]),
     )
+
+
+# ---------------------------------------------------------------------------
+# Read-only classification
+# ---------------------------------------------------------------------------
+#
+# Asking for every `ls` / `cat` / `git status` trains people to flip the whole
+# session to allow-all. This recognizer names the commands that only READ, so
+# the permission layer can let them through in default and plan mode while
+# every mutation still asks. It is an allowlist over the decomposer above and
+# inherits its fail-closed posture: anything it is not sure about is False.
+#
+# Two classes of command:
+#
+# * ``_RO_ANY_ARGS`` — no argument can make them write or run something else,
+#   so a `$VAR`, a `$(…)` whose body is itself read-only, or a glob in their
+#   arguments cannot change the answer.
+# * everything in ``_RO_CHECKERS`` — read-only only for SOME argument shapes
+#   (`find` without `-delete`, `git branch` without `-D`, `sort` without `-o`).
+#   Their arguments are vetted literally, so an expansion (`find . $FLAGS`) or
+#   an unquoted glob (`find *` next to a file named `-delete`) could smuggle in
+#   the very flag the checker refuses — those are rejected outright.
+#
+# Reading is not harmless everywhere: `cat ~/.ssh/id_rsa` is read-only and is
+# exactly what a prompt-injected model wants. So a command that takes PATHS is
+# auto-read-only only inside the working tree: no absolute or `~` path, no
+# `..` component, no `$VAR`/`$(…)` that could point anywhere (including via an
+# input redirect). `_RO_NO_PATHS` commands never open a file and are exempt.
+
+_RO_NO_PATHS = frozenset({
+    "echo", "printf", "which", "type", "uname", "whoami", "id", "printenv",
+    "true", "false", "tr", "basename", "dirname", "pwd", "date", "hostname",
+    "env", "python", "python3", "node",
+})
+
+_RO_ANY_ARGS = frozenset({
+    "ls", "pwd", "cat", "head", "tail", "wc", "stat", "du", "df", "which",
+    "type", "echo", "printf", "grep", "egrep", "fgrep", "diff", "cmp",
+    "basename", "dirname", "realpath", "readlink", "uname", "whoami", "id",
+    "true", "false", "tr", "nl", "od", "cd",
+})
+
+# Plain stateless flag checks: {command: (forbidden exact args, forbidden
+# prefixes, short letters that may not appear in a `-abc` cluster)}.
+_FLAG_RULES: dict[str, tuple[frozenset[str], tuple[str, ...], str]] = {
+    "find": (
+        frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls",
+                   "-fprint", "-fprint0", "-fprintf"}),
+        (), "",
+    ),
+    "sort": (frozenset(), ("--output", "--compress-program"), "o"),
+    # `-o FILE` writes; `-R` re-runs tree with `-o 00Tree.html` in every dir.
+    # tree parses short clusters, so `-ao out` is `-a -o out`.
+    "tree": (frozenset({"-o", "-R"}), ("--output", "-o"), "oR"),
+    "file": (frozenset({"-C"}), ("--compile",), "C"),
+    # `--pre CMD` runs a preprocessor, `--hostname-bin CMD` runs a program.
+    "rg": (frozenset(), ("--pre", "--hostname-bin"), ""),
+    "ag": (frozenset(), ("--pager",), ""),
+    "jq": (frozenset({"-i"}), ("--in-place",), ""),
+}
+
+_SUBST_REASONS = frozenset({"command substitution", "process substitution"})
+
+
+def _has_unquoted(text: str, chars: str) -> bool:
+    """Does ``text`` carry any of ``chars`` outside single/double quotes and
+    not backslash-escaped? Used to spot a live glob or expansion."""
+    i, n = 0, len(text)
+    single = double = False
+    while i < n:
+        c = text[i]
+        if single:
+            if c == "'":
+                single = False
+        elif c == "\\":
+            i += 2
+            continue
+        elif c == '"':
+            double = not double
+        elif c == "'" and not double:
+            single = True
+        elif c in chars and not double:
+            return True
+        elif c in "$`" and c in chars:  # expansions still fire inside "…"
+            return True
+        i += 1
+    return False
+
+
+def _abbreviates(arg: str, longs: Iterable[str]) -> bool:
+    """Is ``arg`` a (possibly abbreviated) spelling of one of ``longs``?
+
+    getopt_long and git's parse-options accept any unambiguous PREFIX of a long
+    option — ``sort --out=x`` is ``--output=x``, ``git grep --open=cmd`` is
+    ``--open-files-in-pager``. A literal ``startswith`` check misses those."""
+    if not arg.startswith("--") or len(arg) < 3:
+        return False
+    name = arg.split("=", 1)[0]
+    return any(lo.startswith(name) or name.startswith(lo) for lo in longs)
+
+
+def _flags_ok(cmd: str, args: tuple[str, ...]) -> bool:
+    exact, prefixes, letters = _FLAG_RULES[cmd]
+    longs = [p for p in prefixes if p.startswith("--")]
+    for a in args:
+        if a == "--":
+            break
+        if a in exact or any(a.startswith(p) for p in prefixes) or _abbreviates(a, longs):
+            return False
+        if letters and a.startswith("-") and not a.startswith("--"):
+            if any(ch in a[1:] for ch in letters):
+                return False
+    return True
+
+
+def _uniq_ok(args: tuple[str, ...]) -> bool:
+    # `uniq IN OUT` writes OUT. One positional at most (conservatively counting
+    # an option's value as a positional, so `uniq -f 1 x` is refused).
+    return sum(1 for a in args if not a.startswith("-")) <= 1
+
+
+_DATE_FLAGS = frozenset({"-u", "--utc", "--universal", "-R", "--rfc-email", "-I"})
+
+
+def _date_ok(args: tuple[str, ...]) -> bool:
+    # An allowlist: `--set`/`-s` (and its abbreviation `--se`) set the clock,
+    # `date MMDDhhmm` sets it too, and GNU `--file=F` / `-f F` READS F (echoing
+    # every line back in its "invalid date" errors) — date is exempt from the
+    # path check, so it may only format the current time.
+    return all(
+        a.startswith("+") or a in _DATE_FLAGS
+        or a.startswith(("--iso-8601", "--rfc-3339=", "-I"))
+        for a in args
+    )
+
+
+_HOSTNAME_FLAGS = frozenset({
+    "-f", "-s", "-d", "-i", "-I", "-a", "-A", "--fqdn", "--long", "--short",
+    "--domain", "--ip-address", "--all-ip-addresses", "--all-fqdns",
+})
+
+
+def _version_only(args: tuple[str, ...]) -> bool:
+    return args in (("--version",), ("-V",), ("-v",))
+
+
+# git: global options that are safe to skip (and whether they take a value).
+_GIT_SAFE_GLOBALS = {"-C": True, "--no-pager": False, "-P": False,
+                     "--no-optional-locks": False, "--literal-pathspecs": False}
+_GIT_RO_ANY = frozenset({
+    "status", "log", "show", "diff", "rev-parse", "ls-files", "ls-tree",
+    "blame", "describe", "shortlog", "cat-file", "rev-list", "merge-base",
+    "show-ref", "whatchanged", "count-objects", "version", "grep", "diff-tree",
+    "annotate",
+})
+_GIT_BRANCH_BAD = frozenset({
+    "-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "--delete", "--move",
+    "--copy", "--force", "--set-upstream-to", "--unset-upstream",
+    "--edit-description", "--track", "--no-track",
+})
+_GIT_BRANCH_BAD_LONG = tuple(a for a in _GIT_BRANCH_BAD if a.startswith("--")) + (
+    "--create-reflog", "--recurse-submodules")
+_GIT_BRANCH_LIST = frozenset({"-l", "--list", "-a", "--all", "-r", "--remotes",
+                              "--contains", "--no-contains", "--merged",
+                              "--no-merged", "--points-at"})
+_GIT_CONFIG_BAD = ("--unset", "--add", "--replace-all", "--edit", "-e",
+                   "--rename-section", "--remove-section", "--unset-all")
+_GIT_CONFIG_BAD_LONG = tuple(a for a in _GIT_CONFIG_BAD if a.startswith("--"))
+_GIT_CONFIG_MODIFIERS = frozenset({
+    "--global", "--system", "--local", "--worktree", "--show-origin",
+    "--show-scope", "--name-only", "-z", "--null", "--includes", "--no-includes",
+})
+_GIT_CONFIG_READ = frozenset({"--get", "--get-all", "--get-regexp", "--list",
+                              "-l", "--get-urlmatch", "--get-color",
+                              "--get-colorbool"})
+
+
+def _git_ok(args: tuple[str, ...]) -> bool:
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        takes_value = _GIT_SAFE_GLOBALS.get(args[i])
+        if takes_value is None:
+            # `-c core.pager=…`, `--exec-path`, `--git-dir` … can make a read
+            # command run arbitrary programs. Unknown ⇒ refuse.
+            return False
+        i += 2 if takes_value else 1
+    if i >= len(args):
+        return False
+    sub, rest = args[i], args[i + 1:]
+    # Any `--output` writes a file; `-O` / `--open-files-in-pager` (git grep)
+    # runs a program; `--ext-diff` hands the diff to a configured program.
+    # parse-options accepts unambiguous prefixes (`git grep --open=CMD`), and
+    # `-O` takes its argument glued into a short cluster (`git grep -iOCMD`).
+    for a in rest:
+        if a.startswith(("--output", "--open-files-in-pager", "--ext-diff")) or a == "-O":
+            return False
+        if _abbreviates(a, ("--output", "--open-files-in-pager", "--ext-diff")):
+            return False
+        if sub == "grep" and a.startswith("-") and not a.startswith("--") and "O" in a:
+            return False
+    if sub in _GIT_RO_ANY:
+        return True
+    if sub == "branch":
+        if any(a in _GIT_BRANCH_BAD or a.startswith(("--set-upstream", "--delete",
+                                                        "--move", "--copy"))
+               or _abbreviates(a, _GIT_BRANCH_BAD_LONG)
+               for a in rest):
+            return False
+        for a in rest:
+            if a.startswith("-") and not a.startswith("--") and len(a) > 2:
+                if any(ch in a[1:] for ch in "dDmMcCfu"):
+                    return False
+        positionals = [a for a in rest if not a.startswith("-")]
+        # `git branch NAME` CREATES a branch; positionals are only patterns
+        # when a listing flag is present.
+        return not positionals or any(a in _GIT_BRANCH_LIST for a in rest)
+    if sub == "tag":
+        # Bare `git tag` lists; `git tag v1` creates. Only an explicit list.
+        if not rest:
+            return True
+        if not any(a in ("-l", "--list") for a in rest):
+            return False
+        bad = ("--delete", "--annotate", "--sign", "--force", "--message",
+               "--file", "--local-user", "--edit", "--trailer")
+        return not any(a in ("-d", "-a", "-s", "-f", "-m", "-F", "-u", "-e")
+                       or _abbreviates(a, bad) for a in rest)
+    if sub == "remote":
+        if not rest or rest in (("-v",), ("--verbose",)):
+            return True
+        if not (rest[0] in ("show", "get-url") or rest[:2] in (("-v", "show"),)):
+            return False
+        # `git remote show URL` contacts an arbitrary URL — a free network
+        # channel for whatever the model puts in the path. Named remotes only.
+        return not any(ch in a for a in rest for ch in ":/@\\")
+    if sub == "config":
+        if any(a.startswith(_GIT_CONFIG_BAD) or _abbreviates(a, _GIT_CONFIG_BAD_LONG)
+               for a in rest):
+            return False
+        # The ACTION must come first (after file/display options). A read flag
+        # anywhere else can be a VALUE: `git config set a.b --get` and the
+        # legacy `git config a.b c --get` both WRITE `a.b`.
+        j = 0
+        while j < len(rest) and rest[j] in _GIT_CONFIG_MODIFIERS:
+            j += 1
+        if j >= len(rest):
+            return False
+        return rest[j] in ("get", "list") or rest[j] in _GIT_CONFIG_READ
+    if sub == "stash":
+        return bool(rest) and rest[0] in ("list", "show")
+    if sub == "reflog":
+        return not rest or rest[0] == "show" or rest[0].startswith("-")
+    return False
+
+
+def _env_ok(args: tuple[str, ...]) -> bool:
+    # `env X=1 cmd` / `env cmd` RUN cmd, and bare `env` dumps every API key in
+    # the environment into the model's context — never auto-allowed.
+    return False
+
+
+_RO_CHECKERS: dict[str, Callable[[tuple[str, ...]], bool]] = {
+    **{c: functools.partial(_flags_ok, c) for c in _FLAG_RULES},
+    "uniq": _uniq_ok,
+    "date": _date_ok,
+    "hostname": lambda a: all(x in _HOSTNAME_FLAGS for x in a),
+    "git": _git_ok,
+    "env": _env_ok,
+    "python": _version_only,
+    "python3": _version_only,
+    "node": _version_only,
+}
+
+
+def _dev_null_only(seg: ShellSegment) -> bool:
+    """True when every OUTPUT redirect on ``seg`` goes to /dev/null or merely
+    dups a descriptor (``2>&1``). Input redirects (``<file``) only read."""
+    for redir in seg.redirects:
+        op = redir.lstrip("0123456789")
+        if op.startswith("&>"):
+            target = op.lstrip("&>").strip()
+        elif op.startswith(">"):
+            target = op.lstrip(">|").strip()
+            if target.startswith("&"):
+                fd = target[1:].strip()
+                if fd == "-" or fd.rstrip("-").isdigit():
+                    continue
+                target = fd
+        elif op.startswith("<>"):
+            target = op[2:].strip()  # opens read-WRITE, creating the file
+        else:
+            continue  # `<in.txt`
+        if target != "/dev/null":
+            return False
+    return True
+
+
+# `-[A-Za-z0-9]*` covers a value glued onto a short CLUSTER (`grep -rf/etc/x`).
+_OUT_OF_TREE_RE = re.compile(r"(?:^|=|^-[A-Za-z0-9]*)[/~]|(?:^|[=/])\.\.(?:/|$)")
+
+# Expansions that can RUN code even with no `$(…)` in sight: `${x@P}` prompt
+# expansion, array subscripts (`${a[…]}` is arithmetic, which evaluates
+# `$(…)` hiding in a variable's value), `$[…]` legacy arithmetic, `${!x}`
+# indirection. Only a plain `$NAME` / `${NAME}` / special parameter is let
+# through for commands whose arguments are otherwise unconstrained.
+_COMPLEX_EXPANSION_RE = re.compile(
+    r"\$\[|\$\{(?![A-Za-z_][A-Za-z0-9_]*\}|[0-9#?@*$!-]\})"
+)
+# A path component that starts with `.` and carries a glob: bash 3.2 (macOS
+# /bin/bash) and bash < 5.2 match `..` with `.*`, `.?` and `.[.]`, so
+# `cat .*/secret` reads the PARENT directory. Lexical `..` checks miss it.
+_DOT_GLOB_RE = re.compile(r"(?:^|[\s/=])\.+[*?\[]")
+
+
+def _brace_expands(text: str) -> bool:
+    """Does ``text`` hold an unquoted ``{a,b}`` / ``{a..b}`` brace expansion?
+    It turns one inert-looking word into several: ``cat {/etc/passwd,}`` or
+    ``sort {-o,x} y`` hide the path / flag from every per-word check."""
+    i, n = 0, len(text)
+    single = double = False
+    while i < n:
+        c = text[i]
+        if single:
+            single = c != "'"
+        elif c == "\\":
+            i += 2
+            continue
+        elif c == '"':
+            double = not double
+        elif c == "'" and not double:
+            single = True
+        elif c == "{" and not double:
+            close = text.find("}", i + 1)
+            body = text[i + 1 : close] if close > 0 else text[i + 1 :]
+            if "," in body or ".." in body:
+                return True
+        i += 1
+    return False
+
+
+def _in_tree(values: Iterable[str]) -> bool:
+    """No value names a path outside the working tree (``/abs``, ``~``,
+    ``../x``, ``--file=/abs``, ``-f/abs``). ``/dev/null`` is always fine."""
+    return not any(
+        v != "/dev/null" and _OUT_OF_TREE_RE.search(v) is not None for v in values
+    )
+
+
+def _segment_read_only(seg: ShellSegment, substituted: bool) -> bool:
+    if not seg.argv or not _dev_null_only(seg):
+        return False
+    cmd, args = seg.argv[0], seg.argv[1:]
+    if "/" in cmd:
+        return False  # `./ls` or `/tmp/cat` is whatever that file is
+    if _brace_expands(seg.raw) or _COMPLEX_EXPANSION_RE.search(seg.raw):
+        return False
+    # An input redirect reads a file even for a command that takes no paths:
+    # `tr a b </etc/passwd` prints it.
+    inputs = [r.lstrip("0123456789<") for r in seg.redirects if r.lstrip("0123456789").startswith("<")]
+    if not _in_tree(inputs):
+        return False
+    if cmd == "printf" and args and args[0].startswith("-v"):
+        return False  # `printf -v NAME` assigns; `-v 'a[…]'` evaluates a subscript
+    if cmd == "cd" and (len(args) != 1 or args[0].startswith("-")):
+        # Bare `cd` goes to $HOME and `cd -` to $OLDPWD — out of the tree with
+        # no path in sight, and the bash tool CARRIES the cwd into later calls.
+        return False
+    if cmd not in _RO_NO_PATHS:
+        # Path-taking: confine to the working tree (see the section comment).
+        if (substituted or _has_unquoted(seg.raw, "$`") or not _in_tree(args)
+                or _DOT_GLOB_RE.search(seg.raw)):
+            return False
+    if cmd in _RO_ANY_ARGS:
+        return True
+    check = _RO_CHECKERS.get(cmd)
+    if check is None:
+        return False
+    # Argument-sensitive command: the args must be exactly what we vetted.
+    if substituted or _has_unquoted(seg.raw, "$`*?["):
+        return False
+    return check(args)
+
+
+@functools.lru_cache(maxsize=256)
+def classify_bash_readonly(command: str) -> bool:
+    """True only when EVERY command in ``command`` is on the read-only allowlist.
+
+    Splits on ``; && || |`` and newlines (via :func:`decompose`), refuses
+    background ``&``, output redirects other than to ``/dev/null``, heredocs,
+    env-assignment prefixes, wrappers (``sudo``/``env cmd``/``nice``…),
+    ``eval``/``xargs`` and anything else the decomposer cannot fully resolve.
+    A ``$(…)`` / backtick / process substitution is tolerated only when its
+    body is itself read-only AND the command carrying it is one whose
+    arguments cannot change what it does (``echo $(pwd)`` yes,
+    ``find . $(echo -delete)`` no).
+
+    Pure and conservative: a False here only means "ask as before".
+    """
+    text = command or ""
+    if not text.strip():
+        return False
+    segments, reasons = _decompose_inner(text, 0)
+    # "wrapper with no command" is bare `env` (or `sudo` alone — which the
+    # allowlist refuses on its own); anything else unresolved is a refusal.
+    reasons = [r for r in reasons if r != "wrapper with no command"]
+    if not segments or any(r not in _SUBST_REASONS for r in reasons):
+        return False
+    substituted = bool(reasons)
+    for seg in segments:
+        if seg.operator == "&":
+            return False
+        # A segment whose own text embeds a substitution: only an any-args
+        # command may carry one (its args cannot become a dangerous flag).
+        seg_subst = substituted and any(m in seg.raw for m in ("$(", "`", "<(", ">("))
+        if not _segment_read_only(seg, seg_subst):
+            return False
+    # A trailing `&` leaves an empty final part with operator "&"; the loop
+    # above only sees non-empty segments, so check the raw tail too.
+    return not text.rstrip().endswith("&") or text.rstrip().endswith("&&")

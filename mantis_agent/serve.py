@@ -33,6 +33,7 @@ import secrets
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -600,6 +601,26 @@ def models_state() -> dict[str, Any]:
         if m["name"] not in info:
             info[m["name"]] = _model_info(m["name"], "ollama", oll.get("base_url"))
 
+    # What you have DEPLOYED is a model family of its own on this page — the
+    # GLM you are running on your own GPUs belongs next to the ones you rent by
+    # the token. From the local store only (no provider calls), live ones only.
+    deployments: list[dict[str, Any]] = []
+    try:
+        from .deploy import store as _dstore  # noqa: PLC0415
+
+        for d in _dstore.load_all():
+            # booting is still yours and still billing — it belongs here too
+            if not ((d.is_live or d.status == "starting") and d.endpoint_url):
+                continue
+            dd = _dep_dict(d)
+            dd["in_use"] = bool(backend_now and d.endpoint_url.rstrip("/") == backend_now)
+            deployments.append(dd)
+            name = d.served_model_name or d.model
+            if name not in info:
+                info[name] = _model_info(name, None, d.endpoint_url)
+    except Exception:  # noqa: BLE001 — no deploy core, no store: no family
+        deployments = []
+
     # What you switched to before this one. The catalog already keeps it; the
     # page had no way to get at it, so switching back meant finding the card
     # again. Only ids — whether each one is still reachable is decided by the
@@ -615,6 +636,7 @@ def models_state() -> dict[str, Any]:
         "families": [{"id": f[0], "label": f[1], "logo": f[2]} for f in FAMILIES],
         "model_info": info,
         "ollama": oll,
+        "deployments": _deploy_redact(deployments),
         "enabled_count": sum(1 for p in provs if p["enabled"]),
         "hosting": _hosting_summary(last, backend_now),
         "selfhost_guide": provider_guides.SELFHOST,
@@ -881,6 +903,182 @@ def _read_skill(md: Path) -> dict[str, Any] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Memory page — what the agent is told every session, and what it remembers.
+#
+# Two different things, the same split Claude Code makes:
+#   * INSTRUCTIONS (project_memory.py) — human-written files loaded into
+#     every session: ~/.mantis-agent/MANTIS.md (you, every project), the
+#     repo's AGENTS.md / MANTIS.md / .mantis/rules/*.md (the team), and
+#     MANTIS.local.md (you, this project only). The CLAUDE.md hierarchy.
+#   * MEMORY (memory.py) — what the agent writes down itself:
+#     ~/.mantis-agent/MEMORY.md (the index, loaded every session) and one
+#     file per memory under ~/.mantis-agent/memory/.
+# Writes are allowed ONLY to the slots listed here — never to a path the
+# page sends — so a request can't be turned into "write any file".
+# ---------------------------------------------------------------------------
+
+_INSTR_ABOUT = {
+    "user": "Your instructions for every project on this machine.",
+    "agents": "Project instructions, checked into the repo and shared with your team. The cross-tool name — Claude Code and other agents read it too.",
+    "mantis": "Project instructions for mantis specifically, checked into the repo.",
+    "local": "Your private notes for this project only. Keep it out of git.",
+    "rule": "An always-on rule for this project (a file in .mantis/rules/).",
+    "managed": "Organization policy, set by an administrator. Read-only.",
+    "other": "Picked up from a parent folder or pulled in by an @import.",
+}
+
+
+def _instr_slots(cwd: Path | None = None) -> list[dict[str, Any]]:
+    import os  # noqa: PLC0415
+
+    from . import paths  # noqa: PLC0415
+    from .project_memory import (  # noqa: PLC0415
+        AGENTS_FILE, LOCAL_FILE, MANAGED_PATH, PROJECT_FILE, RULES_SUBDIR, WORKSPACE_DIR, load_memory_files,
+    )
+
+    base = Path(cwd or os.getcwd()).resolve()
+    try:
+        loaded = {f.path.resolve(): f for f in load_memory_files(base)}
+    except Exception:  # noqa: BLE001 — an unreadable file must not blank the page
+        loaded = {}
+    slots: list[dict[str, Any]] = []
+    seen: set[Path] = set()
+
+    def add(sid: str, kind: str, tier: str, label: str, p: Path, writable: bool, always: bool) -> None:
+        p = p.resolve() if p.exists() else p
+        if p in seen:
+            return
+        seen.add(p)
+        exists = p.is_file()
+        if not exists and not always:
+            return
+        try:
+            content = p.read_text(encoding="utf-8") if exists else ""
+        except OSError:
+            content = ""
+        lf = loaded.get(p)
+        slots.append({"id": sid, "kind": kind, "tier": tier, "label": label, "path": short_path(p), "_abs": str(p),
+                      "exists": exists, "loaded": lf is not None, "writable": writable,
+                      "imported_by": short_path(lf.parent) if (lf and lf.parent) else None,
+                      "about": _INSTR_ABOUT.get(kind, ""), "content": content, "bytes": len(content.encode())})
+
+    add("user", "user", "user", "Personal · MANTIS.md", paths.get_mantis_agent_dir() / PROJECT_FILE, True, True)
+    add("agents", "agents", "project", AGENTS_FILE, base / AGENTS_FILE, True, True)
+    add("mantis", "mantis", "project", PROJECT_FILE, base / PROJECT_FILE, True, True)
+    add("local", "local", "local", LOCAL_FILE, base / LOCAL_FILE, True, True)
+    rules = base / WORKSPACE_DIR / RULES_SUBDIR
+    if rules.is_dir():
+        for f in sorted(rules.glob("*.md")):
+            add("rule:" + f.name, "rule", "project", "rules/" + f.name, f, True, False)
+    add("managed", "managed", "managed", "Managed policy", MANAGED_PATH, False, False)
+    # anything else the loader actually uses (a parent folder's AGENTS.md, an
+    # @import) is shown read-only, so the page never hides what is in context
+    for p, f in loaded.items():
+        add("loaded:" + str(len(slots)), "other", f.tier, p.name, p, False, False)
+    return slots
+
+
+def memory_state() -> dict[str, Any]:
+    import os  # noqa: PLC0415
+
+    from . import memory as _mem  # noqa: PLC0415
+    from . import paths  # noqa: PLC0415
+
+    idx = paths.get_memory_index()
+    entries = []
+    for e in _mem.list_memory_entries():
+        entries.append({"slug": e.slug, "name": e.name, "description": e.description, "type": e.type,
+                        "body": e.body, "path": short_path(e.path) if e.path else None})
+    content = _mem.load_memory_index()
+    return {"cwd": short_path(Path(os.getcwd())),
+            # the absolute path stays server-side: writes resolve it from the slot id
+            "instructions": [{k: v for k, v in x.items() if k != "_abs"} for x in _instr_slots()],
+            "index": {"path": short_path(idx), "exists": idx.is_file(), "content": content,
+                      "lines": len([x for x in content.splitlines() if x.strip()])},
+            "memory_dir": short_path(paths.get_memory_dir()),
+            "entries": entries}
+
+
+def save_instruction(sid: str | None, content: Any) -> dict[str, Any]:
+    slot = next((s for s in _instr_slots() if s["id"] == sid), None)
+    if slot is None:
+        return {"ok": False, "error": "unknown file"}
+    if not slot["writable"]:
+        return {"ok": False, "error": f"{slot['label']} is read-only here"}
+    target = Path(slot["_abs"])
+    text = str(content or "")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text.rstrip() + "\n" if text.strip() else "", encoding="utf-8")
+    return {"ok": True, "id": sid, "path": slot["path"], "bytes": len(text.encode())}
+
+
+def save_memory_index(content: Any) -> dict[str, Any]:
+    from . import memory as _mem  # noqa: PLC0415
+    from . import paths  # noqa: PLC0415
+
+    _mem.ensure_memory_dir()
+    idx = paths.get_memory_index()
+    text = str(content or "")
+    idx.write_text(text.rstrip() + "\n" if text.strip() else "", encoding="utf-8")
+    return {"ok": True, "path": short_path(idx)}
+
+
+def _memory_path(slug: str) -> Path | None:
+    from . import paths  # noqa: PLC0415
+
+    base = paths.get_memory_dir().resolve()
+    p = (base / f"{slug}.md").resolve()
+    return p if base in p.parents else None
+
+
+def save_memory(slug: str | None, name: Any, description: Any, mtype: Any, body: Any) -> dict[str, Any]:
+    """Create or update one memory. A CREATE never lands on an existing file
+    (the page autosaves), and gets its one-line pointer in MEMORY.md — the
+    index is what the agent reads, so a memory missing from it is invisible."""
+    from . import memory as _mem  # noqa: PLC0415
+    from . import paths  # noqa: PLC0415
+
+    name = str(name or "").strip()
+    if not name:
+        return {"ok": False, "error": "name required"}
+    t = str(mtype or "project")
+    t = t if t in ("user", "feedback", "project", "reference") else "project"
+    create = not slug
+    sl = str(slug) if slug else _slugify(name)
+    p = _memory_path(sl)
+    if p is None:
+        return {"ok": False, "error": "bad memory name"}
+    if create and p.exists():
+        return {"ok": False, "exists": True, "slug": sl, "error": f"a memory called '{sl}' already exists"}
+    if not create and not p.exists():
+        return {"ok": False, "error": f"'{sl}' not found"}
+    desc = " ".join(str(description or "").split())
+    _mem.save_memory_entry(_mem.MemoryEntry(slug=sl, name=" ".join(name.split()), description=desc,
+                                            type=t, body=str(body or "")))  # type: ignore[arg-type]
+    if create:
+        idx = paths.get_memory_index()
+        cur = idx.read_text(encoding="utf-8") if idx.is_file() else ""
+        line = f"- [{' '.join(name.split())}](memory/{sl}.md)" + (f" — {desc}" if desc else "")
+        idx.write_text((cur.rstrip() + "\n" if cur.strip() else "") + line + "\n", encoding="utf-8")
+    return {"ok": True, "slug": sl, "path": short_path(p)}
+
+
+def delete_memory(slug: str | None) -> dict[str, Any]:
+    from . import paths  # noqa: PLC0415
+
+    p = _memory_path(str(slug or ""))
+    if not slug or p is None or not p.is_file():
+        return {"ok": False, "error": "memory not found"}
+    p.unlink()
+    idx = paths.get_memory_index()
+    if idx.is_file():
+        keep = [x for x in idx.read_text(encoding="utf-8").splitlines()
+                if f"({slug}.md)" not in x and f"(memory/{slug}.md)" not in x]
+        idx.write_text("\n".join(keep).rstrip() + "\n" if keep else "", encoding="utf-8")
+    return {"ok": True}
+
+
 def skills_state() -> dict[str, Any]:
     import os  # noqa: PLC0415
 
@@ -951,6 +1149,11 @@ def add_skill(scope: str, name: str, description: str, body: str,
         return {"ok": False, "error": "bad skill name"}
     if slug and not (d / "SKILL.md").exists():
         return {"ok": False, "error": f"'{slug}' not found in {scope}"}
+    # A CREATE never lands on an existing skill: the page autosaves, and a
+    # new draft titled like an old skill would silently replace its file.
+    if not slug and (d / "SKILL.md").exists():
+        return {"ok": False, "exists": True, "slug": target_slug,
+                "error": f"a skill called '{target_slug}' already exists in {scope}"}
     d.mkdir(parents=True, exist_ok=True)
     (d / "SKILL.md").write_text(
         _skill_md(name, description, body, category, always_load, tools), encoding="utf-8")
@@ -1170,8 +1373,17 @@ def test_mcp(name: str) -> dict[str, Any]:
         try:
             await client.__aenter__()
             tools = await client.list_tools()
-            result.update(ok=True, tools=[{"name": t.name, "description": (t.description or "")[:220]}
-                                          for t in tools])
+            def params(t: Any) -> list[dict[str, Any]]:
+                sch = getattr(t, "input_schema", None) or {}
+                props = sch.get("properties") if isinstance(sch, dict) else None
+                req = set(sch.get("required") or []) if isinstance(sch, dict) else set()
+                if not isinstance(props, dict):
+                    return []
+                return [{"name": str(k), "type": str(v.get("type") or "") if isinstance(v, dict) else "",
+                         "required": k in req} for k, v in list(props.items())[:12]]
+
+            result.update(ok=True, tools=[{"name": t.name, "description": (t.description or "")[:400],
+                                           "params": params(t)} for t in tools])
         except BaseException as e:  # noqa: BLE001 — a dead server must not 500
             msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             result.update(ok=False, error=msg)
@@ -2180,7 +2392,8 @@ def deploy_gpus(provider: str | None, min_vram: Any = None) -> dict[str, Any]:
     return {"ok": True, "provider": provider, "gpus": rows}
 
 
-def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> dict[str, Any]:
+def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25,
+                  source: str | None = None) -> dict[str, Any]:
     from .deploy import manager as _dm  # noqa: PLC0415
 
     try:
@@ -2192,8 +2405,12 @@ def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> d
     sort = {"recent": "updated", "lastmodified": "updated", "new": "updated"}.get(sort, sort)
     if sort not in ("trending", "downloads", "likes", "updated", "created"):
         sort = "trending"
+    src = (source or "auto").strip().lower()
+    if src not in ("curated", "hub", "auto"):
+        src = "auto"
+    kw = {"source": src} if src != "auto" and _accepts_kw(_dm.search_models, "source") else {}
     try:
-        models = _run_async(_dm.search_models, (query or "").strip(), limit=lim, sort=sort)
+        models = _run_async(_dm.search_models, (query or "").strip(), limit=lim, sort=sort, **kw)
     except Exception as e:  # noqa: BLE001
         return {**_deploy_err(e), "models": [], "query": query or "", "sort": sort}
     rows, missing = [], []
@@ -2208,7 +2425,8 @@ def deploy_models(query: str = "", sort: str = "trending", limit: Any = 25) -> d
         rows.append(d)
     if missing:
         enrich_models(missing)
-    return {"ok": True, "query": query or "", "sort": sort, "curated": not (query or "").strip(),
+    return {"ok": True, "query": query or "", "sort": sort,
+            "curated": not (query or "").strip() and src != "hub",
             "models": rows, "partial": bool(missing), "pending": missing,
             "hf_token_set": hf_token_set()}
 
@@ -2519,6 +2737,33 @@ def _verdict_parts(v: Any) -> tuple[str, str]:
     return kind, reason
 
 
+def _recommend_gpu(fits: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one card a one-click deploy should use: across every configured
+    provider, the cheapest GPU that fits outright — skipping any the provider
+    says are out of stock — falling back to the cheapest ``tight`` fit. Ties
+    go to more VRAM. ``None`` when nothing on offer can hold the model."""
+    def pick(kind: str) -> dict[str, Any] | None:
+        best: tuple[float, float] | None = None
+        out: dict[str, Any] | None = None
+        for entry in fits:
+            for g in entry.get("gpus") or []:
+                if g.get("verdict") != kind or g.get("available") is False:
+                    continue
+                # vLLM shards a model across 1, 2, 4 or 8 cards — a T4 ×3 is a
+                # price in a catalogue, not something it can actually serve on
+                if int(g.get("count") or 1) not in (1, 2, 4, 8):
+                    continue
+                price = g.get("price_per_hour")
+                key = (float(price) if price is not None else float("inf"),
+                       -float(g.get("total_vram_gb") or g.get("vram_gb") or 0))
+                if best is None or key < best:
+                    best = key
+                    out = {"provider": entry.get("provider"), "gpu": g.get("provider_id"),
+                           "verdict": kind, "price_per_hour": price}
+        return out
+    return pick("fits") or pick("tight")
+
+
 def deploy_inspect(model: str | None, *, ttl_s: float = INSPECT_TTL_S) -> dict[str, Any]:
     """Pre-flight facts for one model plus, per configured provider, which
     of its GPUs fit. Cached for a minute: the page re-asks on every click."""
@@ -2564,6 +2809,7 @@ def deploy_inspect(model: str | None, *, ttl_s: float = INSPECT_TTL_S) -> dict[s
             entry["error"] = _deploy_err(e)["error"]
         fits.append(entry)
     out = _deploy_redact({"ok": True, "model": _dc(info), "fits": fits,
+                          "recommended": _recommend_gpu(fits),
                           "checked_at": time.time(), "cache_ttl_s": ttl_s,
                           "hf_token_set": hf_token_set()})
     with _deploy_lock:
@@ -2673,7 +2919,15 @@ def _new_job(kind: str, target: str) -> dict[str, Any]:
 
     job = {"id": secrets.token_urlsafe(9), "kind": kind, "target": target, "status": "running",
            "lines": [], "started_at": time.time(), "ended_at": None, "result": None,
-           "error": None, "hint": None}
+           "error": None, "hint": None,
+           # structured progress for the page: which stage, which deployment
+           # (known the moment it is created, long before it is ready), how
+           # long it has been booting, and what was asked for
+           "stage": None, "deployment_id": None, "boot_s": None, "meta": {},
+           "connected": None, "connect_error": None, "cancel": False,
+           # what the container itself is saying while it boots, and the
+           # fatal line if it is dying — read from the provider's logs
+           "boot_line": None, "fatal": None}
     with _deploy_lock:
         _deploy_jobs[job["id"]] = job
         # bounded: forget the oldest finished jobs
@@ -2694,6 +2948,91 @@ def _job_progress(job: dict[str, Any]) -> Any:
     return progress
 
 
+def _accepts_kw(fn: Any, name: str) -> bool:
+    import inspect as _inspect  # noqa: PLC0415
+
+    try:
+        ps = _inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in ps or any(p.kind is _inspect.Parameter.VAR_KEYWORD for p in ps.values())
+
+
+# A container that dies on import, or vLLM that can't allocate the model,
+# looks exactly like a slow boot from the outside: the endpoint is simply not
+# up yet. The difference is in the container's own log, so while a deploy is
+# booting the server reads that log and (a) puts the last real line on the
+# card, (b) stops the deploy at the first fatal line instead of letting the
+# wait run to its 20-minute timeout at the GPU's hourly rate.
+BOOT_TAIL_S = 25.0
+_FATAL_RE = re.compile(
+    r"Runner failed with exception|OutOfMemoryError|CUDA out of memory|Engine core initialization failed"
+    r"|EngineCore failed|EngineDeadError|^(?:\w+\.)*\w+Error: |^Error: ", re.M)
+_NOISE_RE = re.compile(r"^\s+|^Traceback|^\s*\^+$|^\[modal-client\]|^\s*$")
+
+
+def _boot_tail(job: dict[str, Any], dep_id: str) -> None:
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    seen_tb = False
+    while True:
+        with _deploy_lock:
+            if job["status"] != "running" or job.get("stage") != "boot" or job.get("cancel"):
+                return
+        try:
+            async def collect() -> list[str]:
+                out: list[str] = []
+                async for line in _dm.logs(dep_id, tail=60):
+                    out.append(_redact_text(str(line))[:400])
+                    if len(out) >= 60:
+                        break
+                return out
+            lines = _run_async(collect)
+        except Exception:  # noqa: BLE001 — logs are best-effort; the wait continues
+            lines = []
+        fatal, last = None, None
+        for ln in lines:
+            if "Traceback (most recent call last)" in ln:
+                seen_tb = True
+            m = _FATAL_RE.search(ln)
+            if m and (seen_tb or not ln.startswith(" ")):
+                fatal = ln.strip()
+            if not _NOISE_RE.match(ln):
+                last = ln.strip()
+        with _deploy_lock:
+            if job["status"] != "running":
+                return
+            if last:
+                job["boot_line"] = last[:200]
+            if fatal:
+                job["fatal"] = fatal[:300]
+                job["cancel"] = True          # the deploy stops waiting; the leftover is torn down
+                return
+        time.sleep(BOOT_TAIL_S)
+
+
+def _job_events(job: dict[str, Any]) -> Any:
+    """``manager.deploy``'s structured events, folded onto the job record."""
+    def on_event(kind: str, data: dict[str, Any]) -> None:
+        with _deploy_lock:
+            if kind == "stage":
+                job["stage"] = str(data.get("stage") or "") or None
+                start_tail = job["stage"] == "boot" and bool(job.get("deployment_id"))
+            else:
+                start_tail = False
+            if kind == "created":
+                job["deployment_id"] = str(data.get("id") or "") or None
+            elif kind == "heartbeat":
+                try:
+                    job["boot_s"] = int(data.get("elapsed_s") or 0)
+                except (TypeError, ValueError):
+                    pass
+        if start_tail:
+            threading.Thread(target=_boot_tail, args=(job, job["deployment_id"]),
+                             name="mantis-boot-tail", daemon=True).start()
+    return on_event
+
+
 def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> None:
     """Run one async manager call on a background thread, recording progress
     lines and the result on the job. `_shape` lets a caller convert a result
@@ -2701,6 +3040,7 @@ def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> No
     import time  # noqa: PLC0415
 
     shape = kwargs.pop("_shape", None)
+    after = kwargs.pop("_after", None)
 
     def body() -> None:
         try:
@@ -2711,16 +3051,42 @@ def _run_job(job: dict[str, Any], coro_fn: Any, *args: Any, **kwargs: Any) -> No
                 else:
                     job["result"] = _deploy_redact(_dep_dict(res)) if res is not None and hasattr(res, "gpu") \
                         else (_deploy_redact(_dc(res)) if res is not None else None)
+            if after is not None and res is not None:
+                # a follow-up that belongs to the same job (switch mantis to
+                # the new endpoint): its failure is recorded, never fatal —
+                # the deployment itself succeeded
+                try:
+                    after(res)
+                except Exception as e:  # noqa: BLE001
+                    with _deploy_lock:
+                        job["connect_error"] = _deploy_err(e).get("error")
+            with _deploy_lock:
                 job["status"] = "done"
         except BaseException as e:  # noqa: BLE001 — the job record is the error channel
             d = _deploy_err(e)
             with _deploy_lock:
-                job["status"] = "error"
-                job["error"] = d.get("error")
-                job["hint"] = d.get("hint")
+                if job.get("fatal"):
+                    job["status"] = "error"
+                    job["error"] = "the container died while booting: " + job["fatal"]
+                    job["hint"] = "its logs have the full traceback; it was torn down so it isn't billing"
+                else:
+                    # asked to stop, and stopped: that is not a failure
+                    job["status"] = "cancelled" if job.get("cancel") else "error"
+                    job["error"] = d.get("error")
+                    job["hint"] = d.get("hint")
         finally:
             with _deploy_lock:
                 job["ended_at"] = time.time()
+        # A cancel that landed after the endpoint was created but before the
+        # page learned its id leaves one thing still billing. If nobody has
+        # started deleting it, this is the last place that can.
+        if job["kind"] == "deploy" and job.get("cancel") and job.get("deployment_id"):
+            dep_id = job["deployment_id"]
+            with _deploy_lock:
+                handled = any(j["kind"] == "teardown" and j.get("deployment_id") == dep_id
+                              for j in _deploy_jobs.values())
+            if not handled:
+                deploy_down(dep_id)
         # a finished deploy/teardown changes the list — drop the fit cache too,
         # the provider's availability may have moved. A search changes nothing.
         if job["kind"] != "find":
@@ -2739,9 +3105,41 @@ def deploy_job(job_id: str | None) -> dict[str, Any]:
             return {"ok": False, "error": f"job {job_id!r} not found"}
         d = dict(job)
         d["lines"] = list(job["lines"])
+        d["meta"] = dict(job.get("meta") or {})
     d["ok"] = True
     d["elapsed_s"] = round((d["ended_at"] or time.time()) - d["started_at"], 1)
     return d
+
+
+#: How long a finished deploy/teardown stays on the page after it ends, so a
+#: reload — or coming back from another tab — still shows how it went.
+JOB_RECENT_S = 15 * 60
+
+
+def deploy_jobs() -> dict[str, Any]:
+    """Every deploy/teardown still running, plus those that ended in the last
+    fifteen minutes — what the Deploy page re-attaches to after a reload, so
+    closing the tab never loses a deploy in flight. Lines are left out; the
+    page asks /api/deploy/job for one it is showing."""
+    import time  # noqa: PLC0415
+
+    now = time.time()
+    out = []
+    with _deploy_lock:
+        for j in _deploy_jobs.values():
+            if j["kind"] not in ("deploy", "teardown", "connect"):
+                continue
+            if j["status"] != "running" and (now - (j["ended_at"] or now)) > JOB_RECENT_S:
+                continue
+            d = {k: v for k, v in j.items() if k not in ("lines", "result")}
+            d["meta"] = dict(j.get("meta") or {})
+            d["last_line"] = j["lines"][-1] if j["lines"] else None
+            d["elapsed_s"] = round((j["ended_at"] or now) - j["started_at"], 1)
+            d["endpoint_url"] = ((j.get("result") or {}).get("endpoint_url")
+                                 if isinstance(j.get("result"), dict) else None)
+            out.append(d)
+    out.sort(key=lambda d: -d["started_at"])
+    return {"ok": True, "jobs": out}
 
 
 _OPT_INT = ("max_model_len", "tensor_parallel", "min_replicas", "max_replicas", "idle_timeout_s",
@@ -2779,8 +3177,28 @@ def _build_opts(raw: Any) -> Any:
     return opts
 
 
+def _display_meta(raw: Any) -> dict[str, Any]:
+    """What the page showed when it asked — the GPU's name, its rate, the
+    provider's name — kept on the job so a card can say "L40S · $1.10/h" while
+    it boots and after a reload. Only these three keys, only plain values."""
+    out: dict[str, Any] = {}
+    if not isinstance(raw, dict):
+        return out
+    for k in ("gpu_label", "provider_name"):
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = _redact_text(v.strip())[:60]
+    try:
+        pr = raw.get("price_per_hour")
+        if pr is not None:
+            out["price_per_hour"] = round(float(pr), 4)
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 def deploy_up(provider: str | None, model: str | None, gpu: Any, engine: str | None,
-              opts: Any = None) -> dict[str, Any]:
+              opts: Any = None, use_when_ready: Any = False, display: Any = None) -> dict[str, Any]:
     from .deploy import manager as _dm  # noqa: PLC0415
 
     provider = (provider or "").strip()
@@ -2794,9 +3212,53 @@ def deploy_up(provider: str | None, model: str | None, gpu: Any, engine: str | N
     engine = (engine or "vllm").strip().lower()
     if engine not in ("vllm", "sglang", "tgi", "llamacpp"):
         return {"ok": False, "error": f"unknown engine {engine!r}"}
+    # A second click while the first is still starting must not rent a second
+    # GPU: the same model on the same card at the same provider is one deploy.
+    with _deploy_lock:
+        for j in _deploy_jobs.values():
+            m = j.get("meta") or {}
+            if (j["kind"] == "deploy" and j["status"] == "running" and m.get("provider") == provider
+                    and m.get("model") == model and m.get("gpu") == gpu_id):
+                return {"ok": True, "job": j["id"], "provider": provider, "model": model,
+                        "gpu": gpu_id, "engine": m.get("engine"), "existing": True}
+    use = bool(use_when_ready)
     job = _new_job("deploy", model)
+    job["meta"] = {"provider": provider, "model": model, "gpu": gpu_id, "engine": engine,
+                   "use_when_ready": use, **_display_meta(display)}
+
+    def connect_after(dep: Any) -> None:
+        from .deploy import manager as _dm2  # noqa: PLC0415
+
+        # "Ready" only means the endpoint lists its models. A model can load
+        # and still be unable to answer (wrong chat template, bad weights), so
+        # mantis is only pointed at it after it answers a real prompt — never
+        # on the strength of /models alone.
+        probe = getattr(_dm2, "try_endpoint", None)
+        if probe is not None:
+            try:
+                r = _run_async(probe, dep.id, "Reply with the single word: ok")
+            except Exception as e:  # noqa: BLE001
+                raise RuntimeError("didn't switch mantis to it — it didn't answer a test prompt: "
+                                   + str(_deploy_err(e).get("error") or e)) from e
+            if not str((r or {}).get("reply") or "").strip():
+                raise RuntimeError("didn't switch mantis to it — it answered a test prompt with nothing")
+        try:
+            _run_async(_dm2.connect, dep.id, set_current=True)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError("didn't switch mantis to it — " + str(_deploy_err(e).get("error") or e)) from e
+        with _deploy_lock:
+            job["connected"] = True
+
+    kw: dict[str, Any] = {}
+    # structured stages are a newer part of the contract; a deploy core (or a
+    # test double) that predates them still runs, with text progress only
+    if _accepts_kw(_dm.deploy, "on_event"):
+        kw["on_event"] = _job_events(job)
+    if _accepts_kw(_dm.deploy, "cancelled"):
+        kw["cancelled"] = lambda: bool(job.get("cancel"))
     _run_job(job, _dm.deploy, provider, model, gpu=gpu_id, engine=engine,
-             opts=_build_opts(opts), wait=True, progress=_job_progress(job))
+             opts=_build_opts(opts), wait=True, progress=_job_progress(job),
+             _after=(connect_after if use else None), **kw)
     return {"ok": True, "job": job["id"], "provider": provider, "model": model, "gpu": gpu_id,
             "engine": engine}
 
@@ -2821,10 +3283,19 @@ def deploy_list(refresh: Any = False, with_cost: bool = True) -> dict[str, Any]:
         deps = _run_async(_dm.list_deployments, refresh=ref)
     except Exception as e:  # noqa: BLE001
         return {**_deploy_err(e), "deployments": []}
+    try:
+        from . import catalog  # noqa: PLC0415
+
+        cur = (catalog.get_last_model() or {}).get("backend") or ""
+    except Exception:  # noqa: BLE001
+        cur = ""
+    cur = cur.rstrip("/")
     rows = []
     for dep in deps:
         d = _dep_dict(dep)
         d["cost"] = _deploy_cost(dep) if with_cost and dep.status not in ("deleted", "deleting") else None
+        # the one deployment mantis is pointed at right now, if any
+        d["in_use"] = bool(cur and (d.get("endpoint_url") or "").rstrip("/") == cur)
         rows.append(d)
     rows.sort(key=lambda r: (not r.get("is_live"), -(r.get("created_at") or 0)))
     return _deploy_redact({"ok": True, "refreshed": ref, "deployments": rows,
@@ -2874,6 +3345,107 @@ def deploy_logs(dep_id: str | None, tail: Any = 200) -> dict[str, Any]:
     return {"ok": True, "supported": True, "id": dep_id, "tail": n, "lines": lines}
 
 
+_USAGE_CACHE: dict[str, tuple[float, list[str]]] = {}
+_USAGE_TTL_S = 45.0
+
+
+def deploy_usage(dep_id: str | None, hours: Any = 24) -> dict[str, Any]:
+    """Throughput, load, boot vs serving time and what it cost, for one
+    deployment — parsed from its container log (``deploy/usage.py``).
+
+    The log comes from the provider's control plane, never from the endpoint:
+    a request to a scaled-to-zero GPU app boots it, and even a metrics scrape
+    resets its idle timer, so a dashboard left open would keep it billing.
+    Whether a container is up right now comes from the stored status, which
+    is itself read without touching the endpoint."""
+    import time  # noqa: PLC0415
+
+    from .deploy import manager as _dm  # noqa: PLC0415
+    from .deploy import store as _ds  # noqa: PLC0415
+    from .deploy import usage as _du  # noqa: PLC0415
+    from .deploy.base import NotSupported  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    dep = _ds.get(dep_id)
+    if dep is None:
+        return {"ok": False, "error": f"no deployment {dep_id!r}"}
+    try:
+        h = max(1.0, min(float(hours), 24.0 * 14))
+    except (TypeError, ValueError):
+        h = 24.0
+    now = time.time()
+    hit = _USAGE_CACHE.get(dep_id)
+    if hit and now - hit[0] < _USAGE_TTL_S:
+        lines = hit[1]
+    else:
+        async def collect() -> list[str]:
+            return [str(x) async for x in _dm.logs(dep_id, tail=5000)]
+
+        try:
+            lines = _run_async(collect)
+        except NotSupported as e:
+            return {"ok": False, "supported": False, "error": _redact_text(str(e))}
+        except Exception as e:  # noqa: BLE001
+            # the CLI hiccups now and then; a minute-old log beats an error
+            if not hit:
+                return _deploy_err(e)
+            lines = hit[1]
+        else:
+            _USAGE_CACHE[dep_id] = (now, lines)
+    rate = dep.gpu.price_per_hour if dep.gpu else None
+    live = dep.status in ("running", "starting")
+    out = _du.summarize(_du.parse(lines, now), since=now - h * 3600, until=now, live=live, rate_per_hour=rate)
+    return {"ok": True, "id": dep_id, "hours": h, "status": dep.status, **out}
+
+
+def deploy_connect_job(dep_id: str | None) -> dict[str, Any]:
+    """Point mantis at a deployment as a JOB: a scaled-to-zero replica can
+    take a cold start (minutes) to wake, and a POST that blocks that long is a
+    button that says "Connecting…" forever. The card follows the job."""
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    with _deploy_lock:
+        for j in _deploy_jobs.values():
+            if j["kind"] == "connect" and j["status"] == "running" and j.get("deployment_id") == dep_id:
+                return {"ok": True, "job": j["id"], "existing": True}
+    job = _new_job("connect", dep_id)
+    job["deployment_id"] = dep_id
+    kw: dict[str, Any] = {}
+    if _accepts_kw(_dm.connect, "progress"):
+        kw["progress"] = _job_progress(job)
+
+    def shape(info: Any) -> dict[str, Any]:
+        d = dict(info or {})
+        model, backend = d.get("model"), d.get("backend")
+        d["shell"] = (f"MANTIS_AGENT_MODEL={model} MANTIS_AGENT_BASE_URL={backend} mantis" if model and backend else None)
+        return d
+
+    _run_job(job, _dm.connect, dep_id, set_current=True, _shape=shape, **kw)
+    return {"ok": True, "job": job["id"]}
+
+
+def deploy_forget(dep_id: str | None) -> dict[str, Any]:
+    """Drop a record mantis adopted from the provider but cannot use — no
+    endpoint, unknown state. It only forgets the record; nothing is deleted
+    on the provider, which is why it is offered only for such records."""
+    from .deploy import store  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    try:
+        dep = store.find(dep_id)
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    if dep.endpoint_url and dep.status in ("running", "scaled_to_zero", "starting", "pending", "building"):
+        return {"ok": False, "error": "that one is live — stop it instead",
+                "hint": "Forget is only for records with no endpoint"}
+    store.remove(dep_id)
+    return {"ok": True, "id": dep_id}
+
+
 def deploy_connect(dep_id: str | None) -> dict[str, Any]:
     from .deploy import manager as _dm  # noqa: PLC0415
 
@@ -2897,9 +3469,119 @@ def deploy_down(dep_id: str | None) -> dict[str, Any]:
 
     if not dep_id:
         return {"ok": False, "error": "id required"}
+    with _deploy_lock:
+        for j in _deploy_jobs.values():
+            if j["kind"] == "deploy" and j["status"] == "running" and j.get("deployment_id") == dep_id:
+                j["cancel"] = True
     job = _new_job("teardown", dep_id)
+    job["deployment_id"] = dep_id
     _run_job(job, _dm.teardown, dep_id, progress=_job_progress(job))
     return {"ok": True, "job": job["id"], "id": dep_id}
+
+
+_PKG_RE = re.compile(r"`([A-Za-z0-9_.\-\[\]]+)`")
+
+
+def _install_cmd(pkg: str) -> list[str]:
+    """Install into THIS interpreter's environment. A uv-managed venv has no
+    pip, so prefer uv when it is on PATH; argv only, never a shell."""
+    import shutil  # noqa: PLC0415
+
+    uv = shutil.which("uv")
+    if uv:
+        return [uv, "pip", "install", "--python", sys.executable, pkg]
+    return [sys.executable, "-m", "pip", "install", pkg]
+
+
+def deploy_install(provider: str | None) -> dict[str, Any]:
+    """One click for "needs the X package": install it into the dashboard's
+    own environment as a job the page can watch, then re-check the provider.
+    Refused unless the provider itself says it is missing that package."""
+    import subprocess  # noqa: PLC0415
+
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    pid = (provider or "").strip()
+    try:
+        prov = next((p for p in _run_async(_dm.providers) if p.get("id") == pid), None)
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    if prov is None:
+        return {"ok": False, "error": f"unknown provider {pid!r}"}
+    if prov.get("requirements_ok", True):
+        return {"ok": True, "job": None, "installed": True, "already": True}
+    m = _PKG_RE.search(str(prov.get("requirements_hint") or ""))
+    if not m:
+        return {"ok": False, "error": "this provider doesn't say which package it needs",
+                "hint": str(prov.get("requirements_hint") or "")}
+    pkg = m.group(1)
+    with _deploy_lock:
+        for j in _deploy_jobs.values():
+            if j["kind"] == "install" and j["status"] == "running" and j.get("target") == pkg:
+                return {"ok": True, "job": j["id"], "package": pkg, "existing": True}
+    job = _new_job("install", pkg)
+    job["meta"] = {"provider": pid, "package": pkg}
+    say = _job_progress(job)
+
+    async def run() -> dict[str, Any]:
+        import importlib  # noqa: PLC0415
+
+        cmd = _install_cmd(pkg)
+        say("$ " + " ".join(cmd))
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)  # noqa: S603
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if line.strip():
+                say(line.rstrip())
+        rc = proc.wait(timeout=900)
+        if rc != 0:
+            raise RuntimeError(f"install exited {rc} — see the lines above")
+        importlib.invalidate_caches()
+        fresh = next((p for p in await _dm.providers() if p.get("id") == pid), None) or {}
+        ok = bool(fresh.get("requirements_ok", False))
+        say(("✓ " + pkg + " installed — " + str(fresh.get("display_name") or pid) + " can deploy")
+            if ok else ("installed, but " + pid + " still reports: " + str(fresh.get("requirements_hint") or "not ready")))
+        if not ok:
+            raise RuntimeError(str(fresh.get("requirements_hint") or pid + " is still not ready"))
+        return {"installed": True, "package": pkg, "provider": pid}
+
+    _run_job(job, run)
+    return {"ok": True, "job": job["id"], "package": pkg}
+
+
+def deploy_try(dep_id: str | None, prompt: Any = None) -> dict[str, Any]:
+    """One chat completion against a deployment, timed — "does it actually
+    answer". Blocking: it runs on this request's own thread, and a cold
+    replica can take minutes to wake."""
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    if not dep_id:
+        return {"ok": False, "error": "id required"}
+    fn = getattr(_dm, "try_endpoint", None)
+    if fn is None:
+        return {"ok": False, "error": "this build can't test an endpoint yet"}
+    try:
+        r = _run_async(fn, dep_id, str(prompt or "") or "Say hello in one short sentence.")
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    return _deploy_redact({"ok": True, "id": dep_id, **r})
+
+
+def deploy_cancel(job_id: str | None) -> dict[str, Any]:
+    """Stop a deploy that is still starting. Before anything is rented it just
+    stops; once the provider has created the endpoint, stopping means deleting
+    it, so a teardown job is started too and returned for the page to follow."""
+    with _deploy_lock:
+        job = _deploy_jobs.get(job_id or "")
+        if job is None or job["kind"] != "deploy":
+            return {"ok": False, "error": f"no deploy job {job_id!r}"}
+        if job["status"] != "running":
+            return {"ok": True, "job": job["id"], "status": job["status"], "teardown": None}
+        job["cancel"] = True
+        dep_id = job.get("deployment_id")
+    down = deploy_down(dep_id) if dep_id else None
+    return {"ok": True, "job": job["id"], "status": "cancelling",
+            "teardown": (down or {}).get("job") if down and down.get("ok") else None}
 
 
 def deployments_live_count() -> int:
@@ -2995,6 +3677,10 @@ def auth_family_methods(family: str | None) -> dict[str, Any]:
             "recommended": bool(m.recommended),
             "fields": [_field_dict(f) for f in m.fields],
             "token_env": (m.extra or {}).get("token_env"),
+            # A login another CLI holds (Codex): the dashboard shows the command
+            # to run instead of a form or a browser sign-in.
+            "cli_login": ((m.extra or {}).get("login")
+                          if (m.extra or {}).get("detected_from") else None),
             "status": st,
         })
     active = next((m["id"] for m in out if m["status"]["active"]), None)
@@ -3142,7 +3828,9 @@ def _state_version() -> str:
         except OSError:
             parts.append((name, None))
     with _deploy_lock:
-        parts.append(tuple(sorted((j["id"], j["status"]) for j in _deploy_jobs.values())))
+        parts.append(tuple(sorted((j["id"], j["status"], j.get("stage"), len(j["lines"]),
+                                   j.get("deployment_id"), j.get("connected"))
+                                  for j in _deploy_jobs.values())))
         parts.append(tuple(sorted(_deploy_accounts)))
     return hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()[:12]
 
@@ -3276,6 +3964,19 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/skill/delete":
                 self._json(delete_skill(body.get("scope"), body.get("slug")))
                 return
+            if path == "/api/memory/file":
+                self._json(save_instruction(body.get("id"), body.get("content")))
+                return
+            if path == "/api/memory/index":
+                self._json(save_memory_index(body.get("content")))
+                return
+            if path == "/api/memory/entry":
+                self._json(save_memory(body.get("slug"), body.get("name"), body.get("description"),
+                                       body.get("type"), body.get("body")))
+                return
+            if path == "/api/memory/entry/delete":
+                self._json(delete_memory(body.get("slug")))
+                return
             if path == "/api/mcp":
                 self._json(add_mcp(body.get("scope"), body.get("name"), body.get("entry")))
                 return
@@ -3320,10 +4021,23 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/deploy/up":
                 self._json(deploy_up(body.get("provider"), body.get("model"), body.get("gpu"),
-                                     body.get("engine"), body.get("opts")))
+                                     body.get("engine"), body.get("opts"),
+                                     body.get("use_when_ready"), body.get("display")))
                 return
             if path == "/api/deploy/connect":
-                self._json(deploy_connect(body.get("id")))
+                self._json(deploy_connect_job(body.get("id")) if body.get("job") else deploy_connect(body.get("id")))
+                return
+            if path == "/api/deploy/forget":
+                self._json(deploy_forget(body.get("id")))
+                return
+            if path == "/api/deploy/install":
+                self._json(deploy_install(body.get("provider")))
+                return
+            if path == "/api/deploy/try":
+                self._json(deploy_try(body.get("id"), body.get("prompt")))
+                return
+            if path == "/api/deploy/cancel":
+                self._json(deploy_cancel(body.get("job")))
                 return
             if path == "/api/deploy/down":
                 self._json(deploy_down(body.get("id")))
@@ -3382,6 +4096,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/skills":
             self._json(skills_state())
             return
+        if path == "/api/memory":
+            self._json(memory_state())
+            return
         if path == "/api/mcp":
             self._json(mcp_state())
             return
@@ -3432,7 +4149,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/deploy/models":
             self._json(deploy_models((q.get("q") or [""])[0], (q.get("sort") or ["trending"])[0],
-                                     (q.get("limit") or ["25"])[0]))
+                                     (q.get("limit") or ["25"])[0], (q.get("source") or [None])[0]))
             return
         if path == "/api/deploy/models/enrich":
             self._json(deploy_models_enrich((q.get("ids") or [""])[0]))
@@ -3453,8 +4170,14 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/deploy/logs":
             self._json(deploy_logs((q.get("id") or [""])[0], (q.get("tail") or ["200"])[0]))
             return
+        if path == "/api/deploy/usage":
+            self._json(deploy_usage((q.get("id") or [""])[0], (q.get("hours") or ["24"])[0]))
+            return
         if path == "/api/deploy/job":
             self._json(deploy_job((q.get("id") or [""])[0]))
+            return
+        if path == "/api/deploy/jobs":
+            self._json(deploy_jobs())
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -3521,6 +4244,29 @@ def _print_banner(loopback: bool, port: int, suffix: str) -> None:
         print("    ctrl-c to stop\n")
 
 
+def _apply_settings_env() -> dict[str, str]:
+    """settings.json ``env`` into this process, exactly as the terminal does at
+    launch: a real shell export wins, empty values (a cleared credential) are
+    skipped, and the project/local tiers can't set the guarded variables.
+
+    Without it the dashboard and the terminal disagreed about the same
+    machine — a Claude subscription saved by ``mantis setup`` signed the
+    terminal in and left every Claude card here saying "not connected"."""
+    import os  # noqa: PLC0415
+
+    out: dict[str, str] = {}
+    try:
+        from .settings import SETTING_SOURCES, load_settings_env_safe  # noqa: PLC0415
+
+        for k, v in (load_settings_env_safe(SETTING_SOURCES) or {}).items():
+            if isinstance(k, str) and isinstance(v, str) and v.strip() and not (os.environ.get(k) or "").strip():
+                os.environ[k] = v
+                out[k] = v
+    except Exception:  # noqa: BLE001 — broken settings must not block the dashboard
+        pass
+    return out
+
+
 def run_serve(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="mantis serve",
@@ -3534,6 +4280,7 @@ def run_serve(argv: list[str]) -> int:
     ap.add_argument("--no-open", action="store_true",
                     help="don't auto-open a browser")
     args = ap.parse_args(argv)
+    _apply_settings_env()
 
     host = "0.0.0.0" if args.lan else args.host  # noqa: S104 — opt-in LAN bind
     loopback = host in ("127.0.0.1", "localhost", "::1")

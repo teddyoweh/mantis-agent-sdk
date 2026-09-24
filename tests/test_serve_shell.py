@@ -225,17 +225,22 @@ def test_stylesheet_has_no_elevation_shadows():
             # two differ without relying on colour
             if re.match(r"^inset 0 0 0 \dpx var\(--[a-z0-9-]+\)$", v):
                 continue
+            # the focus ring: a thin accent ring inside a soft halo — still a
+            # drawn ring on the control, not elevation
+            if re.match(r"^0 0 0 [\d.]+px var\(--accent\), 0 0 0 \dpx var\(--accent-soft\)$", v):
+                continue
             raised.append(line.strip())
     # A raise is earned only by a surface that genuinely floats over the page.
-    # There are exactly three: the provider panel, the compare tray that sticks
-    # to the bottom while the grid scrolls under it, and the menu a control
-    # opens over the content.
+    # There are exactly three: the provider panel, the menu a control opens
+    # over the content, and the chart's hover card, which floats over the plot.
     assert len(raised) == 3, raised
+    # one hover card, shared by every chart (Overview trace, spend bars, Deploy usage)
+    tip = css.split("  .trace .tip, .bars-wrap .tip, .us-chart .tip {")[1].split("}")[0]
+    assert "box-shadow" in tip and "position: absolute" in tip
     assert all("var(--dim)" in r for r in raised), "the raise takes the theme's own dim"
     panel = css.split("  .ac-panel {")[1].split("}")[0]
     assert "box-shadow" in panel and "position: absolute" in panel
-    tray = css.split("  .cmp-bar {")[1].split("}")[0]
-    assert "box-shadow" in tray and "position: sticky" in tray
+    assert ".cmp-bar" not in css
     menu = css.split("  .pmenu {")[1].split("}")[0]
     assert "box-shadow" in menu and "position: absolute" in menu
     # ...and nothing flat has one
@@ -298,11 +303,15 @@ def test_choose_a_model_is_a_card_grid_not_a_table():
     from mantis_agent.serve_ui import INDEX_HTML
 
     css, js = _css(), INDEX_HTML.split("<script>")[1]
-    # one grid definition, shared: the two pickers cannot drift apart
-    assert ".dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));" in css
+    # one grid definition, shared: the two pickers cannot drift apart, and it
+    # is a fixed four across so neighbours' readings line up down the column
+    assert ".dp-mgrid, .mm-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));" in css
+    for w, n in ((1360, 3), (860, 2)):
+        assert "@media (max-width: %dpx) { .dp-mgrid, .mm-grid { grid-template-columns: repeat(%d, minmax(0, 1fr)); } }" % (w, n) in css
     # the card is .mcard plus a page modifier, never a second card component
     assert 'el("div","mcard mmcard"' in js
-    for shared in (".mcard {", ".mcard .mh {", ".omark {", ".mcard .mt {", ".mcard .mo {", ".mcard .mp2 {"):
+    for shared in (".mcard {", ".mcard .mh {", ".omark {", ".mcard .mt {", ".mcard .mo {",
+                   ".mstats {", ".mstat {", ".mmeta {", ".mfoot {"):
         assert shared in css, shared
     # the table, its header, its rows and its sticky family stripe are gone
     for dead in (".mtable", ".mrow", ".mhead", ".mfam"):
@@ -312,29 +321,32 @@ def test_choose_a_model_is_a_card_grid_not_a_table():
         assert dead not in js, dead
     # grouped by source, as a labelled grid per group with its count
     assert 'el("div","mm-glabel")' in js and 'el("div","mm-grid")' in js
-    assert 'el("span","mm-gn", rows.length + " model"' in js
+    # the group's count is the cards it shows, so it counts aliases only
+    assert 'el("span","mm-gn", nr + " model"' in js
 
 
 def test_family_tabs_carry_their_vendor_marks():
     """The tab row is the same pill treatment as the Deploy page's org filter,
-    marks included: 16px box, 13px of ink, no square behind it. All is every
-    family at once and wears none; Open models is not a vendor and wears a
-    neutral glyph rather than borrowing Ollama's llama, which is what the
-    catalogue lists as its logo."""
+    marks included: 20px box, 17px of ink, no square behind it — one size for
+    all three pill rows, so bumping one can never leave the others behind. All
+    is every family at once and wears none; Open models is not a vendor and
+    wears a neutral glyph rather than borrowing Ollama's llama, which is what
+    the catalogue lists as its logo."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     css, js = _css(), INDEX_HTML.split("<script>")[1]
 
     # exactly the size the Deploy page's two pill rows already use
-    assert "  .mtabs .mark2 { width: 16px; height: 16px; border-radius: 4px; background: none;" in css
-    assert "  .mtabs .mark2 svg { width: 13px; height: 13px; }" in css
-    for row in (".dp-orgs .omark", ".dp-ptoggle .mark2"):
+    assert "  .mtabs .mark2 { width: 20px; height: 20px; border-radius: 6px; background: none;" in css
+    assert "  .mtabs .mark2 svg { width: 17px; height: 17px; }" in css
+    for row in (".dp-orgs .omark",):
         box = css.split("  %s {" % row)[1].split("}")[0]
-        assert "width: 16px" in box and "background: none" in box, row
-        assert "width: 13px" in css.split("  %s svg {" % row)[1].split("}")[0], row
-    # the pill's own height is untouched: 16px sits inside its 18px content box
-    assert "  .mtabs .fchip { display: inline-flex; align-items: center; gap: 6px;" in css
-    assert "font-weight: 500; padding: 6px 10px; }" in css.split("  .mtabs .fchip {")[1].split("\n")[0]
+        assert "width: 20px" in box and "background: none" in box, row
+        assert "width: 17px" in css.split("  %s svg {" % row)[1].split("}")[0], row
+    # a mark is sized to its label, and all three rows label at the same size
+    for row in (".mtabs .fchip", ".dp-orgs .fchip"):
+        assert "font-size: 14px" in css.split("  %s {" % row)[1].split("}")[0], row
+    assert "  .mtabs .fchip { display: inline-flex; align-items: center; gap: 7px;" in css
 
     # All alone gets nothing, the way the Deploy page's All pill does
     assert 'if (t.id !== "all") c.append(famMark(t.id, t.logo, t.label));' in js
@@ -346,7 +358,7 @@ def test_family_tabs_carry_their_vendor_marks():
     assert js.count("famMark(") == 5
     assert 'fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));' in js
     fm = js[js.index("function famMark("):js.index("function anyMark()")]
-    assert 'fid === "oss" ? anyMark() : providerMark(logo || fid, label)' in fm
+    assert 'fid === "oss" ? anyMark() : fid === "selfhost" ? hostMark() : providerMark(logo || fid, label)' in fm
     # Local IS Ollama, so there the llama is the honest mark
     assert 'tabs.push({ id: "local", label: "Local", n: nLocal, logo: "ollama" });' in js
 
@@ -417,41 +429,104 @@ def test_a_model_card_says_each_fact_once():
     # the vendor's mark, in the same optically normalised square the Deploy
     # card uses — not a second mark treatment
     assert 'fillMark(el("span","omark"), a.pid, a.label)' in card
-    # the facts, as quiet pills
-    assert 'pill(fmtCtx(a.info.ctx), " context")' in card
-    assert "pills.append(pricePill(pr));" in card
-    for cap in ('"cap","tools"', '"cap","effort"', '"cap","thinks"', '"cap ok","loaded"'):
-        assert cap in card, cap
+    # The numbers are READINGS, not pills: context, then what it charges going
+    # in and coming out, each in the same one of three columns on every card.
+    assert 'stat(a.info.ctx ? fmtCtx(a.info.ctx) : "\u2014", "context"' in card
+    assert 'stat("$" + price2(pr.in), "in / 1M")' in card
+    assert 'stat("$" + price2(pr.out), "out / 1M")' in card
+    # a single price tile spans the in/out pair's space, so no card ends in a hole
+    assert 'stat("Free", a.local ? "runs on your machine" : "no API charge", "acc span2")' in card
+    assert 'stat("—", "no price listed", "mute span2")' in card
+    assert "pricePill" not in card, "the price is a reading now, not a pill"
+    # The quiet line is STATE, never a capability list: "tools · effort" was
+    # on nearly every card, and a fact true of everything says nothing about
+    # any one of them. Only what differs card to card and changes what you do.
+    for gone in ('"tools"', '"effort"', '"thinks"'):
+        assert gone not in card, gone
+    assert '"ok", "loaded"' in card
+    assert 'el("div","mmeta")' in card and '"mp2"' not in card
     # readiness is stated once, and never on the card that is already in use
-    assert card.count('pill("needs a key"') == 1
+    assert card.count('"not connected"') == 1
     assert 'if (!a.enabled && !on) {' in card
-    # ONE action, and the current card has none: its tag already says so
-    assert card.count('"mm-act"') == 1
-    assert 'if (!on) foot.append(el("span","mm-act", a.enabled ? "use \u2192" : "unlock \u2192"));' in card
+    # ONE action, as a real button, and the current card has none: its tag
+    # already says so
+    assert card.count('el("button","mbtn"') == 1
+    assert 'a.enabled ? "Use model" : "Connect"' in card
+    assert "if (!on) {" in card
+    assert "use \u2192" not in card and "mm-act" not in card
     # the same slanted Current tag the provider cards wear — and that alone
     assert 'el("span","ac-st cur cornertag")' in card and 'el("span","ac-stl", "Current")' in card
     assert "Motif" not in card and "ac-mot" not in card
     # unlock still deep-links into that family's setup
-    assert "unlockFamily(fid)" in card and "useModel(a.model, a.backend)" in card
+    assert "unlockFamily(fid, a.pid)" in card and "useModel(a.model, a.backend)" in card
     # the local size is said in the caption, "loaded" only as a tag
     assert '"local \u00b7 " + fmtBytes(om.size),' in js and '" \u00b7 loaded"' not in js
+
+
+def test_dated_snapshots_fold_under_the_alias_they_pin():
+    """OpenAI serves gpt-4o AND three dated gpt-4o's. Listed as peers they are
+    most of the grid; folded under the alias they are one word on its card."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    fold = js[js.index("function foldSnapshots("):js.index("const stat = (v, label, cls)")]
+
+    # A trailing ISO or compact date, and ONLY when the same provider also
+    # serves the undated id. That second half is the whole safety of it:
+    # claude-opus-4-5-20251101 has no undated twin, so it stays a model.
+    assert r"const SNAP_RE = /^(.+?)-(\d{4}-\d{2}-\d{2}|\d{8})$/;" in js
+    assert r'const base = byKey.get(mt[1] + "\u0000" + r.pid);' in fold
+    assert "if (!base || base === r) return;" in fold
+    # a snapshot is emitted straight after the alias it pins, never elsewhere
+    assert "if (r.snapOf) return;" in fold and "(r.snaps || []).forEach(sn => out.push(sn));" in fold
+
+    # No label on the card says any of this: no "1 dated", no "dated" tag, no
+    # toggle. The alias simply stands for its pins. Only a search reaches a
+    # snapshot, because typing a date still has to be able to find one.
+    for gone in ("snapb", "snaptag", "SNAPS_OPEN", '" dated"'):
+        assert gone not in INDEX_HTML, gone
+    assert 'const okS = !r.dataset.snap || !!q;' in js
+    assert "const on = okQ && okF && okT && okS;" in js
+    # the counts describe the cards on screen, not the folded total
+    assert "const nPrimary = allModels.filter(a => !a.snapOf).length;" in js
+    assert 'const tabs = [{ id: "all", label: "All", n: nPrimary }];' in js
 
 
 def test_the_model_cards_foot_holds_the_pin_and_the_one_action():
     """The foot is laid out, not stacked: the compare pin and the action are
     flex siblings, so no width can bring them together."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
     css = _css()
-    foot = css.split("  .mm-foot {")[1].split("}")[0]
+    # one foot for both cards now: the Deploy card and My models share it, so
+    # the pin and the verb cannot be laid out two different ways
+    foot = css.split("  .mfoot {")[1].split("}")[0]
     assert "display: flex" in foot and "align-items: center" in foot
     assert "margin-top: auto" in foot                       # the foot is always last
-    # the pin takes the free space; the action follows it
-    assert "  .mm-pin { flex: none; margin-left: auto;" in css
-    act = css.split("  .mm-act {")[1].split("}")[0]
-    assert "margin-left: 10px" in act
+    assert ".mm-foot" not in css, "the my-models-only foot is gone"
+    assert 'el("div","mfoot")' in INDEX_HTML
+    # no pin: Compare is gone, so the foot holds exactly one thing, a button
+    assert ".mm-pin" not in css and "togglePin" not in INDEX_HTML
+    btn = css.split("  .mbtn {")[1].split("}")[0]
+    assert "margin-left: auto" in btn and "border: 0" in btn
+    # hovering a card is not choosing it: green only under the pointer itself
+    assert ".mcard:hover .mbtn { background: var(--fill-2); color: var(--ink); }" in css
+    assert ".mbtn:hover, .mbtn:focus-visible { background: var(--accent);" in css
+    # The facts and the action are divided the way this sheet divides
+    # everything: not by a line but by a run of single pixels — the rail's
+    # branch motif at a sparser 4px pitch — which takes the accent on the
+    # card under the cursor, as the rail's stub does under the row you are on.
+    assert "repeating-linear-gradient(to right, var(--fill-2) 0 1px, transparent 1px 4px)" in foot
+    assert "background-size: 100% 1px" in foot
+    assert ".mcard.on .mfoot {" in css and ".mcard:hover .mfoot" not in css
+    assert "repeating-linear-gradient(to right, var(--accent) 0 1px, transparent 1px 4px)" in css
     # nothing is painted into the foot any more
     assert "ac-mot" not in css
     # the head gives its 70px reservation back unless something sits top-right
-    assert "  .mmcard .mh { padding-right: 0; }" in css
+    # The head reserves a corner ONLY for the Current tag. The verb moved into
+    # the foot, so there is no longer a 70px hole punched in every title for
+    # it — and therefore nothing for the my-models card to reset.
+    assert "padding-right" not in css.split("  .mcard .mh {")[1].split("}")[0]
     assert "  .mmcard.on .mh { padding-right: 84px; }" in css
     # the tag is a corner tag now, by one rule shared with the hero
     assert "  .mmcard, .nowcard { overflow: hidden; }" in css
@@ -480,7 +555,7 @@ def test_my_models_leads_with_what_you_are_running():
     hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
     # the id at a size you read without meaning to
     assert 'el("div","now-id", cur)' in hero
-    assert "  .now-id { font-family: var(--mono); font-size: 21px;" in css
+    assert "  .now-id { font-family: var(--mono); font-size: 24px;" in css
     # the route in, said once
     assert r'via.push("local \u00b7 Ollama")' in hero
     assert 'via.push("via " + (prov.label || prov.id))' in hero
@@ -594,16 +669,20 @@ def test_a_page_states_its_situation_as_readings_not_a_paragraph():
     assert "@media (max-width: 1200px) { .page-rd.opt2 { display: none; } }" in css
     assert "@media (max-width: 1000px) { .page-rd.opt1, .page-rc { display: none; } }" in css
     # the note is a tooltip on a mark, not prose
-    assert r'el("span","page-rn", "\u24d8")' in js and "n.title = note;" in js
+    # no sentence and no ⓘ under a title: the note is the row's own tooltip
+    assert "page-rn" not in js and 'r.title = [clause, note].filter(Boolean).join(" — ");' in js
 
     # every page states itself this way
-    assert js.count("pageReads(pad, [") >= 6
+    assert js.count("pageReads(pad, [") >= 5
+    # Deploy repaints its readings as deploys start and finish, so it states
+    # them into its own holder rather than straight onto the page
+    assert "pageReads(w, reads," in js
     for probe in ('k: "sessions"', 'k: "projects"', 'k: "first run"',
                   'k: "running"', 'k: "done"', 'k: "failed"',
-                  'k: "live"', 'k: "providers keyed"',
+                  'k: "burn · unpriced"', 'k: "providers ready"', 'k: "deploying"',
                   'k: "models"', 'k: "families"',
                   'k: "always loaded"', 'k: "on demand"',
-                  'k: "local"', 'k: "remote"', 'k: "settings"'):
+                  'k: "connected"', 'k: "tools for the agent"', 'k: "settings"'):
         assert probe in js, probe
     # the sentence that used to wrap is gone
     assert "every number here is read off this machine's own transcripts." not in js
@@ -668,38 +747,7 @@ def test_recently_used_lives_on_the_hero_and_never_lies_about_reach():
     assert "(MM_ROWS || []).find(a => a.model === id)).filter(Boolean).slice(0, 5)" in hero
     # one that needs a key says so and goes to setup instead of pretending
     assert "run: () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam)," in hero
-    assert 'side: a.enabled ? null : "needs a key"' in hero
-
-
-def test_compare_holds_the_numbers_side_by_side_and_ranks_nothing():
-    from mantis_agent.serve_ui import INDEX_HTML
-
-    css, js = _css(), INDEX_HTML.split("<script>")[1]
-    assert "const CMP = { pins: [], max: 3, rows: [] };" in js
-    # three at most, and it says why rather than silently ignoring the fourth
-    assert r'toast("three at a time \u2014 unpin one first", true)' in js
-    # the pin is the Deploy card's own hover-revealed treatment
-    pin = css.split("  .mm-pin {")[1].split("}")[0]
-    assert "opacity: 0" in pin and "margin-left: auto" in pin
-    assert ".mmcard:hover .mm-pin, .mm-pin:focus-visible, .mm-pin.on { opacity: 1; }" in css
-    assert 'pin.setAttribute("aria-pressed"' in js
-
-    cmp = js[js.index("function showCompare() {"):js.index("// ---- one model, as a card ---")]
-    # the same facts in the same order for each, and no score anywhere
-    for row in ('line("Served by"', 'line("Context"', 'line("$ / 1M in"', 'line("$ / 1M out"',
-                '"Tool calling", "tools"', '"Effort control", "effort"', '"Emits reasoning", "thinking"',
-                'line("Ready to use"'):
-        assert row in cmp, row
-    assert "Nothing here is ranked." in cmp
-    # ...and nothing computes one. (The sentence that PROMISES nothing is
-    # ranked is allowed to contain the word.)
-    body = cmp.replace("Nothing here is ranked.", "")
-    for invented in ("score", "rank", "best for", "recommended", "winner"):
-        assert invented not in body.lower(), invented
-    # a missing fact is named, never zeroed
-    assert 'txt("not recorded", "dim")' in cmp and 'txt("no price row", "dim")' in cmp
-    # and the sheet is a way out, not a dead end
-    assert '(a.enabled ? "Use " : "Unlock ") + a.model' in cmp
+    assert 'side: a.enabled ? null : "not connected"' in hero
 
 
 def test_models_state_ships_a_bounded_recent_list(home):
@@ -726,24 +774,43 @@ def test_model_picker_filters_by_company_and_shows_recency():
 
     js, css = INDEX_HTML.split("<script>")[1], _css()
     for marker in ("renderOrgPills", "modelShown", "paintModels", "DEPLOY.org", "dp-orgs", "whenText",
-                   "isFresh", "gpuCeiling", "DEPLOY.gpuMax", "writeDeployHash", '"Recent"', '"New"'):
+                   "isFresh", "gpuCeiling", "DEPLOY.gpuMax", "writeDeployHash", '"Recent"', '"Last 30 days"'):
         assert marker in js, marker
     # the pills are derived from the current results, with counts and marks
     pills = js[js.index("function renderOrgPills("):js.index("function modelShown(")]
-    assert "orgMark(o)" in pills and "counts[o]" in pills and 'add("all", "All"' in pills
+    assert "orgMark(slugOf[o])" in pills and "counts[o]" in pills and 'add("all", "All"' in pills
+    # a company is its NAME, not its Hub namespace: openai and openai-community
+    # are one OpenAI pill, and the filter keys on the same name
+    assert "const orgKey = slug => orgName(String(slug || \"\").toLowerCase()).toLowerCase();" in js
+    assert "const o = orgKey(slug);" in pills
+    assert 'orgKey(m.org || _orgOf(m.id)) !== DEPLOY.org' in js
+    # and a name with spaces survives the round trip through the URL
+    assert 'encodeURIComponent(DEPLOY.org)' in js and "decodeURIComponent(raw)" in js
     # org + New combine with the search box and the sort control
     shown = js[js.index("function modelShown("):js.index("function paintModels(")]
     assert "DEPLOY.org" in shown and "DEPLOY.fresh" in shown
     # the date rule: months inside a year, month+year beyond it
     when = js[js.index("function whenText("):js.index("const isFresh")]
     assert "365 * DAY" in when and "month: \"short\", year: \"numeric\"" in when and "updated today" in when
-    # the bar is measured against the provider's largest card and coloured by fit
+    # VRAM is measured against the provider's largest card, and the verdict is
+    # carried by the reading's own colour plus a word — not by a 5px bar whose
+    # scale nothing on the card explained
     assert "DEPLOY.gpuMax[DEPLOY.provider]" in js and "frac > 1 ?" in js
-    for cls in (".mcard .vr .vbar.fits i", ".mcard .vr .vbar.tight i", ".mcard .vr .vbar.no i"):
+    assert 'vcls = frac > 1 ? "red" : frac > 0.85 ? "amb" : "";' in js
+    # the small-print line under the numbers is gone: a line appears only when
+    # something is wrong, and the date rides beside the name
+    assert '"Won\'t fit any GPU on offer" : "Tight fit"' in js and '"vLLM can\'t serve it"' in js
+    assert 'el("span","mwhen" + (isFresh(m) ? " fresh" : ""), short)' in js
+    assert "  .mstat { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 9px 10px 8px;" in css
+    for cls in (".mstat.amb b", ".mstat.red b", ".mstat.mute b"):
         assert cls in css, cls
-    assert "size unknown" in js and "not in the vLLM support list" in js
-    # the GPU-provider toggle left the model picker for Fit & deploy
-    assert 'fSec.querySelector(".sec-t").append(providerToggle())' in js
+    assert ".vbar" not in css, "the unexplained bar is gone"
+    # "vLLM unverified" was small print on every card; the warning now only
+    # appears when vLLM definitely can't serve it
+    assert "not in the vLLM support list" not in js
+    # the GPU-provider toggle is gone: the deploy sheet looks across every
+    # provider that can deploy, so there is nothing left to scope
+    assert "providerToggle" not in js
 
 
 def test_model_picker_reads_search_then_narrow():
@@ -768,10 +835,10 @@ def test_model_picker_reads_search_then_narrow():
     assert 'bar.append(find.wrap);' in pick
     # the org pills are in the row BELOW the search box
     assert 'orgRow.id = "dp-orgs"; sub.append(orgRow)' in pick
-    # ...and the token line ends that row instead of sitting in its middle
-    assert 'hfState.id = "hf-state"; renderHfState(hfState); sub.append(hfState)' in pick
+    # ...and nothing else rides in that row: the standing token status is gone,
+    # because it only matters on a gated model, where the deploy sheet asks in context
+    assert "hf-state" not in js and "renderHfState" not in js
     assert ".dp-sub .dp-status { margin-left: auto; }" in css
-    assert ".dp-sub .hf-state { margin-left: 0; }" in css
 
     # the heading is gone: the search box is the instruction
     assert 'section(pad, "Pick a model"' not in js
@@ -802,7 +869,7 @@ def test_org_pills_use_real_names_and_do_not_mangle_unknown_slugs():
     assert "text-transform" not in orgs
     # pills and the model card's second line both take the mapped name
     pills = js[js.index("function renderOrgPills("):js.index("function modelShown(")]
-    assert "orgName(o)" in pills
+    assert "orgName(slugOf[o])" in pills
     assert 'el("div","mo", orgName(og))' in js
 
     # the row shows the busiest few plus an overflow, and never hides the
@@ -836,7 +903,8 @@ def test_the_curated_list_reads_as_a_starting_point_not_the_whole_world():
     # the status line says how many, out of what
     assert 'searching all of Hugging Face…' in pick
     assert '" of all Hugging Face, for “" + DEPLOY.q + "”"' in pick
-    assert '" curated · search above to reach all of Hugging Face"' in pick
+    # the curated list says nothing under the grid — its tab already names it
+    assert "search above to reach all of Hugging Face" not in pick
     # Ollama is a real source, and says so when the daemon is not running
     assert '"reading local models…"' in pick
     assert '"Ollama is not running on this machine"' in pick
@@ -856,13 +924,18 @@ def test_no_signal_path_and_short_captions():
     for m in re.finditer(r'pageHead\(pad, "([^"]+)", [^,]+,\s*"([^"]*)"', js):
         assert len(m.group(2)) <= 70, (m.group(1), m.group(2))
     assert 'cardHead(pcard, "key", "Providers", readyN + "/" + fams.length + " ready"' in js
-    assert 'section(pad, "GPU providers · "' in js
+    assert "renderProvSection(pSec, !ready.length);" in js and "GPU providers ready" in js
     # section labels are normal-weight title case now — the all-caps mono style is gone
     sec = css.split(".sec-t {")[1].split("}")[0]
     assert "uppercase" not in sec and "var(--mono)" not in sec
-    for lab in ('"Pick a model"', '"Fit & deploy"', '"Deployments"', '"Choose a model"', '"Local models · Ollama"',
-                '"Providers"', '"Spend & usage"', "Curated · good first deploys", '"MCP servers"'):
+    for lab in ('"Active"', '"Deployments"', '"Choose a model"', '"Local models · Ollama"',
+                '"Providers"', '"Spend & usage"', '"MCP servers"'):
         assert lab in js, lab
+    # The model grid holds cards and nothing else. A "Curated · good first
+    # deploys" stripe across it only repeated the Curated tab that is already
+    # selected above it, and a row of cards needs no caption to be read.
+    assert "good first deploys" not in js.split("function paintModels(")[1]
+    assert "dp-glabel" not in INDEX_HTML and "m._label" not in js
 
 
 def test_the_rail_groups_fold_and_remember():
@@ -942,10 +1015,12 @@ def test_a_count_that_needs_acting_on_is_a_filled_badge():
     css, js = _css(), INDEX_HTML.split("<script>")[1]
     due = css.split("  .nc.due {")[1].split("}")[0]
     assert "background: var(--bad)" in due and "border-radius: 8px" in due
-    assert "font-weight: 700" in due
+    # three weights across the whole sheet (400/500/600); 700 is gone
+    assert "font-weight: 600" in due and "font-weight: 700" not in css
     for banned in ("border:", "outline", "box-shadow"):
         assert banned not in due, banned
-    assert "  .nc { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);" in css
+    # a count is a number, not a literal: sans, tabular, the smallest step
+    assert "  .nc { font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-3);" in css
 
     counts = js[js.index("function railCounts(o) {"):js.index("async function loadOverview()")]
     assert "if (act && !live && (o.failed_7d || 0) > 0) {" in counts, "never two numbers on one row"
@@ -1007,10 +1082,14 @@ def test_every_page_shaped_view_leads_with_a_stat_row():
 
     # Activity and Deploy state their situation with it. My models does not:
     # it leads with the one model you are actually running, at hero size.
-    assert js.count("statRow(pad, [") == 2
-    for probe in ('label: "Running"', 'label: "Done"', 'label: "Failed"',
-                  'label: "Live deployments"', 'label: "Hourly burn"', 'label: "Providers ready"'):
-        assert probe in js, probe
+    # Deploy used to, and with nothing running its three tiles read 0, — and
+    # 0/6. It leads with its Active cards instead; the burn is a reading.
+    # Activity's three tiles repeated its own readings line — they are gone too
+    assert js.count("statRow(pad, [") == 0
+    for gone in ('label: "Running"', 'label: "Done"', 'label: "Failed"'):
+        assert gone not in js, gone
+    for gone in ('label: "Live deployments"', 'label: "Hourly burn"', "dp-tiles"):
+        assert gone not in js, gone
     assert "nowRunning(pad, m);" in js
 
 
@@ -1022,20 +1101,19 @@ def test_a_stat_never_invents_a_trend_or_a_second_opinion():
     from mantis_agent.serve_ui import INDEX_HTML
 
     js = INDEX_HTML.split("<script>")[1]
-    i = 0
-    for _ in range(2):
-        i = js.index("statRow(pad, [", i)
-        block = js[i:js.index("]);", i)]
-        assert "delta:" not in block
-        assert "chart:" not in block
-        i += 1
+    # no page leads with a stat row any more, so there is nothing to check here
+    assert "statRow(pad, [" not in js
 
     # the folded provider strip is written by the grid it summarises
     grid = js[js.index('ph.append(el("span","setup-n"'):]
     assert 'document.getElementById("provsum")' in grid[:400]
     assert "AUTH.setProv" in grid[:1400]
     # an unpriced endpoint is never counted as free
-    assert "unpriced — this is the rest" in js
+    assert "const priced = billing.filter(d => depRate(d) != null);" in js
+    # the burn is what bills NOW: serving or booting, never an app asleep at zero
+    assert "const billing = up.concat(booting);" in js
+    assert 'd.status === "scaled_to_zero"' in js and '{ v: asleep.length, k: "asleep" }' in js
+    assert '"burn · " + unpriced + " unpriced"' in js
 
 
 def test_the_breadcrumb_is_a_trail_you_can_walk_back_up():
@@ -1087,9 +1165,9 @@ def test_nav_order_rename_and_hash_alias():
     tabs = _re.findall(r'data-v="(\w+)"[^>]*>.*?<span class="nl">([^<]+)</span>', INDEX_HTML)
     assert tabs == [("home", "Overview"), ("models", "My models"), ("deploy", "Deploy"),
                     ("sessions", "Sessions"), ("activity", "Activity"), ("mcp", "MCP"),
-                    ("skills", "Skills"), ("config", "Config")]
-    assert 'const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","config"];' in js
-    assert '"12345678".indexOf(e.key)' in js and "showTab(VIEWS[i])" in js
+                    ("skills", "Skills"), ("memory", "Memory"), ("config", "Config")]
+    assert 'const VIEWS = ["home","models","deploy","sessions","activity","mcp","skills","memory","config"];' in js
+    assert '"123456789".indexOf(e.key)' in js and "showTab(VIEWS[i])" in js
     # the chords still address pages by name, and #models still resolves
     assert 'm: "models"' in js and 'o: "home"' in js and 's: "sessions"' in js
     assert 'models: "My models"' in js
@@ -1101,13 +1179,17 @@ def test_nav_rows_and_segmented_controls_are_pills():
 
     css = _css()
     nav_on = css.split("#nav .ngi > button.on {")[1].split("}")[0]
-    assert "background: var(--accent-soft)" in nav_on and "color: var(--accent)" in nav_on
+    # selection is neutral; green means primary/live/healthy, never "selected"
+    assert "background: var(--fill)" in nav_on and "color: var(--ink)" in nav_on
+    assert "#nav .ngi > button.on .ic { color: var(--accent); }" in css
     assert "::after" not in css.split("#nav .ngi > button.on")[1].split("\n")[0]
     assert "#nav button.on::after" not in css
     chip_on = css.split(".fchip.on {")[1].split("}")[0]
-    assert "background: var(--accent-soft)" in chip_on
+    assert "background: var(--panel)" in chip_on and "color: var(--ink)" in chip_on
     base = css.split("  #nav .ngi > button {")[1].split("}")[0]
-    assert "padding: 6px 10px" in base and "border-radius: 7px" in base and "transition: background var(--t)" in base
+    # radii come from one small set now (6 / 8 / 12)
+    # Notion-like rows: 30px tall, 6px corners
+    assert "padding: 6px 10px" in base and "border-radius: 6px" in base and "height: 30px" in base and "transition: background var(--t)" in base
     # the active row changes colour and fill only — never weight, so the rail
     # never reflows under the cursor
     assert "font-weight" not in nav_on and 'class="k"' not in INDEX_HTML and "#nav button .k" not in css
@@ -1122,15 +1204,16 @@ def test_theme_tokens_are_neutral_and_defined_for_both_schemes():
     css = _css()
     assert "prefers-color-scheme: dark" in css and ':root[data-theme="dark"]' in css and ':root:not([data-theme="light"])' in css
     dark = css.split(':root[data-theme="dark"]')[1].split("}")[0]
-    for tok in ("--bg: #0a0b0d", "--panel: #111316", "--line: rgba(255,255,255,.08)", "--ink: #ededed", "--ink-2: #9a9ea6"):
+    for tok in ("--bg: #191919", "--panel: #202020", "--line: rgba(255,255,255,.08)", "--ink: #e6e6e4", "--ink-2: #a5a5a2"):
         assert tok in dark, tok
     light = css.split(":root {")[1].split("}")[0]
-    for tok in ("--bg: #eff1f4", "--panel: #ffffff", "--panel-2: #f4f5f7", "--ink: #111111", "--ok:", "--warn:", "--bad:", "--info:"):
+    for tok in ("--bg: #f3f4f6", "--panel: #ffffff", "--panel-2: #f8f9fa", "--ink: #0e0f11", "--ok:", "--warn:", "--bad:", "--info:"):
         assert tok in light, tok
     # olive is gone from the surfaces
     for old in ("#efece5", "#0d0f0a", "#1a1d15", "#14160f"):
         assert old not in css, old
-    assert "font-size: 13px" in css.split("\n  body {")[1].split("}")[0]
+    # body text is 14px — Notion's reading size, not a dense 13
+    assert "font-size: 14px" in css.split("\n  body {")[1].split("}")[0]
 
 
 def test_page_carries_the_shell_cards_transcript_and_palette(home):
@@ -1147,19 +1230,19 @@ def test_page_carries_the_shell_cards_transcript_and_palette(home):
                    'data-v="activity"><i class="ic" data-i="activity"></i>', 'data-v="mcp"><i class="ic" data-i="mcp"></i>',
                    'id="rail"', 'id="railtog"', 'id="crumb"', 'id="sub-models"', 'id="n-sessions"',
                    'id="activitypad"', "loadActivity", "renderActivityPage",
-                   "counts_7d", "ACT_FILTERS", 'a: "activity"', '"12345678"', "xrow", "Load more",
+                   "counts_7d", "ACT_FILTERS", 'a: "activity"', '"123456789"', "xrow", "Load more",
                    "function patchList", "function skeleton", "function md(", "function splitMeta", "function ctxToggle",
                    "function toolCall", "META_RE", "system-reminder", "show context (",
                    'id="projcards"', 'id="sesscards"', "pcard", "selectProject", "selectSession", "UUIDISH",
                    "renderTopStatus", "watchEvents", "/api/events?", "EVENTS_OK", "openPalette", "paletteItems",
-                   'e.key.toLowerCase() === "k"', "cycleTheme", "applyTheme", 'get("theme")', "rollback",
+                   'e.key.toLowerCase() === "k"', "cycleTheme", "applyTheme", 'get("theme")', "trackJob({ id: r.job, kind: \"connect\"",
                    "grid-template-columns: 280px 320px", "repeat(auto-fill, minmax(260px, 1fr))", "max-width: 900px",
                    "CHORDS", "visibilitychange", "sessfind", "fam-grid", "spend-card", "mm-grid", "mmcard"):
         assert marker in page, marker
     for gone in ("live-act", "renderActivitySummary", "act-sum", "see all"):
         assert gone not in page, gone
     assert "cdn." not in page and "googleapis" not in page
-    for marker in ("dp-mgrid", "mcard", "bigMark", "providerDescriptor", "gcard", "color-mix(in srgb", "VRAM_CAP_GB", "dp-glabel"):
+    for marker in ("dp-mgrid", "mcard", "bigMark", "providerDescriptor", "dcard", "color-mix(in srgb", "VRAM_CAP_GB"):
         assert marker in page, marker
 
 
@@ -1204,7 +1287,8 @@ def test_sub_rows_open_only_under_the_page_you_are_on():
     for v in ("models", "deploy", "sessions"):
         assert ('id="sub-%s"' % v) in INDEX_HTML, v
     # a caret exists only on an open page that has rows, and it folds them
-    assert ".ncar { display: none;" in css and "#nav .ngi > button.has-sub .ncar { display: block; }" in css
+    # the 8px caret rendered as a stray dot after the active row — it is gone
+    assert "#nav .ngi > button.has-sub .ncar { display: none; }" in css
     assert 'if (b.dataset.v === curView && e.target.closest(".ncar")) { SUB_OPEN = !SUB_OPEN; paintSubs(); return; }' in js
     # rows repaint from data the pages already fetched — no request to open one
     assert js.count("paintSubs()") >= 5
@@ -1279,4 +1363,5 @@ def test_the_bar_says_where_you_are():
     # the page is the head of the trail, and it is always printed
     assert 'const home = el("b", null, PAGE_NAMES[curView] || curView);' in js and "c.append(home);" in js
     assert js.count("const PAGE_NAMES = ") == 1        # the rail and the palette share one list
-    assert 'setCrumb(fmt(o.session_count) + " sessions · " + fmt(o.project_count) + " projects")' in js
+    # the crumb names the page; the page's readings carry its numbers
+    assert 'if (curView === "home") setCrumb();' in js

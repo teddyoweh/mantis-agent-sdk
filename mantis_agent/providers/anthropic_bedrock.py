@@ -283,15 +283,22 @@ def _raise_bedrock_error(response: httpx.Response, region: str, model: str) -> N
         message = text or response.reason_phrase
     status = response.status_code
     if status in (401, 403):
-        raise AuthError(
+        msg = (
             f"Bedrock rejected the request ({status}): {message} — check the IAM "
             f"principal has bedrock:InvokeModelWithResponseStream on "
             f"{to_bedrock_model(model, region=region)} in {region}."
         )
-    if status == 404:
-        raise ProviderError(
+    elif status == 404:
+        msg = (
             f"Bedrock has no model {to_bedrock_model(model, region=region)!r} in "
             f"{region} ({status}): {message} — model access is per-region and "
             "must be requested once in the Bedrock console."
         )
-    raise ProviderError(f"Bedrock API error ({status}): {message}")
+    else:
+        msg = f"Bedrock API error ({status}): {message}"
+    # Typed by status with the transport's signals attached (status_code, a
+    # RateLimitError + retry_after_s on a 429 ThrottlingException, the
+    # refused-Retry-After note, retried_by_transport).
+    from ..retry import status_error  # noqa: PLC0415
+
+    raise status_error(response, msg, raw=text)

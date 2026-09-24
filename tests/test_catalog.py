@@ -6,6 +6,8 @@ lookup, and key validation. These back the ``mantis`` ``/models`` experience.
 from __future__ import annotations
 
 import functools
+import json
+import time
 from pathlib import Path
 
 import httpx
@@ -67,6 +69,44 @@ def test_live_cache_roundtrip_and_ttl(tmp_home: Path) -> None:
     assert catalog.cached_live_models("openai") == ["gpt-5.4", "gpt-4o"]
     assert catalog.cached_live_models("openai", ttl_s=-1) is None  # forced stale
     assert catalog.cached_live_models("nope") is None  # unknown provider
+
+
+def test_a_model_picker_only_offers_models_you_can_talk_to() -> None:
+    """A provider's /v1/models is its whole product line. OpenAI answers with
+    image generators, TTS, transcription, embeddings and moderation; xAI ships
+    grok-imagine-*. None of them serve a chat completion, so offering one in a
+    model picker guarantees a failure at the first request."""
+    for mid in ("gpt-image-2.5-sunburst", "chatgpt-image-latest", "sora-2",
+                "grok-imagine-image-2.0", "grok-imagine-video-1.5",
+                "tts-1-hd", "gpt-4o-mini-tts", "gpt-audio-mini", "whisper-1",
+                "gpt-transcribe", "gpt-4o-transcribe-diarize",
+                "gpt-realtime-2.1-mini", "gpt-live-1", "gpt-live-transcribe",
+                "text-embedding-3-large", "omni-moderation-latest",
+                "babbage-002", "davinci-002", "gpt-3.5-turbo-instruct-0914"):
+        assert not catalog.is_chat_model_id(mid), mid
+
+    # ...and every real chat model survives. `-instruct` is how essentially
+    # every open-weight chat model is named, so it can never be a marker.
+    for mid in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5-codex", "gpt-5.1-codex-max",
+                "gpt-4o", "gpt-3.5-turbo", "o3-mini", "o4-mini-deep-research",
+                "computer-use-preview", "gpt-4o-search-preview",
+                "claude-opus-5", "grok-4.6", "grok-build-0.1", "qwen-3.8-27b",
+                "gpt-oss-120b", "deepseek-chat", "glm-4.7", "moonshot-v1-128k",
+                "llama-3.3-70b-instruct", "Qwen2.5-72B-Instruct", "gemini-3-pro"):
+        assert catalog.is_chat_model_id(mid), mid
+
+
+def test_the_live_cache_filters_non_chat_models_on_both_sides(tmp_home: Path) -> None:
+    """Writing filters, and reading filters too — so a cache written by an older
+    build can't surface an image model as something you could switch to."""
+    catalog.store_live_models("openai", ["gpt-5.4", "gpt-image-1", "whisper-1", "gpt-4o"])
+    assert catalog.cached_live_models("openai") == ["gpt-5.4", "gpt-4o"]
+
+    # a cache from a build that had no such filter
+    path = catalog._live_path()
+    path.write_text(json.dumps({
+        "openai": {"models": ["gpt-image-2", "tts-1", "gpt-5.4"], "ts": time.time()}}))
+    assert catalog.cached_live_models("openai") == ["gpt-5.4"]
 
 
 def test_provider_for_model() -> None:

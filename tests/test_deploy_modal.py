@@ -60,6 +60,9 @@ def env(monkeypatch, tmp_path):
     for var in ("MODAL_PROXY_TOKEN_ID", "MODAL_PROXY_TOKEN_SECRET", "HF_TOKEN", "MODAL_CONFIG_PATH"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(modal_deploy, "_import_modal", lambda: object())
+    # no test ever reaches the real `modal` CLI; a test that needs its output
+    # scripts its own Recorder
+    monkeypatch.setattr(modal_deploy, "_runner", Recorder((1, "", "offline in tests")))
 
     async def _nosleep(_s):
         return None
@@ -114,21 +117,43 @@ def test_template_has_gpu_model_and_engine_flags():
     assert "'--enforce-eager'" in src
     assert "uv_pip_install('vllm==0.21.0')" in src
     assert "scaledown_window=120" in src
-    assert "startup_timeout=600" in src
+    # the default when nobody sized it; the manager sizes it to the model
+    assert "startup_timeout=1200" in src
+    big = _render(opts=DeployOpts(tensor_parallel=2, extra={"boot_budget_s": 3429}))
+    assert "startup_timeout=3429" in big
     assert "min_containers=1" in src and "max_containers=3" in src
-    assert "unauthenticated=False" in src
+    assert "requires_proxy_auth=True" in src
     assert "--api-key" not in src
     assert "SECRETS = []" in src and "'HF_TOKEN'" not in src  # the docstring mentions the name; the secret line must not
+    # default: a web_server on *.modal.run, not a Flash server on *.modal.direct
+    assert "@modal.web_server(port=PORT" in src and "@app.server(" not in src
+    assert 'json.dumps({"url": server.get_web_url(), "app": APP_NAME})' in src
+    # the input timeout never undercuts the boot budget
+    assert "timeout=3429" in big
+
+
+def test_template_flash_endpoint_is_opt_in():
+    src = _render(opts=DeployOpts(tensor_parallel=2, extra={"modal_endpoint": "flash"}))
+    compile(src, "generated.py", "exec")
+    assert "@app.server(" in src and "@modal.web_server" not in src
+    assert "unauthenticated=False" in src
     assert 'json.dumps({"url": Server.get_url(), "app": APP_NAME})' in src
+    with pytest.raises(NotSupported):
+        _render(opts=DeployOpts(extra={"modal_endpoint": "tunnel"}))
 
 
 def test_template_secrets_line_only_with_token():
     src = _render(has_hf_token=True)
-    assert "SECRETS = [modal.Secret.from_dict({'HF_TOKEN': os.environ['MANTIS_HF_TOKEN']})]" in src
+    # the container re-imports this module with no MANTIS_* in its env — it
+    # must not KeyError there, so each key falls back to Modal's own injection
+    assert ("SECRETS = [modal.Secret.from_dict({'HF_TOKEN': os.environ.get('MANTIS_HF_TOKEN') "
+            "or os.environ.get('HF_TOKEN', '')})]") in src
+    assert "os.environ['MANTIS_" not in src
     assert "'VLLM_API_KEY'" not in src and "--api-key" not in src
     src = _render(has_hf_token=True, unauthenticated=True)
-    assert "'HF_TOKEN': os.environ['MANTIS_HF_TOKEN'], 'VLLM_API_KEY': os.environ['MANTIS_VLLM_API_KEY']" in src
-    assert "unauthenticated=True" in src
+    assert ("'HF_TOKEN': os.environ.get('MANTIS_HF_TOKEN') or os.environ.get('HF_TOKEN', ''), "
+            "'VLLM_API_KEY': os.environ.get('MANTIS_VLLM_API_KEY') or os.environ.get('VLLM_API_KEY', '')") in src
+    assert "requires_proxy_auth=False" in src
     assert '"--api-key",\n            os.environ["VLLM_API_KEY"]' in src
     compile(src, "generated.py", "exec")
 
@@ -243,7 +268,7 @@ async def test_deploy_with_proxy_token_records_header_refs(env, monkeypatch):
     assert path == env / "home" / "deploy" / "modal" / "qwen-qwen3-8b.py"
     assert path.exists()
     src = path.read_text()
-    assert "gpu='H100:2'" in src and "unauthenticated=False" in src
+    assert "gpu='H100:2'" in src and "requires_proxy_auth=True" in src
     assert opts.tensor_parallel == 2  # defaulted from the gpu count
     assert cmd_env["MODAL_TOKEN_ID"] == "ak-test" and cmd_env["MODAL_TOKEN_SECRET"] == "as-test"
     assert "MANTIS_VLLM_API_KEY" not in cmd_env and "MANTIS_HF_TOKEN" not in cmd_env
@@ -274,9 +299,9 @@ async def test_deploy_without_proxy_token_generates_key(env, monkeypatch):
     assert cmd_env["MANTIS_VLLM_API_KEY"] == key
     assert cmd_env["MANTIS_HF_TOKEN"] == "hf_secret123"
     src = Path(rec.calls[0][0][1]).read_text()
-    assert "unauthenticated=True" in src and "--api-key" in src
+    assert "requires_proxy_auth=False" in src and "--api-key" in src
     assert key not in src and "hf_secret123" not in src  # secrets never hit disk
-    assert "'HF_TOKEN': os.environ['MANTIS_HF_TOKEN']" in src
+    assert "'HF_TOKEN': os.environ.get('MANTIS_HF_TOKEN')" in src
     assert "MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY" in dep.message
     monkeypatch.delenv(dep.auth_env)
 
@@ -479,3 +504,70 @@ def test_the_summary_carries_the_requirement(monkeypatch) -> None:
     # An adapter with no requirement of its own is reported as satisfied.
     assert rows["runpod"]["requirements_ok"] is True
     assert rows["runpod"]["requirements_hint"] == ""
+
+
+def test_the_generated_endpoint_key_survives_a_restart(tmp_path, monkeypatch):
+    """The endpoint's API key used to live only in the deploying process's
+    environment: restart the dashboard and its own deployment could never be
+    authenticated again. It is persisted with the provider keys now."""
+    import json as _json
+    import os as _os
+
+    from mantis_agent.deploy import store
+
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY", raising=False)
+    store.save_endpoint_key("MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY", "sk-mantis-abc")
+    assert _os.environ["MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY"] == "sk-mantis-abc"
+    saved = _json.loads((tmp_path / "home" / "settings.json").read_text())["env"]
+    assert saved["MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY"] == "sk-mantis-abc"
+    # a fresh process: the environment is empty until the store is loaded
+    monkeypatch.delenv("MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY")
+    out = store.load_credentials_into_env()
+    assert out["MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY"] == "sk-mantis-abc"
+    assert _os.environ["MANTIS_DEPLOY_QWEN_QWEN3_8B_KEY"] == "sk-mantis-abc"
+    # only endpoint-key names go through this door
+    with pytest.raises(Exception, match="not an endpoint key name"):
+        store.save_endpoint_key("OPENAI_API_KEY", "x")
+
+
+async def test_status_never_wakes_an_app_with_no_containers(env, monkeypatch):
+    """A scaled-to-zero Modal endpoint boots a GPU for ANY request, /health
+    included. status() reads the control plane instead: no containers means
+    asleep, with zero HTTP; a stopped app is deleted; only an app with a
+    container already up is probed, and a refused probe there is a boot."""
+    import json as _json
+
+    def apps(tasks, state="deployed"):
+        return Recorder((0, _json.dumps([{"app_id": "ap-1", "description": "mantis-qwen-qwen3-8b",
+                                          "state": state, "tasks": str(tasks)}]), ""))
+
+    with respx.mock(assert_all_called=False) as router:
+        route = router.get(URL + "/health").mock(side_effect=httpx.ConnectError("reset"))
+        monkeypatch.setattr(modal_deploy, "_runner", apps(0))
+        dep = await ModalDeployProvider().status(_dep())
+        assert dep.status == "scaled_to_zero" and route.call_count == 0
+
+        monkeypatch.setattr(modal_deploy, "_runner", apps(0, "stopped"))
+        dep = await ModalDeployProvider().status(_dep())
+        assert dep.status == "deleted" and route.call_count == 0
+
+        # a container up: readiness comes from its log, still with zero HTTP —
+        # a probe would reset Modal's scale-down timer and keep it billing
+        def up(log):
+            listing = _json.dumps([{"app_id": "ap-1", "description": "mantis-qwen-qwen3-8b",
+                                    "state": "deployed", "tasks": "1"}])
+
+            async def run(cmd, env, timeout_s):
+                return (0, listing if "list" in cmd else log, "")
+            return run
+
+        booting = "[modal-client] 2026-09-23T19:28:10+0000 [Modal Flash] Server tunnel opened at https://x\n"
+        monkeypatch.setattr(modal_deploy, "_runner", up(booting))
+        dep = await ModalDeployProvider().status(_dep())
+        assert dep.status == "starting" and route.call_count == 0
+
+        ready = booting + "(APIServer pid=4) INFO 09-23 19:41:00 [api_server.py:617] x\n(APIServer pid=4) INFO:     Application startup complete.\n"
+        monkeypatch.setattr(modal_deploy, "_runner", up(ready))
+        dep = await ModalDeployProvider().status(_dep())
+        assert dep.status == "running" and route.call_count == 0

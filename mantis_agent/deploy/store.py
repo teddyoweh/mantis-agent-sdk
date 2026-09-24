@@ -42,6 +42,7 @@ __all__ = [
     "remove",
     "save_all",
     "save_credentials",
+    "save_endpoint_key",
     "store_path",
     "upsert",
 ]
@@ -321,6 +322,23 @@ def save_credentials(provider_id: str, values: dict[str, str]) -> dict[str, str]
     return saved
 
 
+#: Generated per-endpoint keys (``MANTIS_DEPLOY_<SLUG>_KEY``) are saved with the
+#: provider credentials, and exported back into the environment with them.
+ENDPOINT_KEY_PREFIX = "MANTIS_DEPLOY_"
+
+
+def save_endpoint_key(env: str, value: str) -> None:
+    """Persist a generated endpoint key into the user settings ``env`` block
+    and export it, so ``connect`` / ``try`` work after a restart."""
+    from ..settings import update_setting_source  # noqa: PLC0415
+
+    env = env.strip()
+    if not env.startswith(ENDPOINT_KEY_PREFIX) or not env.endswith("_KEY"):
+        raise DeployError(f"{env} is not an endpoint key name")
+    os.environ[env] = value
+    update_setting_source("user", {"env": {env: value}})
+
+
 def load_credentials_into_env(*, override: bool = False) -> dict[str, str]:
     """Export saved deploy credentials from settings into ``os.environ``.
 
@@ -337,7 +355,8 @@ def load_credentials_into_env(*, override: bool = False) -> dict[str, str]:
     wanted = set(credential_env_names())
     out: dict[str, str] = {}
     for k, v in env.items():
-        if k in wanted and isinstance(v, str) and v.strip():
+        ok = k in wanted or (k.startswith(ENDPOINT_KEY_PREFIX) and k.endswith("_KEY"))
+        if ok and isinstance(v, str) and v.strip():
             if override or not (os.environ.get(k) or "").strip():
                 os.environ[k] = v.strip()
                 out[k] = v.strip()

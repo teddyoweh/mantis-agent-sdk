@@ -96,6 +96,7 @@ from ..types import (
     ContentBlock,
     Message,
     SystemMessage,
+    TailProjection,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -405,7 +406,14 @@ def build_messages_payload(
             system_text if (not cache and len(blocks) == 1) else blocks
         )
     if cache and encoded:
-        _mark_cache_breakpoint(encoded[-1])  # cache the conversation so far
+        # Cache the conversation so far — but not the per-request tail
+        # (``TailProjection``: task evidence / todos / recall). Those change
+        # every request, so a breakpoint on them never matches the next one;
+        # it belongs on the last stable message before that trailing run.
+        stable = len(body_messages)
+        while stable and isinstance(body_messages[stable - 1], TailProjection):
+            stable -= 1
+        _mark_cache_breakpoint(encoded[stable - 1 if stable else -1])
     if temperature is not None:
         payload["temperature"] = float(temperature)
     if tools:
@@ -651,9 +659,15 @@ def _raise_for_body(response: httpx.Response, text: str) -> None:
             msg = err["message"]
 
     status = response.status_code
-    if status in (401, 403):
-        raise AuthError(f"Anthropic auth error ({status}): {msg}")
-    raise ProviderError(f"Anthropic API error ({status}): {msg}")
+    label = "auth error" if status in (401, 403) else "API error"
+    # Typed by status with the transport's signals attached (status_code, a
+    # RateLimitError + retry_after_s on 429, the refused-Retry-After note,
+    # retried_by_transport) — so a 429/529 the transport already retried isn't
+    # retried again by the engine.
+    from ..retry import status_error  # noqa: PLC0415
+
+    raise status_error(response, f"Anthropic {label} ({status}): {msg}",
+                       raw=payload if payload is not None else text)
 
 
 async def _iter_normalized_events(

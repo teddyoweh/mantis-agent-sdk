@@ -16,6 +16,7 @@ Providers in this release:
 | `deepinfra` | DeepInfra | vLLM | yes | $2.20/h | One API call; no logs API; no quantised checkpoints |
 | `baseten` | Baseten | vLLM, SGLang | yes | $6.50/h | Fullest REST control plane (prices, logs, autoscaling); pricier GPUs |
 | `vastai` | Vast.ai | vLLM, SGLang | **no** | ~$1.5–2.3/h market | Cheapest; plain-HTTP marketplace VM, you pay until you `down` it |
+| `fireworks-dedicated` | Fireworks (on-demand) | Fireworks' own | yes (after 1 h idle) | $8/h | Models from the Fireworks library on your own GPUs; the same key as Fireworks inference |
 
 ## The five-minute path
 
@@ -135,6 +136,11 @@ the network.
 5. $30/month of free compute on Starter ($100 on Team); a card is only
    needed beyond that. [Pricing](https://modal.com/pricing): H100 ≈ $3.95/h,
    L4 ≈ $0.80/h, per second.
+6. Endpoint kind — by default the app is served with `@modal.web_server` on a
+   `*.modal.run` URL. `MANTIS_MODAL_ENDPOINT=flash` (or
+   `opts.extra["modal_endpoint"] = "flash"`) uses Modal Flash on `*.modal.direct`
+   instead; some networks reset TLS to `*.modal.direct`, so keep the default
+   unless you know you want Flash.
 
 ### DeepInfra — `DEEPINFRA_API_KEY`
 
@@ -170,6 +176,27 @@ the network.
    [Pricing](https://vast.ai/pricing) is a market: H100 ≈ $1.5–2.3/h, a 4090
    well under $0.50/h — charged every hour until `deploy down`.
 5. Optional — `HF_TOKEN` for gated repos (passed to the container).
+
+### Fireworks — `FIREWORKS_API_KEY`
+
+1. Sign up at [app.fireworks.ai](https://app.fireworks.ai/signup).
+2. [Settings → API Keys](https://app.fireworks.ai/settings/users/api-keys) →
+   **Create API key** — the same `fw_…` key serverless inference uses, so if
+   Fireworks is already connected for inference there is nothing new to set.
+3. Billing → add a card: on-demand GPUs are billed per GPU-second.
+   [Pricing](https://fireworks.ai/pricing): H100 / H200 $8/h, B200 $13/h,
+   B300 $15/h per GPU.
+4. Optional — `FIREWORKS_ACCOUNT_ID`, only when the key can see more than one
+   account (otherwise it is read from the key).
+
+Fireworks deploys models **from its library** — `zai-org/GLM-4.7` is matched to
+`accounts/fireworks/models/glm-4p7` — or ones you uploaded with
+`firectl create model` (deploy `accounts/<you>/models/<id>`). Hardware is sent
+with `deploymentShape: "default"`, so Fireworks picks a validated configuration
+for your GPU choice. Requests go to `https://api.fireworks.ai/inference/v1` with
+`model="accounts/<you>/deployments/<id>"`. Idle for an hour, a deployment
+scales to zero and answers `503` while a replica comes back; with a minimum of
+0 replicas Fireworks deletes it after 7 days without traffic.
 
 ## Finding a model in plain English
 
@@ -329,9 +356,11 @@ returns it as `model` and the launch line uses it — never guess.
 
 | Variable | Read by |
 |---|---|
-| `RUNPOD_API_KEY`, `HF_TOKEN`, `DEEPINFRA_API_KEY`, `BASETEN_API_KEY`, `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, `VAST_API_KEY` | provider credentials (saved by `deploy creds`) |
+| `RUNPOD_API_KEY`, `HF_TOKEN`, `DEEPINFRA_API_KEY`, `BASETEN_API_KEY`, `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, `VAST_API_KEY`, `FIREWORKS_API_KEY` | provider credentials (saved by `deploy creds`) |
 | `HF_ENDPOINTS_NAMESPACE` | HF Endpoints: deploy into an org instead of your user namespace |
 | `MANTIS_RUNPOD_VLLM_IMAGE` | RunPod: override the vLLM worker image tag |
+| `FIREWORKS_ACCOUNT_ID` | Fireworks: the account to deploy into, when the key can see more than one |
+| `MANTIS_MODAL_ENDPOINT` | Modal: `web` (default, `*.modal.run`) or `flash` (`*.modal.direct`) |
 | `MANTIS_AGENT_MODEL`, `MANTIS_AGENT_BASE_URL`, `MANTIS_AGENT_API_KEY`, `MANTIS_AGENT_EXTRA_HEADERS` | set by `deploy connect` so `mantis` / `Agent()` find the endpoint |
 
 ## Troubleshooting

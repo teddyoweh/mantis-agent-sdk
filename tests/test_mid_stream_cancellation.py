@@ -128,6 +128,8 @@ class _GatedTool:
                 "additionalProperties": True,
             },
             fn=_body,
+            # Exercises overlap, so opt in: writers serialize by default.
+            is_concurrency_safe=True,
         )
 
 
@@ -434,6 +436,7 @@ def test_signal_cancellation_message_differs_from_sibling_abort():
         input_schema={"type": "object", "properties": {}},
         fn=_crash,
         abort_siblings_on_error=True,
+        is_concurrency_safe=True,
     )
     reg2 = ToolRegistry()
     gated_b = _GatedTool("slow_b")

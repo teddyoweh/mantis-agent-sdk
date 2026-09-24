@@ -241,13 +241,18 @@ class JobManager:
 
     def spawn(self, coro: Any, *, desc: str, kind: str = "task",
               max_runtime_s: float | None = _MAX_RUNTIME_S,
-              workflow_id: str = "") -> Job:
+              workflow_id: str = "", gate: Any = None) -> Job:
         """Detach ``coro`` as a job. Returns the Job (id assigned) immediately.
 
         ``max_runtime_s=None`` disables the backstop — only for jobs whose whole
         point is to outlive it (a ``persistent`` watch), which instead end with
         the session via :meth:`cancel_all`. ``workflow_id`` links the job to a
-        workflow run so /jobs and /workflows name the same thing."""
+        workflow run so /jobs and /workflows name the same thing.
+
+        ``gate`` is an optional zero-arg callable returning an async context
+        manager (e.g. a concurrency slot). It is entered BEFORE the
+        ``max_runtime_s`` clock starts, so time spent queued for a slot never
+        counts against the job's runtime."""
         job = Job(id=next(self._counter), desc=desc, kind=kind,
                   workflow_id=workflow_id)
         self.jobs[job.id] = job
@@ -256,7 +261,11 @@ class JobManager:
 
         async def _run() -> None:
             try:
-                out = await asyncio.wait_for(coro, timeout=max_runtime_s)
+                if gate is not None:
+                    async with gate():
+                        out = await asyncio.wait_for(coro, timeout=max_runtime_s)
+                else:
+                    out = await asyncio.wait_for(coro, timeout=max_runtime_s)
                 job.status, job.result = "done", str(out or "")
                 job.record_event("done", update_last=False)
             except (TimeoutError, asyncio.TimeoutError):
@@ -267,6 +276,15 @@ class JobManager:
             except asyncio.CancelledError:
                 job.status, job.result = "cancelled", "(cancelled)"
                 job.record_event("cancelled", update_last=False)
+                # Cancelled while still queued at the gate: the coroutine was
+                # never awaited — close it (a no-op on a finished one).
+                if gate is not None:
+                    close = getattr(coro, "close", None)
+                    if close is not None:
+                        try:
+                            close()
+                        except Exception:  # noqa: BLE001
+                            pass
                 # swallow: cancellation of a background job is an outcome, not
                 # an exception to propagate into the event loop's void
             except Exception as e:  # noqa: BLE001

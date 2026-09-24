@@ -282,6 +282,7 @@ MARK_INK: dict[str, tuple[float, float, float, float]] = {
     "p:deepinfra": (1, 0, 22.032, 24),
     "p:deepseek": (0, 3, 24, 17.66),
     "p:fireworks": (0, 5, 24, 12),
+    "p:fireworks-dedicated": (0, 5, 24, 12),
     "p:gemini": (1, 1.003, 21.998, 21.998),
     "p:glm": (1, 0, 22, 24),
     "p:groq": (5, 2, 14, 20),

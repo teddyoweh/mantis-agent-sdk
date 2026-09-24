@@ -333,7 +333,9 @@ INIT_PROMPT = (
 )
 
 
-_MENTION_TOKEN_RE = __import__("re").compile(r"(?:^|\s)@([\w./~-]+)")
+# ``@path`` or, for a path with spaces, ``@"path with spaces"`` (what the
+# fullscreen @-completion inserts for such a file).
+_MENTION_TOKEN_RE = __import__("re").compile(r'(?:^|\s)@(?:"([^"\n]+)"|([\w./~-]+))')
 
 
 _BINARY_MENTION_EXTS = {
@@ -367,7 +369,7 @@ def resolve_file_mentions(
     seen: set[str] = set()
     base = Path(cwd).expanduser()
     for m in _MENTION_TOKEN_RE.finditer(text):
-        raw = m.group(1)
+        raw = m.group(1) or m.group(2)
         if raw in seen:
             continue
         seen.add(raw)
@@ -448,6 +450,61 @@ def esc_action(
     if has_input:
         return "clear_input"
     return "none"
+
+
+def settle_failed_turn(messages: list, base: int) -> bool:
+    """Fix up the history after a turn raised mid-run (provider error, crash).
+
+    Once the model has answered at least once, earlier tool rounds may already
+    have changed files on disk — wiping them would leave the model blind to its
+    own edits. So, like an interrupt, keep the partial turn and close any
+    ``tool_use`` left unanswered so the next request stays well-formed.
+    A turn that failed before any reply (bad key, unreachable server) is rolled
+    back instead, so a retry doesn't stack duplicate user messages.
+    Returns True when the partial turn was kept."""
+    from .agent import close_open_tool_calls  # noqa: PLC0415
+    from .types import AssistantMessage  # noqa: PLC0415
+
+    kept = any(isinstance(m, AssistantMessage) for m in messages[base:])
+    if not kept:
+        del messages[base:]
+    # Heal on BOTH paths: a mid-turn compaction rewrites the list in place, so
+    # ``base`` can be stale and the rollback can leave (or expose) an open
+    # tool_use. Idempotent — a no-op on an already well-formed history.
+    close_open_tool_calls(messages, note="[not run: the turn failed with an error]")
+    return kept
+
+
+def plain_message_text(msg: Any) -> str:
+    """A markup-free rendering of a message's blocks — the fallback used when
+    the rich renderer itself throws, so a display bug never costs a turn."""
+    parts: list[str] = []
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content
+    for b in content or []:
+        kind = type(b).__name__
+        if kind == "TextBlock":
+            parts.append(getattr(b, "text", "") or "")
+        elif kind == "ToolUseBlock":
+            parts.append(f"⚒ {getattr(b, 'name', '?')}")
+        elif kind == "ToolResultBlock":
+            c = getattr(b, "content", "")
+            parts.append(("  ⎿ " + (c if isinstance(c, str) else str(c)))[:500])
+    return "\n".join(p for p in parts if p)
+
+
+def render_or_plain(render: Any, msg: Any, console: Any) -> None:
+    """Run ``render()``; if it raises, print ``msg`` as plain text instead.
+    Rendering is display-only — an exception here must never propagate into
+    the turn driver (where it would be treated as a failed turn)."""
+    try:
+        render()
+    except Exception:  # noqa: BLE001
+        try:
+            console.print(plain_message_text(msg), markup=False, highlight=False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def format_ctx_status(used: int, win: int, cost: float = 0.0) -> str:
@@ -585,6 +642,13 @@ def provider_auth(prov: Any) -> str:
     saved = catalog.saved_key(prov.id)
     if saved:
         return "OAuth token" if saved.startswith("sk-ant-oat") else "saved key"
+    if prov.id == "openai":
+        from .cli_logins import codex_api_key, has_chatgpt_login  # noqa: PLC0415
+
+        if codex_api_key():
+            return "Codex CLI key"
+        if has_chatgpt_login():
+            return "ChatGPT plan (Codex login)"
     return ""
 
 
@@ -694,6 +758,27 @@ def thinking_summary(thinking: str, width: int = 80) -> Any:
 _HTTP_STATUS_RE = re.compile(r"\b(401|403|404|429|5\d\d)\b")
 
 
+def _error_text(err: BaseException) -> str:
+    """``str(err)`` on one line — or, when that's empty (async httpx raises a bare
+    ``ConnectError('')`` for a reset TLS handshake), the first non-empty message
+    down the ``__cause__``/``__context__`` chain, e.g. ``ConnectError: Connection
+    reset by peer``."""
+    text = " ".join(str(err).split())
+    if text:
+        return text
+    seen: set[int] = set()
+    cur = err.__cause__ or err.__context__
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        inner = " ".join(str(cur).split())
+        if isinstance(cur, OSError) and cur.strerror:
+            inner = cur.strerror
+        if inner:
+            return f"{type(err).__name__}: {inner}"
+        cur = cur.__cause__ or cur.__context__
+    return type(err).__name__
+
+
 def classify_error(err: BaseException, backend: str | None = None,
                    model: str | None = None) -> tuple[str, str]:
     """``(title, message)`` for an error box. The title names the failure class
@@ -701,7 +786,7 @@ def classify_error(err: BaseException, backend: str | None = None,
     box reads at a glance; the message is the exception's own text, one line."""
     from .errors import AuthError, RateLimitError  # noqa: PLC0415
 
-    text = " ".join(str(err).split()) or type(err).__name__
+    text = _error_text(err)
     low = text.lower()
     status = None
     m = _HTTP_STATUS_RE.search(text)
@@ -2054,6 +2139,125 @@ def split_git_diff(text: str) -> list[tuple[str, list[str]]]:
     return files
 
 
+#: Past this size (the file on disk, or a proposed content / old / new
+#: string) the permission prompt shows a one-line note instead of a diff:
+#: reading + diffing a multi-MB file would stall the prompt.
+_DIFF_PREVIEW_MAX_BYTES = 1_000_000
+_DIFF_TOO_BIG = "(file too large / binary — diff not shown)"
+
+
+def _is_diff_note(lines: list[str]) -> bool:
+    """A ``proposed_change_diff`` result that is a one-line note, not hunks
+    (real diff lines start with ``@@`` / ``+`` / ``-`` / space)."""
+    return len(lines) == 1 and lines[0].startswith("(")
+
+
+def proposed_change_diff(
+    tool_name: str, tool_input: dict, cwd: str | None = None
+) -> tuple[str, list[str]] | None:
+    """The change an edit_file / multi_edit / write_file call WOULD make, as
+    ``(path, hunk_lines)`` in the shape ``_render_diff`` wants — for the
+    permission prompt, so the human reviews the real change, not a one-line
+    snippet. A new file (or one that can't be read) diffs against empty; an
+    edit whose ``old_string`` doesn't match the file diffs old vs new string.
+    A huge / binary file, or an ambiguous ``old_string`` the edit tool would
+    reject, yields a single ``(…)`` note line instead of hunks. ``None`` for
+    any other tool or a malformed input. Blocking I/O — call it off-thread
+    from the event loop."""
+    import difflib  # noqa: PLC0415
+
+    inp = tool_input or {}
+    if tool_name not in ("edit_file", "multi_edit", "write_file"):
+        return None
+    path = inp.get("path") or inp.get("file_path")
+    if not isinstance(path, str) or not path:
+        return None
+    p = Path(path).expanduser()
+    if not p.is_absolute():
+        p = Path(cwd or os.getcwd()) / p
+
+    def _big(*vals: Any) -> bool:
+        return any(isinstance(v, str) and len(v) > _DIFF_PREVIEW_MAX_BYTES for v in vals)
+
+    if tool_name == "write_file":
+        strings: list[Any] = [inp.get("content")]
+    elif tool_name == "edit_file":
+        strings = [inp.get("old_string"), inp.get("new_string")]
+    else:
+        edits = inp.get("edits")
+        strings = [v for e in (edits if isinstance(edits, list) else [])
+                   if isinstance(e, dict) for v in (e.get("old_string"), e.get("new_string"))]
+    if _big(*strings):
+        return (path, [_DIFF_TOO_BIG])
+    try:
+        if p.is_file():
+            if p.stat().st_size > _DIFF_PREVIEW_MAX_BYTES:
+                return (path, [_DIFF_TOO_BIG])
+            with p.open("rb") as fh:
+                if b"\0" in fh.read(8192):
+                    return (path, [_DIFF_TOO_BIG])
+            old = p.read_text(encoding="utf-8", errors="replace")
+        else:
+            old = ""
+    except OSError:
+        old = ""
+
+    def _ambiguous(text: str, o: Any, every: bool) -> str | None:
+        """The note for an ``old_string`` the edit tool will reject as
+        ambiguous (several matches, no replace_all) — a diff of just the
+        first match would mislead."""
+        if every or not isinstance(o, str) or not o:
+            return None
+        n = text.count(o)
+        return (f"(old_string matches {n} places — the edit will be rejected)"
+                if n > 1 else None)
+
+    def _apply(text: str, o: Any, n: Any, every: bool) -> str | None:
+        if not isinstance(o, str) or not isinstance(n, str) or not o or o not in text:
+            return None
+        return text.replace(o, n) if every else text.replace(o, n, 1)
+
+    if tool_name == "write_file":
+        new = inp.get("content")
+        if not isinstance(new, str):
+            return None
+    elif tool_name == "edit_file":
+        every = bool(inp.get("replace_all"))
+        note = _ambiguous(old, inp.get("old_string"), every)
+        if note:
+            return (path, [note])
+        new = _apply(old, inp.get("old_string"), inp.get("new_string"), every)
+        if new is None:  # no match in the file: show the requested swap itself
+            o, n = inp.get("old_string"), inp.get("new_string")
+            if not isinstance(o, str) or not isinstance(n, str):
+                return None
+            old, new = o, n
+    else:
+        edits = inp.get("edits")
+        if not isinstance(edits, list) or not edits:
+            return None
+        new = old
+        for e in edits:
+            e = e if isinstance(e, dict) else {}
+            every = bool(e.get("replace_all"))
+            note = _ambiguous(new, e.get("old_string"), every)
+            if note:
+                return (path, [note])
+            nxt = _apply(new, e.get("old_string"), e.get("new_string"), every)
+            if nxt is None:
+                return None
+            new = nxt
+    body = [
+        ln.rstrip("\n")
+        for ln in difflib.unified_diff(
+            old.splitlines(keepends=True), new.splitlines(keepends=True), n=3)
+    ]
+    # Drop the ---/+++ file headers (always the first two lines): only @@
+    # hunks and body lines remain — a removed "-- x" line must survive.
+    lines = body[2:]
+    return (path, lines) if lines else None
+
+
 def render_transcript(messages: list[Any]) -> str:
     """Render a conversation to shareable markdown (for /export). Skips the
     synthetic isMeta context head and tool-result plumbing; keeps user text,
@@ -2285,7 +2489,7 @@ def error_hint(err: BaseException, backend: str | None,
     it; pure + importable so it can be unit-tested."""
     from .errors import AuthError, RateLimitError  # noqa: PLC0415
 
-    low = str(err).lower()
+    low = _error_text(err).lower()
     if isinstance(err, AuthError) or "api key" in low or "authentication" in low:
         return "the API key looks invalid — re-run `mantis setup`, or /models to switch"
     if isinstance(err, RateLimitError) or "rate limit" in low or "too many requests" in low or "429" in low:
@@ -2326,7 +2530,14 @@ def error_hint(err: BaseException, backend: str | None,
     if any(p in low for p in ("connect", "refused", "timed out", "timeout", "unreachable",
                               "all connection attempts failed", "name or service", "getaddrinfo",
                               "nodename nor servname", "network is down", "network unreachable",
-                              "errno 8", "errno 50", "errno 51")):
+                              "errno 8", "errno 50", "errno 51", "connection reset")):
+        if ".modal.direct" in (backend or "") and "reset" in low:
+            # Modal's Flash edge answers a TLS reset both while a scaled-to-zero
+            # app boots and when a campus/corporate firewall blocks the edge —
+            # *.modal.run endpoints are not affected by the latter.
+            return ("Modal's *.modal.direct edge reset the connection — either the app is "
+                    "still cold-starting (`modal app list`), or your network blocks that edge; "
+                    "try another network, or redeploy on *.modal.run (`mantis-agent deploy`)")
         local = "localhost" in (backend or "") or "127.0.0.1" in (backend or "")
         where = "Is Ollama running? `ollama serve`" if local else "check the backend URL / your network"
         return f"can't reach {backend} — {where} · `mantis setup` to switch"
@@ -2669,6 +2880,19 @@ def print_banner(console: Any, model: str, backend: str) -> int:
 # ---------------------------------------------------------------------------
 
 
+def mcp_attention(summary: str | None) -> str | None:
+    """The part of the MCP connect summary worth interrupting launch for.
+
+    Servers that connected fine are not news — "exa (3 tools) · universe (27
+    tools)" on every launch is noise above the first prompt, and /mcp lists
+    them on demand. Only a server that failed (``✗``) or was held back as
+    untrusted is said out loud."""
+    if not summary:
+        return None
+    bad = [p.strip() for p in summary.split(" · ") if "✗" in p or "withheld" in p]
+    return " · ".join(bad) or None
+
+
 class MantisTUI:
     """Stateful interactive session. One Agent, one message history, one loop."""
 
@@ -2963,6 +3187,11 @@ class MantisTUI:
             asker=self._ask_permission,
             rules=self._load_permission_rules(),
         )
+        # A rebuild (model switch / MCP reload / resume) must not forget what the
+        # user already approved: carry the old context's "allow for session"s.
+        old_perms = getattr(getattr(self, "agent", None), "permissions", None)
+        if isinstance(old_perms, PermissionContext):
+            permissions.carry_session_state_from(old_perms)
 
         # SMALL models (7B-class local): slim the belt to the core 10 tools —
         # the full 22 swamp them into inventing tools and spamming questions.
@@ -3101,7 +3330,8 @@ class MantisTUI:
         """Permission decision keyed off the live shift+tab footer mode.
 
         * ``god mode on`` — allow everything, including dangerous shell commands.
-        * read-only tools — always allowed (reads never prompt).
+        * read-only calls — always allowed (reads never prompt), including a
+          read-only shell command such as ``ls`` or ``git status``.
         * ``plan mode on`` — mutating tools denied so the model researches/plans
           without touching the machine (Claude Code's plan mode).
         * ``accept edits on`` — auto-allow file edits; still ask for bash/other.
@@ -3117,12 +3347,16 @@ class MantisTUI:
             Deny,
             _format_prompt,
             _is_edit_tool,
+            is_read_only_call,
         )
 
         mode = MODES[self.mode_idx][0]
         if mode == "god mode on":
             return Allow()
-        if getattr(tool, "is_read_only", False):
+        # Read-only CALLS never prompt — a flagged tool, or a shell command that
+        # classifies as a pure read (`ls`, `git status`). Explicit deny / ask
+        # rules still win: check_permission evaluates them before reaching here.
+        if is_read_only_call(tool, tool_input):
             return Allow()
         if mode == "plan mode on":
             return Deny(
@@ -3152,19 +3386,131 @@ class MantisTUI:
         # leave a stale spinner frame frozen above the prompt.
         if self._thinking is not None:
             await self._thinking.stop()
+        from rich.markup import escape as rich_escape  # noqa: PLC0415
+
+        rule = self._prefix_rule_for(tool, tool_input)
         try:
+            diff_rows = await self._perm_diff_rows_async(tool, tool_input, max_rows=40)
+            if diff_rows:
+                sys.stdout.write("\n".join(diff_rows) + "\n")
+                sys.stdout.flush()
+            choices = "[y]es once · [s]ession · "
+            if rule:
+                choices += f"[p] don't ask again for {rule} in this project · "
+            choices += "[n]o"
             self.console.print(
-                f"[ansiyellow]?[/] allow [bold]{prompt}[/]  "
-                f"[ansibrightblack][y]es once · [s]ession · [n]o[/]"
+                f"[ansiyellow]?[/] allow [bold]{rich_escape(prompt)}[/]  "
+                f"[ansibrightblack]{rich_escape(choices)}[/]"
             )
             ans = (await anyio.to_thread.run_sync(input, "  > ")).strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             return "deny"
+        # Ctrl+C (KeyboardInterrupt / CancelledError) propagates: it cancels
+        # the turn — only an explicit "n" means "deny and let the model react".
         if ans in ("s", "session"):
             return "allow_session"
+        if rule and ans in ("p", "prefix"):
+            self._remember_prefix_rule(rule)
+            return "allow_once"
         if ans in ("y", "yes", ""):
             return "allow_once"
         return "deny"
+
+    def _prefix_rule_for(self, tool: Any, tool_input: dict) -> str | None:
+        """The "don't ask again for ``<rule>``" rule to offer on a shell
+        permission prompt (``Bash(npm run test:*)``), or ``None`` when the call
+        isn't a shell command or has no safe prefix."""
+        from .permissions import (  # noqa: PLC0415
+            _is_shell_tool,
+            _shell_command,
+            suggest_prefix_rule,
+        )
+
+        try:
+            if not _is_shell_tool(tool):
+                return None
+            return suggest_prefix_rule(_shell_command(tool_input or {}))
+        except Exception:  # noqa: BLE001 — an offer, never a reason to fail the prompt
+            return None
+
+    def _remember_prefix_rule(self, rule: str) -> None:
+        """Persist ``rule`` as a project allow rule (the gitignored local
+        settings source) and add it to the LIVE rule set, so the very next
+        matching call — this session and every later one — runs unprompted."""
+        from .permissions import PermissionRule, PermissionRuleSet  # noqa: PLC0415
+
+        try:
+            from .settings import add_permission_rule  # noqa: PLC0415
+            add_permission_rule(rule)
+        except Exception as e:  # noqa: BLE001 — still honour it for this session
+            try:
+                self.console.print(f"  [ansibrightblack]couldn't save {rule}: {e}[/]")
+            except Exception:  # noqa: BLE001
+                pass
+        perms = getattr(getattr(self, "agent", None), "permissions", None)
+        if perms is None:
+            return
+        if perms.rules is None:
+            perms.rules = PermissionRuleSet()
+        new = PermissionRule(pattern=rule, action="allow")
+        if new not in perms.rules.allow:
+            perms.rules.allow.append(new)
+
+    async def _perm_diff_rows_async(
+        self, tool: Any, tool_input: dict, max_rows: int | None = None
+    ) -> list[str]:
+        """``_perm_diff_rows`` with the file read + diff run off the event
+        loop, so a big file can't freeze the prompt (or MCP / jobs)."""
+        import anyio  # noqa: PLC0415
+
+        from .builtin_tools.fs import agent_cwd  # noqa: PLC0415
+
+        found = await anyio.to_thread.run_sync(
+            proposed_change_diff, getattr(tool, "name", ""), tool_input, agent_cwd())
+        return self._perm_diff_rows(tool, tool_input, max_rows=max_rows, found=found)
+
+    def _perm_diff_rows(
+        self, tool: Any, tool_input: dict, max_rows: int | None = None,
+        found: Any = ...,
+    ) -> list[str]:
+        """The proposed change of an edit / multi_edit / write_file call as
+        rendered ``_render_diff`` rows (ANSI strings), for the permission
+        prompt. Past ``max_rows`` it keeps ``max_rows - 1`` rows and ends with
+        ``… +N lines``. Empty for any other tool or when there's no change.
+        ``found`` is a precomputed ``proposed_change_diff`` result (see
+        ``_perm_diff_rows_async``); omitted, it is computed here."""
+        if found is ...:
+            from .builtin_tools.fs import agent_cwd  # noqa: PLC0415
+
+            found = proposed_change_diff(getattr(tool, "name", ""), tool_input, agent_cwd())
+        if not found:
+            return []
+        path, lines = found
+        if _is_diff_note(lines):
+            return [f"\x1b[90m  {lines[0]}\x1b[0m"]
+        # Rendering is per line (with syntax highlighting) — don't render a
+        # 10k-line rewrite just to keep 20 rows of it.
+        body = [ln for ln in lines if not ln.startswith("@@")]
+        budget = (max_rows + 1) if max_rows else len(lines)
+        kept: list[str] = []
+        n_body = 0
+        for ln in lines:
+            if not ln.startswith("@@"):
+                if n_body >= budget:
+                    break
+                n_body += 1
+            kept.append(ln)
+        try:
+            with self.console.capture() as cap:
+                self._render_diff(kept, path=path)
+            rows = cap.get().rstrip("\n").split("\n")
+        except Exception:  # noqa: BLE001 — fall back to the one-line prompt
+            return []
+        total = len(body)
+        if max_rows is not None and total > max_rows:
+            keep = max(0, max_rows - 1)
+            rows = rows[:keep] + [f"\x1b[90m  … +{total - keep} lines\x1b[0m"]
+        return rows
 
     async def _ask_user_question(self, questions: list[dict]) -> list[dict]:
         """Route AskUserQuestion to the interactive picker. The full-screen app
@@ -3193,14 +3539,15 @@ class MantisTUI:
                     self.console.print(
                         f"  [white]{i}[/] {o['label']}  [ansibrightblack]{o['description']}[/]")
                 self.console.print("  [white]o[/] Other (type your own)")
+                # Ctrl+C propagates (cancels the turn); EOF just skips.
                 try:
                     raw = (await anyio.to_thread.run_sync(input, "  > ")).strip()
-                except (EOFError, KeyboardInterrupt):
+                except EOFError:
                     raw = ""
                 if raw.lower() in ("o", "other"):
                     try:
                         answers = [(await anyio.to_thread.run_sync(input, "  your answer: ")).strip()]
-                    except (EOFError, KeyboardInterrupt):
+                    except EOFError:
                         answers = []
                 elif raw.isdigit() and 1 <= int(raw) <= len(q["options"]):
                     answers = [q["options"][int(raw) - 1]["label"]]
@@ -3237,9 +3584,7 @@ class MantisTUI:
         """Build a PermissionRuleSet from settings.json ``permissions`` rules
         (Claude-style ``Bash(rm -rf*)`` / ``Read(...)`` entries). None if no
         rules are configured."""
-        import re  # noqa: PLC0415
-
-        from .permissions import PermissionRule, PermissionRuleSet  # noqa: PLC0415
+        from .permissions import rules_from_settings  # noqa: PLC0415
 
         try:
             from .settings import SETTING_SOURCES, load_settings  # noqa: PLC0415
@@ -3247,22 +3592,10 @@ class MantisTUI:
         except Exception:  # noqa: BLE001 — missing/broken settings: no rules
             return None
         perms = (loaded.get("permissions") if isinstance(loaded, dict) else None) or {}
-
-        def parse(entry: str, action: str) -> Any:
-            m = re.fullmatch(r"\s*([A-Za-z0-9_]+)\s*\((.*)\)\s*", entry)
-            if m:
-                tool_name, inner = m.group(1), m.group(2)
-                return PermissionRule(pattern=f"*{inner}*", action=action, tool_name=tool_name)
-            return PermissionRule(pattern="*", action=action, tool_name=entry.strip())
-
-        rs = PermissionRuleSet()
-        for e in perms.get("deny") or []:
-            rs.deny.append(parse(e, "deny"))
-        for e in perms.get("allow") or []:
-            rs.allow.append(parse(e, "allow"))
-        for e in perms.get("ask") or []:
-            rs.ask.append(parse(e, "ask"))
-        return rs if (rs.allow or rs.deny or rs.ask) else None
+        # The structured grammar: `Bash(git status:*)` is a word-bounded prefix,
+        # not the `*git status:**` substring glob the old local parser built
+        # (which never matched anything).
+        return rules_from_settings(perms)
 
     def _default_system_slim(self) -> str:
         """Compact system prompt for SMALL local models. The full prompt is
@@ -3610,7 +3943,7 @@ class MantisTUI:
                 # (ANTHROPIC_AUTH_TOKEN) — restore with no api_key so the
                 # passthrough picks the token up from the environment, keeping the
                 # saved gateway URL. (Same tested rule the switch/auto-wire use.)
-                bearer = catalog.anthropic_bearer_backend(prov, last.get("backend"))
+                bearer = catalog.bearer_backend(prov, last.get("backend"))
                 if bearer is not None:
                     self.model, self.backend, self.api_key = model, bearer, None
                     return
@@ -3643,7 +3976,7 @@ class MantisTUI:
                 key = catalog.api_key_for(hosted) or self.api_key
                 # Anthropic OAuth/gateway Bearer token: api_key_for returns None, so
                 # wire the backend with api_key=None (passthrough uses env Bearer).
-                bearer = None if key else catalog.anthropic_bearer_backend(hosted, self.backend)
+                bearer = None if key else catalog.bearer_backend(hosted, self.backend)
                 if key:
                     self.backend, self.api_key = hosted.base_url, key
                     self.console.print(
@@ -4117,6 +4450,12 @@ class MantisTUI:
 
         def _sink(ev: Any) -> None:
             if isinstance(ev, MessageStart):
+                if live["active"] and self._turn_streamed:
+                    # A restream (truncation retry) while the partial text is
+                    # still mid-line: close that line so the new "●" starts
+                    # fresh. Normally _render_assistant already closed it.
+                    self.console.print()
+                    self._turn_streamed = False
                 live["active"] = False
             elif isinstance(ev, ContentBlockDelta) and isinstance(ev.delta, TextDelta):
                 if not live["active"]:
@@ -4162,7 +4501,10 @@ class MantisTUI:
                 if isinstance(msg, AssistantMessage):
                     # A tool call is immediately followed by its result; keep
                     # them hugged (no blank/spinner gap between call and result).
-                    hugging = self._render_assistant(msg, ToolUseBlock)
+                    def _ra(m: Any = msg) -> None:
+                        nonlocal hugging
+                        hugging = self._render_assistant(m, ToolUseBlock)
+                    render_or_plain(_ra, msg, self.console)
                     if hugging:
                         # While the tool runs, the spinner names it and counts
                         # its own seconds — a 40s pytest reads as "Run pytest
@@ -4173,7 +4515,8 @@ class MantisTUI:
                             label = f"⚒ {verb} {target}".rstrip()
                 elif isinstance(msg, UserMessage) and not getattr(msg, "isMeta", False):
                     self._bash_stream_finish()   # the live tail gives way to the preview
-                    self._render_tool_results(msg, ToolResultBlock)
+                    render_or_plain(lambda m=msg: self._render_tool_results(m, ToolResultBlock),
+                                    msg, self.console)
                 if not hugging:
                     self.console.print()  # space above the next thinking spinner
                 self._spinner_label = label
@@ -4186,7 +4529,10 @@ class MantisTUI:
             self.console.print("\n[ansibrightblack](interrupted)[/]")
             raise
         except Exception:
-            del self.messages[base:]
+            # Keep tool rounds that already ran (their edits are on disk);
+            # roll back only a turn that failed before any reply.
+            if settle_failed_turn(self.messages, base):
+                self._persist_messages(base)
             raise
         finally:
             # Close the stream in THIS task. run_iter holds the tool executor's
@@ -7158,6 +7504,8 @@ class MantisTUI:
 
     def _show_permissions(self) -> None:
         """/permissions — the active rule set + how to change it."""
+        from rich.markup import escape as _esc  # noqa: PLC0415
+
         c = self.console
         rules = self._load_permission_rules()
         c.print("\n[bold]Permissions[/]")
@@ -7173,12 +7521,21 @@ class MantisTUI:
                 if not lst:
                     continue
                 c.print(f"  [white]{label}[/]")
+                prev = None
                 for r in lst:
-                    pat = r.pattern.strip("*") or "*"
-                    c.print(f"    [ansibrightblack]{r.tool_name or '*'}({pat})[/]")
+                    if r.tool_name is None:  # structured rule: the entry verbatim
+                        text = r.pattern
+                    elif prev is not None and prev.tool_name is None \
+                            and prev.pattern.startswith(f"{r.tool_name}("):
+                        prev = r  # the substring twin of a deny/ask entry above
+                        continue
+                    else:
+                        text = f"{r.tool_name}({r.pattern.strip('*') or '*'})"
+                    prev = r
+                    c.print(f"    [ansibrightblack]{_esc(text)}[/]")
         c.print("\n[ansibrightblack]Edit rules in [white]~/.mantis-agent/settings.json[/] "
                 "under [white]permissions.allow/deny/ask[/] — e.g. "
-                "[white]\"Bash(git status*)\"[/]. Shift+Tab cycles the live mode.[/]")
+                "[white]\"Bash(git status:*)\"[/]. Shift+Tab cycles the live mode.[/]")
 
     def _show_doctor(self) -> None:
         """/doctor — install + config health checks (Claude Code's /doctor)."""
@@ -7909,7 +8266,7 @@ class MantisTUI:
             self.transcript = SessionTranscript(new_session_id())
         self._kick_prewarm()
         try:
-            _mcp = await self._connect_mcp()
+            _mcp = mcp_attention(await self._connect_mcp())
             if _mcp:
                 self.console.print(f"[ansibrightblack]mcp: {_mcp}[/]")
         except Exception:  # noqa: BLE001 — MCP must never block launch

@@ -102,6 +102,7 @@ nav:
       - Thinking blocks: guides/thinking.md
       - Budget and limits: guides/budget.md
       - MCP servers: guides/mcp.md
+      - MCP in print mode: headless-mcp.md
       - Sub-agents: guides/sub-agents.md
       - Workflows: guides/workflows.md
       - Plugins: guides/plugins.md

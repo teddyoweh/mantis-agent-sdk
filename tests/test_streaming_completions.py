@@ -68,6 +68,8 @@ class _Gated:
                 "additionalProperties": True,
             },
             fn=_body,
+            # Exercises overlap, so opt in: writers serialize by default.
+            is_concurrency_safe=True,
         )
 
 
@@ -416,6 +418,7 @@ def test_sibling_abort_emits_completion_for_each_killed_tool():
         input_schema={"type": "object", "properties": {}, "additionalProperties": True},
         fn=_bomb,
         abort_siblings_on_error=True,
+        is_concurrency_safe=True,
     )
 
     peer_a = _Gated("peer_a")

@@ -114,7 +114,7 @@ CURATED_MODELS: tuple[str, ...] = (
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
     "deepseek-ai/DeepSeek-V3.2",
     "zai-org/GLM-4.7",
-    "moonshotai/Kimi-K2.6-Instruct",
+    "moonshotai/Kimi-K2.6",   # the repo has no -Instruct suffix; that id 401s
     "MiniMaxAI/MiniMax-M2.5",
     "google/gemma-3-27b-it",
     "microsoft/phi-4",

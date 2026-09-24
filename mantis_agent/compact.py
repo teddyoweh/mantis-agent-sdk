@@ -28,6 +28,7 @@ decision. The cost of being slightly off is one early or one late compaction
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
@@ -47,6 +48,8 @@ from .types import (
     Usage,
     UserMessage,
 )
+
+_log = logging.getLogger(__name__)
 
 # A function that takes a single big prompt string and returns a summary.
 # Wired in by the agent — usually a thin wrapper around ``provider.stream``
@@ -344,6 +347,11 @@ class SimpleCompactor:
     trigger:
         Label reported to ``PostCompact`` hooks so they can tell an automatic
         threshold compaction ("auto") from an explicit ``/compact`` ("manual").
+    context_window:
+        The model's effective context window in tokens (0 = unknown). Sizes the
+        summarizer prompt so the summarize call fits the same window it is
+        rescuing; the agent keeps it current (the window can be learned
+        mid-run). Unknown falls back to the fixed ``_MAX_PROMPT_CHARS`` cap.
     """
 
     __slots__ = (
@@ -354,10 +362,13 @@ class SimpleCompactor:
         "_micro_threshold",
         "_micro_keep",
         "_micro_min_chars",
+        "_micro_low_water",
+        "_micro_min_keep",
         "_summary_token_budget",
         "_dispatcher",
         "_trigger",
         "_artifact_store",
+        "context_window",
     )
 
     def __init__(
@@ -370,10 +381,13 @@ class SimpleCompactor:
         micro_threshold: float = 0.6,
         micro_keep_tool_results: int = 8,
         micro_min_chars: int = 800,
+        micro_low_water: float = 0.4,
+        micro_min_keep: int = 2,
         summary_token_budget: int = 2048,
         dispatcher: "HookDispatcher | None" = None,
         trigger: str = "auto",
         artifact_store: ArtifactStore | None = None,
+        context_window: int = 0,
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")
@@ -392,6 +406,14 @@ class SimpleCompactor:
         self._micro_threshold = micro_threshold
         self._micro_keep = max(1, micro_keep_tool_results)
         self._micro_min_chars = micro_min_chars
+        # Hysteresis: once micro fires (known window), keep clearing — shrinking
+        # the protected window toward ``micro_min_keep`` — until usage is back
+        # under ``micro_low_water``. Clearing just the one result that aged out
+        # each turn would rewrite a message ~9 from the end EVERY turn, which
+        # invalidates a local server's KV prefix cache from there on; one deep
+        # pass buys many turns of byte-stable history before the next one.
+        self._micro_low_water = micro_low_water
+        self._micro_min_keep = max(1, min(micro_min_keep, self._micro_keep))
         # Dead-end guard: weak local models sometimes summarize by echoing the
         # transcript. Bound the replacement text so compaction always creates
         # headroom instead of burning the limited compaction retry budget.
@@ -402,6 +424,18 @@ class SimpleCompactor:
         self._dispatcher = dispatcher
         self._trigger = trigger
         self._artifact_store = artifact_store
+        self.context_window = context_window
+
+    @property
+    def summary_token_budget(self) -> int:
+        """Token cap on the summary text; bounds the summarize call's max_tokens."""
+        return self._summary_token_budget
+
+    @property
+    def summary_reply_tokens(self) -> int:
+        """Tokens reserved for the summary reply in the current window — the
+        same figure the agent sends as the summarize call's ``max_tokens``."""
+        return summary_reply_tokens(self._summary_token_budget, self.context_window)
 
     @staticmethod
     def _used(messages: list[Message], usage: Usage) -> int:
@@ -428,28 +462,71 @@ class SimpleCompactor:
             return False
         return self._used(messages, usage) >= self._micro_threshold * ctx_window
 
-    def microcompact(self, messages: list[Message]) -> bool:
+    def microcompact(
+        self,
+        messages: list[Message],
+        *,
+        used_tokens: int | None = None,
+        ctx_window: int | None = None,
+    ) -> bool:
         """Clear the payload of tool results older than the last ``micro_keep``
         (only those over ``micro_min_chars``), in place. Keeps the block + its
         tool_use_id so pairing is untouched. Returns True if anything changed.
-        Cheap (no model call), idempotent."""
+        Cheap (no model call), idempotent.
+
+        With a known window (``ctx_window`` or ``self.context_window``) it keeps
+        going past ``micro_keep`` — oldest first, never below ``micro_min_keep``
+        — until usage is under ``micro_low_water`` of the window (hysteresis;
+        see ``__init__``). ``used_tokens`` is the caller's real count; its gap
+        over our estimate (system prompt, tool schemas, undercount) is taken off
+        the target so the next turn doesn't immediately re-trigger."""
 
         tr_idx = [i for i, m in enumerate(messages) if _is_tool_result_message(m)]
-        if len(tr_idx) <= self._micro_keep:
+        window = ctx_window if ctx_window else self.context_window
+        deep = bool(window and window > 0 and self._micro_low_water > 0)
+        if len(tr_idx) <= (self._micro_min_keep if deep else self._micro_keep):
             return False
-        cutoff = tr_idx[-self._micro_keep]
         changed = False
-        for i in tr_idx[: -self._micro_keep]:
+
+        def _clear(i: int) -> bool:
             stripped = _strip_heavy_blocks(
                 messages[i], self._micro_min_chars, artifact_store=self._artifact_store
             )
-            if stripped is not None:
-                messages[i] = stripped
-                changed = True
+            if stripped is None:
+                return False
+            messages[i] = stripped
+            return True
+
+        keep = min(self._micro_keep, len(tr_idx))
+        for i in tr_idx[: len(tr_idx) - keep]:
+            changed = _clear(i) or changed
+        if deep:
+            estimate = sum(_message_token_estimate(m) for m in messages)
+            gap = max(0, (used_tokens or 0) - estimate)
+            target = self._micro_low_water * window - gap
+            # ``image_keep`` trails ``keep``: it only advances past a result
+            # that was actually cleared. Walking over small results that free
+            # nothing must not drag the image cutoff below into fresh context.
+            image_keep = keep
+            while estimate > target and keep > self._micro_min_keep:
+                i = tr_idx[-keep]
+                keep -= 1
+                before = _message_token_estimate(messages[i])
+                if _clear(i):
+                    changed = True
+                    image_keep = keep
+                    estimate -= before - _message_token_estimate(messages[i])
+        else:
+            image_keep = keep
+        from .providers.base import current_turn_start  # noqa: PLC0415 — import cycle
+
         # Bare images — pasted attachments, screenshots handed straight to the
         # model — live OUTSIDE tool results, so the sweep above never saw them
         # even though they are routinely the heaviest thing in the transcript.
-        # Clear the ones older than the keep-window too.
+        # Clear the ones older than the keep-window too — but never anything in
+        # the current prompt (at/after the latest real user message): the user
+        # just pasted it for this very turn.
+        cutoff = min(tr_idx[-image_keep], current_turn_start(messages))
         for i in range(cutoff):
             if _is_tool_result_message(messages[i]):
                 continue
@@ -589,12 +666,23 @@ class SimpleCompactor:
             except (OSError, ValueError, TypeError):
                 return messages  # no durable copy: never destroy original evidence
 
-        prompt = _build_summarization_prompt(to_summarize)
+        prompt = _build_summarization_prompt(
+            to_summarize,
+            max_chars=_summarizer_prompt_cap(self.context_window, self.summary_reply_tokens),
+        )
         try:
             summary = await self._summarizer(prompt)
-        except Exception:  # noqa: BLE001 — summarizer failed: keep full context
+        except Exception as err:  # noqa: BLE001 — summarizer failed: keep full context
+            # Never silent: a summarizer that keeps failing (typically its own
+            # prompt overflowing a small window) means every compaction no-ops
+            # and the run drifts toward a hard overflow.
+            _log.warning(
+                "compaction summarizer failed (%s: %s); history left uncompacted",
+                type(err).__name__, err,
+            )
             return messages
         if not summary or not summary.strip():
+            _log.warning("compaction summarizer returned an empty summary; history left uncompacted")
             return messages  # empty summary: never replace real turns with nothing
         summary = _trim_summary_to_token_budget(summary.strip(), self._summary_token_budget)
 
@@ -681,6 +769,7 @@ async def run_manual_compaction(
     focus: str = "",
     keep_recent: int = 4,
     dispatcher: "HookDispatcher | None" = None,
+    context_window: int = 0,
 ) -> tuple[list[Message], str]:
     """Compact ``messages`` on demand (the ``/compact`` command). Keeps the last
     ``keep_recent`` turns verbatim and summarizes the rest with ``summarizer_fn``;
@@ -690,7 +779,8 @@ async def run_manual_compaction(
 
     ``dispatcher`` rides along to the internal compactor so a user-triggered
     compaction fires ``PostCompact`` exactly like an automatic one, tagged
-    ``trigger="manual"``."""
+    ``trigger="manual"``. ``context_window`` (the model's effective window, 0 =
+    unknown) sizes the summarizer prompt so ``/compact`` fits a small model."""
     fn = summarizer_fn
     if focus.strip():
         async def fn(prompt: str, _s=summarizer_fn, _f=focus.strip()) -> str:  # noqa: A001
@@ -701,6 +791,7 @@ async def run_manual_compaction(
         keep_recent_turns=max(1, keep_recent),
         dispatcher=dispatcher,
         trigger="manual",
+        context_window=context_window,
     )
     snapshot = list(messages)
     before = len(snapshot)
@@ -721,6 +812,7 @@ async def run_manual_compaction(
 # exception, and compaction silently no-ops exactly when it's needed most.
 _MAX_RENDER_CHARS = 4_000
 _MAX_PROMPT_CHARS = 240_000
+_MIN_PROMPT_CHARS = 4_000
 _ELISION = "\n[... transcript middle elided — too large to summarize whole ...]\n"
 
 
@@ -735,16 +827,57 @@ def _truncate_middle(text: str, limit: int) -> str:
     return text[:half] + _ELISION + text[-half:]
 
 
-def _build_summarization_prompt(messages: list[Message]) -> str:
+# Summary reply cap relative to the summary text budget (the trim allows
+# slack), and the tokens held back for the summarizer's system line.
+_SUMMARY_REPLY_SLACK = 1.25
+_SUMMARIZER_SYSTEM_TOKENS = 256
+# Code / JSON / paths tokenize at ~3 chars/token, not the prose ~4; sizing the
+# prompt at 4 put a "50%" prompt at ~67% of the real window.
+_PROMPT_CHARS_PER_TOKEN = 3
+
+
+def summary_reply_tokens(summary_token_budget: int, context_window: int = 0) -> int:
+    """``max_tokens`` for the summarize call: the summary budget plus slack,
+    and never more than a quarter of a known window (a 2.5k reply on a 4k
+    model leaves no room for the transcript it is summarizing)."""
+
+    budget = summary_token_budget if summary_token_budget > 0 else 2048
+    cap = int(budget * _SUMMARY_REPLY_SLACK)
+    if context_window > 0:
+        cap = min(cap, max(1, context_window // 4))
+    return cap
+
+
+def _summarizer_prompt_cap(context_window: int, reply_tokens: int = 0) -> int:
+    """Character cap for the summarizer prompt: whatever the window leaves after
+    the reply reservation and the system line, at a conservative ~3
+    chars/token. A fixed 240k-char (~60k-token) cap overflowed every 8k–32k
+    model, so the summarize call itself failed and compaction silently never
+    happened."""
+
+    if context_window <= 0:
+        return _MAX_PROMPT_CHARS
+    if reply_tokens <= 0:
+        reply_tokens = summary_reply_tokens(0, context_window)
+    room = context_window - reply_tokens - _SUMMARIZER_SYSTEM_TOKENS
+    return max(_MIN_PROMPT_CHARS, min(_MAX_PROMPT_CHARS, room * _PROMPT_CHARS_PER_TOKEN))
+
+
+def _build_summarization_prompt(
+    messages: list[Message], *, max_chars: int = _MAX_PROMPT_CHARS
+) -> str:
     """Stitch messages into a textual prompt the summarizer model can chew on,
     bounded so the summarization call can't overflow the window itself."""
 
-    rendered = [_truncate_middle(_render_message(m), _MAX_RENDER_CHARS) for m in messages]
+    # Per-message cap scales down with a small prompt cap so one message can't
+    # eat the whole budget.
+    per_msg = min(_MAX_RENDER_CHARS, max(200, max_chars // 4))
+    rendered = [_truncate_middle(_render_message(m), per_msg) for m in messages]
     total = sum(len(r) for r in rendered) + len(_SUMMARIZER_INSTRUCTIONS)
-    if total > _MAX_PROMPT_CHARS:
+    if total > max_chars:
         # Keep the oldest turns (where the goal was set) and the newest (where
         # the current state lives); elide the middle.
-        budget = _MAX_PROMPT_CHARS // 2
+        budget = max(0, max_chars - len(_SUMMARIZER_INSTRUCTIONS) - len(_ELISION)) // 2
         head: list[str] = []
         used = 0
         for r in rendered:

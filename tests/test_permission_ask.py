@@ -197,13 +197,15 @@ def test_allow_rule_short_circuits_asker() -> None:
     assert agent._permission_denials == []
 
 
-# (d) acceptEdits => write/edit auto-allowed (not asked); bash IS asked.
+# (d) acceptEdits => write/edit auto-allowed (not asked); a MUTATING bash IS
+# asked. (A read-only one like `ls` is auto-allowed — see
+# test_permission_readonly_bash.py — so this uses a command that writes.)
 def test_accept_edits_allows_edits_but_asks_bash() -> None:
     asker, calls = _make_asker("allow_once")
     scripts = [
         _tool_turn("c1", "write_file", '{"path": "/a"}', "m1"),
         _tool_turn("c2", "edit_file", '{"path": "/b"}', "m2"),
-        _tool_turn("c3", "bash", '{"command": "ls"}', "m3"),
+        _tool_turn("c3", "bash", '{"command": "npm install"}', "m3"),
         _text_turn(),
     ]
     messages, agent = _run(scripts, PermissionContext(mode="acceptEdits", asker=asker))

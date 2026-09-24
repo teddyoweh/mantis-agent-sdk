@@ -365,6 +365,8 @@ class SdkServer:
                 "description": t.description,
                 # MCP wire shape uses ``inputSchema`` (camelCase).
                 "inputSchema": t.input_schema,
+                # Lets a mantis client run our read-only tools concurrently.
+                "annotations": {"readOnlyHint": bool(t.is_read_only)},
             }
             for t in self.registry
         ]

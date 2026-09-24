@@ -56,6 +56,7 @@ broken observer must never change the outcome of the work it observes.
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import time
 from collections.abc import Awaitable, Callable
@@ -927,6 +928,7 @@ def make_task_tool(
     jobs: Any = None,
     registry: Any = None,
     activity_parent_id: Any = None,
+    max_concurrent: int | None = None,
 ) -> Tool:
     """Build the ``task`` tool: the parent delegates a focused, multi-step task
     to a fresh subagent that runs to completion and returns just its findings.
@@ -953,10 +955,53 @@ def make_task_tool(
     node that node hangs off (see :func:`_activity_parent`); a callable is
     accepted because the invoking tool call changes per call while this tool is
     built once. Omit both (the default, and every existing construction) and the
-    tool behaves exactly as before, making no emission calls at all."""
+    tool behaves exactly as before, making no emission calls at all.
+
+    ``max_concurrent`` caps how many children (foreground or background) run
+    at once; excess calls queue. Unset, it follows
+    :func:`~mantis_agent.subagent_limits.subagent_concurrency_cap`: env
+    ``MANTIS_SUBAGENT_MAX_CONCURRENT`` > settings > 2 on a local backend
+    (one GPU: parallel children just queue, multiply KV memory and evict the
+    parent's cached prefix) / 8 on a hosted one.
+
+    Background children additionally take a background-only gate of
+    ``cap - 1`` (min 1) before the shared slot, so detached jobs can never
+    occupy every slot and starve foreground ``task`` calls (with the cap at 2,
+    one slot is always left for the foreground). A background job's slot is
+    acquired before its ``max_runtime_s`` clock starts — queue time isn't
+    runtime."""
     types = agent_types if agent_types is not None else discover_agent_types()
     by_name = {t.name: t for t in types}
     reg = registry   # the ACTIVITY registry, distinct from the child's ToolRegistry
+    # Built on first use — the cap reads settings, and a CapacityLimiter wants
+    # a running loop — then shared by every call of THIS tool instance.
+    gate: dict[str, Any] = {}
+
+    def _limiter() -> Any:
+        if "lim" not in gate:
+            import anyio  # noqa: PLC0415
+
+            from .subagent_limits import subagent_concurrency_cap  # noqa: PLC0415
+
+            gate["lim"] = anyio.CapacityLimiter(subagent_concurrency_cap(
+                provider=provider, backend=backend, model=model,
+                explicit=max_concurrent,
+            ))
+        return gate["lim"]
+
+    def _bg_limiter() -> Any:
+        if "bg" not in gate:
+            import anyio  # noqa: PLC0415
+
+            cap = int(_limiter().total_tokens)
+            gate["bg"] = anyio.CapacityLimiter(max(1, cap - 1))
+        return gate["bg"]
+
+    @contextlib.asynccontextmanager
+    async def _bg_slot() -> Any:
+        async with _bg_limiter():
+            async with _limiter():
+                yield
 
     @tool(name="task", is_read_only=True, is_concurrency_safe=True,
           input_schema=_task_schema(types))
@@ -1155,12 +1200,14 @@ def make_task_tool(
             async def _bg_execute() -> str:
                 return await _execute(holder.get("job"))
 
-            job = jobs.spawn(_bg_execute(), desc=desc, kind=f"task:{type_name}")
+            job = jobs.spawn(_bg_execute(), desc=desc, kind=f"task:{type_name}",
+                             gate=_bg_slot)
             holder["job"] = job
             return (f"Started background job #{job.id} ({type_name}: {desc}). "
                     f"Keep working — the result will arrive as a notification, "
                     f"or fetch it with job_output(job_id={job.id}).")
-        result = await _execute()
+        async with _limiter():
+            result = await _execute()
         if wants_bg:
             # No JobManager wired: we couldn't background this, so it ran
             # inline to completion. Tell the model rather than silently
@@ -1173,6 +1220,8 @@ def make_task_tool(
         return result
 
     task.description = _task_tool_description(types)
+    task.concurrency_limiter = _limiter  # type: ignore[attr-defined]
+    task.background_limiter = _bg_limiter  # type: ignore[attr-defined]
     return task
 
 

@@ -129,7 +129,7 @@ def test_ollama_splits_images_into_the_images_array() -> None:
         return httpx.Response(200, text=body,
                               headers={"content-type": "application/x-ndjson"})
 
-    p = OllamaProvider(base_url="http://127.0.0.1:11434")
+    p = OllamaProvider(base_url="http://127.0.0.1:11434", probe_model_info=False)
     body = _capture(p, "http://127.0.0.1:11434", resp, model="llava", max_tokens=16)
 
     turn = body["messages"][-1]

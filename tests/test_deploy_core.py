@@ -295,3 +295,260 @@ def test_the_package_does_not_shadow_its_adapters_subpackage() -> None:
 
     assert first and len(first) == len(second)
     assert {p["id"] for p in first} == {p["id"] for p in second}
+
+
+def test_deploy_reports_stages_the_created_id_and_a_boot_heartbeat(_env, monkeypatch):
+    """Structured progress for a UI: the stage it is in, the deployment id the
+    moment something billable exists, and a heartbeat while the provider's
+    silent wait_ready loop runs — so "still booting" can be told from "hung"."""
+    monkeypatch.setattr(manager, "HEARTBEAT_S", 0.05)
+
+    async def slow_wait(self, dep, timeout_s=1200):
+        import anyio as _a
+        await _a.sleep(0.18)
+        dep.status = "running"
+        return dep
+    monkeypatch.setattr(FakeProvider, "wait_ready", slow_wait)
+    events: list[tuple[str, dict]] = []
+    dep = anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big",
+                                           on_event=lambda k, d: events.append((k, d))))
+    assert dep.status == "running"
+    kinds = [k for k, _ in events]
+    stages = [d["stage"] for k, d in events if k == "stage"]
+    assert stages == ["prepare", "create", "boot", "ready"]
+    assert ("created", {"provider": "fake", "id": "fk-1"}) in events
+    # created arrives before boot starts; heartbeats only while booting
+    assert kinds.index("created") < kinds.index("stage", kinds.index("created"))
+    beats = [d["elapsed_s"] for k, d in events if k == "heartbeat"]
+    assert beats, "no heartbeat while wait_ready ran"
+    first_boot = next(i for i, (k, d) in enumerate(events) if k == "stage" and d["stage"] == "boot")
+    assert all(i > first_boot for i, (k, _) in enumerate(events) if k == "heartbeat")
+
+
+def test_a_broken_event_sink_never_aborts_a_deploy(_env):
+    def explode(kind, data):
+        raise RuntimeError("sink is broken")
+    dep = anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", on_event=explode))
+    assert dep.status == "running"
+
+
+def test_cancel_before_anything_is_rented_rents_nothing(_env):
+    with pytest.raises(DeployError, match="cancelled before anything was created"):
+        anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", cancelled=lambda: True))
+    assert "deploy" not in FakeProvider.calls
+    assert anyio.run(lambda: manager.list_deployments()) == []
+
+
+def test_cancel_during_create_deletes_what_it_just_created(_env, monkeypatch):
+    """Nobody else knows the endpoint exists yet, so the deploy that made it
+    is the only thing that can stop it billing."""
+    flag = {"on": False}
+    real = FakeProvider.deploy
+
+    async def slow_create(self, model, gpu, engine, opts):
+        flag["on"] = True                       # the cancel lands mid-create
+        return await real(self, model, gpu, engine, opts)
+    monkeypatch.setattr(FakeProvider, "deploy", slow_create)
+    events: list[str] = []
+    with pytest.raises(DeployError, match="was deleted"):
+        anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", cancelled=lambda: flag["on"],
+                                         on_event=lambda k, d: events.append(k)))
+    assert FakeProvider.calls == ["deploy", "delete"]
+    assert "created" not in events                     # never announced, so never double-deleted
+    assert anyio.run(lambda: manager.list_deployments()) == []
+
+
+def test_cancel_during_boot_stops_waiting_and_leaves_the_store_alone(_env, monkeypatch):
+    """Whoever cancelled is tearing it down; writing it back as "starting"
+    would race that delete and resurrect it."""
+    from mantis_agent.deploy import store
+
+    flag = {"on": False}
+
+    async def forever(self, dep, timeout_s=1200):
+        flag["on"] = True
+        import anyio as _a
+        await _a.sleep(30)
+        return dep
+    monkeypatch.setattr(FakeProvider, "wait_ready", forever)
+    writes: list[str] = []
+    real_upsert = store.upsert
+    monkeypatch.setattr(store, "upsert", lambda d: (writes.append(d.status), real_upsert(d))[1])
+    with pytest.raises(DeployError, match="cancelled while it was starting"):
+        anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", cancelled=lambda: flag["on"]))
+    assert writes == ["starting"]                      # the create — and nothing after the cancel
+
+
+def test_try_endpoint_times_one_real_completion(_env):
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    with respx.mock() as router:
+        chat = router.post(f"{FAKE_EP}/chat/completions").mock(return_value=httpx.Response(200, json={
+            "model": "Qwen/Qwen3-8B", "choices": [{"message": {"content": "  Hello there!  "}}],
+            "usage": {"completion_tokens": 4}}))
+        r = anyio.run(lambda: manager.try_endpoint("fk-1", "hi"))
+    req = chat.calls.last.request
+    assert req.headers["authorization"] == "Bearer fk_key" and req.headers["x-extra"] == "extra-val"
+    sent = json.loads(req.content)
+    assert sent["model"] == "Qwen/Qwen3-8B" and sent["messages"] == [{"role": "user", "content": "hi"}]
+    assert sent["max_tokens"] == 256
+    assert r["reply"] == "Hello there!" and r["completion_tokens"] == 4 and r["latency_s"] >= 0
+    assert r["tokens_per_s"] is None or r["tokens_per_s"] > 0
+
+
+def test_try_endpoint_says_why_it_did_not_answer(_env):
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    with respx.mock() as router:
+        router.post(f"{FAKE_EP}/chat/completions").mock(return_value=httpx.Response(401, text="nope"))
+        with pytest.raises(DeployError, match="refused our credentials"):
+            anyio.run(lambda: manager.try_endpoint("fk-1"))
+    with respx.mock() as router:
+        router.post(f"{FAKE_EP}/chat/completions").mock(return_value=httpx.Response(200, json={"oops": 1}))
+        with pytest.raises(DeployError, match="not with a chat completion"):
+            anyio.run(lambda: manager.try_endpoint("fk-1"))
+
+
+def test_curated_means_the_hand_picked_list_and_nothing_else(_env, monkeypatch):
+    """"Curated" used to be the hand-picked list topped up with whatever was
+    trending on the Hub — gpt2 and abliterated fine-tunes under a Curated
+    heading. Now each source is only itself."""
+    from mantis_agent.deploy import hf_hub, preflight
+
+    hub_calls: list[str] = []
+
+    async def fake_search(query, *, limit=25, sort="trending"):
+        hub_calls.append(query)
+        return [{"id": "someone/gpt2-abliterated", "pipeline_tag": "text-generation"}]
+    monkeypatch.setattr(hf_hub, "search", fake_search)
+    cur = anyio.run(lambda: manager.search_models("", limit=100, source="curated"))
+    assert [m.id for m in cur] == list(preflight.CURATED_MODELS) and hub_calls == []
+    hub = anyio.run(lambda: manager.search_models("", limit=5, source="hub"))
+    assert [m.id for m in hub] == ["someone/gpt2-abliterated"] and hub_calls == [""]
+    mixed = anyio.run(lambda: manager.search_models("", limit=len(preflight.CURATED_MODELS) + 1))
+    assert mixed[-1].id == "someone/gpt2-abliterated"           # "auto" keeps the CLI's behaviour
+    # every curated id is a real repo name — no "-Instruct" on a repo that has none
+    assert "moonshotai/Kimi-K2.6" in preflight.CURATED_MODELS
+    assert "moonshotai/Kimi-K2.6-Instruct" not in preflight.CURATED_MODELS
+
+
+def test_a_first_boot_is_given_time_to_pull_the_weights(_env, monkeypatch):
+    """Modal killed a 358B model every 600 s, mid-download, forever. The boot
+    budget is sized to the model and reaches both the adapter (its startup
+    timeout) and the manager's own wait, which must outlast it."""
+    assert manager.boot_budget_s(None) == 900 and manager.boot_budget_s(20) == 1036
+    assert manager.boot_budget_s(372) == 3429 and manager.boot_budget_s(1085) == 3600
+    seen = {}
+
+    async def wait(self, dep, timeout_s=1200):
+        seen["wait_timeout"] = timeout_s
+        dep.status = "running"
+        return dep
+    real = FakeProvider.deploy
+
+    async def dep_(self, model, gpu, engine, opts):
+        seen["budget"] = opts.extra.get("boot_budget_s")
+        return await real(self, model, gpu, engine, opts)
+    monkeypatch.setattr(FakeProvider, "wait_ready", wait)
+    monkeypatch.setattr(FakeProvider, "deploy", dep_)
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))     # INFO_8B: 22.7 GB
+    assert seen["budget"] == manager.boot_budget_s(22.7) == 1054
+    assert seen["wait_timeout"] == 1054 + 300
+    # an explicit wait_timeout_s still wins
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", opts=DeployOpts(extra={"wait_timeout_s": 77})))
+    assert seen["wait_timeout"] == 77
+
+
+def test_a_reasoning_model_gets_its_parser_so_thinking_is_not_the_answer(_env, monkeypatch):
+    """GLM-4.7 answered "what are you?" with its chain of thought as the
+    message. The manager adds vLLM's parser by architecture; a caller's own
+    flag wins; sglang is left alone."""
+    glm = ModelInfo(id="zai-org/GLM-4.7-FP8", source="hf", architectures=("Glm4MoeForCausalLM",), est_vram_gb=372)
+    assert manager.reasoning_parser_for(glm) == "glm45"
+    assert manager.reasoning_parser_for(ModelInfo(id="deepseek-ai/DeepSeek-R1-Distill-Llama-8B", source="hf",
+                                                  architectures=("LlamaForCausalLM",))) == "deepseek_r1"
+    assert manager.reasoning_parser_for(INFO_8B) == "qwen3"
+    assert manager.reasoning_parser_for(ModelInfo(id="meta-llama/Llama-3.1-8B-Instruct", source="hf",
+                                                  architectures=("LlamaForCausalLM",))) is None
+    seen = {}
+    real = FakeProvider.deploy
+
+    async def dep_(self, model, gpu, engine, opts):
+        seen[engine] = list(opts.extra_engine_args or [])
+        return await real(self, model, gpu, engine, opts)
+    monkeypatch.setattr(FakeProvider, "deploy", dep_)
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    assert seen["vllm"] == ["--reasoning-parser", "qwen3", "--enable-auto-tool-choice", "--tool-call-parser", "hermes"]
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big",
+                                     opts=DeployOpts(extra_engine_args=["--reasoning-parser", "mine"])))
+    assert seen["vllm"][:2] == ["--reasoning-parser", "mine"] and seen["vllm"].count("--reasoning-parser") == 1
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", engine="sglang"))
+    assert seen["sglang"] == []
+
+
+def test_try_endpoint_waits_out_a_cold_start_and_says_how_long(_env):
+    """502/503 from a scaled-to-zero endpoint means a replica is waking, not
+    that the model is broken. Keep asking; report the wake and the answer
+    times separately."""
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    with respx.mock() as router:
+        chat = router.post(f"{FAKE_EP}/chat/completions").mock(side_effect=[
+            httpx.Response(503, json={"error": "no upstreams available"}),
+            httpx.Response(503, json={"error": "no upstreams available"}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "awake"}}], "usage": {"completion_tokens": 1}})])
+        r = anyio.run(lambda: manager.try_endpoint("fk-1", "hi"))
+    assert chat.call_count == 3 and r["reply"] == "awake"
+    assert r["cold_start_s"] is not None and r["latency_s"] >= 0
+
+
+def test_try_endpoint_counts_pure_thinking_as_an_answer(_env):
+    """GLM-4.7 with its reasoning parser answered a 64-token probe with an
+    empty content and a full reasoning_content. That is a working model, not a
+    broken one."""
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    with respx.mock() as router:
+        router.post(f"{FAKE_EP}/chat/completions").mock(return_value=httpx.Response(200, json={
+            "choices": [{"message": {"content": "", "reasoning_content": "The user asks what I am…"}}],
+            "usage": {"completion_tokens": 64}}))
+        r = anyio.run(lambda: manager.try_endpoint("fk-1", "hi"))
+    assert r["thinking_only"] is True and r["reply"].startswith("(still thinking") and "The user asks" in r["reply"]
+
+
+def test_a_slow_booting_model_is_not_scaled_to_zero_after_five_minutes(_env, monkeypatch):
+    """GLM-4.7 takes ~30 minutes to wake; a 5-minute idle timeout meant every
+    pause cost a cold start. Unless the caller set it, idle >= the boot budget."""
+    seen = {}
+    real = FakeProvider.deploy
+
+    async def dep_(self, model, gpu, engine, opts):
+        seen["idle"] = opts.idle_timeout_s
+        return await real(self, model, gpu, engine, opts)
+    monkeypatch.setattr(FakeProvider, "deploy", dep_)
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    assert seen["idle"] == manager.boot_budget_s(22.7)
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big", opts=DeployOpts(idle_timeout_s=120)))
+    assert seen["idle"] == 120                                   # the caller's choice wins
+
+
+def test_connect_waits_the_wake_budget_and_reports_progress(_env):
+    anyio.run(lambda: manager.deploy("fake", "Qwen/Qwen3-8B", gpu="big"))
+    lines = []
+    with respx.mock() as router:
+        router.get(f"{FAKE_EP}/models").mock(side_effect=[httpx.Response(503)] * 6 + [
+            httpx.Response(200, json={"data": [{"id": "Qwen/Qwen3-8B"}]})])
+        anyio.run(lambda: manager.connect("fk-1", progress=lines.append))
+    assert lines[0].startswith("Checking") and lines[-1].startswith("Awake")
+    assert any(ln.startswith("still waking") for ln in lines)
+
+
+def test_a_tool_capable_model_is_served_with_auto_tool_choice(_env):
+    """mantis sends tools with tool_choice "auto" on every request; vLLM 400s
+    that unless it was started with --enable-auto-tool-choice and the parser
+    for the model's tool format. GLM-4.7 hit exactly that."""
+    def info(mid, arch):
+        return ModelInfo(id=mid, source="hf", architectures=(arch,))
+    assert manager.tool_parser_for(info("zai-org/GLM-4.7-FP8", "Glm4MoeForCausalLM")) == "glm47"
+    assert manager.tool_parser_for(info("zai-org/GLM-4.6", "Glm4MoeForCausalLM")) == "glm45"
+    assert manager.tool_parser_for(info("moonshotai/Kimi-K2-Instruct-0905", "DeepseekV3ForCausalLM")) == "kimi_k2"
+    assert manager.tool_parser_for(info("deepseek-ai/DeepSeek-V3.2", "DeepseekV3ForCausalLM")) == "deepseek_v3"
+    assert manager.tool_parser_for(info("meta-llama/Llama-3.1-8B-Instruct", "LlamaForCausalLM")) == "llama3_json"
+    assert manager.tool_parser_for(INFO_8B) == "hermes"
+    assert manager.tool_parser_for(info("x/y", "SomethingNewForCausalLM")) is None

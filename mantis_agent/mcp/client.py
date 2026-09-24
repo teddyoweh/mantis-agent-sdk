@@ -287,6 +287,7 @@ class MCPClient:
                         # MCP uses ``inputSchema``; we normalize to snake_case.
                         input_schema=raw.get("inputSchema") or {},
                         server_id=self.server_id,
+                        read_only_hint=_read_only_hint(raw),
                     )
                 )
             cursor = result.get("nextCursor")
@@ -876,6 +877,13 @@ async def _open_transport(config: ServerConfig) -> Transport:
         raise TypeError(f"unknown server config: {type(config).__name__}")
     await t.__aenter__()
     return t
+
+
+def _read_only_hint(raw: dict[str, Any]) -> bool:
+    """``annotations.readOnlyHint`` from a ``tools/list`` entry; anything but
+    a literal ``true`` (missing, malformed, truthy string) means "may write"."""
+    annotations = raw.get("annotations")
+    return isinstance(annotations, dict) and annotations.get("readOnlyHint") is True
 
 
 def _derive_server_id(config: ServerConfig) -> str:

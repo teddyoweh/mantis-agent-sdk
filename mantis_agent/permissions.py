@@ -30,7 +30,8 @@ Decision precedence on each call (``check_permission``)::
     any ask rule matches              -> Ask*
     acceptEdits mode + edit tool      -> Allow
     can_use_tool callback set         -> delegate (may return Ask*)
-    no callback + read-only tool      -> Allow
+    no callback + read-only tool      -> Allow   (incl. read-only bash:
+                                                  ``ls``, ``git status``…)
     no callback + mutating tool       -> Ask*
 
     *Ask is then resolved via the asker (or the non-blocking fallback).
@@ -49,7 +50,12 @@ import msgspec
 
 from .permission_grammar import CompiledRule, compile_rule, is_structured_rule
 from .permission_grammar import rule_matches as _grammar_rule_matches
-from .permission_shell import ShellDecomposition, ShellSegment, decompose
+from .permission_shell import (
+    ShellDecomposition,
+    ShellSegment,
+    classify_bash_readonly,
+    decompose,
+)
 from .tools import Tool
 
 PermissionMode = Literal["default", "acceptEdits", "auto", "bypass"]
@@ -345,6 +351,15 @@ class PermissionContext:
     # it can read .signal.is_set() safely.
     signal: Any = None
 
+    def carry_session_state_from(self, old: PermissionContext | None) -> PermissionContext:
+        """Inherit the "allow for session" approvals of a context this one
+        replaces. The TUI rebuilds its Agent (and so this context) on every
+        model switch / MCP reload; without this the user is re-asked for
+        everything they already approved this session. Returns ``self``."""
+        if old is not None and old is not self:
+            self.session_allows |= set(old.session_allows)
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Tool read-only hint
@@ -360,6 +375,29 @@ class PermissionContext:
 
 def _is_read_only(tool: Tool) -> bool:
     return getattr(tool, "is_read_only", False) is True
+
+
+# Shells whose syntax `permission_shell` models. The read-only classifier is a
+# POSIX-shell recognizer: `cat`/`ls` mean something else to PowerShell, and a
+# tool that merely *streams* a command (`watch`) is not a one-shot read.
+_POSIX_SHELL_NAMES = {"bash", "sh", "shell", "zsh", "ksh"}
+
+
+def is_read_only_call(tool: Tool, input: dict[str, Any]) -> bool:
+    """Is THIS call read-only? A tool flagged ``is_read_only``, or a POSIX shell
+    tool whose whole command classifies as read-only
+    (:func:`~mantis_agent.permission_shell.classify_bash_readonly` — ``ls``,
+    ``cat x``, ``git status``, ``grep -r foo .``; never a write redirect, a
+    background job, ``find -delete`` or ``git branch -D``). Interactive
+    permission callbacks use this in place of the bare ``is_read_only`` flag so
+    reads don't prompt in default or plan mode."""
+    if _is_read_only(tool):
+        return True
+    if getattr(tool, "name", "").lower() not in _POSIX_SHELL_NAMES:
+        return False
+    if (input or {}).get("run_in_background"):
+        return False  # a detached job outlives the approval; keep asking
+    return classify_bash_readonly(_shell_command(input))
 
 
 _EDIT_TOOL_NAMES = {
@@ -430,6 +468,14 @@ _DANGEROUS_BASH: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh", re.IGNORECASE), "pipe-to-shell from network"),
     (re.compile(r"\b(?:sudo|doas|pkexec)\b", re.IGNORECASE), "privilege escalation"),
     (re.compile(r">\s*/etc/"), "overwrites a system config"),
+    # Destructive git: each throws away work that may exist nowhere else.
+    (re.compile(r"\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*\s(?:-[a-zA-Z]*f[a-zA-Z]*\b|--force\b|--force-with-lease\b|\+\S)"), "force push rewrites remote history"),
+    (re.compile(r"\bgit\b[^;&|\n]*\breset\b[^;&|\n]*\s--har(?:d)?\b"), "git reset --hard discards uncommitted changes"),
+    (re.compile(r"\bgit\b[^;&|\n]*\b(?:checkout|switch)\b[^;&|\n]*\s(?:-[a-zA-Z]*f\b|--force\b|--discard-changes\b)"), "discards working-tree changes"),
+    (re.compile(r"\bgit\b[^;&|\n]*\bstash\s+(?:clear|drop)\b"), "drops stashed work"),
+    (re.compile(r"\bgit\b[^;&|\n]*\bclean\b[^;&|\n]*\s(?:-[a-zA-Z]*f|--force\b)"), "git clean deletes untracked files"),
+    (re.compile(r"\bgit\b[^;&|\n]*\b(?:checkout|restore)\b[^;&|\n]*\s(?:--\s+)?\.(?:/)?(?=\s|$)"), "discards working-tree changes"),
+    (re.compile(r"\bgit\b[^;&|\n]*\bbranch\b[^;&|\n]*\s(?:-[a-zA-Z]*D\b|--delete\s+--force\b|--force\s+--delete\b)"), "force-deletes a branch"),
 ]
 
 
@@ -891,8 +937,10 @@ async def _decide(
         )
         return await ctx.can_use_tool(tool, input, tpc)
 
-    # No callback — decide by mode. Reads never prompt; mutations ask.
-    if _is_read_only(tool):
+    # No callback — decide by mode. Reads never prompt (a read-only shell
+    # command counts: `ls` / `git status` must not push people to allow-all);
+    # mutations ask.
+    if is_read_only_call(tool, input):
         return Allow()
     if ctx.mode in ("default", "acceptEdits", "auto"):
         return Ask(prompt=_format_prompt(tool, input))
@@ -980,6 +1028,134 @@ async def recheck_mutated_input(
     return Allow()
 
 
+# ---------------------------------------------------------------------------
+# "Don't ask again for this prefix" — Claude Code's `Bash(npm run test:*)`
+# ---------------------------------------------------------------------------
+
+# `npm run X` / `uv run X` — the script name is what the approval is about.
+_RUNNER_PREFIXES = {
+    ("npm", "run"), ("pnpm", "run"), ("yarn", "run"), ("bun", "run"),
+    ("uv", "run"), ("poetry", "run"), ("pdm", "run"), ("hatch", "run"),
+    ("python", "-m"), ("python3", "-m"),
+}
+# Multi-command CLIs: the subcommand is part of what was approved.
+_SUBCOMMAND_CLIS = {
+    "git", "npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "cargo", "go",
+    "docker", "podman", "kubectl", "poetry", "gh", "brew", "deno", "dotnet",
+    "mvn", "gradle", "terraform", "helm", "pytest", "ruff", "mypy", "tox",
+}
+# Never suggest a prefix for these: `Bash(python:*)` / `Bash(sudo:*)` would
+# approve arbitrary code, not "this kind of command".
+_NO_PREFIX_HEADS = {
+    "sudo", "doas", "pkexec", "env", "nice", "nohup", "time", "eval", "exec",
+    "xargs", "bash", "sh", "zsh", "fish", "ksh", "python", "python3", "node",
+    "ruby", "perl", "php", "rm", "dd", "chmod", "chown", "curl", "wget",
+    # Their "read" forms have code-running / writing twins (`find -exec`,
+    # `sed -i` / `sed e`, `awk 'system()'`, `ssh host CMD`).
+    "find", "sed", "awk", "gawk", "mawk", "ssh", "command", "builtin",
+    "source", ".", "osascript",
+    # `make X` runs whatever the Makefile says; package runners fetch + run
+    # arbitrary packages (`npx some-pkg`).
+    "make", "npx", "bunx", "uvx",
+}
+# Subcommands that run arbitrary code / mutate infrastructure: approving the
+# `head sub` prefix would approve every container, API call or deploy.
+_NO_PREFIX_PAIRS = {
+    ("docker", "run"), ("docker", "exec"), ("docker", "compose"),
+    ("podman", "run"), ("podman", "exec"), ("gh", "api"),
+    ("kubectl", "delete"), ("kubectl", "apply"), ("kubectl", "exec"),
+    ("kubectl", "edit"), ("kubectl", "patch"), ("kubectl", "replace"),
+    ("terraform", "apply"), ("terraform", "destroy"),
+    ("helm", "install"), ("helm", "upgrade"), ("helm", "uninstall"),
+    ("pipx", "run"),
+}
+
+
+def suggest_prefix_rule(command: str, tool_name: str = "Bash") -> str | None:
+    """A ``Tool(prefix:*)`` rule for "don't ask again for commands like this".
+
+    ``npm run test -- -k x`` → ``Bash(npm run test:*)``; ``git log -5`` →
+    ``Bash(git log:*)``; ``pytest -q`` → ``Bash(pytest:*)``. ``None`` when no
+    safe prefix exists: a compound / unparseable / redirecting command, a
+    dangerous one, or a head (interpreter, wrapper, ``rm``) whose prefix would
+    approve arbitrary behaviour. The rule is matched by the structured grammar,
+    which requires a word boundary after the prefix and gates compound commands
+    segment by segment."""
+    dec = decompose(command or "")
+    if not dec.confident or len(dec.segments) != 1:
+        return None
+    seg = dec.segments[0]
+    if seg.operator or seg.in_subshell or _has_write_redirect(dec) or not seg.argv:
+        return None
+    if classify_bash_command(seg.raw).is_dangerous:
+        return None
+    argv = seg.argv
+    head = argv[0]
+    if "/" in head:
+        return None
+    if tuple(argv[:2]) in _RUNNER_PREFIXES and len(argv) >= 3:
+        words = argv[:3]
+    elif (tuple(argv[:2]) in _RUNNER_PREFIXES or head in _NO_PREFIX_HEADS
+          or tuple(argv[:2]) in _NO_PREFIX_PAIRS):
+        return None
+    elif head in _SUBCOMMAND_CLIS and len(argv) >= 2 and not argv[1].startswith("-"):
+        words = argv[:2]
+    elif head in _SUBCOMMAND_CLIS and head not in ("pytest", "ruff", "mypy", "tox"):
+        # `git --no-pager log` / bare `git` would suggest `Bash(git:*)` —
+        # approving `git push --force` along with the log. No safe prefix.
+        return None
+    else:
+        words = argv[:1]
+    # The prefix must survive the rule grammar verbatim: no glob metas, no
+    # parens, no whitespace inside a word, no option-looking tail.
+    for w in words:
+        if not w or any(ch in w for ch in "*?[]()\"'` \t\n") or (w.startswith("-") and w != "-m"):
+            return None
+    return f"{tool_name}({' '.join(words)}:*)"
+
+
+def rules_from_settings(perms: dict[str, Any] | None) -> PermissionRuleSet | None:
+    """Build a rule set from a settings.json ``permissions`` block
+    (``{"allow": [...], "deny": [...], "ask": [...]}``) of Claude-style entries.
+
+    A ``Tool(...)`` entry that parses under the structured grammar becomes a
+    structured rule, so ``Bash(git status:*)`` is a real word-bounded prefix
+    and ``Read(docs/**)`` a real path rule. A bare ``Tool`` means any call to
+    it. Deny / ask entries ALSO keep the historical substring form
+    (``*inner*`` on that tool) so switching grammars can only widen what they
+    catch; an entry the grammar rejects falls back to the substring form
+    alone. ``None`` when nothing is configured."""
+    perms = perms if isinstance(perms, dict) else {}
+    rs = PermissionRuleSet()
+
+    def build(entry: Any, action: str) -> list[PermissionRule]:
+        if not isinstance(entry, str) or not entry.strip():
+            return []
+        text = entry.strip()
+        m = re.fullmatch(r"([A-Za-z0-9_]+)\s*\((.*)\)", text, re.DOTALL)
+        structured_text = text if m else f"{text}()"
+        legacy: PermissionRule | None
+        if m:
+            inner = m.group(2)
+            if inner.endswith(":*"):
+                inner = inner[:-2]
+            legacy = PermissionRule(pattern=f"*{inner}*", action=action, tool_name=m.group(1))
+        else:
+            legacy = PermissionRule(pattern="*", action=action, tool_name=text)
+        try:
+            compile_rule(structured_text)
+        except ValueError:
+            return [legacy]
+        structured = PermissionRule(pattern=structured_text, action=action)
+        return [structured] if action == "allow" else [structured, legacy]
+
+    for action in ("deny", "allow", "ask"):
+        bucket = getattr(rs, action)
+        for e in perms.get(action) or []:
+            bucket.extend(build(e, action))
+    return rs if (rs.allow or rs.deny or rs.ask) else None
+
+
 __all__ = [
     "Allow",
     "Ask",
@@ -989,6 +1165,10 @@ __all__ = [
     "CanUseToolFn",
     "Deny",
     "classify_bash_command",
+    "classify_bash_readonly",
+    "is_read_only_call",
+    "rules_from_settings",
+    "suggest_prefix_rule",
     "PermissionContext",
     "PermissionDecision",
     "PermissionMode",

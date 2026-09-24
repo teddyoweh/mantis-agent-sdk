@@ -63,6 +63,8 @@ Public API
   JSON; the agent never silently swallows broken settings.
 * :func:`save_setting_source` — replace one source's file entirely.
 * :func:`update_setting_source` — deep-merge a patch into a source.
+* :func:`add_permission_rule` — append one ``permissions.<action>`` entry
+  (the TUI's "don't ask again" choice).
 * :func:`merge_settings` — deep-merge multiple layers in order.
 * :func:`load_settings` — load and merge a list of source names.
 * :func:`apply_settings_to_options` — overlay loaded settings *under*
@@ -87,6 +89,7 @@ from .paths import get_mantis_agent_dir
 
 __all__ = [
     "KNOWN_SETTING_KEYS",
+    "add_permission_rule",
     "PROTECTED_ENV_KEYWORDS",
     "PROTECTED_ENV_NAMES",
     "PROTECTED_ENV_PREFIXES",
@@ -449,17 +452,67 @@ def save_setting_source(
     path = resolve_setting_path(source, cwd)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(dict(data), indent=2, sort_keys=True) + "\n"
-    path.write_text(payload, encoding="utf-8")
-    # A settings file holds an `env` block, and that is where OAuth tokens and
-    # provider keys live — so this is a credential file whatever else is in it.
-    # It was being written 0644 (world-readable): any account on the machine
-    # could read a live token. Tighten on every write, not just creation, so a
-    # file that predates this is repaired the next time it is touched.
+    # Atomic: write a sibling temp file and rename it over the target, so a
+    # crash (or a second mantis writing the same file) never leaves a torn,
+    # unparseable settings.json — load_setting_source refuses those loudly.
+    import tempfile  # noqa: PLC0415
+
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        os.chmod(path, 0o600)
-    except OSError:  # noqa: BLE001 — a read-only FS must not break saving
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+        # A settings file holds an `env` block, and that is where OAuth tokens
+        # and provider keys live — so this is a credential file whatever else
+        # is in it. It was being written 0644 (world-readable): any account on
+        # the machine could read a live token. Tighten on every write, not
+        # just creation, so a file that predates this is repaired the next
+        # time it is touched (mkstemp already creates 0600; be explicit).
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:  # noqa: BLE001 — a read-only FS must not break saving
+            pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
+
+
+def add_permission_rule(
+    rule: str,
+    action: str = "allow",
+    source: str = "local",
+    cwd: str | Path | None = None,
+) -> Path:
+    """Append ``rule`` (e.g. ``"Bash(npm run test:*)"``) to
+    ``permissions.<action>`` in ``source`` and persist it atomically.
+
+    Defaults to the gitignored ``local`` source — a personal "don't ask again"
+    must not land in the team's committed file. Idempotent: an entry already
+    present is not duplicated. Unlike :func:`update_setting_source` this does
+    NOT round-trip the file through :func:`merge_settings`, which would strip a
+    ``"!X"`` revocation the user wrote into the same list.
+    """
+
+    if action not in ("allow", "deny", "ask"):
+        raise ValueError(f"unknown permission action: {action!r}")
+    rule = (rule or "").strip()
+    if not rule:
+        raise ValueError("empty permission rule")
+    current = load_setting_source(source, cwd)
+    perms = current.get("permissions")
+    if not isinstance(perms, dict):
+        perms = {}
+    entries = perms.get(action)
+    entries = list(entries) if isinstance(entries, list) else []
+    if rule not in entries:
+        entries.append(rule)
+    perms[action] = entries
+    current["permissions"] = perms
+    return save_setting_source(source, current, cwd)
 
 
 def update_setting_source(

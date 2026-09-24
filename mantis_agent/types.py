@@ -157,6 +157,17 @@ class UserMessage(msgspec.Struct, omit_defaults=True):
         return "user"
 
 
+class TailProjection(UserMessage, omit_defaults=True):
+    """An ``isMeta`` reminder the agent appends to ONE request only (task
+    evidence, the live todo list, re-surfaced recall) — never persisted.
+
+    Encodes exactly like a ``UserMessage``; the type is the explicit signal to
+    providers that it sits after the stable history, so a prompt-cache
+    breakpoint belongs on the last message *before* the trailing run of these
+    (a breakpoint on the projection itself would never match next request).
+    """
+
+
 class AssistantMessage(msgspec.Struct, omit_defaults=True):
     """Assistant turn. Content is a list of blocks; mutated during streaming."""
 

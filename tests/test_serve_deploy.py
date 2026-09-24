@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import threading
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -843,67 +844,88 @@ def test_deploy_endpoints_require_the_token(fake):
         httpd.server_close()
 
 
-def test_the_fit_step_waits_in_the_shape_of_its_answer(fake):
-    """A one-line "inspecting…" card replaced by a header, a six-cell spec
-    strip and a GPU table is a ~260px jump. The waiting state is the SHAPE of
-    the answer, so the step settles instead of leaping."""
+def test_the_deploy_sheet_is_one_decision(fake):
+    """The card's Deploy opens ONE sheet: the best-value GPU already chosen,
+    the cost on the button, everything else optional. It replaces a Fit
+    section 2,000px down the page that listed every GPU on every provider,
+    each with its own Deploy that opened a confirm sheet Enter would submit."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    assert 'sec.append(fitSkeleton(DEPLOY.model)); return;' in js
-    assert 'el("div","card2 dp-loading", "inspecting "' not in js
-    sk = js[js.index("function fitSkeleton(id) {"):js.index("function fitTable(f, m) {")]
-    # the same pieces the loaded shape has: header, six spec cells, GPU rows
-    assert 'el("div","card2")' in sk and 'el("div","dp-mh")' in sk
-    assert 'el("div","lcd tight")' in sk and "i < 6" in sk
-    # one row per GPU the fit table is about to draw: three left the waiting
-    # shape 140px short of the answer once the rail took a column out of the
-    # page, and the render gate caught the step jumping again
-    assert 'el("div","card2 dp-fitbox")' in sk and "i < 6" in sk
-    # each placeholder is sized to the thing it stands in for
-    for cls in (".sk-tag", ".sk-num", ".sk-lbl", ".sk-mark", ".sk-name", ".sk-row"):
-        assert cls in css, cls
-    # the pulse is motion, so it is opt-out-able
-    assert "@media (prefers-reduced-motion: reduce) { .dp-skel .sk { animation: none; } }" in css
+    sheet = js[js.index("async function openDeploySheet(id) {"):js.index("function noGpuPanel(")]
+    # the model card goes straight to it; nothing scrolls the page away
+    assert js.count("card.onclick = () => openDeploySheet(m.id);") == 2
+    for gone in ("function renderFit", "function fitTable", "function confirmDeploy", "function pickModel",
+                 "function openJobSheet", "function renderDeployDone", "function providerToggle", 'id = "dp-fit"'):
+        assert gone not in js, gone
+    # the server's recommendation is selected and listed first
+    assert "const isRec = o =>" in sheet and "opts.sort((a, b) => (isRec(b) - isRec(a))" in sheet
+    assert "let sel = opts[0];" in sheet
+    # only cards that hold it, are in stock, and shard the way vLLM can
+    assert 'if (g.verdict === "no" || g.available === false) return;' in sheet
+    assert "if (g.count > 1 && ![2, 4, 8].includes(g.count)) return;" in sheet
+    # three shown, the rest one click away
+    assert "const SHOW = 3;" in sheet
+    # the price is on the button, and Enter does NOT spend money
+    assert 'go.textContent = "Deploy" + (rate != null ? " · " + fmtRate(rate) : "");' in sheet
+    assert "onkeydown" not in sheet
+    # a gated repo asks for the token here and only here
+    assert js.count("hfTokenForm(") == 2   # the definition, and this one call
+    assert "go.disabled = !!gate;" in sheet
+    # switching mantis to it is OPT-IN — a deploy can come up and still not
+    # answer — and the label says the switch waits for a real answer
+    assert "useC.checked = false;" in sheet and "Switch mantis to it once it answers a test prompt" in sheet
+    assert "use_when_ready: useC.checked" in sheet
+    # when nothing is offered, it says which of the three reasons it is
+    none = js[js.index("function noGpuPanel("):js.index("const DEP_DISMISS_KEY")]
+    for why in ("Connect a GPU provider to deploy it", "Couldn't get GPU prices", "Nothing on offer can hold it"):
+        assert why in none, why
+    # the waiting state is the shape of the answer: three readings, three rows
+    assert 'sk.append(f0, el("div","ds-lbl", "Finding the best GPU for it…"));' in sheet
+    assert ".ds-skrow {" in css and ".ds-gpu.on {" in css
 
 
-def test_the_deploy_job_reads_as_progress_not_as_a_log(fake):
-    """Every line the provider reports is a step: the ones behind you ticked,
-    the newest one live, the raw stream demoted to a disclosure. The steps are
-    the provider's own words — nothing is invented."""
+def test_a_deploy_is_a_card_that_survives_a_reload(fake):
+    """Progress lives on the page, not in a modal: a card per deployment with
+    its stage, a running clock and the provider's latest line — and Logs and
+    Stop the moment something billable exists. The card is the SERVER's job,
+    so reloading the page brings it back exactly where it was."""
     from mantis_agent.serve_ui import INDEX_HTML
 
     js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    sheet = js[js.index("function openJobSheet(jobId, ctx) {"):js.index("function renderDeployDone(")]
-    assert 'el("ol","dp-steps")' in sheet
-    assert 'el("details","dp-logbox")' in sheet and "Provider output" in sheet
-    # finished steps are never re-rendered, so nothing flickers as lines land
-    assert "for (let i = drawn; i < lines.length; i++)" in sheet
-    assert "drawn = lines.length;" in sheet
-    # live and done differ in SHAPE, not only in colour
-    assert ".dp-step.did .dp-stepm { background: var(--accent); }" in css
-    assert "box-shadow: inset 0 0 0 2px var(--accent)" in css.split(".dp-step.live .dp-stepm {")[1].split("}")[0]
-    assert "@keyframes steppulse" in css
-    assert "@media (prefers-reduced-motion: no-preference) {" in css
-
-
-def test_the_deploy_finish_says_it_arrived_and_where_to_go_next(fake):
-    """The end of the flow is an arrival with one obvious next action, not a
-    table of fields."""
-    from mantis_agent.serve_ui import INDEX_HTML
-
-    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
-    done = js[js.index("function renderDeployDone(box, d) {"):js.index("async function useDeployment(")]
-    assert 'el("div","dp-done")' in done and "Deployed and reachable" in done
-    # the headline comes before the field table
-    assert done.index('el("div","dp-done")') < done.index('el("dl","kvs")')
-    # one filled action, and it is the one the keyboard lands on
-    assert 'btn("Use this model", "pri"' in done
-    assert done.count('"pri"') == 1
-    assert 'const use = f.querySelector(".b.pri");' in done and "use.focus()" in done
-    assert ".dp-done" in css and ".dp-donem" in css
-    # Escape closes every sheet in the flow, from one place
-    assert 'if (e.key === "Escape") { hideModal(); hidePalette(); }' in js
+    load = js[js.index("async function loadDeploy() {"):js.index("function renderProvSection(")]
+    assert 'api("/api/deploy/jobs")' in load and "DEPLOY.jobs = jr.jobs || [];" in load
+    assert 'const aSec = section(pad, "Active"); aSec.id = "dp-active";' in load
+    # four stages, the connector drawn in pixels, filled as each is passed
+    assert 'const STAGES = [["prepare", "Check"], ["create", "Create"], ["boot", "Boot"], ["ready", "Ready"]];' in js
+    assert ".dc-step.did::before { background-image: repeating-linear-gradient(to right, var(--accent) 0 1px" in css
+    assert ".dc-step.cur i {" in css
+    # the clock ticks on the page, from the job's own start
+    assert 'clock.dataset.t0 = String(j.started_at' in js and '.dc-clock[data-t0]' in js
+    # a deployment id means Logs and Stop are available mid-boot
+    card = js[js.index("function depCard(card, it) {"):js.index("function stageTrack(j) {")]
+    assert "const logId = d ? d.id : (j && j.deployment_id);" in card
+    # a failure says the provider's words, and warns when it may still bill
+    assert "may still be billing" in card and 'btn("Try again", "pri"' in card
+    # in use is a statement, not a button — and never while it is stopping
+    assert 'if (d && d.in_use && !down) foot.append(el("span","dc-inuse", "In use by mantis"));' in card
+    # Modal calls the app "deployed" while vLLM is still loading: nothing is
+    # usable while a deploy job is on it, whatever the store's status says
+    assert "const usable = !!(d && d.is_live && !down && !flying && !waking);" in card
+    # Use in mantis is a JOB the card follows — a cold start can take minutes,
+    # and a blocking POST was a button that said "Connecting…" forever
+    assert 'post("/api/deploy/connect", { id: d.id, job: true })' in js
+    assert 'waking: ["run", "Waking"]' in js and "Waking a replica so mantis can use it" in card
+    # a record with no endpoint and no known state can be forgotten, not stopped
+    assert '"/api/deploy/forget"' in card
+    assert 'if (usable) foot.append(btn("Try it", "gho", () => openTry(d)));' in card
+    # it keeps itself current: fast while moving, and it asks the providers too
+    assert "depPollT = setTimeout(loop, busy ? 2500 : 20000);" in js
+    assert 'api("/api/deploy/list" + (providers ? "?refresh=1" : ""))' in js
+    assert 'if (curView === "deploy") await syncDeploy(false);' in js
+    # logs follow the output
+    logs = js[js.index("async function openLogs(d) {"):js.index("function confirmTeardown(d) {")]
+    assert "follow.checked = true;" in logs and "t = setTimeout(load, 4000);" in logs
 
 
 def test_page_carries_the_deploy_sections_and_key_binding(fake):
@@ -915,50 +937,52 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
         httpd.shutdown()
         httpd.server_close()
     for marker in ('data-v="deploy"><i class="ic" data-i="deploy"></i>', 'id="deploypad"', "loadDeploy",
-                   "renderDpProviders", "openCredSheet", "renderDpPicker", "renderModelRows", "renderFit", "fitTable",
-                   "confirmDeploy", "openJobSheet", "renderDeployDone", "useDeployment", "renderDeployments",
-                   "openLogs", "confirmTeardown", 'd: "deploy"', '"12345678"', "dp-grid", "dp-fit", "dp-deps",
-                   "deployments_live", "MANTIS_AGENT_BASE_URL", "MantisAgentOptions(", "/api/deploy/job",
-                   "Add a GPU provider to deploy any model", "No deployments yet", "highlightDeployment", "while running",
-                   "pairHeader", "spec-grid", "cost-big", '"Deploy to " +', "--dim", "backdrop-filter: blur(3px)", "deploys to",
-                   "scale to zero", "public endpoint", "plain http", "vllm ✓", "<b>d</b> pages",
-                   ".vd.tight", ".dp-drow", "refreshDeployments(false)"):
+                   "renderDpProviders", "openCredSheet", "renderDpPicker", "renderModelRows", "openDeploySheet",
+                   "renderActive", "depCard", "stageTrack", "syncDeploy", "useDeployment", "openLogs",
+                   "confirmTeardown", 'd: "deploy"', '"123456789"', "dp-grid", "dp-active", "dp-cards",
+                   "deployments_live", "MANTIS_AGENT_BASE_URL", "MantisAgentOptions(", "/api/deploy/jobs",
+                   "--dim", "backdrop-filter: blur(3px)", "scale to zero", "public endpoint", "plain http",
+                   "vLLM can't serve it", "memory", "pulls", "dtypeWords", "<b>d</b> pages"):
         assert marker in page, marker
+    assert "No deployments yet" not in page
     # the six new marks ship inline, no CDN
     for pid in ("runpod", "hf", "modal", "deepinfra", "baseten", "vastai"):
         assert f'"{pid}"' in page, pid
     assert "cdn." not in page and "googleapis" not in page
-    # section order on the Deploy page: providers → deployments → the model
-    # picker → fit & deploy. The picker lost its heading — the search box is
-    # the instruction — so it is anchored by the source selector instead.
+    # Section order: what is Active → the model picker → the providers folded
+    # to one line. The providers lead only while nothing can deploy yet.
     js = page.split("<script>")[1]
-    order = [js.index('section(pad, "GPU providers · "'), js.index('section(pad, "Deployments"'),
-             js.index('const mSec = el("div","sec"); pad.append(mSec);'),
-             js.index('section(pad, "Fit & deploy")')]
+    load = js[js.index("async function loadDeploy() {"):js.index("function renderProvSection(")]
+    order = [load.index('section(pad, "Active")'), load.index("if (!ready.length) pad.append(pSec);"),
+             load.index("renderDpPicker(mSec);"), load.index("if (ready.length) pad.append(pSec);")]
     assert order == sorted(order), order
+    assert "renderProvSection(pSec, !ready.length);" in load
     assert 'section(pad, "Pick a model"' not in js
-    # the provider toggle: pills with real marks, scoping, persistence
-    for marker in ("providerToggle", "dp-ptoggle", "PROV_SHORT", "setDeployProvider", "initDeployProvider",
-                   "DEPLOY_PROV_KEY", "openAddKey", 'f.provider === DEPLOY.provider', 'runpod: "RunPod"'):
+    # the page is never scoped to one provider: the sheet looks across all
+    for gone in ("providerToggle", "setDeployProvider", "dp-ptoggle\"", "f.provider === DEPLOY.provider"):
+        assert gone not in js, gone
+    for marker in ("PROV_SHORT", "initDeployProvider", "openAddKey", 'runpod: "RunPod"'):
         assert marker in js, marker
     # gated models are blocked before the confirm sheet, with the kind in the copy
-    for marker in ("gatedBlocked", "gatedChip", "hfTokenForm", "refreshGating", "renderHfState", "hf-notice",
-                   '"Needs HF token"', "huggingface.co/settings/tokens", "owner approves access by hand",
-                   "click Agree", 'm.gated_kind === "manual"', "Hugging Face token: ", 'HF_TOKEN: i.value.trim()'):
+    for marker in ("gatedBlocked", "gatedChip", "hfTokenForm", "refreshGating",
+                   "huggingface.co/settings/tokens", "owner approves access by hand",
+                   "Click Agree", 'm.gated_kind === "manual"', "This model is gated",
+                   'HF_TOKEN: i.value.trim()'):
         assert marker in js, marker
-    assert ".hf-notice" in page and ".hf-form" in page
+    assert ".ds-gate" in page and ".hf-form" in page
     # a provider whose package is missing: its own card state, an Install
     # action and a re-check — and it can never reach the spend path
     for marker in ("provReady", "reqShort", "reqCmd", "openInstallSheet", '"Needs the " + pkg + " package"',
-                   '"Needs package"', "uv tool install --force", "Re-check",
+                   'btn("Install", "pri", () => openInstallSheet(p))', "uv tool install --force", "Re-check",
                    "provReady(DEPLOY.providers.find", "openInstallSheet(p)"):
         assert marker in js, marker
     assert ".dpc.blocked" in page
-    # the full hint appears once — on the card; the toggle and table stay terse
-    fit = js[js.index("function fitTable("):js.index("function collectOpts(")]
-    assert "requirements_hint" not in fit
-    toggle = js[js.index("function providerToggle("):js.index("function openAddKey(")]
-    assert "requirements_hint" not in toggle and "reqShort(p)" in toggle
+    # the full hint appears once — on the card; the sheet and the folded
+    # providers line stay terse
+    sheet = js[js.index("async function openDeploySheet(id) {"):js.index("const DEP_DISMISS_KEY")]
+    assert "requirements_hint" not in sheet
+    prov = js[js.index("function renderProvSection("):js.index("// ---- providers strip ----")]
+    assert "requirements_hint" not in prov and "reqShort(p)" in prov
     # the credential form + guide are a SHEET, never an in-card panel: a card
     # that grew to fit a guide stretched its whole grid row
     for gone in ("dp-form", "dp-guide"):
@@ -969,7 +993,7 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
         assert gone not in card, "provider card still renders " + gone
     assert "trapFocus" in js and ".cs-foot" in page and ".cs-guide" in page
     assert 'grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))' in page
-    assert ".dp-ptoggle" in page and "flex-wrap: nowrap" in page
+    assert ".dp-ptoggle" not in page
 
 
 def test_deploy_marks_are_valid_svg_with_their_own_viewbox():
@@ -1005,3 +1029,442 @@ def test_inline_javascript_parses(tmp_path):
     f.write_text(js, encoding="utf-8")
     r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
+
+
+# ---------------------------------------------------------------------------
+# one-click deploy: a recommendation, a job the page can find again, stages
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_recommends_the_cheapest_card_that_fits_and_is_in_stock(fake):
+    """The deploy sheet preselects one GPU. It is the cheapest outright fit
+    across every configured provider — never an out-of-stock card, and a
+    tight fit only when nothing fits outright."""
+    serve = fake["serve"]
+    fake["state"]["configured"] = True
+    fits = [{"provider": "a", "gpus": [
+                {"provider_id": "BIG", "verdict": "fits", "price_per_hour": 3.5, "total_vram_gb": 80},
+                {"provider_id": "GONE", "verdict": "fits", "price_per_hour": 0.5, "total_vram_gb": 48, "available": False},
+                {"provider_id": "TIGHT", "verdict": "tight", "price_per_hour": 0.2, "total_vram_gb": 24}]},
+            {"provider": "b", "gpus": [
+                {"provider_id": "MID", "verdict": "fits", "price_per_hour": 1.1, "total_vram_gb": 48},
+                {"provider_id": "NOPE", "verdict": "no", "price_per_hour": 0.1, "total_vram_gb": 8}]}]
+    assert serve._recommend_gpu(fits) == {"provider": "b", "gpu": "MID", "verdict": "fits", "price_per_hour": 1.1}
+    # nothing fits outright → the cheapest tight fit; nothing at all → None
+    only_tight = [{"provider": "a", "gpus": [fits[0]["gpus"][2]]}]
+    assert serve._recommend_gpu(only_tight)["gpu"] == "TIGHT"
+    assert serve._recommend_gpu([{"provider": "b", "gpus": [fits[1]["gpus"][1]]}]) is None
+    # and it rides on the real /inspect answer
+    r = serve.deploy_inspect("org/model-8b")
+    # L4 ×2 is 48 GB in total at $1.20/h — cheaper than the H100, and it fits
+    assert r["ok"] and r["recommended"] == {"provider": "fakegpu", "gpu": "L4x2", "verdict": "fits",
+                                            "price_per_hour": 1.2}
+    # a sharding vLLM can't use is never the pick, however cheap
+    odd = [{"provider": "a", "gpus": [{"provider_id": "T4x3", "count": 3, "verdict": "fits", "price_per_hour": 0.3},
+                                      {"provider_id": "T4x4", "count": 4, "verdict": "fits", "price_per_hour": 0.4}]}]
+    assert serve._recommend_gpu(odd)["gpu"] == "T4x4"
+
+
+def test_a_second_click_does_not_rent_a_second_gpu(fake, monkeypatch):
+    """While a deploy of the same model on the same card at the same provider
+    is still running, asking again returns THAT job."""
+    import threading
+
+    from mantis_agent.deploy import manager
+
+    serve = fake["serve"]
+    gate = threading.Event()
+
+    async def slow(pid, model, *, gpu, engine="vllm", opts=None, wait=True, progress=None):
+        import anyio
+        while not gate.is_set():
+            await anyio.sleep(0.01)
+        return fake["make_dep"]("running")
+    monkeypatch.setattr(manager, "deploy", slow)
+    a = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")
+    b = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")
+    c = serve.deploy_up("fakegpu", "org/model-8b", "H100", "vllm")      # another card is another deploy
+    assert b["job"] == a["job"] and b.get("existing") is True
+    assert c["job"] != a["job"] and not c.get("existing")
+    gate.set()
+    _wait_job(serve, a["job"])
+    _wait_job(serve, c["job"])
+
+
+def test_the_job_reports_stages_and_the_deployment_the_moment_it_exists(fake, monkeypatch):
+    """A structured stage, the deployment id as soon as something billable is
+    created (long before it is ready), and a boot heartbeat — plus what was
+    asked for, so a card can name the GPU and its rate after a reload."""
+    from mantis_agent.deploy import manager
+
+    serve = fake["serve"]
+    seen = {}
+
+    async def staged(pid, model, *, gpu, engine="vllm", opts=None, wait=True, progress=None, on_event=None):
+        on_event("stage", {"stage": "prepare"})
+        on_event("stage", {"stage": "create"})
+        on_event("created", {"provider": pid, "id": "dep-1"})
+        on_event("stage", {"stage": "boot"})
+        on_event("heartbeat", {"elapsed_s": 45})
+        seen["mid"] = serve.deploy_job(job_id)
+        on_event("stage", {"stage": "ready"})
+        return fake["make_dep"]("running")
+    monkeypatch.setattr(manager, "deploy", staged)
+    r = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm", None, False,
+                        {"gpu_label": "A10G 24 GB", "price_per_hour": "0.75", "provider_name": "Fake GPU Cloud",
+                         "sneaky": "dropped"})
+    job_id = r["job"]
+    j = _wait_job(serve, job_id)
+    mid = seen["mid"]
+    assert mid["stage"] == "boot" and mid["deployment_id"] == "dep-1" and mid["boot_s"] == 45
+    assert j["status"] == "done" and j["stage"] == "ready"
+    assert j["meta"] == {"provider": "fakegpu", "model": "org/model-8b", "gpu": "A10G", "engine": "vllm",
+                         "use_when_ready": False, "gpu_label": "A10G 24 GB", "price_per_hour": 0.75,
+                         "provider_name": "Fake GPU Cloud"}
+
+
+def test_a_deploy_core_without_stages_still_runs(fake):
+    """The fixture's deploy predates ``on_event``; the job must still run,
+    with text progress only."""
+    serve = fake["serve"]
+    j = _wait_job(serve, serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")["job"])
+    assert j["status"] == "done" and j["stage"] is None and j["lines"][0] == "pulling image"
+
+
+def test_the_page_finds_its_jobs_again_after_a_reload(fake):
+    """/api/deploy/jobs: every deploy/teardown still running plus the ones that
+    ended in the last fifteen minutes — never an agent search, never the full
+    line log."""
+    serve = fake["serve"]
+    ok = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")["job"]
+    bad = serve.deploy_up("fakegpu", "fail/model", "A10G", "vllm")["job"]
+    _wait_job(serve, ok)
+    _wait_job(serve, bad)
+    down = serve.deploy_down("dep-1")["job"]
+    _wait_job(serve, down)
+    old = serve._new_job("deploy", "ancient/model")
+    old.update(status="done", ended_at=time.time() - serve.JOB_RECENT_S - 5)
+    serve._new_job("find", "a question")
+    r = serve.deploy_jobs()
+    ids = {j["id"]: j for j in r["jobs"]}
+    assert set(ids) == {ok, bad, down}
+    assert ids[ok]["endpoint_url"] == "https://dep-1.fakegpu.test/v1" and "lines" not in ids[ok]
+    assert ids[bad]["status"] == "error" and ids[bad]["error"] == "quota exceeded"
+    assert ids[down]["kind"] == "teardown" and ids[down]["deployment_id"] == "dep-1"
+    assert ids[ok]["last_line"] and SECRET_VALUE not in json.dumps(r)
+
+
+def test_use_when_ready_switches_only_after_a_real_answer(fake, monkeypatch):
+    """Deploy-and-use is one job, so it happens even if the tab is closed —
+    but "ready" only means the endpoint lists its models. mantis is pointed
+    at it only after it answers a real prompt; otherwise the deploy still
+    succeeds, nothing is switched, and the card says why."""
+    from mantis_agent.deploy import DeployError, manager
+
+    serve, calls = fake["serve"], fake["calls"]
+    answers = {"mode": "ok"}
+
+    async def probe(dep_id, prompt="", *, max_tokens=64):
+        calls.setdefault("try", []).append(dep_id)
+        if answers["mode"] == "error":
+            raise DeployError("endpoint answered HTTP 500", hint="bad chat template")
+        return {"reply": "ok" if answers["mode"] == "ok" else "   ", "latency_s": 0.1}
+    monkeypatch.setattr(manager, "try_endpoint", probe, raising=False)
+
+    j = _wait_job(serve, serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm", None, True)["job"])
+    assert j["status"] == "done" and j["connected"] is True and j["connect_error"] is None
+    assert calls["try"] == ["dep-1"] and calls["connect"][-1] == (("dep-1", True), {})
+
+    for mode, why in (("error", "didn't answer a test prompt"), ("empty", "answered a test prompt with nothing")):
+        answers["mode"] = mode
+        n = len(calls.get("connect", []))
+        jb = _wait_job(serve, serve.deploy_up("fakegpu", "org/model-8b", "L4x2" if mode == "error" else "H100",
+                                              "vllm", None, True)["job"])
+        assert jb["status"] == "done", mode                      # the deploy itself still succeeded
+        assert jb["connected"] is None and why in jb["connect_error"], (mode, jb["connect_error"])
+        assert len(calls.get("connect", [])) == n, mode          # mantis was never pointed at it
+
+    # without the box ticked, nothing is probed and nothing is switched
+    answers["mode"] = "ok"
+    t, n = len(calls["try"]), len(calls["connect"])
+    j2 = _wait_job(serve, serve.deploy_up("fakegpu", "org/model-8b", "A10G", "sglang", None, False)["job"])
+    assert j2["connected"] is None and len(calls["try"]) == t and len(calls["connect"]) == n
+
+    async def refuses(dep_id, *, set_current=True):
+        raise DeployError("401 from the endpoint", hint="check the key")
+    monkeypatch.setattr(manager, "connect", refuses)
+    j3 = _wait_job(serve, serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm", None, True)["job"])
+    assert j3["status"] == "done" and j3["connected"] is None
+    assert j3["connect_error"].startswith("didn't switch mantis to it — ") and "401" in j3["connect_error"]
+
+def test_the_list_says_which_deployment_mantis_is_using(fake):
+    from mantis_agent import catalog
+
+    serve = fake["serve"]
+    assert all(not d["in_use"] for d in serve.deploy_list()["deployments"])
+    catalog.set_last_model("org/model-8b", "https://dep-1.fakegpu.test/v1/")
+    rows = serve.deploy_list()["deployments"]
+    assert [d["in_use"] for d in rows if d["status"] == "running"] == [True]
+
+
+def test_cancel_stops_a_deploy_and_tears_down_whatever_it_created(fake, monkeypatch):
+    """Before anything is rented, cancelling just stops it and reads as
+    cancelled, not failed. Once the endpoint exists, cancelling starts its
+    teardown — and Stop on a deployment that a deploy is still waiting on
+    tells that deploy to stop waiting."""
+    import threading
+
+    from mantis_agent.deploy import DeployError, manager
+
+    serve, calls = fake["serve"], fake["calls"]
+    created, release = threading.Event(), threading.Event()
+
+    async def staged(pid, model, *, gpu, engine="vllm", opts=None, wait=True, progress=None,
+                     on_event=None, cancelled=None):
+        import anyio
+        if model == "org/early":
+            while not cancelled():
+                await anyio.sleep(0.01)
+            raise DeployError("cancelled before anything was created")
+        on_event("created", {"provider": pid, "id": "dep-1"})
+        created.set()
+        while not cancelled() and not release.is_set():
+            await anyio.sleep(0.01)
+        if cancelled():
+            raise DeployError("cancelled while it was starting")
+        return fake["make_dep"]("running")
+    monkeypatch.setattr(manager, "deploy", staged)
+
+    early = serve.deploy_up("fakegpu", "org/early", "A10G", "vllm")["job"]
+    r = serve.deploy_cancel(early)
+    assert r["ok"] and r["teardown"] is None
+    j = _wait_job(serve, early)
+    assert j["status"] == "cancelled" and "teardown" not in calls
+
+    late = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")["job"]
+    assert created.wait(2)
+    r = serve.deploy_cancel(late)
+    assert r["ok"] and r["teardown"]
+    assert _wait_job(serve, late)["status"] == "cancelled"
+    _wait_job(serve, r["teardown"])
+    assert calls["teardown"] == [(("dep-1",), {})]          # exactly one delete
+
+    # Stop on the deployment flags the deploy that is still waiting on it
+    created.clear()
+    third = serve.deploy_up("fakegpu", "org/model-8b", "H100", "vllm")["job"]
+    assert created.wait(2)
+    down = serve.deploy_down("dep-1")["job"]
+    assert _wait_job(serve, third)["status"] == "cancelled"
+    _wait_job(serve, down)
+    assert serve.deploy_cancel("nope")["ok"] is False
+
+
+def test_each_source_tab_asks_for_only_itself(fake, monkeypatch):
+    from mantis_agent.deploy import manager
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    serve = fake["serve"]
+    seen = []
+
+    async def search(query="", *, limit=25, sort="trending", source="auto"):
+        seen.append(source)
+        return [fake["info"]]
+    monkeypatch.setattr(manager, "search_models", search)
+    assert serve.deploy_models("", "trending", 30, "curated")["curated"] is True
+    assert serve.deploy_models("", "trending", 30, "hub")["curated"] is False
+    serve.deploy_models("", "trending", 30, "nonsense")
+    assert seen == ["curated", "hub", "auto"]
+    js = INDEX_HTML.split("<script>")[1]
+    assert 'source: DEPLOY.source === "curated" ? "curated" : "hub"' in js
+    # choosing an ordering is a Hub question, so it leaves Curated like typing does
+    assert 'if (DEPLOY.source === "curated") setSource("hub"); runSearch(); },' in js
+
+
+def test_a_booting_container_that_dies_fails_fast_with_its_own_words(fake, monkeypatch):
+    """From outside, a crash-looping container looks like a slow boot. The
+    server reads the container's log during boot: the last real line goes on
+    the card, and a fatal line stops the deploy at once — as an ERROR carrying
+    that line — and tears down what was rented."""
+    from mantis_agent.deploy import DeployError, manager
+
+    serve, calls = fake["serve"], fake["calls"]
+    monkeypatch.setattr(serve, "BOOT_TAIL_S", 0.05)
+    log_lines = {"lines": ["INFO [loader.py] Loading safetensors 12/86"]}
+
+    def logs(dep_id, *, tail=200):
+        async def gen():
+            for ln in log_lines["lines"]:
+                yield ln
+        return gen()
+    monkeypatch.setattr(manager, "logs", logs)
+
+    async def booting(pid, model, *, gpu, engine="vllm", opts=None, wait=True, progress=None,
+                      on_event=None, cancelled=None):
+        import anyio
+        on_event("created", {"provider": pid, "id": "dep-1"})
+        on_event("stage", {"stage": "boot"})
+        while not cancelled():
+            await anyio.sleep(0.01)
+        raise DeployError("cancelled while it was starting")
+    monkeypatch.setattr(manager, "deploy", booting)
+
+    job = serve.deploy_up("fakegpu", "org/model-8b", "A10G", "vllm")["job"]
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 3 and not serve.deploy_job(job).get("boot_line"):
+        time.sleep(0.02)
+    assert serve.deploy_job(job)["boot_line"] == "INFO [loader.py] Loading safetensors 12/86"
+    assert serve.deploy_job(job)["status"] == "running"        # a healthy boot is left alone
+
+    log_lines["lines"] = ["Traceback (most recent call last):", '  File "/root/app.py", line 35, in <module>',
+                          "KeyError: 'MANTIS_VLLM_API_KEY'", "Runner failed with exception: KeyError('MANTIS_VLLM_API_KEY')"]
+    j = _wait_job(serve, job)
+    assert j["status"] == "error"
+    assert j["error"].startswith("the container died while booting: ") and "KeyError" in j["error"]
+    assert "torn down" in j["hint"]
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 3 and not calls.get("teardown"):
+        time.sleep(0.02)
+    assert calls["teardown"] == [(("dep-1",), {})]
+    listed = {x["id"]: x for x in serve.deploy_jobs()["jobs"]}
+    assert listed[job]["boot_line"] and listed[job]["status"] == "error"
+
+
+def test_install_is_one_click_and_reports_the_provider_ready(fake, monkeypatch):
+    """"Needs the modal package" used to be a dead end that sent you to a shell.
+    Now it is a job: install into the dashboard's own environment, stream the
+    output, re-check the provider, and only report done when it can deploy."""
+    from mantis_agent.deploy import manager
+
+    serve = fake["serve"]
+    state = {"ok": False}
+
+    async def providers():
+        return [manager.ProviderSummary({"id": "modal", "display_name": "Modal", "configured": True,
+                                         "requirements_ok": state["ok"],
+                                         "requirements_hint": "" if state["ok"] else
+                                         "the `modal` package is not installed — pip install mantis-agent-sdk[modal]"})]
+    monkeypatch.setattr(manager, "providers", providers)
+    ran = []
+
+    def fake_cmd(pkg):
+        ran.append(pkg)
+        state["ok"] = True  # "installing" makes it ready
+        return [sys.executable, "-c", "print('Resolved 3 packages'); print('Installed modal')"]
+    monkeypatch.setattr(serve, "_install_cmd", fake_cmd)
+
+    r = serve.deploy_install("modal")
+    assert r["ok"] and r["package"] == "modal"
+    j = _wait_job(serve, r["job"])
+    assert j["status"] == "done", (j["error"], j["hint"], j["lines"])
+    assert ran == ["modal"]
+    assert j["lines"][0].startswith("$ ") and "Installed modal" in j["lines"] and j["lines"][-1].startswith("✓ modal installed")
+    assert j["result"] == {"installed": True, "package": "modal", "provider": "modal"}
+    # already ready → nothing to run; unknown → refused
+    assert serve.deploy_install("modal")["already"] is True
+    assert serve.deploy_install("nope")["ok"] is False
+
+    # a failed install says so, and never claims the provider is ready
+    state["ok"] = False
+    monkeypatch.setattr(serve, "_install_cmd", lambda pkg: [sys.executable, "-c", "import sys; print('boom'); sys.exit(2)"])
+    j2 = _wait_job(serve, serve.deploy_install("modal")["job"])
+    assert j2["status"] == "error" and "exited 2" in j2["error"] and "boom" in j2["lines"]
+
+
+def test_use_in_mantis_is_a_job_that_waits_out_a_cold_start(fake, monkeypatch):
+    from mantis_agent.deploy import manager
+
+    serve = fake["serve"]
+    seen = {}
+
+    async def connect(dep_id, *, set_current=True, timeout_s=None, progress=None):
+        progress("It scaled to zero — waking a replica…")
+        progress("Awake — it answers. Pointing mantis at it…")
+        seen["id"] = dep_id
+        return {"model": "org/model-8b", "backend": "https://dep-1.fakegpu.test/v1"}
+    monkeypatch.setattr(manager, "connect", connect)
+    r = serve.deploy_connect_job("dep-1")
+    assert r["ok"] and r["job"]
+    j = _wait_job(serve, r["job"])
+    assert j["status"] == "done" and j["kind"] == "connect" and j["deployment_id"] == "dep-1"
+    assert "waking" in j["lines"][0] and j["result"]["backend"].endswith("/v1") and seen["id"] == "dep-1"
+    assert r["job"] in {x["id"] for x in serve.deploy_jobs()["jobs"]}      # the page can find it again
+
+
+def test_forget_only_drops_dead_records(fake, monkeypatch):
+    from mantis_agent.deploy import store
+    from mantis_agent.deploy.base import Deployment
+
+    serve = fake["serve"]
+    dead = Deployment(id="old", provider="fakegpu", model="selfhost", engine="vllm", status="unknown",
+                      gpu=fake["gpus"][0], served_model_name="selfhost", endpoint_url="")
+    live = fake["make_dep"]("running")
+    store.upsert(dead)
+    store.upsert(live)
+    assert serve.deploy_forget("dep-1")["ok"] is False          # live: stop it instead
+    assert serve.deploy_forget("old")["ok"] is True
+    assert [d.id for d in store.load_all()] == ["dep-1"]
+
+
+def test_models_state_lists_live_deployments_as_their_own_family(fake):
+    """What you deployed yourself shows up on My models: live ones only, with
+    whether mantis is pointed at it right now, and never a secret."""
+    from mantis_agent import catalog
+    from mantis_agent.deploy import store
+    from mantis_agent.deploy.base import Deployment
+
+    serve = fake["serve"]
+    live = fake["make_dep"]("running")
+    dead = Deployment(id="old", provider="fakegpu", model="gone", engine="vllm", status="stopped",
+                      gpu=fake["gpus"][0], served_model_name="gone", endpoint_url="")
+    store.upsert(live)
+    store.upsert(dead)
+    catalog.set_last_model(live.served_model_name or live.model, live.endpoint_url)
+    m = serve.models_state()
+    deps = m["deployments"]
+    assert [d["id"] for d in deps] == [live.id]
+    assert deps[0]["in_use"] is True
+    blob = json.dumps(deps)
+    for secret in (SECRET_VALUE, HEADER_SECRET, HF_TOKEN):
+        assert secret not in blob
+    assert (live.served_model_name or live.model) in m["model_info"]
+
+
+def test_my_models_has_a_self_hosted_family_that_connects_through_the_job():
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    # its own family, first, with a tab, a rail row and a glyph of its own
+    assert 'famOrder.unshift("selfhost"); famLabel.selfhost = "Self-hosted";' in js
+    assert 'selfhost: "self-hosted"' in js
+    assert 'rows.unshift({ key: "selfhost", label: "Self-hosted", mark: hostMark(),' in js
+    assert 'fid === "selfhost" ? hostMark()' in js
+    # the card: the model's maker, where it runs, and the hourly GPU rate
+    assert 'a.dep ? orgMark(_orgOf(a.model))' in js
+    assert '"GPU while running"' in js
+    # current means mantis points at ITS endpoint, not a same-named rented model
+    assert "const on = a.dep ? !!a.dep.in_use : (a.model === cur && !MM_SELFCUR);" in js
+    # switching goes through the cold-start-aware connect job, shown on the button
+    body = js.split("async function useSelfhosted(a, b) {", 1)[1].split("\n}\n", 1)[0]
+    assert 'post("/api/deploy/connect", { id: a.dep.id, job: true })' in body
+    assert "fmtClock(" in body and "loadModels()" in body
+
+
+def test_serve_reads_settings_env_like_the_terminal(monkeypatch, tmp_path):
+    """A Claude subscription saved by `mantis setup` lives in settings env. The
+    terminal applies it at launch; the dashboard has to as well, or it tells
+    you Claude isn't connected while the terminal is using it. A shell export
+    still wins, and a cleared (empty) value is never applied."""
+    import os
+
+    from mantis_agent import serve
+    from mantis_agent import settings as st
+
+    monkeypatch.setattr(st, "load_settings_env_safe", lambda *_a, **_k: {
+        "ANTHROPIC_AUTH_TOKEN": "sk-ant-oat-saved", "OPENAI_API_KEY": "from-settings", "GEMINI_API_KEY": ""})
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "from-shell")
+    got = serve._apply_settings_env()
+    assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "sk-ant-oat-saved"
+    assert os.environ["OPENAI_API_KEY"] == "from-shell"
+    assert "GEMINI_API_KEY" not in os.environ and set(got) == {"ANTHROPIC_AUTH_TOKEN"}

@@ -90,6 +90,9 @@ def test_microcompact_clears_bare_images_outside_tool_results() -> None:
     c = _compactor()
     msgs = _screenshot_history(5)
     msgs.insert(1, UserMessage(content=[_image()]))
+    # A later real prompt makes the pasted image an EARLIER turn's — images in
+    # the current prompt are deliberately never swept (the user just sent them).
+    msgs.append(UserMessage(content="next task"))
     assert c.microcompact(msgs) is True
     assert _message_token_estimate(msgs[1]) < 100
 

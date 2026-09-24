@@ -174,6 +174,15 @@ _OPENAI: tuple[AuthMethod, ...] = (
         recommended=True,
     ),
     AuthMethod(
+        id="chatgpt", family="openai", label="ChatGPT subscription (Codex)", kind="oauth",
+        description="Use the ChatGPT plan the Codex CLI is signed in with — no API key, "
+                    "no per-token bill.",
+        fields=(),
+        backend="https://chatgpt.com/backend-api/codex",
+        docs_url="https://developers.openai.com/codex/cli",
+        extra={"login": "codex login", "detected_from": "codex"},
+    ),
+    AuthMethod(
         id="azure_openai", family="openai", label="Azure OpenAI", kind="cloud",
         description="GPT models through an Azure OpenAI resource (api-key header).",
         fields=(
@@ -361,7 +370,23 @@ def _method_configured(m: AuthMethod) -> tuple[bool, str | None, str, dict[str, 
         if hit:
             masked["ANTHROPIC_AUTH_TOKEN"] = _mask(hit[0])
             return True, "saved", "signed in with a Claude subscription", masked
+        from .cli_logins import detect_claude_code  # noqa: PLC0415
+
+        if detect_claude_code()["signed_in"]:
+            return (False, None, "Claude Code is signed in on this machine — run "
+                    "`mantis-agent auth login claude` to use the same subscription here", masked)
         return False, None, "run `mantis-agent auth login claude` to sign in", masked
+
+    if m.id == "chatgpt":
+        from .cli_logins import detect_codex, has_chatgpt_login  # noqa: PLC0415
+
+        codex = detect_codex()
+        if has_chatgpt_login():
+            plan = f" ({codex['plan']} plan)" if codex.get("plan") else ""
+            return True, "cli", f"signed in to ChatGPT via the Codex CLI{plan}", masked
+        if codex["installed"]:
+            return False, None, "Codex is installed but not signed in with ChatGPT — `codex login`", masked
+        return False, None, "install the Codex CLI and run `codex login`", masked
 
     if m.id == "ollama":
         if _port_open("127.0.0.1", 11434):
@@ -417,6 +442,15 @@ def _method_configured(m: AuthMethod) -> tuple[bool, str | None, str, dict[str, 
             source = source or (hit[1] if hit else "saved")
         elif f.required:
             ok = False
+    if not ok and m.family == "openai" and m.id == "api_key":
+        # A platform key `codex login --with-api-key` stored is a plain OpenAI
+        # key; reuse it rather than asking for the same key twice.
+        from .cli_logins import codex_api_key  # noqa: PLC0415
+
+        key = codex_api_key()
+        if key:
+            masked["OPENAI_API_KEY"] = _mask(key)
+            return True, "cli", "from the Codex CLI (~/.codex/auth.json)", masked
     if ok and m.fields:
         return True, source or "env", "ready", masked
     missing = [f.env for f in m.fields if f.required and f.env not in masked]
@@ -853,6 +887,20 @@ def _probe_plan(m: AuthMethod, model: str | None) -> tuple[str, str, dict[str, s
                                for x in (d.get("modelSummaries") or [])
                                if str(x.get("modelId") or "").startswith("anthropic.")])
 
+    if m.family == "openai" and m.id == "chatgpt":
+        from .cli_logins import (  # noqa: PLC0415
+            CHATGPT_CODEX_URL,
+            chatgpt_access_token,
+            chatgpt_headers,
+            codex_client_version,
+        )
+
+        headers = {"authorization": f"Bearer {chatgpt_access_token()}", **chatgpt_headers()}
+        return ("GET", f"{CHATGPT_CODEX_URL}/models?client_version={codex_client_version()}",
+                headers, None,
+                lambda d: [str(x.get("slug") or "") for x in (d.get("models") or [])
+                           if x.get("visibility") != "hide"])
+
     if m.family in ("openai", "gemini", "xai", "oss"):
         base, headers = _openai_compat_probe_target(m)
         if base is None:
@@ -909,6 +957,10 @@ def _openai_compat_probe_target(m: AuthMethod) -> tuple[str | None, dict[str, st
             break
     if not key:
         key = _saved_key_for(m) or ""
+    if not key and m.family == "openai" and m.id == "api_key":
+        from .cli_logins import codex_api_key  # noqa: PLC0415
+
+        key = codex_api_key() or ""
     if not key or not m.backend:
         return None, {}
     return m.backend, {"authorization": f"Bearer {key}"}

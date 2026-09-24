@@ -51,6 +51,34 @@ _MODE_ANSI = {
 }
 
 
+
+_DEPLOY_PROV_NAMES = {"modal": "Modal", "runpod": "RunPod", "hf": "HF", "baseten": "Baseten",
+                      "deepinfra": "DeepInfra", "vastai": "Vast.ai",
+                      "fireworks-dedicated": "Fireworks"}
+
+
+def deployment_rows() -> list[dict]:
+    """The model picker's rows for what you have DEPLOYED — each one a
+    /connect you already made, carrying its endpoint and the name of its saved
+    key. Read from the local store (no network), so the picker opens instantly;
+    a scaled-to-zero endpoint is listed too and wakes on its first request."""
+    rows: list[dict] = []
+    try:
+        from .deploy import store as _dstore  # noqa: PLC0415
+
+        deps = _dstore.load_all()
+    except Exception:  # noqa: BLE001 — no deploy core or no store: nothing to list
+        return rows
+    for d in deps:
+        if d.status not in ("running", "scaled_to_zero") or not d.endpoint_url:
+            continue
+        prov = _DEPLOY_PROV_NAMES.get(d.provider, d.provider)
+        rows.append({"kind": "deployment", "model": d.served_model_name or d.model,
+                     "enabled": True, "provider_id": None, "ctx": "",
+                     "endpoint": d.endpoint_url, "auth_env": d.auth_env,
+                     "where": prov + (" · idle" if d.status == "scaled_to_zero" else " · live")})
+    return rows
+
 def _c(code: str) -> str:
     """``code`` on a terminal that can take colour, "" on one that can't."""
     return code if _PAINT else ""
@@ -325,8 +353,13 @@ def _footer_line(mode_idx: int, model: str, knobs: Any = (), ctx: str = "",
 
 _MENTION_IGNORE = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", ".mypy_cache",
-    ".pytest_cache", "build", ".ruff_cache", ".tox", ".idea", ".egg-info",
+    ".pytest_cache", "build", ".ruff_cache", ".tox", ".idea",
 }
+
+
+def _mention_skip_dir(name: str) -> bool:
+    return (name in _MENTION_IGNORE or name.startswith(".")
+            or name.endswith(".egg-info") or not mentionable(name))
 
 
 def context_breakdown(messages: list, system_text: str = "") -> dict:
@@ -355,22 +388,37 @@ def _walk_mention_files(root: str) -> list[str]:
     """All files under ``root`` (rel paths), skipping VCS/build dirs and
     dotfiles and capping the scan so a huge repo can't stall the walk. Kept
     separate from ranking so callers can cache this once and re-rank in-memory
-    per keystroke (the walk is the expensive part) — see ``_rank_mentions``."""
+    per keystroke (the walk is the expensive part) — see ``_rank_mentions``.
+
+    Breadth-first, so shallow project files are listed before a deep vendored
+    tree can exhaust the cap."""
     import os  # noqa: PLC0415
+    from collections import deque  # noqa: PLC0415
 
     rels: list[str] = []
-    scanned = 0
-    for dp, dns, fns in os.walk(root):
-        dns[:] = [d for d in dns if d not in _MENTION_IGNORE and not d.startswith(".")]
-        for f in fns:
-            if f.startswith("."):
+    queue: deque[str] = deque([""])
+    while queue:
+        rel_dir = queue.popleft()
+        try:
+            with os.scandir(os.path.join(root, rel_dir) if rel_dir else root) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            continue
+        for e in entries:
+            rel = f"{rel_dir}/{e.name}" if rel_dir else e.name
+            try:
+                is_dir = e.is_dir(follow_symlinks=False)
+            except OSError:
                 continue
-            scanned += 1
-            rels.append(os.path.relpath(os.path.join(dp, f), root))
-            if scanned > _MENTION_SCAN_CAP:
-                break
-        if scanned > _MENTION_SCAN_CAP:
-            break
+            if is_dir:
+                if not _mention_skip_dir(e.name):
+                    queue.append(rel)
+                continue
+            if e.name.startswith(".") or not mentionable(e.name):
+                continue
+            rels.append(rel.replace("/", os.sep))
+            if len(rels) > _MENTION_SCAN_CAP:
+                return rels
     return rels
 
 
@@ -397,6 +445,371 @@ def find_file_mentions(partial: str, root: str, *, limit: int = 8) -> list[str]:
     dirs and dotfiles, caps the scan) so it stays snappy per keystroke on big
     repos. Powers the ``@``-file-mention completer."""
     return _rank_mentions(_walk_mention_files(root), partial, limit=limit)
+
+
+_MENTION_TTL = 10.0  # seconds before the cached @-file listing is re-walked
+
+
+class MentionFileIndex:
+    """Cached repo listing behind the ``@``-file completer.
+
+    The walk is keyed by cwd and goes stale after ``ttl`` seconds or an explicit
+    :meth:`invalidate` (the UI calls it after every turn, so files the agent just
+    created show up). A stale listing keeps serving while a worker thread
+    re-walks — even the first walk for a directory runs off-thread (an empty
+    list is served until it lands) — so a big repo never stalls a keystroke or
+    a render on the event loop.
+
+    A generation counter guards the turn-end :meth:`invalidate`: a re-walk
+    already in flight when the turn wrote files may carry a pre-write listing,
+    so it only clears the stale flag if no invalidate happened since it began."""
+
+    def __init__(self, *, ttl: float = _MENTION_TTL, walk: Any = None,
+                 clock: Any = time.monotonic, on_refresh: Any = None) -> None:
+        import threading  # noqa: PLC0415
+
+        self.ttl = ttl
+        self._walk = walk or _walk_mention_files
+        self._clock = clock
+        self.on_refresh = on_refresh
+        self._lock = threading.Lock()
+        self._cwd: str | None = None
+        self._files: list[str] = []
+        self._at = 0.0
+        self._stale = False
+        self._refreshing = False
+        self._gen = 0
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._gen += 1
+            self._stale = True
+
+    def files(self, cwd: str) -> list[str]:
+        with self._lock:
+            if self._cwd != cwd:
+                self._cwd, self._files, self._stale = cwd, [], True
+                self._gen += 1
+            due = self._stale or self._clock() - self._at > self.ttl
+            if due and not self._refreshing:
+                self._refreshing = True
+                import threading  # noqa: PLC0415
+
+                threading.Thread(target=self._refresh, args=(cwd, self._gen),
+                                 daemon=True).start()
+            return self._files
+
+    def _refresh(self, cwd: str, gen: int) -> None:
+        try:
+            files = self._walk(cwd)
+        except Exception:  # noqa: BLE001 — a failed re-walk keeps the old listing
+            files = None
+        with self._lock:
+            self._refreshing = False
+            if files is not None and self._cwd == cwd:
+                self._files, self._at = files, self._clock()
+                if gen == self._gen:  # nothing invalidated mid-walk
+                    self._stale = False
+        if files is not None and self.on_refresh is not None:
+            try:
+                self.on_refresh()
+            except Exception:  # noqa: BLE001 — app torn down mid-refresh
+                pass
+
+
+def mention_completion(line: str, value: str) -> str:
+    """``line`` with its trailing ``@partial`` replaced by the chosen path.
+
+    Keeps the ``@`` — ``resolve_file_mentions`` only attaches ``@``-prefixed
+    tokens — and quotes any path the bare form can't carry (spaces, ``+``,
+    ``@``, parens, commas…) as ``@"a b.py"``, the form its mention regex
+    accepts. Paths containing ``"`` can't be quoted and are never offered (the walk skips them). Ends with a space so the menu closes."""
+    idx = line.rfind("@")
+    head = line[:idx] if idx >= 0 else line
+    token = "@" + value if _BARE_MENTION_RE.fullmatch(value) else f'@"{value}"'
+    return head + token + " "
+
+
+# Mirrors the unquoted alternative of tui._MENTION_TOKEN_RE.
+_BARE_MENTION_RE = __import__("re").compile(r"[\w./~-]+")
+
+
+def mentionable(value: str) -> bool:
+    """Whether a path can be written as an ``@`` mention at all — the quoted
+    form has no escape for ``"`` (nor a newline)."""
+    return '"' not in value and "\n" not in value
+
+
+# Lone Esc vs Alt/Option combos. Alt+B, Option+Backspace etc. arrive as ESC
+# followed by the key, so a global Esc binding must NOT be eager (it would fire
+# on the ESC and eat the combo). Without eager, prompt_toolkit waits
+# ``ttimeoutlen`` (input parser) and then ``timeoutlen`` (key processor) before
+# deciding a lone ESC is just Esc — 0.5s + 1s by default, which makes Esc feel
+# dead. Shorten both, but ``timeoutlen`` only while ESC is the pending prefix:
+# it also governs chords like Ctrl-X Ctrl-E and vi ``gg``, which must keep the
+# slow default.
+#
+# ``ttimeoutlen`` is also how long the parser waits for the rest of an escape
+# SEQUENCE (arrow keys are ESC [ B). Too short and a laggy link (SSH) splits an
+# arrow into a lone Esc + "[B" — which interrupts a running turn or clears the
+# line. So the parser wait stays moderate (longer over SSH, overridable with
+# MANTIS_ESC_TIMEOUT); only the key-processor wait is cut to the bone.
+_ESC_TIMEOUT = 0.1
+_ESC_TIMEOUT_SSH = 0.15
+_ESC_KEY_TIMEOUT = 0.05
+
+
+def esc_timeout_default(env: Any = None) -> float:
+    """Parser wait for a lone ESC: ``MANTIS_ESC_TIMEOUT`` (seconds) if set and
+    valid, else 0.15 over SSH, else 0.1."""
+    import os  # noqa: PLC0415
+
+    env = os.environ if env is None else env
+    raw = (env.get("MANTIS_ESC_TIMEOUT") or "").strip()
+    if raw:
+        try:
+            val = float(raw)
+            if 0 <= val <= 5:
+                return val
+        except ValueError:
+            pass
+    if env.get("SSH_CONNECTION") or env.get("SSH_TTY"):
+        return _ESC_TIMEOUT_SSH
+    return _ESC_TIMEOUT
+
+
+def tune_escape_timing(app: Any, *, esc_timeout: float | None = None,
+                       key_timeout: float = _ESC_KEY_TIMEOUT) -> None:
+    from prompt_toolkit.keys import Keys  # noqa: PLC0415
+
+    app.ttimeoutlen = esc_timeout_default() if esc_timeout is None else esc_timeout
+    chord_timeout = app.timeoutlen
+    kp = app.key_processor
+
+    def _tune(_sender: Any = None) -> None:
+        buf = kp.key_buffer
+        esc_pending = len(buf) == 1 and buf[0].key == Keys.Escape
+        app.timeoutlen = key_timeout if esc_pending else chord_timeout
+
+    kp.after_key_press += _tune
+
+
+def app_escape_filter(claimed: Any) -> Any:
+    """When the app-level Esc handler may run: always in emacs mode; in vi mode
+    only while the app has a use for Esc (``claimed`` — an overlay, a prompt,
+    a running turn) or the buffer is already in normal mode. Vi insert/visual
+    Esc belongs to prompt_toolkit, so Esc drops to normal mode instead of
+    clearing the line."""
+    from prompt_toolkit.filters import Condition, vi_mode, vi_navigation_mode  # noqa: PLC0415
+
+    return ~vi_mode | vi_navigation_mode | Condition(claimed)
+
+
+def add_vi_insert_escape(kb: Any, claimed: Any, on_esc: Any) -> None:
+    """The complement of :func:`app_escape_filter`: vi insert/replace Esc with
+    nothing claiming it. Does what prompt_toolkit's own vi Esc does (drop to
+    normal mode, cursor one left) but also calls ``on_esc`` — so the app sees
+    this first Esc and Esc-Esc (rewind) takes two presses, not three. Not
+    eager, for the same Alt-combo reason as the app-level binding."""
+    from prompt_toolkit.filters import Condition, vi_insert_mode, vi_replace_mode  # noqa: PLC0415
+    from prompt_toolkit.key_binding.vi_state import InputMode  # noqa: PLC0415
+
+    @kb.add("escape", filter=(vi_insert_mode | vi_replace_mode) & ~Condition(claimed))
+    def _(event: Any) -> None:
+        buf = event.current_buffer
+        buf.cursor_position += buf.document.get_cursor_left_position()
+        event.app.vi_state.input_mode = InputMode.NAVIGATION
+        on_esc()
+
+
+# -- multi-line input ------------------------------------------------------------
+# The prompt grows with its content (1 row up to INPUT_MAX_ROWS, fewer on a
+# short terminal) and wraps. Enter submits; Alt+Enter, Ctrl+J, Shift+Enter
+# (where the terminal reports it) and a trailing ``\`` before Enter insert a
+# newline. Large pastes collapse to a token that expands again on submit.
+INPUT_MAX_ROWS = 10
+PASTE_COLLAPSE_LINES = 10
+PASTE_COLLAPSE_CHARS = 2000
+
+
+def input_rows(text: str, width: int, max_rows: int = INPUT_MAX_ROWS) -> int:
+    """Screen rows ``text`` takes in a wrapping input ``width`` columns wide,
+    clamped to 1..``max_rows``."""
+    from prompt_toolkit.utils import get_cwidth  # noqa: PLC0415
+
+    width = max(width, 1)
+    n = 0
+    for line in text.split("\n"):
+        # +1: the cursor parked after a full row wraps onto a fresh one
+        n += max(1, -(-(get_cwidth(line) + 1) // width))
+        if n >= max_rows:
+            return max(1, max_rows)
+    return max(1, min(n, max_rows))
+
+
+def install_shift_enter_sequences() -> None:
+    """Teach the input parser the Shift+Enter reports of terminals that send
+    one — CSI-u (kitty, WezTerm, iTerm2 "report modifiers", foot, Ghostty) and
+    xterm modifyOtherKeys — as Ctrl+J, the newline key. prompt_toolkit maps
+    the xterm form to plain Enter (submit) and doesn't know CSI-u at all.
+    Terminals that send a bare CR for Shift+Enter can't be told apart from
+    Enter; there Alt+Enter, Ctrl+J or ``\\``+Enter insert the newline."""
+    from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES  # noqa: PLC0415
+    from prompt_toolkit.input.vt100_parser import (  # noqa: PLC0415
+        _IS_PREFIX_OF_LONGER_MATCH_CACHE,
+    )
+    from prompt_toolkit.keys import Keys  # noqa: PLC0415
+
+    for seq in ("\x1b[13;2u", "\x1b[27;2;13~"):
+        ANSI_SEQUENCES[seq] = Keys.ControlJ
+    # The parser memoises "is this a prefix of a longer sequence?" — drop
+    # what it decided before these existed.
+    _IS_PREFIX_OF_LONGER_MATCH_CACHE.clear()
+
+
+def continue_line(buf: Any) -> bool:
+    """Enter right after a ``\\`` continues the prompt on a new line (the
+    backslash is dropped) instead of submitting. True if it did."""
+    if not buf.document.text_before_cursor.endswith("\\"):
+        return False
+    buf.delete_before_cursor(1)
+    buf.newline(copy_margin=False)
+    return True
+
+
+def add_newline_keys(kb: Any) -> None:
+    """Alt+Enter (ESC-prefixed — the app Esc is not eager, so it waits for the
+    Enter and never fires) and Ctrl+J (also what Shift+Enter maps to, see
+    :func:`install_shift_enter_sequences`) insert a newline."""
+    @kb.add("escape", "enter")
+    @kb.add("c-j")
+    def _(event: Any) -> None:
+        event.current_buffer.newline(copy_margin=False)
+
+
+def add_history_search_keys(kb: Any) -> None:
+    """Ctrl+R (bound by prompt_toolkit's defaults once the input's
+    BufferControl has a ``search_buffer_control``) searches the buffer's
+    history incrementally; Ctrl+R again steps to older matches. These are
+    eager so they beat the app Esc/Enter/Ctrl+C handlers while the search is
+    open: Enter puts the match in the line (a second Enter sends it), Esc /
+    Ctrl+C / Ctrl+G cancel and restore what was typed."""
+    from prompt_toolkit.filters import is_searching  # noqa: PLC0415
+    from prompt_toolkit.key_binding.bindings import search  # noqa: PLC0415
+
+    kb.add("enter", filter=is_searching, eager=True)(search.accept_search)
+    for key in ("escape", "c-c", "c-g"):
+        kb.add(key, filter=is_searching, eager=True)(search.abort_search)
+
+
+class PastedTexts:
+    """Large pastes shown as ``[Pasted text #N +K lines]`` in the input and
+    swapped back for the real text on submit. A token the user deleted simply
+    isn't there to expand; :meth:`clear` after each submit."""
+
+    _TOKEN = re.compile(r"\[Pasted text #(\d+)(?: \+\d+ lines| · \d+ chars)\]")
+
+    def __init__(self) -> None:
+        self._texts: dict[int, str] = {}
+        self._next = 1
+
+    def __bool__(self) -> bool:
+        return bool(self._texts)
+
+    @staticmethod
+    def should_collapse(data: str) -> bool:
+        return (data.count("\n") + 1 > PASTE_COLLAPSE_LINES
+                or len(data) > PASTE_COLLAPSE_CHARS)
+
+    def add(self, data: str) -> str:
+        n = self._next
+        self._next += 1
+        self._texts[n] = data
+        extra = data.rstrip("\n").count("\n")
+        return (f"[Pasted text #{n} +{extra} lines]" if extra
+                else f"[Pasted text #{n} · {len(data)} chars]")
+
+    def expand(self, text: str) -> str:
+        if not self._texts:
+            return text
+
+        def sub(m: re.Match) -> str:
+            return self._texts.get(int(m.group(1)), m.group(0))
+        return self._TOKEN.sub(sub, text)
+
+    def clear(self) -> None:
+        self._texts.clear()
+        self._next = 1
+
+
+async def await_prompt(state: dict, key: str, payload: dict, fut: asyncio.Future,
+                       invalidate: Any = None, *, cancelled: Any = None) -> Any:
+    """Show an in-pane prompt overlay (``state[key] = payload``) and await the
+    keypress ``fut``. The overlay is always dismissed afterwards.
+
+    A task cancel (Ctrl+C / Esc-interrupt) is NOT an answer: the future is
+    resolved to ``cancelled`` so nothing is left waiting on it, and the
+    ``CancelledError`` is re-raised so the turn stops. Only the explicit keys
+    (Esc / ``n`` on a permission prompt) mean "deny and let the model react"."""
+    state[key] = payload
+    if invalidate is not None:
+        invalidate()
+    try:
+        return await fut  # yields to the loop; the app keeps redrawing
+    except asyncio.CancelledError:
+        if not fut.done():
+            fut.set_result(cancelled)
+        raise
+    finally:
+        if state.get(key) is payload:
+            state[key] = None
+        if invalidate is not None:
+            invalidate()
+
+
+def perm_options(prefix_rule: str | None) -> list[tuple[str, str]]:
+    """(label, answer) pairs of the permission overlay, in digit order: 1 =
+    allow once, 2 = allow for session, 3 = deny — always, so muscle-memory
+    "3" never grants a PERMANENT rule — and 4 = "don't ask again", present
+    only when a safe prefix rule was found."""
+    opts = [("allow once", "allow_once"), ("allow for session", "allow_session"),
+            ("deny", "deny")]
+    if prefix_rule:
+        opts.append((f"don't ask again for {prefix_rule} in this project", "allow_prefix"))
+    return opts
+
+
+def perm_payload(tui: Any, tool: Any, tool_input: dict, prompt_text: str,
+                 fut: Any, diff_rows: list[str] | None = None) -> dict:
+    """The ``pending_perm`` overlay state for one permission prompt: the
+    options (with the prefix-rule offer for a shell command) and, for a file
+    edit, the proposed change pre-rendered as diff rows (``diff_rows`` when
+    the caller already computed them off-thread)."""
+    rule = tui._prefix_rule_for(tool, tool_input)
+    if diff_rows is None:
+        try:
+            diff_rows = tui._perm_diff_rows(tool, tool_input, max_rows=200)
+        except Exception:  # noqa: BLE001 — the one-line prompt still works
+            diff_rows = []
+    return {"future": fut, "prompt": prompt_text, "sel": 0,
+            "prefix_rule": rule, "opts": perm_options(rule), "diff_rows": diff_rows}
+
+
+def perm_diff_visible(rows: list[str], cap: int) -> list[str]:
+    """Fit pre-rendered diff rows into ``cap`` screen rows, ending with a
+    ``… +N lines`` marker when some had to go."""
+    if cap <= 0:
+        return []
+    if len(rows) <= cap:
+        return list(rows)
+    keep = cap - 1
+    # A row already ending in the renderer's own "… +N lines" marker counts
+    # those lines too.
+    hidden = len(rows) - keep
+    m = re.search(r"… \+(\d+) lines", term_caps.strip_ansi(rows[-1]))
+    if m:
+        hidden += int(m.group(1)) - 1
+    return rows[:keep] + [f"\x1b[90m  … +{hidden} lines\x1b[0m"]
 
 
 async def run_fullscreen(tui: Any) -> int:
@@ -429,6 +842,8 @@ async def run_fullscreen(tui: Any) -> int:
     from prompt_toolkit.layout.processors import (  # noqa: PLC0415
         AppendAutoSuggestion,
         ConditionalProcessor,
+        HighlightIncrementalSearchProcessor,
+        HighlightSearchProcessor,
         PasswordProcessor,
     )
     from .types import (  # noqa: PLC0415
@@ -549,15 +964,23 @@ async def run_fullscreen(tui: Any) -> int:
     # The agent's permission layer calls this whenever a decision lands on Ask.
     async def _ask_permission(tool: Any, tool_input: dict, prompt_text: str) -> str:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        state["pending_perm"] = {"future": fut, "prompt": prompt_text, "sel": 0}
-        get_app().invalidate()
+        # Read + diff the target file off the loop: a big file mustn't freeze
+        # the UI (or MCP / background jobs) before the prompt even shows.
         try:
-            return await fut  # yields to the loop; the app keeps redrawing
-        except asyncio.CancelledError:
-            return "deny"
-        finally:
-            state["pending_perm"] = None
-            get_app().invalidate()
+            diff_rows = await tui._perm_diff_rows_async(tool, tool_input, max_rows=200)
+        except Exception:  # noqa: BLE001 — the one-line prompt still works
+            diff_rows = []
+        payload = perm_payload(tui, tool, tool_input, prompt_text, fut, diff_rows)
+        # Ctrl+C here cancels the whole turn (re-raised), not just this call.
+        ans = await await_prompt(
+            state, "pending_perm", payload,
+            fut, lambda: get_app().invalidate(), cancelled="deny")
+        if ans == "allow_prefix":
+            # "don't ask again for <rule> in this project": persist + live rule,
+            # then this call runs once like a plain "yes".
+            tui._remember_prefix_rule(payload["prefix_rule"])
+            return "allow_once"
+        return ans
 
     if tui.agent is not None and tui.agent.permissions is not None:
         tui.agent.permissions.asker = _ask_permission
@@ -569,17 +992,12 @@ async def run_fullscreen(tui: Any) -> int:
         total = len(questions)
         for n, q in enumerate(questions, 1):
             fut: asyncio.Future = asyncio.get_event_loop().create_future()
-            state["pending_question"] = {"q": q, "sel": 0, "selected": set(),
-                                         "typing": False, "future": fut,
-                                         "index": n, "total": total}
-            get_app().invalidate()
-            try:
-                answers = await fut
-            except asyncio.CancelledError:
-                answers = []
-            finally:
-                state["pending_question"] = None
-                get_app().invalidate()
+            # Esc skips a question (answers=[]); Ctrl+C cancels the turn.
+            answers = await await_prompt(
+                state, "pending_question",
+                {"q": q, "sel": 0, "selected": set(), "typing": False,
+                 "future": fut, "index": n, "total": total},
+                fut, lambda: get_app().invalidate(), cancelled=[])
             # Echo the pick into scrollback so the decision stays visible after
             # the overlay closes (the tool-result line alone is easy to miss).
             picked = ", ".join(answers) if answers else "(skipped)"
@@ -647,16 +1065,33 @@ async def run_fullscreen(tui: Any) -> int:
                 return Suggestion(s[len(t):])
             return None
 
-    _kw: dict[str, Any] = {"multiline": False, "auto_suggest": _NextPromptSuggest()}
+    # Multi-line: the box grows with its content (see _input_height). Up/Down
+    # still walk history from the first/last row (Buffer.auto_up/auto_down).
+    _kw: dict[str, Any] = {"multiline": True, "auto_suggest": _NextPromptSuggest()}
     if _hist:
         _kw["history"] = _hist
     input_buffer = Buffer(**_kw)
+    pasted = PastedTexts()  # [Pasted text #N …] tokens → the real text
+    install_shift_enter_sequences()
 
     # Reset the slash-menu selection whenever the line stops being a slash cmd.
     def _on_text(_buf: Any) -> None:
         if not input_buffer.text.startswith("/"):
             state["slash_sel"] = 0
+        if not input_buffer.text:
+            pasted.clear()  # the line was cleared: its paste tokens go with it
     input_buffer.on_text_changed += _on_text
+
+    # Buffer.reset() fires no text-changed event, so the Esc-clear / overlay
+    # paths would otherwise leave stale paste tokens a later literal
+    # "[Pasted text #N …]" could expand back. Every reset drops them.
+    _reset_input_buffer = input_buffer.reset
+
+    def _reset_and_forget_pastes(*args: Any, **kwargs: Any) -> None:
+        pasted.clear()
+        _reset_input_buffer(*args, **kwargs)
+
+    input_buffer.reset = _reset_and_forget_pastes  # type: ignore[method-assign]
 
     # -- live menu: slash commands OR a model picker (a real layout window) ---
 
@@ -675,19 +1110,21 @@ async def run_fullscreen(tui: Any) -> int:
         state["model_cache"] = {"backend": tui.backend, "models": models}
         return models
 
+    def _mention_repaint() -> None:
+        # Runs on the re-walk's worker thread, where get_app() would be a
+        # dummy; the real app's invalidate() is thread-safe.
+        app.invalidate()
+
+    # The repo walk is cached — _file_matches runs several times per frame while
+    # an @-mention token is active (menu_ft, _menu_height, the _menu_open
+    # filter, _has_ghost); only the cheap in-memory rank runs per keystroke.
+    # The index re-walks off-thread on a TTL and after every turn, so files the
+    # agent creates become mentionable.
+    mention_index = MentionFileIndex(on_refresh=_mention_repaint)
+
     def _file_matches(partial: str) -> list[str]:
-        # Cache the repo walk per cwd — it is called several times per frame
-        # while an @-mention token is active (menu_ft, _menu_height, the
-        # _menu_open filter, _has_ghost), and an uncached os.walk each time
-        # lagged input on large trees. Only the cheap in-memory rank runs
-        # per keystroke; the walk happens once per working directory.
         import os  # noqa: PLC0415
-        cwd = os.getcwd()
-        cache = state.get("mention_files")
-        if cache is None or cache[0] != cwd:
-            cache = (cwd, _walk_mention_files(cwd))
-            state["mention_files"] = cache
-        return _rank_mentions(cache[1], partial)
+        return _rank_mentions(mention_index.files(os.getcwd()), partial)
 
     def _menu_options() -> list[tuple[str, str, str]]:
         """Type-ahead menu rows for the in-progress line: ``@``-file-mentions
@@ -695,7 +1132,7 @@ async def run_fullscreen(tui: Any) -> int:
         is a separate state-driven overlay (see picker_ft)."""
         t = input_buffer.text
         # @-file-mention: the last whitespace-delimited token starts with @.
-        word = t.rsplit(" ", 1)[-1] if t else ""
+        word = re.split(r"[ \n]", t)[-1] if t else ""
         if word.startswith("@"):
             return [("file", p, "") for p in _file_matches(word[1:])]
         if not t.startswith("/") or " " in t:
@@ -916,13 +1353,16 @@ async def run_fullscreen(tui: Any) -> int:
         _rank = {pid: i for i, pid in enumerate(_PREF)}
         prov_groups.sort(key=lambda g: _rank.get(g["tab"], len(_PREF)))
         groups.extend(prov_groups)
-        # Pinned self-host affordance — makes "any self-host" reachable without
-        # leaving the picker. Selecting it pre-fills /connect on the input line.
+        # The self-host tab: what you have DEPLOYED (the dashboard's Deploy page
+        # or `deploy up`), then the pinned "any endpoint" affordance. Read from
+        # the local store — no network — so the picker opens instantly; a
+        # scaled-to-zero endpoint is listed too and wakes on the first request.
+        dep_rows = deployment_rows()
         groups.append({
             "tab": "selfhost", "tablabel": "self-host", "enabled": True,
-            "header": "Bring your own endpoint",
-            "rows": [{"kind": "selfhost", "model": "+ self-host / custom endpoint…",
-                      "enabled": True, "provider_id": None, "ctx": ""}]})
+            "header": "Your deployments" if dep_rows else "Bring your own endpoint",
+            "rows": dep_rows + [{"kind": "selfhost", "model": "+ self-host / custom endpoint…",
+                                 "enabled": True, "provider_id": None, "ctx": ""}]})
         return groups
 
     def _dup_in_view(row: dict, tab: str) -> bool:
@@ -1007,10 +1447,10 @@ async def run_fullscreen(tui: Any) -> int:
         groups = _picker_groups()
 
         def _nmodels(g: dict) -> int:
-            return sum(1 for r in g["rows"] if r["kind"] == "model")
+            return sum(1 for r in g["rows"] if r["kind"] in ("model", "deployment"))
 
         def _navailable(g: dict) -> int:
-            return sum(1 for r in g["rows"] if r["kind"] == "model" and r["enabled"])
+            return sum(1 for r in g["rows"] if r["kind"] in ("model", "deployment") and r["enabled"])
 
         # The cross-provider tabs hide rows the ● active group already lists, so
         # their counts must skip the same rows or the header promises models the
@@ -1143,7 +1583,7 @@ async def run_fullscreen(tui: Any) -> int:
                                   "mode": "session"}
         get_app().invalidate()
 
-    _SELECTABLE_KINDS = ("model", "session", "rewind", "selfhost")
+    _SELECTABLE_KINDS = ("model", "session", "rewind", "selfhost", "deployment")
 
     def _refilter_picker() -> None:
         p = state.get("picking_model")
@@ -1350,7 +1790,10 @@ async def run_fullscreen(tui: Any) -> int:
             # needs a pull, a self-host connect, or an API key first. Padlock +
             # dimmed row so it doesn't read as available like the live models.
             not_ready = not it["enabled"]
-            if it.get("local_tag"):
+            if it.get("endpoint"):
+                is_cur = is_cur and (tui.backend or "").rstrip("/") == it["endpoint"].rstrip("/")
+                right, rw = ("● now", 8) if is_cur else (it.get("where") or "self-hosted", 16)
+            elif it.get("local_tag"):
                 right, rw = "● local · free", 15
             elif it.get("pull_tag"):
                 right, rw = f"🔒 pull {it['pull_tag']}", 23
@@ -1502,7 +1945,7 @@ async def run_fullscreen(tui: Any) -> int:
                 # Anthropic OAuth/gateway Bearer token (api_key_for → None): wire the
                 # backend with no api_key so the passthrough uses the env Bearer,
                 # preserving an existing gateway. None → not applicable.
-                wired = catalog.anthropic_bearer_backend(prov, tui.backend)
+                wired = catalog.bearer_backend(prov, tui.backend)
                 if wired is not None:
                     tui.backend, tui.api_key = wired, None
         _old = tui.agent.provider if tui.agent is not None else None
@@ -2652,25 +3095,183 @@ async def run_fullscreen(tui: Any) -> int:
                 n += 1  # the "↓ inspect" hint line
         return Dimension.exact(n)
 
-    _PERM_OPTS = ["allow once", "allow for session", "deny"]
-    _PERM_OPTS_VALUES = ["allow_once", "allow_session", "deny"]
+    # -- live reply preview ------------------------------------------------------
+    # run_iter only yields finalized messages; the turn taps the raw stream
+    # (agent.on_event) into this buffer and a window pinned ABOVE the spinner
+    # shows its last rows as plain text. The finished message prints through
+    # _assist and clears the buffer inside the same run_in_terminal step, so
+    # the preview is replaced by the markdown with no duplicate frame.
+    from .live_preview import LivePreview  # noqa: PLC0415
+    live_preview = LivePreview(max_hz=25.0)
+
+    def _screen_size() -> tuple[int, int]:
+        """(rows, columns) of the app's real output — what the layout must fit
+        in — falling back to the controlling terminal outside a running app."""
+        try:
+            sz = get_app().output.get_size()
+            if sz.rows > 0 and sz.columns > 0:
+                return sz.rows, sz.columns
+        except Exception:  # noqa: BLE001 — no app (tests) / closed output
+            pass
+        size = shutil.get_terminal_size((80, 24))
+        return size.lines, size.columns
+
+    def _searching() -> bool:
+        try:
+            return bool(get_app().layout.is_searching)
+        except Exception:  # noqa: BLE001 — no app (tests)
+            return False
+
+    def _input_height_rows() -> int:
+        """The input box's rows: its wrapped content, 1..INPUT_MAX_ROWS, and
+        never more than the other windows leave (the preview yields first —
+        it's sized from _other_live_heights, which counts these rows)."""
+        lines, columns = _screen_size()
+        want = input_rows(input_buffer.text, columns - 2)
+        return max(1, min(want, lines - _chrome_heights() - 1))
+
+    def _input_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        return Dimension.exact(_input_height_rows())
+
+    def _other_live_heights() -> int:
+        """Rows every OTHER window of the layout takes right now. Every window
+        is Dimension.exact and the app isn't full-screen, so their sum plus the
+        preview must fit the terminal or prompt_toolkit paints "Window too
+        small" — the preview is the one window that yields."""
+        return _chrome_heights() + _input_height_rows()
+
+    def _chrome_heights() -> int:
+        """_other_live_heights minus the input box itself."""
+        def rows_of(fn: Any) -> int:
+            try:
+                d = fn()
+            except Exception:  # noqa: BLE001 — a height probe must never kill a frame
+                return 0
+            return int(getattr(d, "preferred", d) or 0)
+
+        effort = state.get("picking_effort")
+        n = 3  # two rules, the footer
+        n += 1 if _searching() else 0  # the Ctrl+R search toolbar
+        n += (1 + len(effort["items"])) if effort else 0
+        for fn in (_spinner_height, _live_todos_height, _attach_height,
+                   _menu_height, _perm_height, _question_height, _picker_height,
+                   _mcp_view_height, _pull_height, _auth_height,
+                   _agent_inspector_height, _workflows_height, _rail_height):
+            n += rows_of(fn)
+        return n
+
+    def _live_preview_rows() -> list[tuple[str, str]]:
+        if not state["working"] or not live_preview:
+            return []
+        lines, columns = _screen_size()
+        # A third of the screen at most, and never more than what the other
+        # live windows leave (one row of slack, one for the leading blank):
+        # on a short terminal with todos + subagents showing, it shrinks —
+        # to nothing if need be — instead of overflowing the layout.
+        cap = min(lines // 3, lines - _other_live_heights() - 2)
+        if cap <= 0:
+            return []
+        return live_preview.tail(max(columns - 2, 8), cap)
+
+    def live_preview_ft() -> Any:
+        rows = _live_preview_rows()
+        if not rows:
+            return []
+        # Leading blank mirrors _assist's, so the final render lands in place.
+        out: list[tuple[str, str]] = [("", "\n")]
+        for i, (kind, row) in enumerate(rows):
+            style = "italic fg:ansibrightblack" if kind == "thinking" else ""
+            out.append((style, "  " + row))
+            if i < len(rows) - 1:
+                out.append(("", "\n"))
+        # Park the (hidden) cursor on the last row: if the window ever gets
+        # fewer rows than this content, prompt_toolkit scrolls to keep the
+        # newest tokens — the tail — in view rather than the oldest.
+        out.append(("[SetCursorPosition]", ""))
+        return out
+
+    def _live_preview_height() -> Any:
+        from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
+        n = len(_live_preview_rows())
+        return Dimension.exact(n + 1 if n else 0)
+
+    def _live_preview_sink(ev: Any) -> None:
+        """agent.on_event for a fullscreen turn: buffer deltas, repaint
+        throttled (the 8 Hz spinner ticker picks up the trailing tokens)."""
+        from .events import (  # noqa: PLC0415
+            ContentBlockDelta,
+            MessageStart,
+            TextDelta,
+            ThinkingDelta,
+        )
+        if isinstance(ev, MessageStart):
+            # A new model call — or a truncation retry restarting the stream,
+            # whose discarded partial text must disappear.
+            live_preview.reset()
+        elif isinstance(ev, ContentBlockDelta):
+            d = ev.delta
+            if isinstance(d, TextDelta):
+                live_preview.feed_text(d.text)
+            elif isinstance(d, ThinkingDelta):
+                live_preview.feed_thinking(d.thinking)
+            else:
+                return
+        else:
+            return
+        if live_preview.due():
+            try:
+                get_app().invalidate()
+            except Exception:  # noqa: BLE001 — no app (tests)
+                pass
+
+    _perm_sizing = {"on": False}
+
+    def _perm_diff_cap() -> int:
+        """Diff rows the permission overlay may show: at most half the screen,
+        and never more than the rest of the layout leaves. The rest is measured
+        with the overlay counted at its bare 2 rows (head + options) — the
+        re-entrancy flag stops _chrome_heights recursing back in here."""
+        lines, _cols = _screen_size()
+        _perm_sizing["on"] = True
+        try:
+            rest = _chrome_heights() + _input_height_rows()
+        finally:
+            _perm_sizing["on"] = False
+        return max(0, min(lines // 2, lines - rest - 2))
+
+    def _perm_view() -> tuple[list[str], list[str]]:
+        """(visible diff rows, option labels) of the pending permission prompt."""
+        p = state.get("pending_perm")
+        if not p:
+            return [], []
+        return perm_diff_visible(p.get("diff_rows") or [], _perm_diff_cap()), \
+            [label for label, _v in p.get("opts") or perm_options(None)]
 
     def perm_ft() -> Any:
         p = state.get("pending_perm")
         if not p:
             return ANSI("")
-        sel = p["sel"] % 3
+        diff, labels = _perm_view()
+        sel = p["sel"] % len(labels)
         head = f"{_GREEN}Allow?{_RESET} {_DIM}{p['prompt']}{_RESET}"
         row = "   ".join(
             (f"{_HL} {i + 1} {o} {_RESET}" if i == sel
              else f"{_DIM}{i + 1} {o}{_RESET}")
-            for i, o in enumerate(_PERM_OPTS)
+            for i, o in enumerate(labels)
         )
-        return ANSI(head + "\n" + row + f"   {_GREY}(y/s/n · enter){_RESET}")
+        keys = "y/s/p/n" if p.get("prefix_rule") else "y/s/n"
+        body = "".join(r + _RESET + "\n" for r in diff)
+        return ANSI(body + head + "\n" + row + f"   {_GREY}({keys} · enter){_RESET}")
 
     def _perm_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        return Dimension.exact(2) if state.get("pending_perm") else Dimension.exact(0)
+        p = state.get("pending_perm")
+        if not p:
+            return Dimension.exact(0)
+        if _perm_sizing["on"]:
+            return Dimension.exact(2)
+        return Dimension.exact(2 + len(_perm_view()[0]))
 
     def question_ft() -> Any:
         p = state.get("pending_question")
@@ -2703,12 +3304,16 @@ async def run_fullscreen(tui: Any) -> int:
         from .tui import echo_user_message  # noqa: PLC0415
         echo_user_message(tui.console, t)  # grey bar, Claude-Code style
 
+    # Rendering is display-only: a renderer bug falls back to plain text rather
+    # than escaping into _handle, where it would be treated as a failed turn.
     def _assist(m: Any) -> None:
+        from .tui import render_or_plain  # noqa: PLC0415
         tui.console.print()
-        tui._render_assistant(m, ToolUseBlock)
+        render_or_plain(lambda: tui._render_assistant(m, ToolUseBlock), m, tui.console)
 
     def _result(m: Any) -> None:
-        tui._render_tool_results(m, ToolResultBlock)
+        from .tui import render_or_plain  # noqa: PLC0415
+        render_or_plain(lambda: tui._render_tool_results(m, ToolResultBlock), m, tui.console)
 
     # -- live bash output --------------------------------------------------------
     # The foreground bash tool streams its output into a BashTail; a throttled
@@ -2956,8 +3561,13 @@ async def run_fullscreen(tui: Any) -> int:
         tui._turn_active = True
         get_app().invalidate()
         _stream = None
+        _turn_agent = None
+        live_preview.reset()
         try:
             tui._bind_harness_state()
+            # Tap the raw stream so the reply shows up while it generates.
+            _turn_agent = tui.agent
+            _turn_agent.on_event = _live_preview_sink
             _stream = tui.agent.run_iter(tui.messages)
             async for msg in _stream:
                 if isinstance(msg, AssistantMessage):
@@ -2978,7 +3588,11 @@ async def run_fullscreen(tui: Any) -> int:
                                           getattr(tui.agent, "_provider_hint", None))
                         if c:
                             state["session_cost"] += c
-                    await _print(lambda m=msg: _assist(m))
+
+                    def _assist_final(m: Any = msg) -> None:
+                        live_preview.reset()  # the markdown replaces the preview
+                        _assist(m)
+                    await _print(_assist_final)
                     # The spinner names the tool now running and times IT —
                     # "⚒ Run pytest -q (38s)" — until its result lands.
                     calls = [b for b in msg.content if isinstance(b, ToolUseBlock)]
@@ -3007,16 +3621,29 @@ async def run_fullscreen(tui: Any) -> int:
                 goal_note = " · autopilot paused (/goal resume to continue)"
             from .agent import close_open_tool_calls  # noqa: PLC0415
             close_open_tool_calls(tui.messages)
-            await _print(lambda d=dropped, gn=goal_note: tui.console.print(
-                "[ansibrightblack](interrupted — you can continue or redirect"
-                + (f" · {d} queued message{'s' if d != 1 else ''} dropped" if d else "")
-                + gn + ")[/]"))
+
+            def _show_interrupted(d: int = dropped, gn: str = goal_note) -> None:
+                live_preview.reset()  # the half-streamed reply goes with the turn
+                tui.console.print(
+                    "[ansibrightblack](interrupted — you can continue or redirect"
+                    + (f" · {d} queued message{'s' if d != 1 else ''} dropped" if d else "")
+                    + gn + ")[/]")
+            await _print(_show_interrupted)
         except Exception as e:  # noqa: BLE001
-            del tui.messages[base:]
+            # Like an interrupt: keep the tool rounds that already ran (their
+            # edits are on disk — dropping them leaves the model blind to its own
+            # changes) and close any open tool_use. A turn that failed before
+            # any reply is rolled back so a retry doesn't duplicate the prompt.
+            from .tui import settle_failed_turn  # noqa: PLC0415
+            settle_failed_turn(tui.messages, base)
 
             def _show_err(e: Any = e) -> None:
+                live_preview.reset()
                 tui._print_error(e)  # one boxed hint with the fix — never a traceback
-            await _print(_show_err)
+            try:
+                await _print(_show_err)
+            except Exception:  # noqa: BLE001 — the error box must not crash the turn driver
+                pass
         finally:
             # Close the stream in THIS task. run_iter holds the tool executor's
             # task group open across its yields, so letting the event loop
@@ -3024,6 +3651,9 @@ async def run_fullscreen(tui: Any) -> int:
             from .agent import aclose_stream  # noqa: PLC0415
             if _stream is not None:
                 await aclose_stream(_stream)
+            if _turn_agent is not None and _turn_agent.on_event is _live_preview_sink:
+                _turn_agent.on_event = None
+            live_preview.reset()
             state["tool_inflight"] = None
             if state.get("bash_tail") is not None:   # interrupted mid-command
                 await _print(_bash_tail_finish)
@@ -3031,6 +3661,7 @@ async def run_fullscreen(tui: Any) -> int:
             tui._persist_messages(base)  # save this turn for /resume + /branch
             elapsed = time.monotonic() - state.get("started", time.monotonic())
             state.update(working=False, task=None)
+            mention_index.invalidate()  # the turn may have created/removed files
             from .tui import notify_turn_done  # noqa: PLC0415
             notify_turn_done(elapsed)  # bell after a long turn (settings: notifChannel)
             get_app().invalidate()
@@ -3438,8 +4069,13 @@ async def run_fullscreen(tui: Any) -> int:
             await _print(lambda: tui.console.print(
                 "[ansibrightblack](compacting the conversation…)[/]"))
             try:
+                try:
+                    window = int(tui.agent._effective_context_window() or 0)
+                except Exception:  # noqa: BLE001 — unknown window: fixed cap
+                    window = 0
                 new_msgs, note = await run_manual_compaction(
-                    tui.messages, tui.agent._summarize, focus=arg.strip())
+                    tui.messages, tui.agent._summarize, focus=arg.strip(),
+                    context_window=window)
                 tui.messages[:] = new_msgs
             except Exception as e:  # noqa: BLE001
                 note = f"compaction failed: {e}"
@@ -4057,7 +4693,7 @@ async def run_fullscreen(tui: Any) -> int:
 
     kb = KeyBindings()
 
-    from prompt_toolkit.filters import Condition  # noqa: PLC0415
+    from prompt_toolkit.filters import Condition, is_searching  # noqa: PLC0415
 
     _menu_open = Condition(lambda: bool(_menu_options()))
     _perm_open = Condition(lambda: state.get("pending_perm") is not None)
@@ -4324,11 +4960,6 @@ async def run_fullscreen(tui: Any) -> int:
         p["sel"] = (p["sel"] + 1) % len(p["items"])
         event.app.invalidate()
 
-    @kb.add("escape", filter=_effort_open)
-    def _(event: Any) -> None:
-        state["picking_effort"] = None
-        event.app.invalidate()
-
     @kb.add("enter", filter=_effort_open, eager=True)
     def _(event: Any) -> None:
         p = state.get("picking_effort")
@@ -4454,9 +5085,8 @@ async def run_fullscreen(tui: Any) -> int:
             return True
         if kind == "file":
             # Replace the trailing @<partial> token with the chosen path.
-            t = input_buffer.text
-            idx = t.rfind("@")
-            new = (t[:idx] if idx >= 0 else t) + value + " "
+            # Keep the "@" — without it resolve_file_mentions never attaches it.
+            new = mention_completion(input_buffer.text, value)
             input_buffer.text = new
             input_buffer.cursor_position = len(new)
             state["slash_sel"] = 0
@@ -4476,21 +5106,37 @@ async def run_fullscreen(tui: Any) -> int:
         if p and not p["future"].done():
             p["future"].set_result(choice)
 
-    @kb.add("1", filter=_perm_open)
+    def _perm_opt_values() -> list[str]:
+        p = state.get("pending_perm") or {}
+        return [v for _label, v in (p.get("opts") or perm_options(None))]
+
     @kb.add("y", filter=_perm_open)
     def _(event: Any) -> None:
         _resolve_perm("allow_once")
 
-    @kb.add("2", filter=_perm_open)
     @kb.add("s", filter=_perm_open)
     def _(event: Any) -> None:
         _resolve_perm("allow_session")
 
-    @kb.add("3", filter=_perm_open)
+    @kb.add("p", filter=_perm_open)
+    def _(event: Any) -> None:
+        # Only offered for a shell command with a safe prefix rule.
+        if (state.get("pending_perm") or {}).get("prefix_rule"):
+            _resolve_perm("allow_prefix")
+
     @kb.add("n", filter=_perm_open)
     @kb.add("d", filter=_perm_open)
     def _(event: Any) -> None:
         _resolve_perm("deny")
+
+    # Digits pick by position; perm_options fixes that order (3 is always
+    # deny, the permanent prefix rule is 4) so a digit's meaning never shifts.
+    for _digit in "1234":
+        @kb.add(_digit, filter=_perm_open)
+        def _(event: Any, _i: int = int(_digit) - 1) -> None:
+            vals = _perm_opt_values()
+            if _i < len(vals):
+                _resolve_perm(vals[_i])
 
     @kb.add("up", filter=_perm_open)
     def _(event: Any) -> None:
@@ -4502,7 +5148,7 @@ async def run_fullscreen(tui: Any) -> int:
         state["pending_perm"]["sel"] += 1
         event.app.invalidate()
 
-    @kb.add("down", filter=_can_enter_agents, eager=True)
+    @kb.add("down", filter=_can_enter_agents & ~is_searching, eager=True)
     def _(event: Any) -> None:
         # ↓ from an empty prompt steps into the live subagent list.
         _open_agent_inspector()
@@ -4681,7 +5327,8 @@ async def run_fullscreen(tui: Any) -> int:
             return
         # A permission prompt steals Enter: submit the highlighted choice.
         if state.get("pending_perm") is not None:
-            _resolve_perm(_PERM_OPTS_VALUES[state["pending_perm"]["sel"] % 3])
+            vals = _perm_opt_values()
+            _resolve_perm(vals[state["pending_perm"]["sel"] % len(vals)])
             return
         # An AskUserQuestion picker steals Enter.
         pq = state.get("pending_question")
@@ -4800,6 +5447,23 @@ async def run_fullscreen(tui: Any) -> int:
                     "self-host: /connect <url> <model>  ·  e.g. /connect http://localhost:8000/v1 my-model"))
                 event.app.invalidate()
                 return
+            if it and it["kind"] == "deployment":
+                # A deployment is a /connect you already made: its endpoint and
+                # the name of its saved key are on the row.
+                async def _use_deployment(row: dict = it) -> None:
+                    import os as _os  # noqa: PLC0415
+
+                    try:
+                        from .deploy import store as _dstore  # noqa: PLC0415
+                        _dstore.load_credentials_into_env()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    key = _os.environ.get(row.get("auth_env") or "") or tui.api_key or "sk-noauth"
+                    await tui._apply(row["model"], row["endpoint"], key,
+                                     f" [ansibrightblack]· self-hosted on {row.get('where', '').split(' · ')[0]}[/]")
+                event.app.create_background_task(_use_deployment())
+                event.app.invalidate()
+                return
             if it and it["kind"] == "rewind":
                 idx = it["msg_index"]
                 tui.messages = tui.messages[:idx]
@@ -4881,7 +5545,16 @@ async def run_fullscreen(tui: Any) -> int:
         # Menu open → act on the highlighted row (switch model / fill command).
         if _accept_menu(event):
             return
-        text = input_buffer.text.strip()
+        # A trailing "\" continues the prompt on a new line instead.
+        if continue_line(input_buffer):
+            return
+        # Collapsed pastes go out (and into history) as the real text.
+        raw = input_buffer.text
+        full = pasted.expand(raw)
+        pasted.clear()
+        if full != raw:
+            input_buffer.text = full
+        text = full.strip()
         # Record the submitted line in the persistent history (up-arrow recall
         # across sessions). The API-key path above resets WITHOUT this — a
         # pasted secret must never land in ~/.mantis-agent/history.
@@ -4933,10 +5606,34 @@ async def run_fullscreen(tui: Any) -> int:
         if not state["working"]:
             event.app.exit(result=0)
 
-    @kb.add("escape", eager=True)
+    def _esc_claimed() -> bool:
+        # Something the app-level Esc handler must answer even in vi insert
+        # mode (see app_escape_filter): an overlay, a prompt, a running turn.
+        return bool(
+            state["working"] or state.get("dash_live")
+            or any(state.get(k) is not None for k in (
+                "agent_inspector", "mcp_view", "pulling", "workflows", "picking_effort",
+                "awaiting_key", "picking_model", "pending_perm", "pending_question")))
+
+    def _note_vi_esc() -> None:
+        state["last_esc"] = time.monotonic()
+
+    add_vi_insert_escape(kb, _esc_claimed, _note_vi_esc)
+
+    # NOT eager: Alt/Option combos (Alt+B/F word moves, Option+Backspace) arrive
+    # as ESC + key, and an eager Esc fired on the ESC and wiped the line.
+    # tune_escape_timing (below, on the app) keeps a lone Esc instant.
+    @kb.add("escape", filter=app_escape_filter(_esc_claimed))
     def _(event: Any) -> None:
         if _stop_dash_live():
             event.app.create_background_task(_announce("dash live stopped"))
+            return
+        # Overlays with no Esc binding of their own close here: a non-eager
+        # overlay Esc binding would be shadowed (prompt_toolkit runs the LAST
+        # registered match — this one).
+        if state.get("picking_effort") is not None:
+            state["picking_effort"] = None
+            event.app.invalidate()
             return
         if state.get("agent_inspector") is not None:
             state["agent_inspector"] = None
@@ -5030,6 +5727,8 @@ async def run_fullscreen(tui: Any) -> int:
                 task.cancel()
             return
         elif action == "clear_input":
+            if getattr(tui, "vim_mode", False):
+                return                    # vi normal mode: Esc never clears the line
             input_buffer.reset()          # idle: Esc clears a half-typed line
         else:
             return
@@ -5058,11 +5757,38 @@ async def run_fullscreen(tui: Any) -> int:
             input_buffer.cursor_right()
         event.app.invalidate()
 
+    # Newline without submitting: Alt+Enter, Ctrl+J, Shift+Enter (CSI-u /
+    # modifyOtherKeys terminals). "\"+Enter is handled in the Enter binding.
+    add_newline_keys(kb)
+
+    @kb.add("c-o")
+    def _(event: Any) -> None:
+        # Ctrl+O: the "… +N more lines (ctrl+o to expand)" hints point here —
+        # the whole conversation, every tool output and thinking block in full,
+        # through the system pager (q closes it and returns to the prompt).
+        # Mid-turn the synchronous pager would freeze the loop (stream, spinner,
+        # job monitors) until it closes — so it waits for the turn to end.
+        if state.get("working"):
+            event.app.create_background_task(
+                _announce("ctrl+o: the full transcript opens once this turn finishes")
+            )
+            return
+        event.app.create_background_task(_print(tui._show_transcript))
+
+    # Ctrl+R: reverse-search prompt history (the toolbar under the input).
+    add_history_search_keys(kb)
+
     @kb.add("c-x", "c-e")
     def _(event: Any) -> None:
         # Compose a long / multi-line prompt in $EDITOR (like the shell's C-x C-e).
         try:
-            input_buffer.open_in_editor(event.app)
+            # Expand collapsed pastes so the editor shows (and edits) the real
+            # text; no validate_and_handle — the edited text stays in the box
+            # for Enter (there is no accept_handler, so handling would drop it).
+            if pasted:
+                input_buffer.text = pasted.expand(input_buffer.text)
+                pasted.clear()
+            input_buffer.open_in_editor()
         except Exception:  # noqa: BLE001 — no editor / spawn failed: ignore
             pass
 
@@ -5109,11 +5835,30 @@ async def run_fullscreen(tui: Any) -> int:
                 input_buffer.insert_text(placeholder + " ")
                 event.app.invalidate()
                 return
+        # A big paste collapses to a token (expanded on submit) so it doesn't
+        # bury the prompt — but not where the line is read raw: an /mcp config
+        # paste, a masked key, a typed answer to a question.
+        if PastedTexts.should_collapse(data) and not any(
+                state.get(k) is not None
+                for k in ("mcp_view", "awaiting_key", "pending_question")):
+            input_buffer.insert_text(pasted.add(data))
+            event.app.invalidate()
+            return
         input_buffer.insert_text(data)
 
+    from prompt_toolkit.widgets import SearchToolbar  # noqa: PLC0415
+
+    search_toolbar = SearchToolbar(
+        text_if_not_searching="", ignore_case=True,
+        forward_search_prompt="search history: ",
+        backward_search_prompt="search history: ")
     input_window = Window(
         BufferControl(
             buffer=input_buffer,
+            search_buffer_control=search_toolbar.control,
+            # Ctrl+R shows the matching history entry IN the input as you type
+            # (prompt_toolkit's default is to reveal it only on accept).
+            preview_search=True,
             # Mask the line (••••) ONLY while pasting an API key for a locked
             # provider — normal chat input stays visible.
             input_processors=[
@@ -5122,22 +5867,34 @@ async def run_fullscreen(tui: Any) -> int:
                     Condition(lambda: state.get("awaiting_key") is not None),
                 ),
                 AppendAutoSuggestion(),  # dim next-prompt ghost text
+                # A custom processor list drops prompt_toolkit's defaults —
+                # put back the Ctrl+R match highlight.
+                HighlightIncrementalSearchProcessor(),
+                HighlightSearchProcessor(),
             ],
         ),
-        height=1, wrap_lines=False,
+        height=_input_height, wrap_lines=True,
     )
     layout = Layout(
         HSplit([
             # Working status + live checklist sit ABOVE the input (the reply
             # streams into scrollback right on top of them); the prompt stays
             # anchored below, always ready for the next message.
+            # Live reply preview (streamed text/thinking tail) — height 0
+            # unless a turn is streaming; cleared when the message finalizes.
+            Window(FormattedTextControl(live_preview_ft, show_cursor=False),
+                   height=_live_preview_height,
+                   wrap_lines=False),
             Window(FormattedTextControl(spinner_ft), height=_spinner_height),
             Window(FormattedTextControl(live_todos_ft), height=_live_todos_height),
             # Staged attachments / "image on the clipboard" offer — height 0
             # when there's neither.
             Window(FormattedTextControl(attach_ft), height=_attach_height),
             Window(FormattedTextControl(rule_ft), height=1),
-            VSplit([Window(FormattedTextControl(prompt_ft), width=2), input_window], height=1),
+            VSplit([Window(FormattedTextControl(prompt_ft), width=2), input_window],
+                   height=_input_height),
+            # Ctrl+R history search — height 0 unless a search is open.
+            HSplit([search_toolbar], height=lambda: 1 if _searching() else 0),
             Window(FormattedTextControl(rule_ft), height=1),
             # The slash-command menu lives here — its height collapses to 0 when
             # the line isn't a slash command, so the footer normally hugs the rule.
@@ -5173,6 +5930,7 @@ async def run_fullscreen(tui: Any) -> int:
         layout=layout, key_bindings=kb, full_screen=False, erase_when_done=True,
         editing_mode=EditingMode.VI if getattr(tui, "vim_mode", False) else EditingMode.EMACS,
     )
+    tune_escape_timing(app)
 
     async def _animate() -> None:
         while True:
@@ -5222,8 +5980,11 @@ async def run_fullscreen(tui: Any) -> int:
             summary = await tui._connect_mcp()
         except Exception:  # noqa: BLE001 — MCP must never take the UI down
             return
-        if summary:
-            await _announce(f"mcp: {summary}")
+        from .tui import mcp_attention  # noqa: PLC0415
+
+        note = mcp_attention(summary)
+        if note:          # only a failed or withheld server is worth a line
+            await _announce(f"mcp: {note}")
 
     # Route HTTP-retry notices into the spinner line instead of raw log lines
     # (which tear through the prompt frame). The note self-expires.

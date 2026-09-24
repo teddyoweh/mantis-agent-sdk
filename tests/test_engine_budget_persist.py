@@ -114,7 +114,10 @@ def test_wrapup_reminder_is_not_followed_by_a_persist_nudge() -> None:
     assert nudges_after == [], "persist re-drove a natural stop AFTER telling the model to wrap up"
     # The run honoured its own reminder: it ended at the step cap without an extension.
     assert prov.n == 3
-    assert any(_TODO_SENTINEL in str(m.content) for m in msgs if getattr(m, "isMeta", False))
+    # The todo reminder is a per-request tail projection (prefix-cache safe),
+    # not persisted history — it must reach every provider request instead.
+    assert not any(_TODO_SENTINEL in str(m.content) for m in msgs if getattr(m, "isMeta", False))
+    assert all(_TODO_SENTINEL in str(c["messages"][-1].content) for c in prov.calls)
 
 
 def _query_result(provider: Any, **opts: Any) -> Any:

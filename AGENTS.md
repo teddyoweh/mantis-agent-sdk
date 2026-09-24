@@ -70,25 +70,48 @@ What the loop guarantees (there are tests for each — `tests/test_engine_*.py`)
 
 **True remaining gaps** (verified, not folklore):
 
-1. `BackendCapability` has no structured-output flag; the engine reads an optional
-   `structured_output` attribute (`"json_schema" | "json_object" | "none"`) and
-   otherwise falls back to a provider-name rule (only Anthropic passthrough is
-   forced to instruct mode). Hosted `json_object`-only backends (DeepSeek, Moonshot)
-   still get the `json_schema` envelope until the table carries the flag.
-2. The OpenAI-compat *native* translator (`_translate_native`) doesn't peel inline
-   `<think>` tags — only the prompt-engineered path does. The engine-level split
-   above is the net; per-token streaming UIs still see the raw tags mid-stream.
-3. Two turn caps with different semantics: `max_steps`/`max_turns` is a clean stop
+1. Models missing from `capabilities.py` get the tag-stripping `ThinkingParser` only
+   on the prompt-engineered path; the native translator peels `<think>` only when
+   the capability says the model emits inline thinking. The engine-level split is
+   the net; per-token streaming UIs may still see raw tags for unlisted models.
+2. Two turn caps with different semantics: `max_steps`/`max_turns` is a clean stop
    (final-turn wrap-up, then break); an explicit `Budget(max_turns=N)` is a hard
    `BudgetExceededError` after the Nth turn (pinned by `test_budget_wrapup.py`).
-4. The `Stop` hook fires on a natural stop and on cancellation, **not** on a
+3. The `Stop` hook fires on a natural stop and on cancellation, **not** on a
    step-cap cutoff; `HookDispatcher.dispatch_run_end` (`StopFailure`) exists but
    the loop never calls it.
-5. `Agent.cancel()` is one-way — `cancellation_signal` is never reset, so a
+4. `Agent.cancel()` is one-way — `cancellation_signal` is never reset, so a
    cancelled Agent can't run again (the terminal builds a fresh one).
-6. Headless `Ask` in `mode="auto"` is treated as Allow at the loop layer
-   (`_preflight_call`); every other headless Ask already denies.
-7. The TUI default permission mode is allow-all (Tier 0 on the roadmap).
+5. Headless implicit `Ask` (default / `auto` mode, no approver) is Allow for
+   non-dangerous calls by design (pinned by `test_permission_shell.py`); explicit
+   ask rules and the danger list deny headless.
+6. `ClaudeSDKClient` keeps history but rebuilds Agent/provider/MCP each response
+   (only the HTTP client is pooled via `http.sharing_http_clients()`).
+7. Classic REPL (`MANTIS_CLASSIC=1`): Ctrl+C mid-turn arrives as `CancelledError`
+   under `anyio.run`, so the `KeyboardInterrupt` branch is dead and the turn isn't kept.
+
+**Harness invariants added in the Sept 2026 pass** (tests pin each):
+
+- **Tool ordering**: a non-concurrency-safe call is a barrier (waits for earlier
+  calls; later calls wait for it). `is_concurrency_safe` defaults to `is_read_only`;
+  MCP tools are unsafe unless `readOnlyHint: true` (`test_executor_ordering.py`).
+- **Truncated streams** keep closed blocks as a `stop_reason="truncated"` turn,
+  answer already-dispatched tools, and continue (`test_engine_truncation.py`).
+- **Prefix-cache stability**: persisted history is append-only; todo / task-evidence
+  / recall reminders are per-request `TailProjection` messages; the Anthropic cache
+  breakpoint skips them (`test_engine_prefix_cache.py`). Don't mutate mid-history.
+- **Sizing is window-aware**: compaction thresholds exclude prompt overhead, the
+  summarizer is sized to the window, tool-result caps scale with the message budget
+  (`result_char_budget_for`), and small/prompt-path models get compact tool
+  descriptions (memoized per model so the prefix doesn't flip).
+- **Arg aliases are normalized BEFORE permissions/hooks** (`normalize_tool_input`) —
+  never let a permission check see a different input than the one executed.
+- **Retry authority**: transport retries pre-body failures and tags them
+  (`retried_by_transport`); the engine never re-retries those. Streams have a
+  first-byte budget (900s localhost) and an idle watchdog.
+- **Read-only bash** is auto-allowed via `permission_shell.classify_bash_readonly`
+  (conservative allowlist, in-tree paths only). Any change there needs a
+  security-review pass — see `test_permission_readonly_bash.py`.
 
 ## Conventions & gotchas (don't trip on these)
 
@@ -105,8 +128,9 @@ What the loop guarantees (there are tests for each — `tests/test_engine_*.py`)
 - **Diffs**: `_render_diff` renders full-width green/red rows with syntax-highlighted
   code (token bg stripped, row bg layered) on Claude's exact palette
   (`rgb(105,219,124)` / `rgb(255,168,180)`). Lang from file extension.
-- **Permissions are real at the engine** (`agent.py` checks before dispatch) but the
-  **TUI default mode is allow-all** — fixing that is Tier 0 (safety). See roadmap.
+- **Permissions are real at the engine** (`agent.py` checks before dispatch), and the
+  TUI default mode is `default` (asks before mutating tools; read-only bash is
+  auto-allowed).
 
 ## Reference source
 

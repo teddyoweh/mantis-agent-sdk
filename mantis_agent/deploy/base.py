@@ -219,7 +219,7 @@ class DeployProvider(Protocol):
     raises :class:`NotSupported` — callers render that, they don't crash.
     """
 
-    id: str                      # "runpod", "hf", "modal", "deepinfra", "baseten", "vastai"
+    id: str                      # "runpod", "hf", "modal", "deepinfra", "baseten", "vastai", "fireworks-dedicated"
     display_name: str            # "RunPod Serverless"
     credential_fields: tuple[CredentialField, ...]
     engines: tuple[Engine, ...]  # what deploy() accepts

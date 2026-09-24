@@ -359,3 +359,14 @@ def test_request_timeout_marks_unresponsive_server_failed(tmp_path) -> None:
         assert "mute" in mgr.errors
         await mgr.aclose()
     anyio.run(go)
+
+
+def test_launch_only_mentions_mcp_servers_that_need_attention() -> None:
+    """Connected servers are not news on every launch; a failed or withheld one is."""
+    from mantis_agent.tui import mcp_attention
+
+    assert mcp_attention("exa (3 tools) · universe (27 tools)") is None
+    assert mcp_attention("exa (3 tools) · slack ✗") == "slack ✗"
+    assert mcp_attention("github (5 tools) · 1 project server(s) withheld (untrusted)") == \
+        "1 project server(s) withheld (untrusted)"
+    assert mcp_attention(None) is None and mcp_attention("") is None

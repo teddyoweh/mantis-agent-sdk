@@ -121,18 +121,62 @@ def test_skills_over_http_and_the_page(home):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    for marker in ("skillGlyph", "hashStr", "openSkillSheet", "openSkillEditor", "SKILL_FILTERS", "skillMatches",
-                   "sk-grid", "skcard", "sglyph", "sk-split", "sk-prev", "slugify", "SKILL_TOOLS",
-                   "Always loaded", "On demand", "This project", "Allowed tools", "New skill",
-                   'pageHead(pad, "Skills"'):
+    # The Notion-style workspace (requested redesign): a page list beside the
+    # open page, edited in place, autosaved — no modal form, no Save button.
+    for marker in ("skillGlyph", "hashStr", "skillMatches", "slugify", "SKILL_TOOLS",
+                   "paintSkillList", "paintSkillDoc", "skillProps", "splitBlocks", "joinBlocks", "editBlock",
+                   "saveSkillNow", "touchSkill", "newSkill", "Always loaded", "On demand", "This project",
+                   'pageHead(pad, "Skills"', "skx-list", "skx-doc"):
         assert marker in page, marker
     js = page.split("<script>")[1]
-    # the editor validates the slug and shows the path before writing
-    ed = js[js.index("function openSkillEditor("):js.index("function fieldWrap(")]
-    assert "has no slug" in ed and "SKILL.md" in ed and "scopeSel.value" in ed
-    # the card grid is responsive and the preview stacks on narrow screens
-    assert "repeat(auto-fill, minmax(280px, 1fr))" in page
-    assert ".sk-split, .sk-frow { grid-template-columns: 1fr; }" in page
+    for gone in ("function openSkillEditor(", "function openSkillSheet("):
+        assert gone not in js, gone
+    skills_js = js[js.index("const SKW = {"):js.index("function fieldWrap(")]
+    assert '"Save changes"' not in skills_js and "showModal(" not in skills_js
+    # title and description are edited where they are read
+    doc = js[js.index("function paintSkillDoc("):js.index("function skillProps(")]
+    assert 'contentEditable = "plaintext-only"' in doc and 'dataset.ph = "Untitled"' in doc
+    # every edit autosaves after a pause; a draft saves only once it has a title
+    assert "SKW.timer = setTimeout(saveSkillNow, 700);" in js
+    assert 'Give it a title to save' in js
+    # a new draft never overwrites an existing skill of the same name
+    assert "slug: SKW.draft ? undefined : d.slug" in js and "That name is taken" in js
+    # blocks: Enter splits, "/" opens the block menu, Backspace merges, focus is immediate
+    ed = js[js.index("function editBlock("):]
+    assert "SLASH.filter" in ed and 'e.key === "Backspace" && s === 0' in ed
+    assert "grow(); ta.focus();" in ed and "setTimeout(() => {\n    grow(); ta.focus();" not in ed
+    # the two panes stack on narrow screens
+    assert ".skx { grid-template-columns: minmax(0, 1fr); }" in page
+
+
+def test_block_split_round_trips_markdown():
+    """Cutting a body into blocks and joining it back never loses a line —
+    fences stay whole, headings stand alone, lists stay together."""
+    import subprocess
+
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    fns = js[js.index("function splitBlocks("):js.index("function paintBlocks(")]
+    prog = fns + r"""
+const src = "# Title\nintro line\n\n- a\n- b\n\n```bash\necho 1\n\necho 2\n```\n\n## Next\n> quote";
+const b = splitBlocks(src);
+if (JSON.stringify(b) !== JSON.stringify(["# Title","intro line","- a\n- b","```bash\necho 1\n\necho 2\n```","## Next","> quote"])) { console.log("SPLIT " + JSON.stringify(b)); process.exit(1); }
+if (joinBlocks(b) !== src.replace("# Title\nintro", "# Title\n\nintro").replace("## Next\n>", "## Next\n\n>")) { console.log("JOIN " + JSON.stringify(joinBlocks(b))); process.exit(1); }
+if (blockKind("```x") !== "code" || blockKind("## h") !== "h2" || blockKind("1. x") !== "list") { console.log("KIND"); process.exit(1); }
+console.log("OK");
+"""
+    r = subprocess.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+    assert r.stdout.startswith("OK"), (r.stdout, r.stderr[:400])
+
+
+def test_creating_a_skill_never_overwrites_one(home):
+    from mantis_agent import serve
+
+    assert serve.add_skill("global", "Deploy", "d", "original")["ok"]
+    r = serve.add_skill("global", "Deploy", "d", "clobber")
+    assert r["ok"] is False and r["exists"] is True
+    assert "original" in serve.skills_state()["global"][0]["body"]
 
 
 def test_identity_glyph_is_deterministic_and_self_contained():

@@ -30,7 +30,12 @@ from .tool_search import (
     make_tool_search,
     search_deferred,
 )
+from .short_descriptions import apply_short_descriptions
 from .web import WebFetch, WebSearch, aclose_builtin_clients, web_fetch, web_search
+
+# Compact descriptions for small-context / prompt-engineered models; the tools
+# are module-level singletons, so this runs once, before anyone copies them.
+apply_short_descriptions((*CODING_TOOLS, web_fetch, web_search))
 
 __all__ = [
     "CODING_TOOLS",

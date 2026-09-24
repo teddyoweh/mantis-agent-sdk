@@ -22,6 +22,28 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="pty is POSIX-only")
 
 
+def _keystrokes(s: str) -> list[str]:
+    """Split ``s`` into keystrokes: one char each, except an escape sequence
+    (``ESC [ … final`` or ESC + one char), which a real terminal writes in one
+    go. Dribbling it out a byte at a time let the app's short ESC timeout see a
+    lone Esc followed by ``[B`` instead of ↓."""
+    out: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\x1b" and i + 1 < len(s):
+            j = i + 2
+            if s[i + 1] in "[O":
+                while j < len(s) and not ("@" <= s[j] <= "~"):
+                    j += 1
+                j += 1
+            out.append(s[i:j])
+            i = j
+        else:
+            out.append(s[i])
+            i += 1
+    return out
+
+
 class Term:
     """Minimal expect-style driver for one mantis process on a pty."""
 
@@ -120,8 +142,8 @@ class Term:
         containing text+\r can be treated as a PASTE by prompt_toolkit (the
         enter becomes literal instead of submit) — the source of pure flake."""
         self.pump(0.2)
-        for ch in s:
-            os.write(self.master, ch.encode())
+        for key in _keystrokes(s):
+            os.write(self.master, key.encode())
             self.pump(0.02)
         self.pump(0.2)
 
@@ -236,7 +258,8 @@ def test_mcp_view_inspects_config_masks_secrets_and_adds_json(
 
     term = term_with_mcp
     term.ready()
-    term.expect("mcp:", timeout=40.0)          # boot connect settled
+    # a clean connect prints nothing now; give the background connect a moment
+    term.pump(3.0)
     term.send_until("/mcp\r", "MCP servers")
     term.expect("MCP servers")                 # list header with counts
     # Sync on the list FOOTER, not on a server name: "alpha"/"beta" are already
@@ -606,3 +629,52 @@ def test_the_active_providers_tab_does_not_disappear(tmp_path) -> None:
         if t.proc.poll() is None:
             t.proc.kill()
             t.close()
+
+
+def _split_arrow_exits(tmp_path, env_extra: dict | None = None) -> bool:
+    """Type ``/exit``, then a ↓ whose ESC and ``[B`` arrive ~45ms apart (a
+    laggy SSH link), then Enter. True when the app exited — the arrow parsed as
+    one key. A split arrow instead reads as a lone Esc (clears the line) plus
+    literal ``[B``, so Enter submits ``[B`` as a message and the app stays up."""
+    t = Term(str(tmp_path / "home"), str(tmp_path), env_extra=env_extra)
+    try:
+        t.ready()
+        t.send("/exit")
+        os.write(t.master, b"\x1b")
+        time.sleep(0.045)              # no pump: its select can overshoot the gap
+        os.write(t.master, b"[B")
+        t.pump(0.5)
+        t.send("\r")
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and t.proc.poll() is None:
+            t.pump(0.2)
+        return t.proc.poll() is not None
+    finally:
+        if t.proc.poll() is None:
+            t.proc.kill()
+        t.close()
+
+
+def test_a_split_arrow_key_is_not_a_lone_esc(tmp_path) -> None:
+    assert _split_arrow_exits(tmp_path, {"MANTIS_ESC_TIMEOUT": ""})
+
+
+def test_split_arrow_detector_is_sensitive(tmp_path) -> None:
+    # Proves the test above can fail: with the old 20–50ms parser wait the same
+    # split arrow is a lone Esc and the line is wiped.
+    assert not _split_arrow_exits(tmp_path, {"MANTIS_ESC_TIMEOUT": "0.02"})
+
+
+def test_esc_closes_the_effort_picker(term) -> None:
+    """The effort picker's own non-eager Esc was shadowed by the app-level one
+    (prompt_toolkit runs the last registered match), so Esc left it open and
+    the next Enter picked an effort instead of submitting the line."""
+    term.ready()
+    term.send("/effort\r")
+    term.expect("Select effort")
+    term.esc()
+    term.send("/exit\r")               # with the picker still open Enter is eaten
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and term.proc.poll() is None:
+        term.pump(0.2)
+    assert term.proc.poll() is not None, term.buf[-400:]

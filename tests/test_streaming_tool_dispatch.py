@@ -176,6 +176,8 @@ class _GatedTool:
                 "additionalProperties": True,
             },
             fn=_body,
+            # Exercises overlap, so opt in: writers serialize by default.
+            is_concurrency_safe=True,
         )
 
 
@@ -777,13 +779,13 @@ def test_results_preserve_stream_order_even_when_tools_finish_out_of_order():
 
     a_done = anyio.Event()
 
-    @tool
+    @tool(is_concurrency_safe=True)
     async def slow(value: int) -> str:
         """Wait until B has finished, then return."""
         await a_done.wait()
         return f"slow:{value}"
 
-    @tool
+    @tool(is_concurrency_safe=True)
     async def fast(value: int) -> str:
         """Mark A free to finish, then return."""
         a_done.set()

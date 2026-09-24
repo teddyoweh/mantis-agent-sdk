@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 
 # One module per provider; each is imported for its registration side effect.
 # A broken/missing optional module must not take the others down.
-_MODULES = ("runpod", "hf_endpoints", "modal_deploy", "deepinfra", "baseten", "vastai")
+_MODULES = ("runpod", "hf_endpoints", "modal_deploy", "deepinfra", "baseten", "vastai", "fireworks_dedicated")
 
 for _name in _MODULES:
     try:

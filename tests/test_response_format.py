@@ -544,7 +544,7 @@ class TestOllamaWire:
         seen: list[httpx.Request] = []
         handler = _record_handler(seen, _OLLAMA_NDJSON_BODY, "application/x-ndjson")
 
-        p = OllamaProvider(base_url="http://stub:11434")
+        p = OllamaProvider(base_url="http://stub:11434", probe_model_info=False)
         await p.client.aclose()
         p.client = httpx.AsyncClient(
             base_url="http://stub:11434",
@@ -576,7 +576,7 @@ class TestOllamaWire:
         seen: list[httpx.Request] = []
         handler = _record_handler(seen, _OLLAMA_NDJSON_BODY, "application/x-ndjson")
 
-        p = OllamaProvider(base_url="http://stub:11434")
+        p = OllamaProvider(base_url="http://stub:11434", probe_model_info=False)
         await p.client.aclose()
         p.client = httpx.AsyncClient(
             base_url="http://stub:11434",

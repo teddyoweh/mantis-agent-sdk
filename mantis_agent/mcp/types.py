@@ -11,9 +11,9 @@ Design
   ``mantis_agent.Tool`` so the agent loop can dispatch MCP tools and local
   ``@tool``-decorated tools through the same registry.
 * ``CallToolResult`` mirrors the MCP wire shape (``content: list[block]``,
-  ``is_error: bool``). Helper ``.to_string()`` flattens text/image blocks to
-  a single string suitable for ``ToolResultBlock.content`` — the agent loop
-  is unaware of MCP block structure.
+  ``is_error: bool``). ``.to_string()`` is the text fallback; visual tool
+  results are converted to the engine's ``ImageBlock`` / ``TextBlock``
+  convention so the executor preserves their payloads.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - Python 3.9 only
 import msgspec
 
 from ..tools import Tool
+from ..types import ImageBlock, TextBlock
 
 if TYPE_CHECKING:
     from .client import MCPClient
@@ -141,26 +142,41 @@ class MCPTool(msgspec.Struct, frozen=True, omit_defaults=True):
     description: str
     input_schema: dict[str, Any]
     server_id: str
+    # ``annotations.readOnlyHint`` from ``tools/list``. Only a server that
+    # promises the tool doesn't write gets to run it alongside other calls.
+    read_only_hint: bool = False
 
     def to_mantis_agent_tool(self, client: "MCPClient") -> Tool:
         """Wrap this MCP tool as a local ``Tool``.
 
         The returned tool's ``fn`` is an async closure that round-trips the
-        call through ``client.call_tool`` and stringifies the result. Errors
-        from the server surface as the string representation of
-        ``CallToolResult`` with ``is_error=True``; ``Tool`` dispatch in
-        ``mantis_agent.tools`` handles wrapping it into a ``ToolResultBlock``.
+        call through ``client.call_tool``. Visual results use the executor's
+        rich-content convention; text-only results keep their string shape.
+        Server errors still raise so dispatch marks the result as an error.
         """
 
         tool_name = self.name
 
-        async def _invoke(**kwargs: Any) -> str:
+        async def _invoke(**kwargs: Any) -> str | list[TextBlock | ImageBlock]:
             result = await client.call_tool(tool_name, kwargs)
             text = result.to_string()
             if result.is_error:
                 # Surface as exception so dispatch_tool_calls flags it
                 # as a tool error result.
                 raise RuntimeError(text or f"MCP tool {tool_name!r} returned an error")
+            if any(block.get("type") == "image" for block in result.content):
+                # Match read_file's rich return convention, not raw MCP dicts
+                # (which the executor would stringify). Keep captions in order.
+                return [
+                    ImageBlock(source={
+                        "type": "base64",
+                        "media_type": block.get("mimeType") or block.get("mime_type") or "image/png",
+                        "data": block.get("data", ""),
+                    })
+                    if block.get("type") == "image"
+                    else TextBlock(text=CallToolResult(content=[block]).to_string())
+                    for block in result.content
+                ]
             return text
 
         # MCP tool names can include separators MCP servers consider valid
@@ -170,9 +186,11 @@ class MCPTool(msgspec.Struct, frozen=True, omit_defaults=True):
             description=self.description,
             input_schema=self.input_schema,
             fn=_invoke,
-            # ``parallel_safe`` is the deprecated alias — a property, not an
-            # init field, so it must be spelled the real way here.
-            is_concurrency_safe=True,
+            # Remote tools are opaque: assume they write (and so serialize
+            # against earlier/later calls) unless the server annotated
+            # ``readOnlyHint``. ``is_read_only`` stays False — a server's
+            # self-declared hint is not enough to skip permission prompts.
+            is_concurrency_safe=self.read_only_hint,
         )
 
 
@@ -188,14 +206,14 @@ class CallToolResult(msgspec.Struct, omit_defaults=True):
     at least a ``type`` field — usually ``"text"`` (with ``text``), but the
     spec also allows ``"image"`` (``data``, ``mimeType``) and
     ``"resource"`` (``resource`` link). We keep the raw dicts here and
-    flatten in ``.to_string()``.
+    offer a text fallback in ``.to_string()``.
     """
 
     content: list[dict[str, Any]] = []
     is_error: bool = False
 
     def to_string(self) -> str:
-        """Flatten content blocks into a single string for the agent loop.
+        """Flatten content blocks for text-only consumers and error messages.
 
         * ``text`` blocks contribute their text.
         * ``image`` blocks contribute a placeholder ``[image:<mime>]``.

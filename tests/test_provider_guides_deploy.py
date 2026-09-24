@@ -18,7 +18,15 @@ from pathlib import Path
 import pytest
 
 from mantis_agent import provider_guides
-from mantis_agent.deploy.providers import baseten, deepinfra, hf_endpoints, modal_deploy, runpod, vastai
+from mantis_agent.deploy.providers import (
+    baseten,
+    deepinfra,
+    fireworks_dedicated,
+    hf_endpoints,
+    modal_deploy,
+    runpod,
+    vastai,
+)
 
 DATA = Path(provider_guides.__file__).resolve().parent / "data"
 
@@ -29,6 +37,7 @@ ADAPTERS = {
     "deepinfra": deepinfra.DeepInfraProvider,
     "baseten": baseten.BasetenProvider,
     "vastai": vastai.VastAIProvider,
+    "fireworks-dedicated": fireworks_dedicated.FireworksDedicatedProvider,
 }
 
 # Path data: commands + numbers + separators only. Anything else (quotes,

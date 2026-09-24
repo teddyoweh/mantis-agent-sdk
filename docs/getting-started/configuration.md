@@ -111,9 +111,17 @@ Behavioral knobs, mostly for CI and hardening:
 | `MANTIS_SANDBOX`, `MANTIS_SANDBOX_NETWORK`, `MANTIS_SANDBOX_SCRUB_ENV` | OS-level confinement for shell tools. |
 | `MANTIS_MCP_TRUST_PROJECT`, `MANTIS_SKILLS_TRUST_PROJECT` | Pre-trust project-supplied MCP servers / skills. |
 | `MANTIS_AGENT_MAX_TOOL_CONCURRENCY`, `MANTIS_AGENT_MAX_TOOL_RESULT` | Parallel tool cap; tool-result truncation. |
-| `MANTIS_AGENT_RETRY_ATTEMPTS`, `MANTIS_AGENT_RETRY_BASE_S`, `MANTIS_AGENT_RETRY_MAX_S` | Transient-error retry policy. |
+| `MANTIS_AGENT_RETRY_ATTEMPTS`, `MANTIS_AGENT_RETRY_BASE_S`, `MANTIS_AGENT_RETRY_MAX_S` | HTTP retry policy: attempts (default `4`) and exponential backoff for connect errors and 408/425/429/5xx/529 before the response body. The engine never re-retries what this layer gave up on — it goes straight to `fallback_model` or raises. |
+| `MANTIS_AGENT_RETRY_AFTER_MAX_S` | Longest `Retry-After` honoured (default `60`). A longer ask surfaces at once, naming the wait, instead of a silent sleep: a 429 as a `RateLimitError` (with `retry_after_s`), a 503/529 as a `ProviderError` with its `status_code`. Same on every backend, Anthropic / Vertex / Bedrock included. |
+| `MANTIS_AGENT_FIRST_BYTE_TIMEOUT_S` | For a **streaming** request: time from sending it to the first response-body byte (default `300`, generous for CPU prefill of a long prompt or a cold start; `0` = no bound). Never retried — a wedged server fails the call in one window, not hours. Non-streaming calls (their first byte is the whole answer) aren't bounded by it; httpx's read timeout governs them (default `max(600, first-byte budgets)`). A per-request `timeout=` with a larger `read` stretches the bound; `timeout=None` lifts it. |
+| `MANTIS_AGENT_LOCAL_FIRST_BYTE_TIMEOUT_S` | The same bound for loopback servers — Ollama, llama.cpp, a local vLLM — where the first request also pays a cold model load from disk (default `900`, or `MANTIS_AGENT_FIRST_BYTE_TIMEOUT_S` when that is set explicitly; `0` = no bound). |
+| `MANTIS_AGENT_STREAM_IDLE_TIMEOUT_S` | Longest silence between streamed chunks once output started (default `180` — room for backends that reason silently between visible chunks; `0` = off). An idle stream is re-streamed by the engine before any content, and kept as a truncated turn after. |
 | `MANTIS_AGENT_NO_CONTEXT` | Skip the session-start repo/env context injection. |
+| `MANTIS_DISABLE_CODEX_LOGIN` | Don't use the Codex CLI's ChatGPT login for OpenAI models. See [Logins from the Claude Code and Codex CLIs](../guides/models-and-backends.md#logins-from-the-claude-code-and-codex-clis). |
 | `MANTIS_WEB_ALLOW_LOCAL` | Let `WebFetch` reach private/loopback addresses. Off by default — it's an SSRF guard, so turn it on only for a trusted local target. |
+| `MANTIS_OLLAMA_NUM_CTX` | Pin Ollama's context window (`options.num_ctx`); `0` sends none. See [Ollama](../guides/models-and-backends.md#ollama). |
+| `MANTIS_OLLAMA_MAX_NUM_CTX` | Cap on the automatic Ollama window (default `32768`). |
+| `MANTIS_OLLAMA_KEEP_ALIVE` | How long Ollama keeps the model loaded (default `30m`; `-1` forever, `0` unload, `off` = server default). |
 
 ### Paths and directories
 
@@ -141,6 +149,7 @@ once instead of typing it every run:
 | `MANTIS_AGENT_NO_PREFLIGHT` | Skip backend preflight validation at launch. |
 | `MANTIS_WATCH_FOLLOWUP` | Whether `/watch` sends an automatic follow-up turn when a watched command breaks. |
 | `MANTIS_CHILD_REPORT_MAX` | Character cap on a sub-agent's report before head/tail truncation. |
+| `MANTIS_ESC_TIMEOUT` | Seconds the terminal waits after `Esc` for the rest of a key sequence before treating it as a lone Esc (default `0.1`, `0.15` over SSH). Raise it if arrow keys interrupt a turn or clear the prompt on a laggy link; lower it for a snappier Esc. |
 
 ### Browser tool
 

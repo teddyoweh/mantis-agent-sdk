@@ -76,6 +76,7 @@ from ..types import (
     ContentBlock,
     Message,
     SystemMessage,
+    ImageBlock,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -83,7 +84,12 @@ from ..types import (
     UserMessage,
     Usage,
 )
-from .base import PROVIDER_CONTROL_KEYS, HTTPProviderMixin, normalize_messages
+from .base import (
+    PROVIDER_CONTROL_KEYS,
+    HTTPProviderMixin,
+    current_turn_start,
+    normalize_messages,
+)
 
 # Soft import — thinking parser ships in a later milestone. The provider still
 # works without it; we just won't split <think>...</think> out of content
@@ -248,10 +254,12 @@ def _render_prompt_engineered_tools(tools: list[dict[str, Any]]) -> str:
     """System-prompt block teaching a non-native model the ``<tool_call>``
     protocol. Accepts OpenAI function-tool format OR flattened Anthropic-shaped.
 
-    Each tool is rendered as its own readable, pretty-printed section rather than
-    one dense minified JSON blob — weak OSS models (the only ones routed through
-    Paths B/C) parse a spaced per-tool listing far more reliably, losing track of
-    which ``required``/``properties`` belong to which tool much less often."""
+    Each tool is rendered as its own section rather than one JSON blob of every
+    tool — weak OSS models (the only ones routed through Paths B/C) lose track of
+    which ``required``/``properties`` belong to which tool far less often. The
+    schema inside each section is minified, though: ``indent=2`` roughly
+    doubled every schema's size, and this whole block is prompt text, spent on
+    every turn by precisely the models with the least context to spare."""
 
     flattened = [t["function"] if isinstance(t.get("function"), dict) else t for t in tools]
     sections: list[str] = []
@@ -263,7 +271,7 @@ def _render_prompt_engineered_tools(tools: list[dict[str, Any]]) -> str:
         if description:
             lines.append(description)
         lines.append("Parameters (JSON schema):")
-        lines.append(json.dumps(schema, indent=2))
+        lines.append(json.dumps(schema, separators=(",", ":"), ensure_ascii=False))
         required = schema.get("required") if isinstance(schema, dict) else None
         if required:
             lines.append("Required: " + ", ".join(str(r) for r in required))
@@ -315,6 +323,22 @@ class OpenAICompatProvider(HTTPProviderMixin):
         # A token that expires mid-session (Vertex ADC) is re-read per request
         # rather than frozen into the client's headers at construction.
         self._key_provider = api_key_provider
+        # The ChatGPT Codex backend: a ChatGPT plan the Codex CLI signed in
+        # with. Auth is that login's bearer (refreshed per request) plus an
+        # account header — never an env API key, which it would reject.
+        from ..cli_logins import is_chatgpt_codex_url  # noqa: PLC0415
+
+        self._chatgpt = is_chatgpt_codex_url(url)
+        if self._chatgpt:
+            from ..cli_logins import chatgpt_access_token, chatgpt_headers  # noqa: PLC0415
+
+            api_key = ""
+            if self._key_provider is None:
+                self._key_provider = chatgpt_access_token
+            try:
+                default_headers = {**chatgpt_headers(), **(default_headers or {})}
+            except Exception:  # noqa: BLE001 — surfaced on the first request instead
+                pass
         # api_key semantics: a non-empty string is used verbatim; ``None`` means
         # "discover a key from the env chain"; an empty string ``""`` means
         # "explicitly NO auth — do not read the env" (used by providers like
@@ -398,6 +422,18 @@ class OpenAICompatProvider(HTTPProviderMixin):
 
         cap = model_capability or self._default_model_capability
         bare_model = model.lower().rsplit("/", 1)[-1]
+        if self._chatgpt:
+            async for event in self._stream_chatgpt(
+                model=model,
+                messages=messages,
+                system=system,
+                tools=tools or [],
+                extra=extra,
+                thinking=thinking,
+                model_capability=cap,
+            ):
+                yield event
+            return
         if tools and bare_model.startswith("gpt-6-astra") and not self._azure:
             async for event in self._stream_responses(
                 model=model,
@@ -559,6 +595,60 @@ class OpenAICompatProvider(HTTPProviderMixin):
         for event in _translate_responses(data, model):
             yield event
 
+    async def _stream_chatgpt(
+        self,
+        *,
+        model: str,
+        messages: Iterable[Message],
+        system: str | None,
+        tools: list[dict[str, Any]],
+        extra: dict[str, Any] | None,
+        thinking: dict[str, Any] | None,
+        model_capability: ModelCapability | None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Responses API on the ChatGPT Codex backend, streamed.
+
+        The backend differs from api.openai.com's Responses in ways that each
+        fail a request: it only streams, requires ``store: false`` and an
+        ``instructions`` string, rejects ``max_output_tokens``, and leaves
+        ``output`` empty on ``response.completed`` — the items arrive only as
+        ``response.output_item.done`` events.
+        """
+
+        payload = _build_responses_payload(
+            model=model,
+            messages=messages,
+            system=system,
+            tools=tools,
+            max_tokens=0,
+            extra=extra,
+            thinking=thinking,
+            model_capability=model_capability,
+        )
+        payload.pop("max_output_tokens", None)
+        if not payload.get("tools"):
+            payload.pop("tools", None)
+        payload.setdefault("instructions", "You are a helpful assistant.")
+        payload["store"] = False
+        payload["stream"] = True
+        try:
+            request_headers = self._per_request_headers()
+        except RuntimeError as exc:  # no / expired login — say how to fix it
+            raise ProviderError(str(exc), status_code=401) from exc
+        async with self.client.stream(
+            "POST",
+            "/responses",
+            headers=request_headers or None,
+            content=_PAYLOAD_ENCODER.encode(payload),
+        ) as response:
+            if response.status_code >= 400:
+                await response.aread()
+                raise_for_status(response)
+            async for event in _translate_responses_stream(
+                _iter_openai_sse(response), model
+            ):
+                yield event
+
     def _chat_endpoint(self, model: str) -> tuple[str, dict[str, str]]:
         """``(path, query)`` for the chat-completions call.
 
@@ -629,8 +719,15 @@ class OpenAICompatProvider(HTTPProviderMixin):
         wire_messages: list[dict[str, Any]] = []
         if sys_string is not None:
             wire_messages.append({"role": "system", "content": sys_string})
-        for m in body_msgs:
-            wire_messages.extend(_encode_message(m, path=path))
+        # Text-channel paths re-inline reasoning only inside the current agentic
+        # turn (interleaved thinking across its tool calls helps); earlier
+        # turns' chain-of-thought is dropped, as the models' own chat
+        # templates do. Path A never re-sends reasoning at all.
+        turn_start = current_turn_start(body_msgs)
+        for i, m in enumerate(body_msgs):
+            wire_messages.extend(
+                _encode_message(m, path=path, keep_thinking=i >= turn_start)
+            )
 
         # OpenAI's GPT-5/GPT-6 / o-series reject legacy ``max_tokens`` (they want
         # ``max_completion_tokens``) and only accept the default temperature.
@@ -905,6 +1002,11 @@ def _build_responses_payload(
                         "call_id": block.tool_use_id,
                         "output": _tool_result_content_to_string(block.content),
                     })
+                    for part in _tool_result_image_parts(block):
+                        if part["type"] == "text":
+                            content.append({"type": "input_text", "text": part["text"]})
+                        else:
+                            content.append({"type": "input_image", "image_url": part["image_url"]["url"]})
                 elif isinstance(block, TextBlock):
                     text.append(block.text)
                 elif hasattr(block, "source"):
@@ -994,6 +1096,98 @@ def _translate_responses(data: dict[str, Any], requested_model: str) -> Iterable
     yield MessageDelta(stop_reason="tool_use" if has_tool else "end_turn", usage=usage)
     yield MessageStop()
 
+async def _translate_responses_stream(
+    chunks: AsyncIterator[dict[str, Any]], requested_model: str
+) -> AsyncIterator[StreamEvent]:
+    """Translate a streamed Responses call to normalized stream events.
+
+    Text streams as it arrives (``response.output_text.delta``); a function
+    call is emitted whole once ``response.output_item.done`` closes it. Items
+    are keyed by ``output_index`` so interleaved items never share a block.
+    """
+
+    started = False
+    blocks: dict[int, int] = {}   # output_index -> our content-block index
+    stop_reason = "end_turn"
+    next_index = 0
+    has_tool = False
+    usage = Usage(input_tokens=0, output_tokens=0)
+
+    def start(resp: dict[str, Any] | None) -> MessageStart:
+        resp = resp or {}
+        return MessageStart(
+            message_id=resp.get("id") or f"resp-{uuid4().hex[:12]}",
+            model=resp.get("model") or requested_model,
+        )
+
+    async for chunk in chunks:
+        kind = chunk.get("type")
+        if not started and kind in ("response.created", "response.in_progress"):
+            started = True
+            yield start(chunk.get("response"))
+            continue
+        if not started:
+            started = True
+            yield start(None)
+        if kind == "response.output_text.delta":
+            out_idx = int(chunk.get("output_index") or 0)
+            if out_idx not in blocks:
+                blocks[out_idx] = next_index
+                next_index += 1
+                yield ContentBlockStart(index=blocks[out_idx], block=TextBlock(text=""))
+            delta = chunk.get("delta") or ""
+            if delta:
+                yield ContentBlockDelta(index=blocks[out_idx], delta=TextDelta(text=delta))
+        elif kind == "response.output_item.done":
+            out_idx = int(chunk.get("output_index") or 0)
+            item = chunk.get("item") or {}
+            item_type = item.get("type")
+            if item_type == "message":
+                if out_idx in blocks:
+                    yield ContentBlockStop(index=blocks[out_idx])
+                    continue
+                # No deltas were streamed for it — emit the finished text.
+                text = "".join(
+                    part.get("text") or "" for part in item.get("content") or []
+                    if part.get("type") in ("output_text", "text")
+                )
+                if text:
+                    idx = next_index
+                    next_index += 1
+                    yield ContentBlockStart(index=idx, block=TextBlock(text=""))
+                    yield ContentBlockDelta(index=idx, delta=TextDelta(text=text))
+                    yield ContentBlockStop(index=idx)
+            elif item_type == "function_call":
+                has_tool = True
+                idx = next_index
+                next_index += 1
+                call_id = item.get("call_id") or item.get("id") or f"call_{uuid4().hex[:12]}"
+                yield ContentBlockStart(
+                    index=idx,
+                    block=ToolUseBlock(id=call_id, name=item.get("name") or "unknown_tool", input={}),
+                )
+                yield ContentBlockDelta(
+                    index=idx, delta=InputJsonDelta(partial_json=item.get("arguments") or "{}")
+                )
+                yield ContentBlockStop(index=idx)
+        elif kind in ("response.completed", "response.incomplete"):
+            if kind == "response.incomplete":
+                stop_reason = "max_tokens"
+            u = (chunk.get("response") or {}).get("usage") or {}
+            usage = Usage(
+                input_tokens=int(u.get("input_tokens") or 0),
+                output_tokens=int(u.get("output_tokens") or 0),
+            )
+        elif kind in ("response.failed", "error"):
+            err = (chunk.get("response") or {}).get("error") or chunk.get("error") or chunk
+            message = err.get("message") if isinstance(err, dict) else str(err)
+            raise ProviderError(f"ChatGPT backend error: {message}", raw=chunk)
+    if not started:
+        yield start(None)
+    yield MessageDelta(stop_reason="tool_use" if has_tool else stop_reason, usage=usage)
+    yield MessageStop()
+
+
 # ---------------------------------------------------------------------------
 # Message encoding (universal -> OpenAI chat shape)
 # ---------------------------------------------------------------------------
@@ -1017,7 +1211,9 @@ def _system_to_string(m: SystemMessage) -> str:
     return m.content if isinstance(m.content, str) else "".join(b.text for b in m.content)
 
 
-def _encode_message(m: Message, *, path: ToolUsePath) -> list[dict[str, Any]]:
+def _encode_message(
+    m: Message, *, path: ToolUsePath, keep_thinking: bool = True,
+) -> list[dict[str, Any]]:
     """Encode one universal message into one or more OpenAI wire messages.
     A UserMessage with N ToolResultBlocks expands to N ``tool``-role messages
     in Path A (OpenAI requires one per call id); B/C folds them as XML in user
@@ -1028,7 +1224,9 @@ def _encode_message(m: Message, *, path: ToolUsePath) -> list[dict[str, Any]]:
             return [{"role": "user", "content": m.content}]
         return _encode_user_blocks(m.content, path=path)
     if isinstance(m, AssistantMessage):
-        return _encode_assistant_blocks(m.content, path=path)
+        return _encode_assistant_blocks(
+            m.content, path=path, keep_thinking=keep_thinking,
+        )
     if isinstance(m, SystemMessage):  # only reachable if caller bypassed _split_system
         return [{"role": "system", "content": _system_to_string(m)}]
     raise TypeError(f"unsupported message type: {type(m).__name__}")
@@ -1050,6 +1248,7 @@ def _encode_user_blocks(
             text_pieces.append(b.text)
         elif isinstance(b, ToolResultBlock):
             tool_results.append(b)
+            image_parts.extend(_tool_result_image_parts(b))
         else:
             image_parts.append(_image_block_to_openai_part(b))
 
@@ -1114,7 +1313,7 @@ def _image_block_to_openai_part(block: ContentBlock) -> dict[str, Any]:
 
 
 def _encode_assistant_blocks(
-    blocks: list[ContentBlock], *, path: ToolUsePath,
+    blocks: list[ContentBlock], *, path: ToolUsePath, keep_thinking: bool = True,
 ) -> list[dict[str, Any]]:
     """Encode an assistant turn. Native emits ``tool_calls``; prompt-engineered
     paths re-serialize tool uses as ``<tool_call>`` XML so the model sees its
@@ -1147,9 +1346,12 @@ def _encode_assistant_blocks(
                 )
 
     # why: re-inline <think> for OSS models that learned it — round-tripping
-    # preserves chain-of-thought across turns.
+    # preserves chain-of-thought across the tool calls of the current turn.
+    # ``keep_thinking`` is False for earlier turns (see ``_build_payload``).
+    # Path A never sends reasoning back: DeepSeek 400s on a returned
+    # ``reasoning_content`` and vLLM/Qwen3 templates ignore it.
     content_parts: list[str] = []
-    if thinking_pieces and path in ("B", "C"):
+    if thinking_pieces and keep_thinking and path in ("B", "C"):
         content_parts.append("<think>" + "".join(thinking_pieces) + "</think>")
     content_parts.extend(text_pieces)
     content_parts.extend(tool_call_xml)
@@ -1160,7 +1362,29 @@ def _encode_assistant_blocks(
         msg["content"] = content
     if tool_calls:
         msg["tool_calls"] = tool_calls
+    elif content is None:
+        # A reasoning-only turn with its thinking dropped: strict servers /
+        # Jinja templates (llama.cpp) reject an assistant with neither.
+        msg["content"] = ""
     return [msg]
+
+
+def _tool_result_image_parts(result: ToolResultBlock) -> list[dict[str, Any]]:
+    """Keep images in user content, never JSON text in a tool output.
+
+    Label each result's images so parallel screenshots remain attributable.
+    Callers append this user content only AFTER all linked tool outputs.
+    This is the same wire image shape used for native read_file images.
+    """
+    if isinstance(result.content, str):
+        return []
+    images = [b for b in result.content if isinstance(b, ImageBlock)]
+    if not images:
+        return []
+    return [
+        {"type": "text", "text": f"Images from tool call {result.tool_use_id}:"},
+        *[_image_block_to_openai_part(b) for b in images],
+    ]
 
 
 def _tool_result_content_to_string(content: str | list[ContentBlock]) -> str:
@@ -1171,7 +1395,7 @@ def _tool_result_content_to_string(content: str | list[ContentBlock]) -> str:
     parts = [
         b.text if isinstance(b, TextBlock)
         else json.dumps(msgspec.to_builtins(b), separators=(",", ":"))
-        for b in content
+        for b in content if not isinstance(b, ImageBlock)
     ]
     return "\n".join(parts)
 

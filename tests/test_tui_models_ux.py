@@ -283,3 +283,36 @@ def test_apply_prints_the_routing_note(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(t._apply("gpt-5.6", "https://api.openai.com/v1", "sk-live", ""))
     out = t.console.export_text()
     assert "model → gpt-5.6 · ◯ OpenAI · via api.openai.com · $OPENAI_API_KEY (env)" in out
+
+
+def test_the_self_host_tab_lists_what_you_deployed(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The picker's self-host tab held only "+ self-host / custom endpoint…" —
+    a GLM you had deployed on Modal was nowhere in it. Live and idle
+    deployments are listed, each carrying its endpoint and its key's name."""
+    from mantis_agent.deploy import store
+    from mantis_agent.deploy.base import Deployment, GpuSpec
+    from mantis_agent.tui_fullscreen import deployment_rows
+
+    monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    gpu = GpuSpec("H200:4", "H200", 141, count=4, price_per_hour=18.16)
+    for i, st in enumerate(("running", "scaled_to_zero", "deleted", "failed")):
+        store.upsert(Deployment(id=f"d{i}", provider="modal", model="zai-org/GLM-4.7-FP8", engine="vllm",
+                                status=st, gpu=gpu, served_model_name=f"glm-{st}",
+                                endpoint_url=f"https://ep{i}.modal.run/v1", auth_env="MANTIS_DEPLOY_GLM_KEY"))
+    rows = deployment_rows()
+    assert [(r["model"], r["where"]) for r in rows] == [("glm-running", "Modal · live"),
+                                                         ("glm-scaled_to_zero", "Modal · idle")]
+    assert all(r["kind"] == "deployment" and r["enabled"] and r["auth_env"] == "MANTIS_DEPLOY_GLM_KEY" for r in rows)
+    assert rows[0]["endpoint"] == "https://ep0.modal.run/v1"
+
+
+def test_the_picker_applies_a_deployment_like_connect() -> None:
+    import inspect
+
+    from mantis_agent import tui_fullscreen as tf
+
+    src = inspect.getsource(tf)
+    assert '"deployment")' in src.split("_SELECTABLE_KINDS = ")[1].split("\n")[0]
+    assert 'if it and it["kind"] == "deployment":' in src
+    assert 'await tui._apply(row["model"], row["endpoint"], key,' in src
+    assert "dep_rows = deployment_rows()" in src

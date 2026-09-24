@@ -551,26 +551,6 @@ def _ns_segment(s: str) -> str:
     return re.sub(r"__+", "_", s)
 
 
-def _drain_cancellation() -> None:
-    """Clear a cancellation queued against THIS task by a dead client.
-
-    When an MCP server exits around the handshake, its client's task group is
-    torn down and asyncio ends up holding a cancel request against the task
-    running the connect loop. Left in place it lands on the *next* server's
-    first await and reports a perfectly healthy server as failed. anyio's own
-    shielding does the same uncancel dance. A cancellation that genuinely
-    belongs to an outer scope is re-delivered at the next checkpoint, so
-    nothing is swallowed for good."""
-    import asyncio  # noqa: PLC0415
-
-    task = asyncio.current_task()
-    uncancel = getattr(task, "uncancel", None)
-    if uncancel is None:  # pragma: no cover — Python < 3.11
-        return
-    while task.cancelling():  # type: ignore[union-attr]
-        uncancel()
-
-
 def _transport_label(cfg: ServerConfig) -> str:
     if isinstance(cfg, StdioServerConfig):
         return f"stdio · {cfg.command}"
@@ -598,20 +578,116 @@ class MCPManager:
         self.warnings: dict[str, list[str]] = {}      # server name → non-fatal issues
         self._runner: Any = None                     # start()/stop() lifetime task
         self._stop_event: Any = None
+        # One host task per server (see _host_server) + the event that lets it
+        # close its client. Keyed by server name.
+        self._hosts: dict[str, Any] = {}
+        self._host_stops: dict[str, Any] = {}
+        self._host_ready: dict[str, Any] = {}
+        # Hosts replaced by a retry (connect_all() on a server that failed)
+        # that may still be closing their client. Held strongly — asyncio only
+        # weakly refs tasks, so a dropped one could be GC'd mid-close and leak
+        # its stdio child — and gathered by aclose() with the live ones.
+        self._retired_hosts: list[Any] = []
+        # tools/list generation per server: every fetch (handshake or a
+        # list_changed refetch) takes the next number when it STARTS, and a
+        # result only lands if nothing newer has landed — so an older, slower
+        # response can never overwrite a newer tool set.
+        self._tools_gen: dict[str, int] = {}
+        self._tools_applied: dict[str, int] = {}
+        # Called with the server name after a ``notifications/tools/list_changed``
+        # refresh has replaced ``self.tools[name]`` — lets a caller re-fold the
+        # new tool set into a live registry.
+        self.on_tools_changed: Any = None
 
     async def connect_all(self, *, timeout_s: float = 10.0) -> list[Tool]:
-        """Connect every server (serially — startup order is deterministic and
-        stdio spawns are cheap), returning every adapted tool. Failures land in
-        ``self.errors`` instead of raising.
+        """Connect every server CONCURRENTLY, returning every adapted tool in
+        config order (deterministic regardless of which server answers first).
+        Failures land in ``self.errors`` instead of raising — one slow or broken
+        server never blocks or kills the rest; startup costs max(handshake)
+        rather than sum(handshakes).
+
+        Each client lives in its own dedicated host task: an MCPClient's anyio
+        task group must enter and exit in the SAME task, so the connect →
+        serve → close lifetime of each server is confined to one task and
+        :meth:`aclose` just signals and awaits them (safe from any task).
 
         The timeout rides on the client's per-request cap (initialize +
-        tools/list each get ``timeout_s``) — an external cancel scope around
-        ``__aenter__`` would misnest with the client's internal task group."""
-        all_tools: list[Tool] = []
-        for name, cfg in self.configs.items():
-            client = MCPClient(cfg, server_id=name, request_timeout_s=timeout_s)
+        tools/list each get ``timeout_s``); a server that wedges before that
+        (e.g. a transport that never opens) is abandoned after
+        ``2 * timeout_s + 5`` seconds overall."""
+        import asyncio  # noqa: PLC0415
+
+        names = [n for n in self.configs if n not in self.clients]
+        outcomes = await asyncio.gather(
+            *(self._connect_one(n, self.configs[n], timeout_s) for n in names)
+        )
+        for name, (client, _remote, error) in zip(names, outcomes):
+            # A connected server was registered by its host task the moment
+            # its handshake finished (see _register) — so a list_changed that
+            # races the rest of the gather isn't lost or overwritten here.
+            if client is None:
+                self.errors[name] = error or "connection failed"
+        # Registration happened in completion order; re-key in config order so
+        # summary() / status output stay deterministic.
+        order = {n: i for i, n in enumerate(self.configs)}
+        for d in (self.clients, self.tools):
+            items = sorted(d.items(), key=lambda kv: order.get(kv[0], len(order)))
+            d.clear()
+            d.update(items)
+        # Config order, not completion order — and a server already connected
+        # by an earlier call is reused, never spawned twice.
+        return [t for n in self.configs if n in self.clients for t in self.tools.get(n) or []]
+
+    async def _connect_one(
+        self, name: str, cfg: ServerConfig, timeout_s: float,
+    ) -> tuple[MCPClient | None, list[Any], str | None]:
+        """Spawn ``name``'s host task and wait (bounded) for its handshake."""
+        import asyncio  # noqa: PLC0415
+
+        loop = asyncio.get_running_loop()
+        ready: asyncio.Future = loop.create_future()
+        stop = asyncio.Event()
+        host = asyncio.ensure_future(self._host_server(name, cfg, timeout_s, ready, stop))
+        old = self._hosts.get(name)
+        if old is not None and not old.done():
+            self._retired_hosts.append(old)   # a retry: keep the closing one alive
+        self._hosts[name] = host
+        self._host_stops[name] = stop
+        self._host_ready[name] = ready
+        try:
+            return await asyncio.wait_for(asyncio.shield(ready), 2 * timeout_s + 5)
+        except asyncio.TimeoutError:
+            stop.set()
+            host.cancel()   # its finally still closes whatever did open
+            return None, [], f"no handshake within {2 * timeout_s + 5:.0f}s"
+        except asyncio.CancelledError:
+            # The caller gave up (stop() timing out on a quit mid-handshake).
+            # The shield kept the host alive; a host still inside
+            # __aenter__/list_tools isn't listening for its stop event, so
+            # cancel it here or aclose() would wait out its whole handshake.
+            stop.set()
+            if not ready.done():
+                host.cancel()
+            raise
+
+    async def _host_server(
+        self, name: str, cfg: ServerConfig, timeout_s: float, ready: Any, stop: Any,
+    ) -> None:
+        """Own one client's whole lifetime: connect, report via ``ready``, idle
+        until ``stop``, close. Runs as its own asyncio task."""
+        import asyncio  # noqa: PLC0415
+
+        # The handler captures THIS host's client: a list_changed that arrives
+        # before the handshake is registered (or after a retry replaced it)
+        # still refetches from the server that sent it.
+        client = MCPClient(
+            cfg, server_id=name, request_timeout_s=timeout_s,
+            notification_handler=lambda m, p: self._on_notification(name, m, p, client),
+        )
+        try:
             try:
                 await client.__aenter__()
+                gen = self._next_tools_gen(name)
                 remote = await client.list_tools()
                 # Tool calls mid-session get a more generous budget than the
                 # startup handshake (a real tool may legitimately run long).
@@ -619,55 +695,106 @@ class MCPManager:
             except BaseException as e:  # noqa: BLE001 — isolate per server
                 # BaseException, deliberately: a server that dies around the
                 # handshake takes its client's internals down with it, and the
-                # fallout reaches this task as a CancelledError — which an
-                # ``except Exception`` would let sail past, aborting the connect
-                # loop for every server after it, silently (no tools, no errors,
-                # no status rows). Record it, close the client, clear the stray
-                # cancellation, and move on to the next server.
+                # fallout reaches this task as a CancelledError. This task is
+                # the server's alone, so recording it and returning is enough
+                # — no stray cancellation can leak into a sibling server.
                 cancelled = isinstance(e, anyio.get_cancelled_exc_class())
-                self.errors[name] = (
-                    "server exited during the handshake" if cancelled
-                    else (f"{type(e).__name__}: {e}" if str(e) else type(e).__name__)
-                )
+                if not ready.done():
+                    ready.set_result((None, [], (
+                        "server exited during the handshake" if cancelled
+                        else (f"{type(e).__name__}: {e}" if str(e) else type(e).__name__)
+                    )))
+                return
+            if not ready.done():
+                self._register(name, client, remote, gen)
+                ready.set_result((client, remote, None))
+            # Idle until aclose(). A connected client whose read loop dies
+            # (server exits, network drops) cancels its task group, whose host
+            # is THIS task — that means "this server went away", so fall
+            # through to teardown instead of escaping.
+            try:
+                await stop.wait()
+            except (Exception, asyncio.CancelledError):  # noqa: BLE001
+                pass
+        finally:
+            if not ready.done():
+                ready.set_result((None, [], "connection abandoned"))
+            with anyio.CancelScope(shield=True):
                 try:
                     await client.close()
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 — best-effort teardown
                     pass
-                # Unconditionally, not just for the CancelledError case: a
-                # failure that surfaces as an ordinary exception (refused
-                # connection, bad handshake) can still leave a cancel request
-                # queued behind it, which would then be blamed on the next
-                # server in the list.
-                _drain_cancellation()
+
+    def _adapt(self, name: str, client: MCPClient, remote: list[Any]) -> list[Tool]:
+        """Namespace a server's ``tools/list`` result into registry tools."""
+        adapted: list[Tool] = []
+        seen_remote: set[str] = set()
+        warnings: list[str] = []
+        for rt in remote:
+            if not rt.name:
+                warnings.append("skipped unnamed tool from tools/list")
                 continue
-            adapted: list[Tool] = []
-            seen_remote: set[str] = set()
-            warnings: list[str] = []
-            for rt in remote:
-                if not rt.name:
-                    warnings.append("skipped unnamed tool from tools/list")
-                    continue
-                if rt.name in seen_remote:
-                    warnings.append(
-                        f"skipped duplicate tool {rt.name!r}; first definition kept"
-                    )
-                    continue
-                seen_remote.add(rt.name)
-                t = rt.to_mantis_agent_tool(client)
-                # Namespace like Claude Code so two servers' `search` tools
-                # can't collide and the model can tell where a tool lives.
-                # Collapse ``__`` in each segment so a server-supplied tool
-                # name can't inject an extra delimiter and impersonate another
-                # server's namespace. (The remote call still uses rt.name; only
-                # the surfaced display name is sanitized.)
-                t.name = f"mcp__{_ns_segment(name)}__{_ns_segment(rt.name)}"
-                adapted.append(t)
-            if warnings:
-                self.warnings[name] = warnings
-            self.clients[name] = client
-            self.tools[name] = adapted
-            all_tools.extend(adapted)
-        return all_tools
+            if rt.name in seen_remote:
+                warnings.append(
+                    f"skipped duplicate tool {rt.name!r}; first definition kept"
+                )
+                continue
+            seen_remote.add(rt.name)
+            t = rt.to_mantis_agent_tool(client)
+            # Namespace like Claude Code so two servers' `search` tools
+            # can't collide and the model can tell where a tool lives.
+            # Collapse ``__`` in each segment so a server-supplied tool
+            # name can't inject an extra delimiter and impersonate another
+            # server's namespace. (The remote call still uses rt.name; only
+            # the surfaced display name is sanitized.)
+            t.name = f"mcp__{_ns_segment(name)}__{_ns_segment(rt.name)}"
+            adapted.append(t)
+        if warnings:
+            self.warnings[name] = warnings
+        else:
+            self.warnings.pop(name, None)
+        return adapted
+
+    def _next_tools_gen(self, name: str) -> int:
+        gen = self._tools_gen.get(name, 0) + 1
+        self._tools_gen[name] = gen
+        return gen
+
+    def _apply_tools(self, name: str, client: MCPClient, remote: list[Any], gen: int) -> bool:
+        """Install a ``tools/list`` result unless a newer one already landed."""
+        if gen <= self._tools_applied.get(name, 0):
+            return False
+        self._tools_applied[name] = gen
+        self.tools[name] = self._adapt(name, client, remote)
+        return True
+
+    def _register(self, name: str, client: MCPClient, remote: list[Any], gen: int) -> None:
+        """A server finished its handshake: make it live immediately."""
+        self.errors.pop(name, None)
+        self.clients[name] = client
+        self._apply_tools(name, client, remote, gen)
+
+    async def _on_notification(
+        self, name: str, method: str, params: dict[str, Any], client: Any = None,
+    ) -> None:
+        """``tools/list`` is fetched once per server and cached in
+        ``self.tools`` for the manager's lifetime; the one thing that
+        invalidates it is the server announcing ``tools/list_changed``."""
+        if method != "notifications/tools/list_changed":
+            return
+        if client is None:
+            client = self.clients.get(name)
+        if client is None:
+            return
+        gen = self._next_tools_gen(name)
+        remote = await client.list_tools()
+        if not self._apply_tools(name, client, remote, gen):
+            return   # a newer refetch already landed
+        cb = self.on_tools_changed
+        if cb is not None:
+            res = cb(name)
+            if hasattr(res, "__await__"):
+                await res
 
     def status_rows(self) -> list[dict[str, str]]:
         """One row per configured server for the ``/mcp`` renderer."""
@@ -698,13 +825,39 @@ class MCPManager:
         parts += [f"{n} ✗" for n in self.errors]
         return " · ".join(parts)
 
-    async def aclose(self) -> None:
-        # Take the client list and empty the registry up front: teardown awaits,
-        # and a second caller (an explicit aclose() racing the runner's own
-        # teardown) must not iterate a dict that's being drained underneath it.
-        # MCPClient.close() is idempotent, so an overlap is harmless.
+    async def aclose(self, *, timeout_s: float = 10.0) -> None:
+        # Take the host/client lists and empty the registries up front:
+        # teardown awaits, and a second caller (an explicit aclose() racing the
+        # runner's own teardown) must not iterate dicts being drained under it.
+        # Every server's client closes inside its own host task (the one that
+        # opened it), concurrently; MCPClient.close() is idempotent, so an
+        # overlap is harmless.
+        import asyncio  # noqa: PLC0415
+
+        #
+        # A host still mid-handshake isn't waiting on its stop event yet, so
+        # it's cancelled outright; the gather is bounded, and a host that still
+        # won't finish (a close() that wedges) is cancelled and abandoned —
+        # this runs as the user quits.
+        hosts, self._hosts = list(self._hosts.items()), {}
+        stops, self._host_stops = list(self._host_stops.values()), {}
+        readies, self._host_ready = self._host_ready, {}
+        retired, self._retired_hosts = self._retired_hosts, []
         clients, self.clients = list(self.clients.values()), {}
-        for client in clients:
+        for ev in stops:
+            ev.set()
+        for name, host in hosts:
+            ready = readies.get(name)
+            if ready is not None and not ready.done():
+                host.cancel()
+        tasks = [h for _, h in hosts] + retired
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=timeout_s)
+            for t in pending:
+                t.cancel()
+            if pending:
+                await asyncio.wait(pending, timeout=1.0)
+        for client in clients:   # any client not owned by a host task
             try:
                 await client.close()
             except Exception:  # noqa: BLE001 — best-effort teardown
@@ -716,8 +869,11 @@ class MCPManager:
     # EXIT in the same asyncio task. Callers that connect in one task and close
     # in another (an async generator like query(), or a TUI that connects in a
     # background task and closes at exit) hit "Attempted to exit a cancel scope
-    # that isn't the current task's" — so start()/stop() confine the whole
-    # connect → serve → close lifetime to ONE task and just await it.
+    # that isn't the current task's". connect_all() already gives each client
+    # its own host task; start()/stop() additionally run the connect/teardown
+    # sequence in one dedicated task so a caller (an async generator, a TUI
+    # background task) never has to await teardown from inside a cancel scope
+    # it doesn't own.
 
     async def start(self) -> list[Tool]:
         """Connect all servers inside a dedicated task; returns the adapted

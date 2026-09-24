@@ -126,7 +126,40 @@ app = modal.App(APP_NAME)
 
 {secrets_block}
 
-@app.server(
+{server_block}'''
+
+# ``web`` (default): a classic ``@modal.web_server`` endpoint on ``*.modal.run``.
+# ``flash``: a Modal Server (``@app.server``) on the ``*.modal.direct`` edge —
+# lower-latency routing, but some networks (campus/corporate firewalls) reset
+# every TLS handshake to that edge while ``*.modal.run`` goes through, and a
+# reset reads as "backend unreachable" with no way to tell from outside.
+_SERVER_WEB = '''@app.function(
+    image=image,
+    gpu={gpu!r},
+    scaledown_window={scaledown_window},
+    timeout={request_timeout},
+    startup_timeout={startup_timeout},
+    min_containers={min_containers},
+    max_containers={max_containers},
+    volumes={{
+        "/root/.cache/huggingface": hf_cache,
+        {engine_cache_mount!r}: engine_cache,
+    }},
+    secrets=SECRETS,
+)
+@modal.concurrent(max_inputs={target_concurrency})
+@modal.web_server(port=PORT, startup_timeout={startup_timeout}, requires_proxy_auth={proxy_auth})
+def server():
+    cmd = {command_expr}
+    subprocess.Popen(cmd)
+
+
+if __name__ == "__main__":
+    app.deploy()
+    print(json.dumps({{"url": server.get_web_url(), "app": APP_NAME}}), flush=True)
+'''
+
+_SERVER_FLASH = '''@app.server(
     image=image,
     gpu={gpu!r},
     scaledown_window={scaledown_window},
@@ -157,6 +190,19 @@ if __name__ == "__main__":
     app.deploy()
     print(json.dumps({{"url": Server.get_url(), "app": APP_NAME}}), flush=True)
 '''
+
+MODAL_ENDPOINT_KINDS = ("web", "flash")
+
+
+def _endpoint_kind(opts: DeployOpts) -> str:
+    kind = str(opts.extra.get("modal_endpoint") or os.environ.get("MANTIS_MODAL_ENDPOINT") or "web").lower()
+    if kind not in MODAL_ENDPOINT_KINDS:
+        raise NotSupported(
+            f"unknown Modal endpoint kind {kind!r}",
+            hint="modal_endpoint must be 'web' (*.modal.run, default) or 'flash' (*.modal.direct)",
+            provider="modal",
+        )
+    return kind
 
 
 def _image_expr(engine: Engine, opts: DeployOpts) -> str:
@@ -214,11 +260,34 @@ def render_modal_app(
     if unauthenticated:
         secret_keys.append("VLLM_API_KEY")
     if secret_keys:
-        pairs = ", ".join(f'{k!r}: os.environ[{("MANTIS_" + k)!r}]' for k in secret_keys)
+        # This module is imported TWICE: here, to deploy it, and again inside
+        # the container, where MANTIS_* does not exist — Modal injects the
+        # secret under its own name instead. Reading only MANTIS_* made every
+        # container die at import with KeyError before vLLM ever started.
+        pairs = ", ".join("{0!r}: os.environ.get({1!r}) or os.environ.get({0!r}, '')".format(k, "MANTIS_" + k)
+                          for k in secret_keys)
         secrets_block = f"SECRETS = [modal.Secret.from_dict({{{pairs}}})]"
     else:
         secrets_block = "SECRETS = []"
 
+    kind = _endpoint_kind(opts)
+    server_block = (_SERVER_WEB if kind == "web" else _SERVER_FLASH).format(
+        gpu=gpu,
+        scaledown_window=int(opts.idle_timeout_s),
+        # sized to the model by the manager (weights must be pulled before the
+        # server can answer); 600 s killed every big model mid-download
+        startup_timeout=int(opts.extra.get("boot_budget_s", 1200)),
+        # Modal bounds a web function's input by `timeout` too — never shorter
+        # than the boot budget, or a big model is killed while loading weights
+        request_timeout=max(int(opts.request_timeout_s or 600), int(opts.extra.get("boot_budget_s", 1200))),
+        min_containers=int(opts.min_replicas),
+        max_containers=max(1, int(opts.max_replicas)),
+        engine_cache_mount="/root/.cache/vllm" if engine == "vllm" else "/root/.cache/sglang",
+        target_concurrency=int(opts.extra.get("target_concurrency", 100)),
+        unauthenticated=bool(unauthenticated),
+        proxy_auth=not unauthenticated,
+        command_expr=_command_expr(model, engine, opts, with_api_key=unauthenticated),
+    )
     return _TEMPLATE.format(
         model=model,
         engine=engine,
@@ -229,14 +298,7 @@ def render_modal_app(
         port=PORT,
         image_expr=_image_expr(engine, opts),
         secrets_block=secrets_block,
-        scaledown_window=int(opts.idle_timeout_s),
-        startup_timeout=600,
-        min_containers=int(opts.min_replicas),
-        max_containers=max(1, int(opts.max_replicas)),
-        engine_cache_mount="/root/.cache/vllm" if engine == "vllm" else "/root/.cache/sglang",
-        target_concurrency=int(opts.extra.get("target_concurrency", 100)),
-        unauthenticated=bool(unauthenticated),
-        command_expr=_command_expr(model, engine, opts, with_api_key=unauthenticated),
+        server_block=server_block,
     )
 
 
@@ -473,7 +535,12 @@ class ModalDeployProvider:
         if unauthenticated:
             auth_env = auth_env_name(slug)
             key = os.environ.get(auth_env) or generate_api_key()
-            os.environ[auth_env] = key      # the store persists the NAME only
+            # The record persists only the NAME; the value has to survive a
+            # restart of whatever process deployed it, or the endpoint can
+            # never be authenticated again — it goes where provider keys go.
+            from ..store import save_endpoint_key  # noqa: PLC0415
+
+            save_endpoint_key(auth_env, key)
             env["MANTIS_VLLM_API_KEY"] = key
         else:
             auth_headers = {
@@ -514,7 +581,91 @@ class ModalDeployProvider:
             headers["Authorization"] = f"Bearer {os.environ[dep.auth_env]}"
         return headers
 
+    async def _app_tasks(self, app_name: str) -> tuple[str, int] | None:
+        """(state, running containers) for one app from Modal's control plane,
+        or None when that can't be read. Costs nothing and wakes nothing — the
+        app list is cached for a few seconds so a page listing several
+        deployments asks once."""
+        now = _boot._clock()
+        cache = getattr(self, "_apps_cache", None)
+        if not cache or now - cache[0] > 10.0:
+            try:
+                out = await self._cli(["app", "list", "--json"], timeout_s=30.0)
+                cache = (now, self._parse_app_list(out))
+            except Exception:  # noqa: BLE001 — no CLI, no auth: fall back
+                return None
+            self._apps_cache = cache
+        live = [a for a in cache[1] if a["name"] == app_name and a["state"] != "stopped"]
+        rows = live or [a for a in cache[1] if a["name"] == app_name]
+        if not rows:
+            return ("missing", 0)
+        a = rows[0]
+        raw = a.get("raw") or {}
+        try:
+            n = int(str(raw.get("Tasks") if raw.get("Tasks") is not None else raw.get("tasks") or 0).strip() or 0)
+        except ValueError:
+            n = 0
+        return (a["state"], n)
+
     async def status(self, dep: Deployment) -> Deployment:
+        """What the deployment is doing, WITHOUT waking it.
+
+        A Modal endpoint that has scaled to zero boots a GPU container for any
+        request that reaches it — /health included — and bills from then. So
+        this asks the control plane first: stopped is stopped, no containers is
+        asleep, and only an app that already has a container up gets an HTTP
+        health probe (which then costs nothing extra)."""
+        if not dep.endpoint_url:
+            dep.status = "unknown"
+            dep.message = "no endpoint URL recorded"
+            return dep
+        seen = await self._app_tasks(dep.id)
+        if seen is not None:
+            state, n = seen
+            if state == "stopped":
+                dep.status, dep.message = "deleted", "the Modal app is stopped"
+                return dep
+            if state == "missing":
+                dep.status = "unknown"
+                dep.message = "not in this Modal workspace's app list (another profile?)"
+                return dep
+            if n == 0:
+                dep.status = "scaled_to_zero"
+                dep.message = "asleep — no containers up; the first request wakes one"
+                return dep
+            # A container is up. Even then, no HTTP: every request through
+            # Modal's proxy resets the scale-down timer, so a status check
+            # that probed /health would keep an idle GPU billing for as long
+            # as a dashboard stayed open. The container log says whether the
+            # server inside it has finished booting.
+            ready = await self._ready_from_log(dep)
+            if ready is None:
+                dep.status, dep.message = "running", f"{n} container{'s' if n != 1 else ''} up"
+            elif ready:
+                dep.status, dep.message = "running", f"ready — {n} container{'s' if n != 1 else ''} up"
+            else:
+                dep.status, dep.message = "starting", "a container is booting — loading the weights"
+            return dep
+        return await self._probe_health(dep)
+
+    async def _ready_from_log(self, dep: Deployment) -> bool | None:
+        """Has the newest container reported "Application startup complete"?
+        None when the log can't be read. Control plane only."""
+        from .. import usage as _usage  # noqa: PLC0415
+
+        try:
+            out = await self._cli(["app", "logs", dep.id, "-n", "3000"], timeout_s=60.0)
+        except Exception:  # noqa: BLE001
+            return None
+        sessions = _usage.parse(out.splitlines()).sessions
+        if not sessions:
+            return None
+        last = sessions[-1]
+        return last.ready is not None
+
+    async def _probe_health(self, dep: Deployment, *, booting: bool = False) -> Deployment:
+        """GET /health. Wakes a scaled-to-zero app — only for when that is the
+        point (waiting on a deploy you just made) or a container is already up."""
         if not dep.endpoint_url:
             dep.status = "unknown"
             dep.message = "no endpoint URL recorded"
@@ -526,6 +677,10 @@ class ModalDeployProvider:
             async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0)) as client:
                 r = await client.get(f"{base}/health", headers=self._inference_headers(dep))
         except httpx.HTTPError as e:
+            if booting:
+                # a container is up but not serving yet: that is a boot
+                dep.status, dep.message = "starting", "a container is booting — loading the weights"
+                return dep
             dep.status = "unknown"
             dep.message = f"health check failed: {type(e).__name__}"
             return dep
@@ -550,7 +705,8 @@ class ModalDeployProvider:
         deadline = _boot._clock() + timeout_s
         delay = 3.0
         while True:
-            dep = await self.status(dep)
+            # waiting on a deploy is the one time waking it is the point
+            dep = await self._probe_health(dep)
             if dep.status == "running":
                 return dep
             if dep.status in ("failed", "deleted"):

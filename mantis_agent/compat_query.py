@@ -73,7 +73,11 @@ async def query(
 
     opts = _normalize_options(options)
     opts = _apply_response_model(opts)
-    agent = _build_agent(opts)
+    # Pooled HTTP client: back-to-back query() calls on one loop reuse the
+    # provider's warm keep-alive connections instead of re-handshaking.
+    from .http import sharing_http_clients  # noqa: PLC0415
+    with sharing_http_clients():
+        agent = _build_agent(opts)
     # Claude-SDK parity that used to be silently dropped:
     #   * options.agents={"name": AgentDefinition(...)} → each becomes a real
     #     delegatable subagent tool (named after the agent).
@@ -98,7 +102,7 @@ async def query(
         subtype="init",
         data={
             "tools": _system_tools_list(agent, opts),
-            "mcp_servers": opts.get("mcp_servers", []),
+            "mcp_servers": _mcp_init_servers(_mcp_mgr),
             "model": agent.model,
             "permissionMode": opts.get("permission_mode", "default"),
             "cwd": opts.get("cwd", ""),
@@ -438,6 +442,8 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
                 Tool(
                     name=namespaced,
                     description=inner.description,
+                    description_short=inner.description_short,
+                    _short_for=inner._short_for,
                     input_schema=inner.input_schema,
                     fn=inner.fn,
                     is_concurrency_safe=inner.is_concurrency_safe,
@@ -531,6 +537,14 @@ def _register_agent_definitions(agent: Agent, opts: dict[str, Any]) -> None:
         agent.tools.add(as_subagent_tool(spec, parent_provider=agent.provider))
 
 
+def _mcp_init_servers(manager: Any) -> list[dict[str, str]]:
+    """Wire metadata is an allow-list, never transport config or error details."""
+    if manager is None:
+        return []
+    return [{"name": row["name"], "status": row["state"]}
+            for row in manager.status_rows()]
+
+
 async def _connect_external_mcp(agent: Agent, opts: dict[str, Any]) -> Any:
     """Connect EXTERNAL MCP servers from ``options.mcp_servers`` (stdio/sse/
     http — Claude Code config dicts or typed configs) and fold their tools into
@@ -566,10 +580,15 @@ async def _connect_external_mcp(agent: Agent, opts: dict[str, Any]) -> Any:
     if not configs:
         return None
     mgr = MCPManager(configs)
-    tools = await mgr.start()   # dedicated-task lifetime — generator-safe
-    if tools:
-        agent.tools.add(*tools)
-    return mgr
+    try:
+        tools = await mgr.start()   # dedicated-task lifetime — generator-safe
+        if tools:
+            agent.tools.add(*tools)
+        return mgr
+    except BaseException:
+        # A partial connection/cancel must not orphan the manager's runner.
+        await mgr.stop()
+        raise
 
 
 def _system_tools_list(agent: Agent, opts: dict[str, Any]) -> list[str]:

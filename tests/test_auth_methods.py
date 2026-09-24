@@ -131,7 +131,7 @@ class TestMethodTables:
         ("family", "expected"),
         [
             ("anthropic", ["api_key", "oauth", "vertex", "bedrock", "azure"]),
-            ("openai", ["api_key", "azure_openai"]),
+            ("openai", ["api_key", "chatgpt", "azure_openai"]),
             ("gemini", ["api_key", "vertex"]),
             ("xai", ["api_key"]),
         ],
