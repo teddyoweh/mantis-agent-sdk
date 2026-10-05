@@ -359,13 +359,13 @@
 }
 
 /* ---- hero product window ---- */
-.hero-window {
+.showcase-window {
   border: 1px solid var(--color-hair);
 }
-.hero-code {
+.showcase-code {
   border-radius: 0 !important;
 }
-.hero-code .shiki-pre {
+.showcase-code .shiki-pre {
   padding: 18px 22px;
   font-size: 12.5px;
   aspect-ratio: 2200 / 1310;

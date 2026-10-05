@@ -3,9 +3,9 @@
 import Image from "next/image";
 import { useState } from "react";
 
-/* The launch film, shown in the hero window's Film tab. A still of "One harness. Every
-   model." until clicked — nothing downloads before that — then it plays inline, with
-   sound, on native controls. Unmounting (switching tabs) stops it. */
+/* The launch film, shown in the hero. A still of "One harness. Every model." until
+   clicked — nothing downloads before that — then it plays inline, with sound, on
+   native controls. */
 
 export const FILM_DURATION = "1:35";
 

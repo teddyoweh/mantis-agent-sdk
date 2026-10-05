@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { BackendPills } from "@/components/landing/BackendPills";
-import { HeroShowcase } from "@/components/landing/HeroShowcase";
+import { ProductShowcase } from "@/components/landing/ProductShowcase";
 import { Film } from "@/components/landing/Film";
 import { ScreenTabs, type Screen } from "@/components/landing/ScreenTabs";
 import { BrowserFrame } from "@/components/landing/BrowserFrame";
@@ -171,21 +171,8 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-8 sm:mt-10">
-            <HeroShowcase
-              film={<Film />}
-              cli={
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src="/shots/cli.png"
-                  width={2200}
-                  height={1310}
-                  alt="The mantis CLI adding a DELETE endpoint to a FastAPI app on qwen3-coder, with a syntax-highlighted diff"
-                  className="block w-full h-auto"
-                />
-              }
-              sdk={<Shiki code={QUICKSTART} lang="python" className="hero-code" />}
-            />
+          <div className="mt-8 sm:mt-10 rise rounded-2xl overflow-hidden" style={{ animationDelay: "0.2s" }}>
+            <Film />
           </div>
         </section>
 
@@ -298,6 +285,30 @@ export default function Home() {
                 See all models and backends
               </Link>
             </p>
+          </div>
+        </section>
+
+        {/* ============ CLI AND SDK ============ */}
+        <section className="wrap pt-20">
+          <Heading
+            eyebrow="CLI and SDK"
+            title="Code in your terminal. Build in Python."
+            sub="The CLI reads, edits and runs your code. The SDK gives you the same agent in a few lines."
+          />
+          <div className="mt-10">
+            <ProductShowcase
+              cli={
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src="/shots/cli.png"
+                  width={2200}
+                  height={1310}
+                  alt="The mantis CLI adding a DELETE endpoint to a FastAPI app on qwen3-coder, with a syntax-highlighted diff"
+                  className="block w-full h-auto"
+                />
+              }
+              sdk={<Shiki code={QUICKSTART} lang="python" className="showcase-code" />}
+            />
           </div>
         </section>
 
