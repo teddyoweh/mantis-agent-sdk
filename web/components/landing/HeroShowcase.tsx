@@ -3,18 +3,28 @@
 import { useState } from "react";
 import { TrafficLights } from "./BrowserFrame";
 
-/* The hero's product shot: one app window, two tabs — a real capture of the
-   mantis CLI, and the SDK quickstart (rendered on the server, handed in). */
+/* The hero's product shot: one app window, three tabs — the launch film, a real
+   capture of the mantis CLI, and the SDK quickstart (rendered on the server, handed in).
+   The film tab is mounted only while active, so switching away stops playback. */
 
 const TABS = [
+  { key: "film", label: "Film", path: "mantis — launch film · 1:35" },
   { key: "cli", label: "CLI", path: "~/code/todo-api — mantis" },
   { key: "sdk", label: "SDK", path: "quickstart.py" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function HeroShowcase({ cli, sdk }: { cli: React.ReactNode; sdk: React.ReactNode }) {
-  const [tab, setTab] = useState<TabKey>("cli");
+export function HeroShowcase({
+  film,
+  cli,
+  sdk,
+}: {
+  film: React.ReactNode;
+  cli: React.ReactNode;
+  sdk: React.ReactNode;
+}) {
+  const [tab, setTab] = useState<TabKey>("film");
   const active = TABS.find((t) => t.key === tab)!;
 
   return (
@@ -40,6 +50,7 @@ export function HeroShowcase({ cli, sdk }: { cli: React.ReactNode; sdk: React.Re
         <span className="mono text-[12px] text-ink-3 ml-auto truncate hidden sm:block">{active.path}</span>
       </div>
       <div style={{ background: "var(--color-code)" }}>
+        {tab === "film" && film}
         <div hidden={tab !== "cli"}>{cli}</div>
         <div hidden={tab !== "sdk"}>{sdk}</div>
       </div>

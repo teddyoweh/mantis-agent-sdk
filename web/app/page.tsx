@@ -3,6 +3,7 @@ import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { BackendPills } from "@/components/landing/BackendPills";
 import { HeroShowcase } from "@/components/landing/HeroShowcase";
+import { Film } from "@/components/landing/Film";
 import { ScreenTabs, type Screen } from "@/components/landing/ScreenTabs";
 import { BrowserFrame } from "@/components/landing/BrowserFrame";
 import { DEPLOY_LOGOS } from "@/components/landing/deployLogos";
@@ -172,6 +173,7 @@ export default function Home() {
 
           <div className="mt-8 sm:mt-10">
             <HeroShowcase
+              film={<Film />}
               cli={
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
