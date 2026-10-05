@@ -8,6 +8,31 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.65.0] - 2026-10-04
+
+### Added
+
+- **2026 model and deploy support.** Updated hosted-provider catalogs for the latest
+  DeepSeek, Kimi, GLM, Qwen, OpenRouter and Cerebras models; expanded vLLM reasoning
+  and tool parsers for current GLM, Qwen, Kimi, DeepSeek, MiniMax, Gemma, GPT-OSS
+  and Nemotron architectures.
+- **Multimodal Hugging Face discovery.** Deployment search now merges text-generation
+  and image-text-to-text models, sizes context to available GPU memory, and reports
+  clearer compatibility and fit guidance.
+- **Website redesign.** Rebuilt the landing page, navigation, model showcase and
+  feature artwork, with current dashboard and CLI screenshots.
+
+### Changed
+
+- Updated self-hosted deployment defaults to vLLM 0.30.0 for Transformers 5-era
+  architectures.
+
+### Fixed
+
+- Removed leading blank lines left in answers after server-side reasoning extraction.
+- Improved deployment preflight estimates, parser selection and provider-specific
+  startup behavior, with expanded regression coverage.
+
 ## [2.64.1] - 2026-09-23
 
 ### Changed
@@ -2946,6 +2971,10 @@ A non-exhaustive summary:
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.62.0...HEAD
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.65.0...HEAD
+[2.65.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.1...v2.65.0
+[2.64.1]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.0...v2.64.1
+[2.64.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.63.0...v2.64.0
+[2.63.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.62.0...v2.63.0
 [2.62.0]: https://github.com/teddyoweh/mantis-agent-sdk/releases/tag/v2.62.0
 [1.0.0]: https://github.com/teddyoweh/mantis-agent-sdk/releases/tag/v1.0.0
