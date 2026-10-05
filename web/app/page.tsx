@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
-import { DiffHero } from "@/components/landing/DiffHero";
+// import { DiffHero } from "@/components/landing/DiffHero"; // replaced in the hero by the launch film
+import { Film } from "@/components/landing/Film";
 import { BackendPills } from "@/components/landing/BackendPills";
 import { HuntScene } from "@/components/landing/HuntScene";
 import { Terminal } from "@/components/landing/Terminal";
@@ -161,7 +162,8 @@ export default function Home() {
           </div>
 
           <div className="mt-12 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
-            <DiffHero />
+            {/* <DiffHero /> */}
+            <Film />
             <div className="rise flex flex-col gap-3" style={{ animationDelay: "0.25s" }}>
               <CopyLine text="pip install mantis-agent-sdk" />
               <div className="flex flex-wrap gap-2.5">
