@@ -62,7 +62,7 @@ export async function renderMarkdown(
     .use(rehypeCollectHeadings, headings)
     .use(rehypeRewriteLinks, slug)
     .use(rehypePrettyCode, {
-      theme: "vesper",
+      theme: "everforest-dark",
       keepBackground: true,
       defaultLang: { block: "text" },
     })

@@ -85,25 +85,29 @@ class Provider:
 CATALOG: tuple[Provider, ...] = (
     Provider(
         "deepseek", "DeepSeek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
-        ("deepseek-chat", "deepseek-reasoner"),
-        "platform.deepseek.com · chat=V3.2, reasoner=thinking",
+        # api-docs.deepseek.com, 2026-09-23: deepseek-flash = V4.1-Flash,
+        # deepseek-v4-pro = V4-Pro-0813 (1M context). The chat/reasoner names
+        # are gone from the pricing page, so they are no longer offered.
+        ("deepseek-flash", "deepseek-v4-pro"),
+        "platform.deepseek.com · V4.1-Flash, V4-Pro",
     ),
     Provider(
         "moonshot", "Kimi (Moonshot)", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY",
-        ("kimi-latest", "kimi-k2-0905-preview", "moonshot-v1-128k", "moonshot-v1-32k"),
-        "platform.moonshot.ai · K2.6",
+        ("kimi-k3", "kimi-latest"),
+        "platform.moonshot.ai · K3",
     ),
     Provider(
         "glm", "GLM (Zhipu)", "https://api.z.ai/api/paas/v4", "ZHIPUAI_API_KEY",
-        ("glm-4.7", "glm-4.6", "glm-4-plus", "glm-4-flash"),
+        # docs.z.ai: glm-5.3 (reasoning_effort low/high/max) and its Flash
+        ("glm-5.3", "glm-5.3-flash", "glm-4.7"),
         "z.ai",
         key_env_aliases=("ZAI_API_KEY", "ZHIPU_API_KEY"),
     ),
     Provider(
         "qwen", "Qwen (DashScope)",
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
-        ("qwen-max", "qwen-plus", "qwen3-235b-a22b", "qwen3-coder-plus"),
-        "dashscope-intl.aliyuncs.com · Qwen3",
+        ("qwen3.8-max", "qwen-plus", "qwen3-coder-plus"),
+        "dashscope-intl.aliyuncs.com · Qwen3.8",
         key_env_aliases=("QWEN_API_KEY",),  # intuitive name for the "Qwen" label
     ),
     Provider(
@@ -136,8 +140,10 @@ CATALOG: tuple[Provider, ...] = (
     ),
     Provider(
         "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
-        ("openai/gpt-oss-120b", "z-ai/glm-4.7", "moonshotai/kimi-k2",
-         "deepseek/deepseek-chat", "qwen/qwen3-235b-a22b"),
+        # verified against openrouter.ai/api/v1/models, 2026-09-23
+        ("z-ai/glm-5.3", "moonshotai/kimi-k3", "deepseek/deepseek-v4-pro",
+         "deepseek/deepseek-v4.1-flash", "qwen/qwen3.8-27b", "minimax/minimax-m3",
+         "openai/gpt-oss-120b"),
         "openrouter.ai · one key, every model",
     ),
     Provider(
@@ -155,13 +161,13 @@ CATALOG: tuple[Provider, ...] = (
     ),
     Provider(
         "cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-        # Public-endpoint catalog as of 2026-09-04 (https://api.cerebras.ai/
-        # public/v1/models): production gpt-oss-120b first, then gemma-4-31b
-        # and qwen-3.8-27b. llama-3.3-70b and zai-glm-4.7 are gone — they
-        # resolve only on Dedicated Endpoints now — so offering either sent
-        # people to a model their key cannot reach. The keyless refresh
+        # Public-endpoint catalog as of 2026-09-23 (https://api.cerebras.ai/
+        # public/v1/models): gpt-oss-120b and qwen-3.8-27b. gemma-4-31b left
+        # it this month (as llama-3.3-70b and zai-glm-4.7 did before — those
+        # resolve only on Dedicated Endpoints), so offering it sent people to
+        # a model their key cannot reach. The keyless refresh
         # (``refresh_public_models``) keeps this list current at runtime.
-        ("gpt-oss-120b", "gemma-4-31b", "qwen-3.8-27b"),
+        ("gpt-oss-120b", "qwen-3.8-27b"),
         "cloud.cerebras.ai · very fast · hosts OpenAI gpt-oss",
     ),
     # Anthropic is NOT OpenAI-compatible — mantis routes api.anthropic.com (and
@@ -496,7 +502,10 @@ def provider_for_model(model_id: str) -> Provider | None:
         "moonshot-": "moonshot",
         "deepseek-chat": "deepseek",
         "deepseek-reasoner": "deepseek",
+        "deepseek-flash": "deepseek",
+        "deepseek-v4": "deepseek",
         "qwen-max": "qwen",
+        "qwen3.8-": "qwen",
         "qwen-plus": "qwen",
         "gpt-": "openai",
         "o1": "openai",

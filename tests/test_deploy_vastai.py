@@ -117,7 +117,7 @@ def test_names_keys_and_env_refs(monkeypatch):
     monkeypatch.setenv("A_ID", "wk")
     monkeypatch.delenv("B_ID", raising=False)
     assert boot.resolve_env_refs({"X": "${A_ID}", "Y": "${B_ID}", "Z": "literal"}) == {"X": "wk", "Z": "literal"}
-    assert boot.vllm_image(DeployOpts()) == "vllm/vllm-openai:v0.21.0"
+    assert boot.vllm_image(DeployOpts()) == "vllm/vllm-openai:v0.30.0"
     assert boot.vllm_image(DeployOpts(engine_version="v0.22.0")) == "vllm/vllm-openai:v0.22.0"
     assert boot.vllm_image(DeployOpts(engine_version="latest")) == "vllm/vllm-openai:latest"
     assert boot.sglang_image(DeployOpts(engine_version="v0.5.1")) == "lmsysorg/sglang:v0.5.1"
@@ -252,7 +252,7 @@ async def test_deploy_creates_polls_and_derives_url(env, monkeypatch):
         dep = await VastAIProvider().deploy(MODEL, offer(count=1), "vllm", opts)
 
     body = _json.loads(create.calls[0].request.content)
-    assert body["image"] == "vllm/vllm-openai:v0.21.0"
+    assert body["image"] == "vllm/vllm-openai:v0.30.0"
     assert body["label"] == "mantis-qwen-qwen3-8b" and body["runtype"] == "args"
     assert body["disk"] == 80
     key = os.environ[KEY_ENV]

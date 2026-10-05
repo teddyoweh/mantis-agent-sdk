@@ -13,7 +13,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         href="/docs"
         onClick={onNavigate}
         className={`block mb-6 mono text-[12px] tracking-wide ${
-          pathname === "/docs" ? "text-clay" : "text-ink-3 hover:text-ink"
+          pathname === "/docs" ? "text-accent" : "text-ink-3 hover:text-ink"
         }`}
       >
         ← docs home
@@ -32,7 +32,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     onClick={onNavigate}
                     className={`block py-[5px] px-2.5 -mx-2.5 rounded-md transition-colors ${
                       active
-                        ? "bg-paper-2 text-clay font-medium"
+                        ? "bg-paper-2 text-accent font-medium"
                         : "text-ink-2 hover:text-ink hover:bg-paper-2/60"
                     }`}
                   >

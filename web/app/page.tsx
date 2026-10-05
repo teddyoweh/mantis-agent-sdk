@@ -1,15 +1,27 @@
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
-import { DiffHero } from "@/components/landing/DiffHero";
 import { BackendPills } from "@/components/landing/BackendPills";
-import { HuntScene } from "@/components/landing/HuntScene";
-import { Terminal } from "@/components/landing/Terminal";
+import { HeroShowcase } from "@/components/landing/HeroShowcase";
+import { ScreenTabs, type Screen } from "@/components/landing/ScreenTabs";
+import { BrowserFrame } from "@/components/landing/BrowserFrame";
+import { DEPLOY_LOGOS } from "@/components/landing/deployLogos";
+import { ModelsTable } from "@/components/landing/ModelsTable";
+import {
+  ModelsArt,
+  ToolsArt,
+  McpArt,
+  DeployArt,
+  SessionsArt,
+  BudgetArt,
+} from "@/components/landing/FeatureArt";
 import { Shiki } from "@/components/Shiki";
 import { CopyLine } from "@/components/CopyLine";
 
 const QUICKSTART = `import asyncio
-from mantis_agent import query, MantisAgentOptions, tool, AssistantMessage
+from mantis_agent import (
+    query, MantisAgentOptions, tool, AssistantMessage,
+)
 
 @tool
 async def get_weather(city: str) -> str:
@@ -20,7 +32,7 @@ async def main():
     async for msg in query(
         prompt="What's the weather in SF?",
         options=MantisAgentOptions(
-            model="qwen2.5:1.5b",   # routes to local Ollama automatically
+            model="qwen2.5:1.5b",  # local Ollama
             tools=[get_weather],
             max_turns=5,
         ),
@@ -32,106 +44,106 @@ async def main():
 
 asyncio.run(main())`;
 
-const SWAP = `# same script, five families — change one line
-options = MantisAgentOptions(model="qwen2.5:7b")                       # → local Ollama
-options = MantisAgentOptions(model="Qwen/Qwen2.5-72B-Instruct-Turbo")  # → Together
-options = MantisAgentOptions(model="claude-opus-5")                    # → Claude, native
-options = MantisAgentOptions(model="grok-4")                           # → xAI
-options = MantisAgentOptions(model="llama-3.3-70b-versatile",
-                            backend="https://api.groq.com/openai/v1")  # → Groq`;
+const ART = {
+  models: ModelsArt,
+  tools: ToolsArt,
+  mcp: McpArt,
+  deploy: DeployArt,
+  sessions: SessionsArt,
+  budget: BudgetArt,
+};
 
-const TRACING = `from mantis_agent import Agent, InMemoryTracer
+const FEATURES: { k: keyof typeof ART; t: string; d: string }[] = [
+  { k: "models", t: "Pick any model", d: "Write the model name. mantis works out where it lives and how to talk to it." },
+  { k: "tools", t: "Tools that just work", d: "Any Python function becomes a tool, even for models never trained to call one." },
+  { k: "mcp", t: "Every MCP server", d: "Connect filesystems, GitHub, databases and browsers, or publish your own tools." },
+  { k: "deploy", t: "Your own GPUs", d: "Pick an open model and a GPU. mantis deploys it and points your agent at it." },
+  { k: "sessions", t: "Sessions that keep going", d: "Resume yesterday's work or fork to try another approach. Long chats compact on their own." },
+  { k: "budget", t: "A hard spending limit", d: "Cap a run in dollars. Every call is traced with its tokens and cost." },
+];
 
-tracer = InMemoryTracer()
-agent  = Agent(model="qwen2.5:7b", tools=[...], tracer=tracer)
-await agent.run(...)
+const DEPLOY_PROVIDERS = ["RunPod", "Modal", "Hugging Face", "DeepInfra", "Baseten", "Vast.ai", "Fireworks"];
 
-tracer.summary()            # turns / tokens / cost_usd on the root span
-tracer.write_jsonl("t.jsonl")
+const DEPLOY_STEPS = [
+  { t: "Pick a model", d: "Search any open model. mantis checks it will fit before you spend anything." },
+  { t: "Pick a GPU", d: "See which GPUs fit, what they cost per hour, and choose one." },
+  { t: "Code with it", d: "When it boots, it is a model in your CLI and SDK. Stop it from the same page." },
+];
 
-# ship the same spans to Datadog / Honeycomb / Tempo — zero extra code
-from mantis_agent import OTelTracer
-agent = Agent(model="qwen2.5:7b", tracer=OTelTracer(service_name="my-agent"))`;
-
-const FEATURES = [
+const SCREENS: Screen[] = [
   {
-    k: "five families",
-    t: "Name the model and go",
-    d: "Claude, GPT, Gemini, Grok, or any open model — on a local Ollama, your own GPU server, or a hosted provider. mantis works out where the model lives and speaks its dialect; a bare name like claude-opus-5 or grok-4 is the whole configuration. Moving is a one-line change, not a rewrite.",
+    key: "sessions",
+    url: "localhost:8788/#sessions",
+    label: "Sessions",
+    title: "Every session, every project",
+    desc: "Open any conversation with its model, context fill and cost. Resume it in the terminal.",
+    src: "/shots/app-sessions.png",
+    alt: "The mantis dashboard listing sessions across projects with model, context and cost",
   },
   {
-    k: "deploy",
-    t: "Bring your own GPU cloud",
-    d: "Save a RunPod, Modal, Hugging Face, DeepInfra, Baseten or Vast.ai credential once. mantis pre-flights the model, shows which GPUs fit and what they cost, deploys it, and connects — from the dashboard, the CLI, or /deploy in the terminal.",
+    key: "usage",
+    url: "localhost:8788/#home",
+    label: "Usage",
+    title: "Know what you spend",
+    desc: "Messages, tool calls, tokens and dollars by day and by provider, with every connected model family.",
+    src: "/shots/app-home.png",
+    alt: "The mantis dashboard overview with spend, tokens and providers",
   },
   {
-    k: "tools",
-    t: "Write a function. It becomes a tool.",
-    d: "Decorate any Python function and every model can call it — even the ones that never learned function calling. mantis finds a way, and you never think about it.",
+    key: "skills",
+    url: "localhost:8788/#skills",
+    label: "Skills",
+    title: "Skills your agent can load",
+    desc: "Write and edit skills in one place. Every model sees the same catalog.",
+    src: "/shots/app-skills.png",
+    alt: "The mantis dashboard skills page",
   },
   {
-    k: "mcp",
-    t: "Plug into the MCP ecosystem",
-    d: "Connect the same MCP servers Claude Code uses — filesystems, browsers, databases — or expose your own tools as one. Your open model gets the whole ecosystem.",
+    key: "memory",
+    url: "localhost:8788/#memory",
+    label: "AGENTS.md",
+    title: "Project memory, edited in place",
+    desc: "Keep AGENTS.md and memory files current without leaving the dashboard.",
+    src: "/shots/app-memory.png",
+    alt: "The mantis dashboard editing an AGENTS.md file",
   },
   {
-    k: "sessions",
-    t: "Pick up where you left off",
-    d: "Every conversation is saved as it happens. Close the laptop, come back tomorrow, resume — or fork a session and try a different approach. Long chats compact themselves.",
-  },
-  {
-    k: "sub-agents",
-    t: "Build teams, not monoliths",
-    d: "Hand an agent smaller agents as tools — a researcher, a reviewer, a fixer — and set rules for what each one may touch. Approve, deny, or rewrite any call before it runs.",
-  },
-  {
-    k: "budget",
-    t: "Spend with a ceiling",
-    d: "Cap any run in dollars or turns. Every response tells you what it cost, and the run stops cleanly before it overspends — no surprise bills from a runaway loop.",
-  },
-  {
-    k: "dashboard",
-    t: "An instrument panel, local",
-    d: "mantis serve opens a page over everything on your machine: which of the five families are ready, every session with its context fill and cost, models with prices, and the Deploy page. /dash puts the same readout inside the terminal.",
-  },
-  {
-    k: "autonomy",
-    t: "Hand it the whole job",
-    d: "/goal plans, executes, and adversarially verifies until the task is done. /watch wakes the agent the moment a command starts failing; /loop and /cron run prompts on a schedule, sandboxed by default when nobody is watching.",
+    key: "mcp",
+    url: "localhost:8788/#mcp",
+    label: "MCP",
+    title: "All your MCP servers",
+    desc: "Add, check and remove MCP servers for every agent on the machine.",
+    src: "/shots/app-mcp.png",
+    alt: "The mantis dashboard MCP servers page",
   },
 ];
 
-const PATHS = [
+const START = [
   {
-    n: "A",
-    t: "Native",
-    d: "Models that speak function calling — Qwen, Llama 3, gpt-oss — get called directly. The fast path.",
+    t: "Install",
+    d: "One package gives you the CLI, the SDK and the dashboard.",
+    cmd: "pip install mantis-agent-sdk",
   },
   {
-    n: "B",
-    t: "Prompted",
-    d: "Older models never learned the schema, so mantis teaches it in the prompt and parses the reply. Tool use for models that “can't do tools.”",
+    t: "Choose a model",
+    d: "Paste a key, pick a local model, or deploy one to your GPUs.",
+    cmd: "mantis setup",
   },
   {
-    n: "C",
-    t: "Constrained",
-    d: "Where the server can enforce a grammar, the model physically cannot produce a malformed call. The strict path.",
+    t: "Start",
+    d: "Open the agent in any project, or the dashboard in your browser.",
+    cmd: "mantis",
   },
 ];
 
-const MODELS = [
-  ["Kimi K2.6", "cloud", "moonshotai/Kimi-K2.6-Instruct", "#1 open-weights GPQA"],
-  ["Qwen3 235B-A22B", "cloud · 64 GB+", "Qwen/Qwen3-235B-A22B-Instruct-Turbo", "Apache 2.0, broad leader"],
-  ["GLM-5", "cloud", "zai-org/GLM-5", "Best open Arena Elo"],
-  ["MiniMax M2.5", "cloud", "minimaxai/MiniMax-M2.5", "80.2% SWE-bench"],
-  ["DeepSeek-V3.2", "cloud · 80 GB+", "deepseek-ai/DeepSeek-V3.2", "Top general-purpose OSS"],
-  ["gpt-oss-120b", "cloud · 80 GB", "gpt-oss:120b", "OpenAI open, ~o4-mini class"],
-  ["Qwen2.5-Coder 7B", "8 GB local", "qwen2.5-coder:7b", "Strongest small coder"],
-  ["qwen2.5:1.5b", "4 GB local", "qwen2.5:1.5b", "CPU default, tool-capable"],
-];
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <div className="eyebrow mb-4">{children}</div>;
+function Heading({ eyebrow, title, sub }: { eyebrow: string; title: string; sub?: string }) {
+  return (
+    <div className="max-w-[640px]">
+      <div className="eyebrow mb-3">{eyebrow}</div>
+      <h2 className="font-display text-[clamp(1.5rem,2.6vw,2.1rem)] leading-[1.12] text-balance">{title}</h2>
+      {sub && <p className="mt-3 text-[15.5px] text-ink-3 leading-relaxed">{sub}</p>}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -140,49 +152,38 @@ export default function Home() {
       <Nav />
       <main>
         {/* ============ HERO ============ */}
-        <section className="wrap pt-16 sm:pt-24 pb-20">
-          <div className="max-w-[760px]">
-            <h1
-              className="rise font-display text-[clamp(1.7rem,3.6vw,2.8rem)]"
-              style={{ animationDelay: "0.05s" }}
-            >
-              Claude Code, for open source.
-              <br />
-              Any model, any provider.
-            </h1>
-            <p
-              className="rise mt-6 text-[17px] sm:text-[18px] text-ink-2 leading-relaxed max-w-[620px]"
-              style={{ animationDelay: "0.1s" }}
-            >
-              A Claude-Code-style agent in your terminal, and Anthropic&apos;s{" "}
-              <span className="mono text-ink">claude-agent-sdk</span> surface as a library — on any
-              model you can serve, open or closed. The migration is one import.
-            </p>
-          </div>
-
-          <div className="mt-12 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
-            <DiffHero />
-            <div className="rise flex flex-col gap-3" style={{ animationDelay: "0.25s" }}>
-              <CopyLine text="pip install mantis-agent-sdk" />
-              <div className="flex flex-wrap gap-2.5">
-                <Link
-                  href="/docs/getting-started/quickstart"
-                  className="mono text-[13px] px-4 py-2.5 rounded-lg bg-ink text-paper hover:bg-clay transition-colors"
-                >
-                  Quickstart →
-                </Link>
-                <Link
-                  href="/docs"
-                  className="mono text-[13px] px-4 py-2.5 rounded-lg bg-paper-2 hover:bg-paper-3 text-ink transition-colors"
-                >
-                  Read the docs
-                </Link>
-              </div>
-              <p className="mt-1 text-[13px] text-ink-3 leading-relaxed">
-                The <span className="mono text-ink-2">mantis</span> terminal ships in the same install
-                — a Claude-Code-style coding agent driving the open model you choose.
+        <section className="wrap pt-10 sm:pt-14 pb-14 sm:pb-20">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16 items-start">
+            <div className="rise" style={{ animationDelay: "0.05s" }}>
+              <h1 className="font-display text-[clamp(1.45rem,2.3vw,1.95rem)] leading-[1.15]">A coding agent for any model.</h1>
+              <p className="mt-3 text-[15.5px] text-ink-3 leading-relaxed max-w-[460px]">
+                The mantis CLI reads, edits and runs your code on the model you pick, local or
+                hosted.
               </p>
             </div>
+            <div className="rise" style={{ animationDelay: "0.1s" }}>
+              <p className="font-display text-[clamp(1.45rem,2.3vw,1.95rem)] leading-[1.15]">An SDK to build your own.</p>
+              <p className="mt-3 text-[15.5px] text-ink-3 leading-relaxed max-w-[460px]">
+                Tools, MCP, sessions and sub-agents in a few lines of Python. The same code runs on
+                every model.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 sm:mt-10">
+            <HeroShowcase
+              cli={
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src="/shots/cli.png"
+                  width={2200}
+                  height={1310}
+                  alt="The mantis CLI adding a DELETE endpoint to a FastAPI app on qwen3-coder, with a syntax-highlighted diff"
+                  className="block w-full h-auto"
+                />
+              }
+              sdk={<Shiki code={QUICKSTART} lang="python" className="hero-code" />}
+            />
           </div>
         </section>
 
@@ -190,205 +191,141 @@ export default function Home() {
         <section className="band py-10">
           <div className="wrap">
             <div className="flex flex-col md:flex-row md:items-center gap-6 md:gap-10">
-              <p className="mono text-[12px] text-ink-3 shrink-0 md:w-[160px] uppercase tracking-wider">
-                One kwarg between
+              <p className="mono text-[12px] text-ink-3 shrink-0 md:w-[100px] uppercase tracking-wider">
+                Runs on
               </p>
               <BackendPills />
             </div>
           </div>
         </section>
 
-        {/* ============ TWO WAYS IN ============ */}
-        <section className="wrap py-24">
-          <SectionLabel>two ways in · one pip install</SectionLabel>
-          <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[720px]">
-            A terminal to code in, and a library to build with.
-          </h2>
-          <div className="mt-14 grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
-            <div className="min-w-0">
-              <div className="flex items-baseline gap-3 mb-4">
-                <span className="mono text-[13px] text-clay">01</span>
-                <h3 className="text-[18px] font-medium">The mantis terminal</h3>
-              </div>
-              <p className="text-[14.5px] text-ink-2 leading-relaxed mb-6">
-                Point it at any directory. It reads, writes, edits, greps, and runs shell commands —
-                Claude Code&apos;s feel, driving your local Ollama, your vLLM box, or a hosted endpoint.
-                The input stays pinned to the bottom; replies render as Markdown; file edits come back
-                as real, line-numbered diffs.
-              </p>
-              <Terminal />
-              <div className="mt-4">
-                <CopyLine text="mantis setup && mantis" />
+        {/* ============ DEPLOY ============ */}
+        <section className="wrap py-20">
+          <Heading
+            eyebrow="Deploy"
+            title="Run any open model on your own GPUs."
+            sub="Deploy GLM, Kimi, DeepSeek or Qwen to the GPU cloud you already use, and your agent is running on it in minutes."
+          />
+          <div className="mt-10 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-8 lg:gap-12 items-start">
+            <BrowserFrame url="localhost:8788/#deploy">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/shots/app-deploy.png"
+                alt="The mantis dashboard Deploy page with a running open-model deployment"
+                className="block w-full h-auto"
+              />
+            </BrowserFrame>
+            <div>
+              <ol className="flex flex-col gap-6">
+                {DEPLOY_STEPS.map((s, i) => (
+                  <li key={s.t} className="flex gap-4">
+                    <span className="mono text-[12px] text-ink-3 w-5 shrink-0 pt-1">{i + 1}</span>
+                    <div>
+                      <div className="text-[15.5px] font-medium">{s.t}</div>
+                      <p className="mt-1 text-[14px] text-ink-3 leading-relaxed">{s.d}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <div className="mt-8 pt-6 border-t border-hair">
+                <div className="eyebrow mb-3">Deploys to</div>
+                <div className="flex flex-wrap gap-2">
+                  {DEPLOY_PROVIDERS.map((p) => (
+                    <span key={p} className="pill">
+                      <span
+                        aria-hidden="true"
+                        className="provider-logo"
+                        dangerouslySetInnerHTML={{ __html: DEPLOY_LOGOS[p] }}
+                      />
+                      {p}
+                    </span>
+                  ))}
+                </div>
+                <Link href="/docs/guides/deploy" className="inline-block mt-5 ul text-[14px] text-ink">
+                  How deploys work →
+                </Link>
               </div>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-baseline gap-3 mb-4">
-                <span className="mono text-[13px] text-mantis">02</span>
-                <h3 className="text-[18px] font-medium">The Python library</h3>
-              </div>
-              <p className="text-[14.5px] text-ink-2 leading-relaxed mb-6">
-                The same engine, as an SDK. A tool-calling loop is a few lines away — and the exact same
-                script runs against Claude, GPT, Gemini, Grok, Together, vLLM, or Groq by changing one string.
-              </p>
-              <Shiki code={QUICKSTART} lang="python" title="quickstart.py" />
-              <div className="mt-4">
-                <Shiki code={SWAP} lang="python" />
-              </div>
+          </div>
+        </section>
+
+        {/* ============ DASHBOARD ============ */}
+        <section className="band">
+          <div className="wrap py-20">
+            <Heading
+              eyebrow="Dashboard"
+              title="One place to run all your agents."
+              sub="mantis serve opens a local dashboard for everything on your machine."
+            />
+            <div className="mt-10">
+              <ScreenTabs screens={SCREENS} />
             </div>
+            <Link href="/docs/guides/dashboard" className="inline-block mt-8 ul text-[14px] text-ink">
+              Open the dashboard guide →
+            </Link>
           </div>
         </section>
 
         {/* ============ FEATURES ============ */}
-        <section className="band">
-          <div className="wrap py-24">
-            <SectionLabel>the whole surface</SectionLabel>
-            <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[760px]">
-              Everything that makes Claude Code feel finished — on models you choose.
-            </h2>
-            <div className="mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-10 gap-y-12">
-              {FEATURES.map((f) => (
-                <div key={f.k} className="group">
-                  <div className="eyebrow text-clay mb-2.5">{f.k}</div>
-                  <h3 className="text-[17px] font-medium mb-2 leading-snug">{f.t}</h3>
-                  <p className="text-[13.5px] text-ink-2 leading-relaxed">{f.d}</p>
+        <section className="wrap py-20">
+          <Heading eyebrow="Built in" title="What every model gets." />
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
+            {FEATURES.map((f) => {
+              const Art = ART[f.k];
+              return (
+                <div key={f.k}>
+                  <Art />
+                  <h3 className="mt-5 text-[16.5px] font-medium">{f.t}</h3>
+                  <p className="mt-1.5 text-[14px] text-ink-3 leading-relaxed">{f.d}</p>
                 </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* ============ TOOL-USE PATHS ============ */}
-        <section className="wrap py-24">
-          <SectionLabel>universal tool use</SectionLabel>
-          <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[680px]">
-            Every model gets tool use.
-          </h2>
-          <p className="mt-5 text-[15px] text-ink-2 max-w-[560px] leading-relaxed">
-            Not every open model knows how to call functions. mantis meets each one where it is — you
-            write the tool once, and it picks the right way in for whatever model is in front of it.
-          </p>
-          <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-px" style={{ background: "var(--color-hair)" }}>
-            {PATHS.map((p) => (
-              <div key={p.n} className="bg-paper p-7">
-                <div className="flex items-center gap-3 mb-4">
-                  <span
-                    className="mono text-[13px] w-8 h-8 grid place-items-center rounded-full text-paper"
-                    style={{ background: "var(--color-ink)" }}
-                  >
-                    {p.n}
-                  </span>
-                  <span className="text-[17px] font-medium">{p.t}</span>
-                </div>
-                <p className="text-[13.5px] text-ink-2 leading-relaxed">{p.d}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
         {/* ============ MODELS ============ */}
         <section className="band">
-          <div className="wrap py-24">
-            <SectionLabel>ranked · picked by where they run</SectionLabel>
-            <h2 className="font-display text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[640px]">
-              Pick the highest-ranked model that fits your hardware.
-            </h2>
-            <div className="mt-12 overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[640px]">
-                <thead>
-                  <tr className="eyebrow">
-                    <th className="pb-3 pr-4 font-normal">Model</th>
-                    <th className="pb-3 pr-4 font-normal">Runs</th>
-                    <th className="pb-3 pr-4 font-normal">model=</th>
-                    <th className="pb-3 font-normal">Notable</th>
-                  </tr>
-                </thead>
-                <tbody className="mono text-[13px]">
-                  {MODELS.map((m, i) => (
-                    <tr
-                      key={m[2]}
-                      className="transition-colors hover:bg-paper-3/60"
-                      style={{ background: i % 2 ? "transparent" : "rgba(0,0,0,0.012)" }}
-                    >
-                      <td className="py-2.5 pr-4 text-ink font-medium whitespace-nowrap">{m[0]}</td>
-                      <td className="py-2.5 pr-4 text-ink-3 whitespace-nowrap">{m[1]}</td>
-                      <td className="py-2.5 pr-4 text-mantis whitespace-nowrap">{m[2]}</td>
-                      <td className="py-2.5 text-ink-2" style={{ fontFamily: "var(--font-sans)" }}>
-                        {m[3]}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="wrap py-20">
+            <Heading eyebrow="Models" title="The best models, open and closed." />
+            <div className="mt-10">
+              <ModelsTable />
             </div>
-            <p className="mt-6 text-[13px] text-ink-3">
-              Full ranked catalog — 20 hosted + 10 CPU-friendly tiers — in{" "}
-              <Link href="/docs/guides/models-and-backends" className="ul text-clay">
-                Models &amp; backends
+            <p className="mt-5 text-[13.5px] text-ink-3">
+              Any other model works too.{" "}
+              <Link href="/docs/guides/models-and-backends" className="ul text-accent">
+                See all models and backends
               </Link>
-              .
             </p>
           </div>
         </section>
 
-        {/* ============ OBSERVABILITY ============ */}
-        <section className="wrap py-24">
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
-            <div>
-              <SectionLabel>observability, shipped</SectionLabel>
-              <h2 className="font-display text-[clamp(1.45rem,2.6vw,2rem)] leading-[1.05]">
-                See what every run did — and what it cost.
-              </h2>
-              <p className="mt-5 text-[14.5px] text-ink-2 leading-relaxed max-w-[460px]">
-                Every run produces a full trace: each turn, each model call, each tool call, with
-                tokens and dollars totalled at the top. Keep it in memory while you develop, or ship
-                the same trace to Datadog, Honeycomb, or any OpenTelemetry pipeline with one line.
-                And traces record which fields a tool was given — never their values — so nothing
-                sensitive leaves the house.
-              </p>
-            </div>
-            <Shiki code={TRACING} lang="python" title="tracing.py" />
+        {/* ============ GET STARTED ============ */}
+        <section className="wrap py-20">
+          <Heading eyebrow="Get started" title="Up and running in a minute." />
+          <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
+            {START.map((s, i) => (
+              <div key={s.t} className="rounded-xl bg-paper-2 p-6 flex flex-col">
+                <span className="mono text-[12px] text-ink-3">{String(i + 1).padStart(2, "0")}</span>
+                <div className="mt-3 text-[16.5px] font-medium">{s.t}</div>
+                <p className="mt-1.5 text-[14px] text-ink-3 leading-relaxed flex-1">{s.d}</p>
+                <div className="mt-5">
+                  <CopyLine text={s.cmd} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-[14px]">
+            <Link href="/docs/getting-started/quickstart" className="ul text-ink">
+              Read the quickstart →
+            </Link>
+            <Link href="/docs/guides/tools" className="ul text-ink-2">
+              Build with the SDK
+            </Link>
+            <Link href="https://github.com/teddyoweh/mantis-agent-sdk" target="_blank" className="ul text-ink-2">
+              GitHub
+            </Link>
           </div>
         </section>
-
-        {/* ============ PROOF / CTA ============ */}
-        <section className="band-3">
-          <div className="wrap py-24 text-center">
-            <SectionLabel>does it actually work?</SectionLabel>
-            <h2 className="font-display text-[clamp(1.6rem,3vw,2.3rem)] max-w-[720px] mx-auto">
-              On a fresh machine, no GPU. Works on the first try.
-            </h2>
-            <div className="mt-10 max-w-[560px] mx-auto text-left">
-              <Shiki
-                code={`pip install mantis-agent-sdk
-mantis-agent setup-local     # pulls a CPU-friendly model, smoke-tests
-python my_agent.py           # two tools, a 5-turn task — first try`}
-                lang="bash"
-              />
-            </div>
-            <p className="mt-8 text-[15px] text-ink-2 max-w-[540px] mx-auto leading-relaxed">
-              Change one word — <span className="mono text-clay">model=</span> — and the same script runs
-              against Claude, GPT, Gemini, Grok, Together, Fireworks, vLLM, llama.cpp, or Groq.
-            </p>
-            <div className="mt-9 flex flex-wrap gap-3 justify-center">
-              <Link
-                href="/docs/getting-started/quickstart"
-                className="mono text-[13.5px] px-5 py-3 rounded-lg bg-ink text-paper hover:bg-clay transition-colors"
-              >
-                Get started →
-              </Link>
-              <Link
-                href="https://github.com/teddyoweh/mantis-agent-sdk"
-                target="_blank"
-                className="mono text-[13.5px] px-5 py-3 rounded-lg bg-paper hover:bg-paper-2 text-ink transition-colors"
-              >
-                Star on GitHub
-              </Link>
-            </div>
-          </div>
-        </section>
-
-        {/* ============ THE HUNT ============ */}
-        <HuntScene />
       </main>
       <Footer />
     </>

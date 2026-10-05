@@ -42,11 +42,67 @@ __all__ = [
 
 # Text-generation architectures vLLM serves natively. Snapshot of
 # ``vllm/model_executor/models/registry.py`` (_TEXT_GENERATION_MODELS +
-# _MULTIMODAL_MODELS + the Transformers-backend set), September 2026:
+# _MULTIMODAL_MODELS + the Transformers-backend set), refreshed 2026-09-23:
 # https://docs.vllm.ai/en/latest/models/supported_models.html . Anything
 # not listed is *unknown* (``vllm_ok=None``) rather than unsupported — vLLM
 # falls back to the Transformers backend for most decoder-only models.
 VLLM_ARCHITECTURES: frozenset[str] = frozenset({
+    # vLLM main, refreshed 2026-09-23 from registry.py _TEXT_GENERATION_MODELS +
+    # _MULTIMODAL_MODELS (GLM-5.x, Kimi K3, DeepSeek V4.x, Qwen3.5+/3.8, MiniMax M3, ...)
+    "AXK1ForCausalLM", "AfmoeForCausalLM", "ArceeForCausalLM", "AriaForConditionalGeneration",
+    "AudioFlamingo3ForConditionalGeneration", "BagelForConditionalGeneration",
+    "BailingMoeV2_5ForCausalLM", "BailingMoeV3ForCausalLM", "BailingMoeV3VLForConditionalGeneration",
+    "BeeForConditionalGeneration", "Blip2ForConditionalGeneration", "Cohere2MoeForCausalLM",
+    "Cohere2VisionForConditionalGeneration", "CohereAsrForConditionalGeneration",
+    "CohereCompassForConditionalGeneration", "Cosmos3EdgeForConditionalGeneration",
+    "Cosmos3ForConditionalGeneration", "CwmForCausalLM", "DeepseekOCR2ForCausalLM",
+    "DeepseekOCRForCausalLM", "DeepseekV41ForCausalLM", "DeepseekV4ForConditionalGeneration",
+    "DeepseekVLV2ForCausalLM", "DiffusionGemmaForBlockDiffusion", "Dots3NoteForCausalLM",
+    "DotsOCRForCausalLM", "Ernie4_5_VLMoeForConditionalGeneration",
+    "Exaone4_5_ForConditionalGeneration", "ExaoneMoeForCausalLM",
+    "FireRedASR2ForConditionalGeneration", "FunASRForConditionalGeneration",
+    "FunAudioChatForConditionalGeneration", "GLM4VForCausalLM", "Gemma3nForCausalLM",
+    "Gemma4UnifiedForConditionalGeneration", "Glm4MoeLiteForCausalLM",
+    "Glm4vMoeForConditionalGeneration", "Glm5NextForCausalLM", "Glm5NextForConditionalGeneration",
+    "GlmAsrForConditionalGeneration", "GlmForCausalLM", "GlmOcrForConditionalGeneration",
+    "Granite4VisionForConditionalGeneration", "GraniteMoeSWAForCausalLM",
+    "GraniteMoeSharedForCausalLM", "GraniteSWAForCausalLM", "GraniteSpeechForConditionalGeneration",
+    "GraniteSpeechPlusForConditionalGeneration", "H2OVLChatModel", "HCXVisionV2ForCausalLM",
+    "HYV3ForCausalLM", "HYV4ForCausalLM", "HfMoondream", "HrmTextForCausalLM",
+    "HyperCLOVAXForCausalLM", "IQuestCoderForCausalLM", "IQuestLoopCoderForCausalLM",
+    "InklingForCausalLM", "InklingForConditionalGeneration", "InternS1ForConditionalGeneration",
+    "InternS1ProForConditionalGeneration", "InternS2MobiusForConditionalGeneration",
+    "InternS2PreviewForConditionalGeneration", "InternVLForConditionalGeneration",
+    "IsaacForConditionalGeneration", "Jais2ForCausalLM", "K2HorizonForCausalLM",
+    "KananaVForConditionalGeneration", "KeyeForConditionalGeneration",
+    "KeyeVL1_5ForConditionalGeneration", "KimiK25ForConditionalGeneration",
+    "KimiK3ForConditionalGeneration", "KimiLinearForCausalLM", "LLaMAForCausalLM", "LagunaForCausalLM",
+    "Lfm2ForCausalLM", "Lfm2MoeForCausalLM", "Lfm2VlForConditionalGeneration",
+    "LightOnOCRForConditionalGeneration", "Llama_Nemotron_Nano_VL",
+    "LlavaNextVideoForConditionalGeneration", "LlavaOnevision2ForConditionalGeneration",
+    "LongcatFlashNgramForCausalLM", "MellumForCausalLM", "MiDashengLMModel", "MiMoForCausalLM",
+    "MiMoV2FlashForCausalLM", "MiMoV2ForCausalLM", "MiMoV2OmniForCausalLM", "MiniCPMO",
+    "MiniCPMV4_6ForConditionalGeneration", "MiniMaxM3SparseForCausalLM",
+    "MiniMaxM3SparseForConditionalGeneration", "Ministral3ForCausalLM", "MistralLarge3ForCausalLM",
+    "Molmo2ForConditionalGeneration", "Moondream3ForCausalLM", "MoonshotKimiaForCausalLM",
+    "MossAudioModel", "MossTranscribeDiarizeForConditionalGeneration", "MuseGlimmerForCausalLM",
+    "MuseGlimmerForConditionalGeneration", "NVLM_D", "NemotronHPuzzleForCausalLM",
+    "NemotronH_Nano_Omni_Reasoning_V3", "NemotronH_Nano_VL_V2", "NemotronH_Omni_Reasoning_V3",
+    "NemotronH_Super_Omni_Reasoning_V3", "NemotronParseForConditionalGeneration",
+    "OlmoHybridForCausalLM", "OpenCUAForConditionalGeneration", "OpenPanguVLForConditionalGeneration",
+    "OpenVLAForActionPrediction", "Ovis2_5", "Ovis2_6ForCausalLM", "Ovis2_6_MoeForCausalLM",
+    "PaddleOCRVLForConditionalGeneration", "PanguEmbeddedForCausalLM", "PanguProMoEV2ForCausalLM",
+    "PanguUltraMoEForCausalLM", "Param2MoEForCausalLM", "Phi3VForCausalLM", "Phi4ForCausalLMV",
+    "Plamo3ForCausalLM", "QianfanOCRForConditionalGeneration", "Qwen2AudioForConditionalGeneration",
+    "Qwen2_5OmniForConditionalGeneration", "Qwen2_5OmniModel", "Qwen3ASRForConditionalGeneration",
+    "Qwen3ASRRealtimeGeneration", "Qwen3OmniMoeForConditionalGeneration", "Qwen3_5ForCausalLM",
+    "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForCausalLM", "Qwen3_5MoeForConditionalGeneration",
+    "Qwen4ExpForCausalLM", "Qwen4ExpForConditionalGeneration", "RForConditionalGeneration",
+    "Rnj1ForCausalLM", "SarvamMLAForCausalLM", "SarvamMoEForCausalLM", "SkyworkR1VChatModel",
+    "SmolVLMForConditionalGeneration", "Step1ForCausalLM", "Step3VLForConditionalGeneration",
+    "Step3p5ForCausalLM", "Step3p7ForConditionalGeneration", "StepVLForConditionalGeneration",
+    "TeleChat3ForCausalLM", "TeleFLMForCausalLM", "UltravoxModel", "UnlimitedOCRForCausalLM",
+    "VoxtralForConditionalGeneration", "VoxtralRealtimeGeneration", "WhisperForConditionalGeneration",
     # Llama family & derivatives
     "LlamaForCausalLM", "Llama4ForCausalLM", "Llama4ForConditionalGeneration",
     "MistralForCausalLM", "MixtralForCausalLM", "Mistral3ForConditionalGeneration",
@@ -100,26 +156,30 @@ VLLM_ARCHITECTURES: frozenset[str] = frozenset({
 # (``mantis_agent.catalog``: gpt-oss, GLM, Kimi, DeepSeek, Qwen3). Keep this
 # short and current — it is what the dashboard shows before anyone types.
 CURATED_MODELS: tuple[str, ...] = (
-    "Qwen/Qwen3-8B",
-    "Qwen/Qwen3-14B",
-    "Qwen/Qwen3-32B",
-    "Qwen/Qwen3-235B-A22B-Instruct-2507",
-    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
-    "openai/gpt-oss-20b",
+    # The open-weight frontier, verified on the Hub 2026-09-23 — every id
+    # resolves and every architecture is in vLLM's registry. Biggest first.
+    "zai-org/GLM-5.3",                          # 753B, top open coding model
+    "zai-org/GLM-5.3-Flash",                    # 321B, multimodal, MIT
+    "moonshotai/Kimi-K3",                       # 2.8T, 1M context
+    "deepseek-ai/DeepSeek-V4-Pro-0813",         # 1.6T, 1M context
+    "deepseek-ai/DeepSeek-V4.1-Flash",          # 763B
+    "Qwen/Qwen3.8-2.4T-A95B",                   # Qwen3.8-Max weights
+    "MiniMaxAI/MiniMax-M3",                     # 427B, multimodal agentic coding
+    "moonshotai/Kimi-K2.7-Code",                # 1T coding
+    "mistralai/Mistral-Medium-3.5-128B",
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+    "mistralai/Mistral-Small-4-119B-2603",      # 119B / 6.5B active, Apache 2.0
     "openai/gpt-oss-120b",
-    "meta-llama/Llama-3.1-8B-Instruct",
-    "meta-llama/Llama-3.3-70B-Instruct",
-    "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
-    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-    "deepseek-ai/DeepSeek-V3.2",
-    "zai-org/GLM-4.7",
-    "moonshotai/Kimi-K2.6",   # the repo has no -Instruct suffix; that id 401s
-    "MiniMaxAI/MiniMax-M2.5",
-    "google/gemma-3-27b-it",
-    "microsoft/phi-4",
-    "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
-    "NousResearch/Hermes-4-70B",
+    "Qwen/Qwen3-Coder-Next",                    # 80B / 3B active coder
+    # fits one GPU
+    "Qwen/Qwen3.8-27B",
+    "Qwen/Qwen3.6-35B-A3B",
+    "google/gemma-4-31B-it",
+    "google/gemma-4-26B-A4B-it",
+    "zai-org/GLM-4.7-Flash",
+    "openai/gpt-oss-20b",
+    "google/gemma-4-E4B-it",
+    "Qwen/Qwen3-8B",
 )
 
 # safetensors dtype key → bytes per parameter.
@@ -223,6 +283,40 @@ def _default_context(config: dict[str, Any] | None) -> int:
     return max(2048, min(mx, 32768))
 
 
+#: never ask vLLM for more than this unless the caller does — past it the KV
+#: cache crowds out batching, and agents compact long before
+SERVE_CONTEXT_CAP = 131072
+
+
+def serve_context(info: ModelInfo, gpu_total_gb: float | None) -> int | None:
+    """The ``--max-model-len`` to launch with when the user didn't set one.
+
+    vLLM otherwise reserves the model's FULL native window — 262,144 tokens
+    for Qwen3.8 — and dies at boot when that doesn't fit ("To serve at least
+    one request with the model's max seq len (262144), 4.08 GiB KV cache is
+    needed, which is larger than the available KV cache memory"). The fit
+    check sized the GPUs for the default agent context, so launch with the
+    largest context the chosen GPUs actually hold: vLLM's 90% memory
+    utilisation, minus the weights and activations, minus a 15% margin,
+    divided by the per-token KV cost — never past the model's own window or
+    :data:`SERVE_CONTEXT_CAP`, never under 4096."""
+    native = int(info.context_len) if info.context_len else None
+    default_ctx = max(2048, min(native or 8192, 32768))
+    if not (info.params_b and info.est_vram_gb and gpu_total_gb):
+        return default_ctx
+    weights = float(info.params_b) * bytes_per_param(info.dtype)
+    kv_default = float(info.est_vram_gb) - weights - 1.5
+    if kv_default <= 0:
+        return default_ctx
+    per_token = kv_default / default_ctx
+    budget = (float(gpu_total_gb) * 0.9 - weights - 1.5) * 0.85
+    if budget <= 0:
+        return default_ctx
+    ctx = int(budget / per_token) // 1024 * 1024
+    ceiling = min(native or SERVE_CONTEXT_CAP, SERVE_CONTEXT_CAP)
+    return max(4096, min(ctx, ceiling))
+
+
 def _dominant_dtype(parameters: dict[str, Any] | None) -> tuple[str | None, float | None]:
     if not isinstance(parameters, dict) or not parameters:
         return None, None
@@ -239,16 +333,19 @@ def _dominant_dtype(parameters: dict[str, Any] | None) -> tuple[str | None, floa
     return (best[0] if best else None), (total / 1e9 if total else None)
 
 
-_PARAM_IN_NAME = re.compile(r"(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])")
+_PARAM_IN_NAME = re.compile(r"(\d+(?:\.\d+)?)\s*([bBtT])(?![a-zA-Z])")
 
 
 def _params_from_name(model_id: str) -> float | None:
+    """Billions of parameters from the repo name. ``T`` is trillions: the
+    2026 frontier names its size that way (``Qwen3.8-2.4T-A95B``), and a
+    B-only parser read that model as its 95B *active* count."""
     hits = _PARAM_IN_NAME.findall(model_id)
     if not hits:
         return None
     try:
         # MoE ids carry two numbers ("235B-A22B"); the *total* is what has to fit.
-        return max(float(h) for h in hits)
+        return max(float(n) * (1000.0 if unit in "tT" else 1.0) for n, unit in hits)
     except ValueError:
         return None
 

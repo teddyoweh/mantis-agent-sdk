@@ -1,6 +1,6 @@
 import { codeToHtml } from "shiki";
 
-const THEME = "vesper";
+const THEME = "everforest-dark";
 
 export async function Shiki({
   code,
@@ -30,9 +30,9 @@ export async function Shiki({
       {title && (
         <div
           className="mono text-[11.5px] px-4 py-2.5 flex items-center gap-2"
-          style={{ background: "var(--color-code-2)", color: "#8b8577" }}
+          style={{ background: "var(--color-code-2)", color: "#7a887f" }}
         >
-          <span className="w-2 h-2 rounded-full" style={{ background: "#3a352b" }} />
+          <span className="w-2 h-2 rounded-full" style={{ background: "#25312a" }} />
           {title}
         </div>
       )}

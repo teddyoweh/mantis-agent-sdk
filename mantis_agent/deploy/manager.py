@@ -87,9 +87,25 @@ class ProviderSummary(dict):
 #: vLLM is told which parser splits it into ``reasoning_content``. Without
 #: this, GLM-4.7 answered "what are you?" with "1. Analyze the user's
 #: request…" as the message — and an agent would take that as the answer.
+# The 2026 families follow vLLM's own recipes (github.com/vllm-project/recipes:
+# GLM5.md, Qwen3.5.md, Gemma4.md, GPT-OSS.md, Kimi-K2.5.md, MiniMax-M2.md) and
+# its parser registry (vllm/reasoning, vllm/tool_parsers), checked 2026-09-24.
 _REASONING_PARSERS: tuple[tuple[str, str], ...] = (
     ("Glm4MoeForCausalLM", "glm45"), ("Glm4vMoeForConditionalGeneration", "glm45"),
+    ("Glm4MoeLiteForCausalLM", "glm45"),
+    ("GlmMoeDsaForCausalLM", "glm45"),                                  # GLM-5 / 5.1 / 5.2 / 5.3
+    ("Glm5NextForConditionalGeneration", "glm45"), ("Glm5NextForCausalLM", "glm45"),  # GLM-5.3-Flash
     ("Qwen3ForCausalLM", "qwen3"), ("Qwen3MoeForCausalLM", "qwen3"),
+    ("Qwen3NextForCausalLM", "qwen3"),
+    ("Qwen3_5ForConditionalGeneration", "qwen3"), ("Qwen3_5MoeForConditionalGeneration", "qwen3"),
+    ("Qwen3_5MoeForCausalLM", "qwen3"), ("Qwen3_5ForCausalLM", "qwen3"),  # Qwen3.5 → 3.8
+    ("KimiK25ForConditionalGeneration", "kimi_k2"), ("KimiK3ForConditionalGeneration", "kimi_k3"),
+    ("DeepseekV4ForCausalLM", "deepseek_v4"), ("DeepseekV41ForCausalLM", "deepseek_v41"),
+    ("MiniMaxM2ForCausalLM", "minimax_m2"),
+    ("MiniMaxM3SparseForConditionalGeneration", "minimax_m3"), ("MiniMaxM3SparseForCausalLM", "minimax_m3"),
+    ("Gemma4ForConditionalGeneration", "gemma4"),
+    ("GptOssForCausalLM", "openai_gptoss"),
+    ("NemotronHForCausalLM", "nemotron_v3"),
     ("DeepseekV3ForCausalLM", "deepseek_r1"), ("DeepseekV2ForCausalLM", "deepseek_r1"),
 )
 
@@ -112,6 +128,18 @@ def reasoning_parser_for(info: ModelInfo) -> str | None:
 #: ``--enable-auto-tool-choice`` and the parser that reads this model family's
 #: tool-call format. Keyed on architecture, like the reasoning parser.
 _TOOL_PARSERS: tuple[tuple[str, str], ...] = (
+    ("GlmMoeDsaForCausalLM", "glm47"),                                  # GLM-5.x
+    ("Glm5NextForConditionalGeneration", "glm47"), ("Glm5NextForCausalLM", "glm47"),
+    ("Glm4MoeLiteForCausalLM", "glm47"),                                # GLM-4.7-Flash
+    ("Qwen3_5ForConditionalGeneration", "qwen3_coder"), ("Qwen3_5MoeForConditionalGeneration", "qwen3_coder"),
+    ("Qwen3_5MoeForCausalLM", "qwen3_coder"), ("Qwen3_5ForCausalLM", "qwen3_coder"),
+    ("Qwen3NextForCausalLM", "hermes"),
+    ("KimiK25ForConditionalGeneration", "kimi_k2"), ("KimiK3ForConditionalGeneration", "kimi_k3"),
+    ("DeepseekV4ForCausalLM", "deepseek_v4"), ("DeepseekV41ForCausalLM", "deepseek_v41"),
+    ("MiniMaxM3SparseForConditionalGeneration", "minimax_m3"), ("MiniMaxM3SparseForCausalLM", "minimax_m3"),
+    ("Gemma4ForConditionalGeneration", "gemma4"),
+    ("GptOssForCausalLM", "openai"),
+    ("NemotronHForCausalLM", "qwen3_coder"),
     ("Glm4MoeForCausalLM", "glm45"), ("Glm4vMoeForConditionalGeneration", "glm45"),
     ("Qwen3ForCausalLM", "hermes"), ("Qwen3MoeForCausalLM", "hermes"),
     ("Qwen2ForCausalLM", "hermes"), ("Qwen2MoeForCausalLM", "hermes"),
@@ -492,6 +520,13 @@ async def deploy(
             await _say(progress, f"warning: {verdict}")
         else:
             await _say(progress, "Fit: ok")
+    # Pin the context the GPUs were sized for. Left unset, vLLM reserves the
+    # model's whole native window and a long-context model dies at boot.
+    if not opts.max_model_len and engine in ("vllm", "sglang"):
+        ctx = preflight.serve_context(info, gpu_spec.total_vram_gb)
+        if ctx:
+            opts.max_model_len = ctx
+            await _say(progress, f"Context: {ctx:,} tokens — what these GPUs hold (set max_model_len to change it)")
     if prov.public_by_default:
         await _say(progress, "note: this provider's endpoints are reachable without our auth header — the engine's --api-key is the only lock")
 

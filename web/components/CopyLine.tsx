@@ -23,12 +23,12 @@ export function CopyLine({ text }: { text: string }) {
       style={{ background: "var(--color-code)" }}
       aria-label={`Copy: ${text}`}
     >
-      <span className="mono text-[13.5px] truncate" style={{ color: "#e8e2d4" }}>
+      <span className="mono text-[13.5px] truncate" style={{ color: "#e2eae4" }}>
         <span style={{ color: "var(--color-mantis-soft)" }}>$</span> {text}
       </span>
       <span
         className="shrink-0 grid place-items-center w-7 h-7 rounded-md transition-colors"
-        style={{ color: copied ? "var(--color-mantis-soft)" : "#8b8577" }}
+        style={{ color: copied ? "var(--color-mantis-soft)" : "#7a887f" }}
       >
         {copied ? <Check size={15} /> : <Copy size={15} />}
       </span>

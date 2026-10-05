@@ -57,7 +57,7 @@ export default async function DocPage({
               className="group rounded-lg p-4 bg-paper-2 hover:bg-paper-3 transition-colors"
             >
               <div className="eyebrow mb-1.5">← previous</div>
-              <div className="text-[14.5px] font-medium text-ink group-hover:text-clay transition-colors">
+              <div className="text-[14.5px] font-medium text-ink group-hover:text-accent transition-colors">
                 {prev.title}
               </div>
             </Link>
@@ -70,7 +70,7 @@ export default async function DocPage({
               className="group rounded-lg p-4 bg-paper-2 hover:bg-paper-3 transition-colors text-right"
             >
               <div className="eyebrow mb-1.5">next →</div>
-              <div className="text-[14.5px] font-medium text-ink group-hover:text-clay transition-colors">
+              <div className="text-[14.5px] font-medium text-ink group-hover:text-accent transition-colors">
                 {next.title}
               </div>
             </Link>

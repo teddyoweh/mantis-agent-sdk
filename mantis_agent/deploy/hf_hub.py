@@ -9,7 +9,7 @@ and we degrade to a headroom rule when it is refused.
 
 Verified shapes (September 2026):
 
-* ``GET /api/models?search=&pipeline_tag=text-generation&sort=trendingScore
+* ``GET /api/models?search=&pipeline_tag=text-generation|image-text-to-text&sort=trendingScore
   &direction=-1&limit=N&expand[]=...`` — ``expand[]`` selects fields:
   ``safetensors.parameters`` (dtype → count), ``gated`` (``false | "auto" |
   "manual"``), ``config`` (``architectures``, ``model_type``), ``cardData``
@@ -45,6 +45,10 @@ HF_SITE = "https://huggingface.co"
 OLLAMA_SITE = "https://ollama.com"
 
 #: What ``search_models(sort=...)`` accepts → the Hub's parameter value.
+#: the Hub pipelines a chat model is filed under — multimodal chat models
+#: (most of the 2026 frontier) are ``image-text-to-text``, not ``text-generation``
+PIPELINES: tuple[str, ...] = ("text-generation", "image-text-to-text")
+
 SORT_KEYS: dict[str, str] = {
     "trending": "trendingScore",
     "downloads": "downloads",
@@ -79,24 +83,49 @@ async def search(
     token: str | None = None,
     gated: bool | None = None,
 ) -> list[dict[str, Any]]:
-    """Text-generation models matching ``query`` (safetensors only — that is
-    what vLLM/SGLang load), richest fields expanded."""
+    """Chat models matching ``query`` (safetensors only — that is what
+    vLLM/SGLang load), richest fields expanded.
 
-    params: list[tuple[str, str]] = [
-        ("pipeline_tag", "text-generation"),
-        ("filter", "safetensors"),
-        ("sort", SORT_KEYS.get(sort, SORT_KEYS["trending"])),
-        ("direction", "-1"),
-        ("limit", str(max(1, min(int(limit), 200)))),
-    ]
-    if query.strip():
-        params.append(("search", query.strip()))
-    if gated is not None:
-        params.append(("gated", "true" if gated else "false"))
-    for f in _EXPAND:
-        params.append(("expand[]", f))
-    data = await _client(token).json("GET", "/models", params=params, what="search")
-    return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+    Two pipelines, merged: ``text-generation`` AND ``image-text-to-text``.
+    The 2026 frontier is multimodal — GLM-5.3-Flash, Kimi K3, Qwen3.8,
+    MiniMax M3, DeepSeek V4.1-Flash, Gemma 4 all carry the vision tag — and
+    a text-generation-only search simply never returned them."""
+
+    import anyio  # noqa: PLC0415
+
+    key = SORT_KEYS.get(sort, SORT_KEYS["trending"])
+    n = max(1, min(int(limit), 200))
+
+    def params(pipeline: str) -> list[tuple[str, str]]:
+        p: list[tuple[str, str]] = [
+            ("pipeline_tag", pipeline), ("filter", "safetensors"),
+            ("sort", key), ("direction", "-1"), ("limit", str(n)),
+        ]
+        if query.strip():
+            p.append(("search", query.strip()))
+        if gated is not None:
+            p.append(("gated", "true" if gated else "false"))
+        p.extend(("expand[]", f) for f in _EXPAND)
+        return p
+
+    results: dict[str, list[dict[str, Any]]] = {}
+    client = _client(token)
+
+    async def one(pipeline: str) -> None:
+        data = await client.json("GET", "/models", params=params(pipeline), what="search")
+        results[pipeline] = [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+
+    async with anyio.create_task_group() as tg:
+        for pipeline in PIPELINES:
+            tg.start_soon(one, pipeline)
+    seen: dict[str, dict[str, Any]] = {}
+    for pipeline in PIPELINES:
+        for d in results.get(pipeline, []):
+            seen.setdefault(str(d.get("id") or d.get("modelId") or ""), d)
+    merged = [d for k, d in seen.items() if k]
+    # one ordering across both lists, the one the caller asked for
+    merged.sort(key=lambda d: d.get(key) or (0 if key not in ("lastModified", "createdAt") else ""), reverse=True)
+    return merged[:n]
 
 
 async def model_info(model_id: str, *, token: str | None = None) -> dict[str, Any]:

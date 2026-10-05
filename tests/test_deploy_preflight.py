@@ -93,6 +93,8 @@ def test_params_from_name_uses_total_for_moe():
     assert preflight._params_from_name("Qwen/Qwen3-235B-A22B-Instruct") == 235.0
     assert preflight._params_from_name("openai/gpt-oss-20b") == 20.0
     assert preflight._params_from_name("microsoft/phi-4") is None
+    # T is trillions — the 2026 frontier names itself that way
+    assert preflight._params_from_name("Qwen/Qwen3.8-2.4T-A95B") == 2400.0
 
 
 def test_fit_verdicts_format_and_order():
@@ -201,3 +203,19 @@ def test_a_token_clears_the_gate_whichever_kind() -> None:
     check_gated(_gated_info("auto"), "hf_token")
     check_gated(_gated_info("manual"), "hf_token")
     check_gated(_gated_info(None))  # ungated needs nothing
+
+
+def test_serve_context_pins_what_the_gpus_hold():
+    """vLLM reserves a model's whole native window unless told otherwise, and
+    Qwen3.8's is 262,144 tokens — it died at boot on 4×L4. The launch pins the
+    largest context the chosen GPUs hold, capped, never past the model's own."""
+    from mantis_agent.deploy.base import ModelInfo
+
+    q = ModelInfo(id="Qwen/Qwen3.8-27B", source="hf", params_b=27.78, dtype="BF16",
+                  context_len=262144, est_vram_gb=65.7)
+    on_l4x4 = preflight.serve_context(q, 96)
+    assert 32768 <= on_l4x4 < 262144 and on_l4x4 % 1024 == 0
+    assert preflight.serve_context(q, 80) < on_l4x4                   # less memory, less context
+    assert preflight.serve_context(q, 10_000) == preflight.SERVE_CONTEXT_CAP
+    small = ModelInfo(id="x/y", source="hf", params_b=1.0, dtype="BF16", context_len=4096, est_vram_gb=3.0)
+    assert preflight.serve_context(small, 80) == 4096                  # never past the model's window

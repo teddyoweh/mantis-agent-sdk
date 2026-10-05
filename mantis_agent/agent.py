@@ -858,7 +858,7 @@ def _split_inline_thinking(msg: AssistantMessage) -> AssistantMessage:
         return any(o in low for o in opens)
 
     if not any(_has_tag(b) for b in msg.content):
-        return msg
+        return _trim_leading_blank_lines(msg)
     out: list[ContentBlock] = []
     for b in msg.content:
         if not _has_tag(b):
@@ -879,7 +879,27 @@ def _split_inline_thinking(msg: AssistantMessage) -> AssistantMessage:
             if not text.strip():
                 continue
             out.append(ThinkingBlock(thinking=text.strip()) if is_think else TextBlock(text=text))
-    return msgspec.structs.replace(msg, content=out or list(msg.content))
+    return _trim_leading_blank_lines(msgspec.structs.replace(msg, content=out or list(msg.content)))
+
+
+_LEADING_BLANK = re.compile(r"\A(?:[ \t]*\r?\n)+")
+
+
+def _trim_leading_blank_lines(msg: AssistantMessage) -> AssistantMessage:
+    """Drop blank lines before the answer's first text. A reasoning model's
+    ``</think>`` is followed by ``\n\n``; the server splits the thinking out
+    (vLLM ``--reasoning-parser``) and leaves those newlines as the start of the
+    answer — which ``query().result`` returned as ``"\n\nANSWER=…"``. Only
+    whole blank lines go: the first real line keeps its indentation."""
+    for i, b in enumerate(msg.content):
+        if isinstance(b, TextBlock):
+            t = _LEADING_BLANK.sub("", b.text)
+            if t == b.text:
+                return msg
+            content = list(msg.content)
+            content[i] = TextBlock(text=t)
+            return msgspec.structs.replace(msg, content=content)
+    return msg
 
 
 def _structured_output_instruction(kind: str, payload: dict[str, Any] | None) -> str:

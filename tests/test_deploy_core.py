@@ -263,7 +263,9 @@ def test_search_models_curated_when_empty(monkeypatch):
 
     monkeypatch.setattr("mantis_agent.deploy.hf_hub.search", fake_search)
     out = anyio.run(lambda: manager.search_models("", limit=5))
-    assert len(out) == 5 and out[0].id == "Qwen/Qwen3-8B" and "curated" in out[0].tags
+    from mantis_agent.deploy import preflight
+
+    assert len(out) == 5 and out[0].id == preflight.CURATED_MODELS[0] and "curated" in out[0].tags
     out = anyio.run(lambda: manager.search_models("hit", limit=5))
     assert [m.id for m in out] == ["org/hit"] and out[0].vllm_ok is True
 
@@ -426,8 +428,10 @@ def test_curated_means_the_hand_picked_list_and_nothing_else(_env, monkeypatch):
     mixed = anyio.run(lambda: manager.search_models("", limit=len(preflight.CURATED_MODELS) + 1))
     assert mixed[-1].id == "someone/gpt2-abliterated"           # "auto" keeps the CLI's behaviour
     # every curated id is a real repo name — no "-Instruct" on a repo that has none
-    assert "moonshotai/Kimi-K2.6" in preflight.CURATED_MODELS
-    assert "moonshotai/Kimi-K2.6-Instruct" not in preflight.CURATED_MODELS
+    # the list is the current frontier (refreshed 2026-09-23), with real repo
+    # ids — Moonshot's repos carry no -Instruct suffix; that form 401s
+    assert "moonshotai/Kimi-K3" in preflight.CURATED_MODELS and "zai-org/GLM-5.3" in preflight.CURATED_MODELS
+    assert not any(m.startswith("moonshotai/") and m.endswith("-Instruct") for m in preflight.CURATED_MODELS)
 
 
 def test_a_first_boot_is_given_time_to_pull_the_weights(_env, monkeypatch):
@@ -552,3 +556,36 @@ def test_a_tool_capable_model_is_served_with_auto_tool_choice(_env):
     assert manager.tool_parser_for(info("meta-llama/Llama-3.1-8B-Instruct", "LlamaForCausalLM")) == "llama3_json"
     assert manager.tool_parser_for(INFO_8B) == "hermes"
     assert manager.tool_parser_for(info("x/y", "SomethingNewForCausalLM")) is None
+
+
+def test_hub_search_covers_multimodal_chat_models(monkeypatch):
+    """The 2026 frontier is filed under image-text-to-text (GLM-5.3-Flash,
+    Kimi K3, Qwen3.8, MiniMax M3): search asks both pipelines and merges them
+    in the requested order."""
+    import anyio
+
+    from mantis_agent.deploy import hf_hub
+
+    asked = []
+
+    class FakeClient:
+        async def json(self, method, path, params=None, what=""):
+            pipe = dict(params)["pipeline_tag"]
+            asked.append(pipe)
+            if pipe == "text-generation":
+                return [{"id": "zai-org/GLM-5.3", "trendingScore": 50}, {"id": "shared/x", "trendingScore": 5}]
+            return [{"id": "moonshotai/Kimi-K3", "trendingScore": 90}, {"id": "shared/x", "trendingScore": 5}]
+
+    monkeypatch.setattr(hf_hub, "_client", lambda token=None: FakeClient())
+    out = anyio.run(lambda: hf_hub.search("", limit=10))
+    assert sorted(asked) == ["image-text-to-text", "text-generation"]
+    assert [d["id"] for d in out] == ["moonshotai/Kimi-K3", "zai-org/GLM-5.3", "shared/x"]
+
+
+def test_frontier_architectures_are_servable():
+    from mantis_agent.deploy.preflight import vllm_servable
+
+    for arch in ("GlmMoeDsaForCausalLM", "Glm5NextForConditionalGeneration", "KimiK3ForConditionalGeneration",
+                 "DeepseekV4ForCausalLM", "DeepseekV41ForCausalLM", "Qwen3_5ForConditionalGeneration",
+                 "Qwen3_5MoeForCausalLM", "MiniMaxM3SparseForConditionalGeneration", "Gemma4ForConditionalGeneration"):
+        assert vllm_servable([arch])[0] is True, arch

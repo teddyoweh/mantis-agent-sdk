@@ -31,6 +31,7 @@ export function BackendPills() {
                 width="15"
                 height="15"
                 viewBox={icon.vb}
+                fill="currentColor"
                 aria-hidden="true"
                 className="shrink-0"
                 dangerouslySetInnerHTML={{ __html: icon.body }}

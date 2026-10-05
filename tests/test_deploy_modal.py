@@ -115,7 +115,7 @@ def test_template_has_gpu_model_and_engine_flags():
     assert "'--quantization',\n            'fp8'" in src
     assert "'--trust-remote-code'" in src
     assert "'--enforce-eager'" in src
-    assert "uv_pip_install('vllm==0.21.0')" in src
+    assert "uv_pip_install('vllm==0.30.0')" in src
     assert "scaledown_window=120" in src
     # the default when nobody sized it; the manager sizes it to the model
     assert "startup_timeout=1200" in src

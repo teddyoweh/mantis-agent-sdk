@@ -53,7 +53,7 @@ export function Footer() {
               <span className="mono text-[14px]">mantis-agent-sdk</span>
             </div>
             <p className="mt-3 text-[13px] text-ink-3 leading-relaxed max-w-[220px]">
-              The Claude Agent SDK, reimplemented for open models. One import.
+              A coding agent and agent SDK for any model you can run.
             </p>
             <div className="mt-4 flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 mono text-[11.5px] text-mantis">
@@ -70,7 +70,7 @@ export function Footer() {
                     <Link
                       href={l.href}
                       target={l.external ? "_blank" : undefined}
-                      className="text-[13px] text-ink-2 hover:text-clay transition-colors"
+                      className="text-[13px] text-ink-2 hover:text-accent transition-colors"
                     >
                       {l.label}
                     </Link>
@@ -85,7 +85,7 @@ export function Footer() {
             © 2026 mantis-agent-sdk · not affiliated with Anthropic
           </p>
           <p className="mono text-[11.5px] text-ink-3">
-            written to the <span className="text-ink-2">claude-agent-sdk</span> surface
+            drop-in compatible with <span className="text-ink-2">claude-agent-sdk</span>
           </p>
         </div>
       </div>

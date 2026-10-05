@@ -562,8 +562,8 @@ def test_cerebras_key_prompt_names_shape_and_console(term) -> None:
     term.ready()
     term.send("/models\r")
     term.expect("select a model")
-    term.send("gemma-4-31b")           # Cerebras-only id, so the row is unambiguous
-    term.expect("gemma-4-31b")
+    term.send("qwen-3.8-27b")          # Cerebras-only id (dashed), so the row is unambiguous
+    term.expect("qwen-3.8-27b")
     term.send("\x0b")                  # ^k — set a key for the highlighted row
     term.expect("csk-")                # the key's actual shape…
     term.expect("cloud.cerebras.ai")   # …and where to get one

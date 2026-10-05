@@ -20,11 +20,11 @@ const SITE = "https://mantisagent.cc";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
   title: {
-    default: "mantis — the Claude Agent SDK, for open models",
+    default: "mantis — a coding agent and agent SDK for any model",
     template: "%s · mantis-agent-sdk",
   },
   description:
-    "Write to Anthropic's claude-agent-sdk API; run the loop against Llama, Qwen, DeepSeek, GLM, or anything you serve. The migration is one import. Plus mantis — a Claude-Code-style terminal for open models.",
+    "mantis is a terminal coding agent and a Python agent SDK that run on any model: Ollama, vLLM, llama.cpp, your own GPUs, or any hosted API. Drop-in compatible with claude-agent-sdk.",
   keywords: [
     "claude agent sdk",
     "open source agent sdk",
@@ -37,18 +37,18 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "mantis-agent-sdk" }],
   openGraph: {
-    title: "mantis — the Claude Agent SDK, for open models",
+    title: "mantis — a coding agent and agent SDK for any model",
     description:
-      "Write to Anthropic's claude-agent-sdk API; run it on any model you can serve. One import.",
+      "A terminal coding agent and Python agent SDK for any model you can run.",
     url: SITE,
     siteName: "mantis-agent-sdk",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "mantis — the Claude Agent SDK, for open models",
+    title: "mantis — a coding agent and agent SDK for any model",
     description:
-      "Write to Anthropic's claude-agent-sdk API; run it on any model you can serve. One import.",
+      "A terminal coding agent and Python agent SDK for any model you can run.",
   },
 };
 

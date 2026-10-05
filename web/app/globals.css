@@ -61,32 +61,32 @@
 
 /* ============================================================
    mantis — design tokens
-   Claude's warm editorial palette, flattened into a dense
-   developer-platform surface. Two accents held with discipline:
-   clay (the Claude side) and mantis-green (the open-model side).
+   A cool, leaf-tinted surface with one green family doing all the
+   accent work: leaf (links, actions) and mantis (code, live state).
+   Neutrals lean slightly green so nothing reads as default grey.
    No borders as decoration — separation comes from tint bands.
    ============================================================ */
 
 @theme {
-  --color-paper: #ffffff; /* main surface — clean white */
-  --color-paper-2: #f6f6f5; /* recessed band — neutral */
-  --color-paper-3: #ededec; /* deeper recess / hover — neutral */
-  --color-hair: #e6e6e4; /* the one hairline we allow, used sparingly */
+  --color-paper: #0a0a0a; /* page */
+  --color-paper-2: #111111; /* raised band */
+  --color-paper-3: #1a1a1a; /* hover / deeper band */
+  --color-hair: #242424; /* the one hairline we allow */
 
-  --color-ink: #1a1a19; /* near-black, neutral */
-  --color-ink-2: #52514e; /* body */
-  --color-ink-3: #8a8a86; /* captions / meta */
+  --color-ink: #ededed; /* primary text */
+  --color-ink-2: #a1a1a1; /* body */
+  --color-ink-3: #6e6e6e; /* captions / meta */
 
-  --color-clay: #bd5a37; /* primary accent — the Claude side */
-  --color-clay-soft: #d0784f;
-  --color-clay-wash: #f0e4d8;
+  --color-accent: #5fd08e; /* mantis green — used sparingly */
+  --color-accent-soft: #3fae6e;
+  --color-accent-wash: #11241a;
 
-  --color-mantis: #3f7a4a; /* second accent — the open-model side */
-  --color-mantis-soft: #67a56b;
-  --color-mantis-wash: #e4ecdf;
+  --color-mantis: #74c98f;
+  --color-mantis-soft: #74c98f;
+  --color-mantis-wash: #12211a;
 
-  --color-code: #1c1a15; /* dark code surface — the platform pop */
-  --color-code-2: #26231d;
+  --color-code: #0d0d0d; /* code surface */
+  --color-code-2: #141414;
 
   /* self-hosted Google Sans wins when present; next/font Google Sans is the fallback */
   --font-sans: "Google Sans Local", var(--ff-sans);
@@ -118,6 +118,9 @@
     }
   }
 
+  html {
+    color-scheme: dark;
+  }
   body {
     background: var(--color-paper);
     color: var(--color-ink);
@@ -128,8 +131,8 @@
   }
 
   ::selection {
-    background: var(--color-clay);
-    color: #fff;
+    background: var(--color-accent);
+    color: var(--color-paper);
   }
 
   a {
@@ -138,7 +141,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-clay);
+    outline: 2px solid var(--color-accent);
     outline-offset: 2px;
     border-radius: 2px;
   }
@@ -176,7 +179,7 @@
 /* ---- layout rhythm ---- */
 .wrap {
   width: 100%;
-  max-width: 1120px;
+  max-width: 1240px;
   margin-inline: auto;
   padding-inline: 28px;
 }
@@ -207,7 +210,7 @@
   font-family: var(--font-mono);
   font-size: 0.86em;
   background: var(--color-paper-3);
-  color: var(--color-clay);
+  color: var(--color-accent);
   padding: 0.1em 0.36em;
   border-radius: 4px;
   letter-spacing: 0;
@@ -226,6 +229,16 @@
   padding: 5px 10px;
   border-radius: 999px;
   transition: color 0.18s, background 0.18s;
+}
+.provider-logo {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.provider-logo svg {
+  width: 100%;
+  height: 100%;
 }
 .pill:hover {
   background: var(--color-paper-3);
@@ -287,16 +300,15 @@
   width: 1.2rem;
   margin-right: 1.1rem;
   text-align: right;
-  color: #55504533;
-  color: rgba(180, 170, 150, 0.28);
+    color: rgba(150, 172, 158, 0.3);
 }
 [data-rehype-pretty-code-figure] [data-line] {
   padding-inline: 18px;
   border-left: 2px solid transparent;
 }
 [data-rehype-pretty-code-figure] [data-highlighted-line] {
-  background: rgba(189, 90, 55, 0.13);
-  border-left-color: var(--color-clay-soft);
+  background: rgba(63, 174, 110, 0.14);
+  border-left-color: var(--color-accent-soft);
 }
 [data-rehype-pretty-code-figure] [data-highlighted-chars] {
   background: rgba(103, 165, 107, 0.2);
@@ -336,6 +348,30 @@
   font-family: var(--font-mono);
 }
 
+/* ---- product screenshots ---- */
+.browser-frame {
+  border: 1px solid var(--color-hair);
+  background: var(--color-paper-2);
+}
+.shot-frame {
+  border: 1px solid var(--color-hair);
+  background: var(--color-paper-2);
+}
+
+/* ---- hero product window ---- */
+.hero-window {
+  border: 1px solid var(--color-hair);
+}
+.hero-code {
+  border-radius: 0 !important;
+}
+.hero-code .shiki-pre {
+  padding: 18px 22px;
+  font-size: 12.5px;
+  aspect-ratio: 2200 / 1310;
+  font-size: 13.5px;
+}
+
 /* ============================================================
    Docs prose
    ============================================================ */
@@ -358,7 +394,7 @@
   font-style: italic;
 }
 .prose a {
-  color: var(--color-clay);
+  color: var(--color-accent);
   background-image: linear-gradient(currentColor, currentColor);
   background-size: 0% 1px;
   background-position: 0 100%;
@@ -417,7 +453,7 @@
   font-family: var(--font-mono);
   font-size: 0.85em;
   background: var(--color-paper-3);
-  color: var(--color-clay);
+  color: var(--color-accent);
   padding: 0.12em 0.38em;
   border-radius: 4px;
 }
@@ -462,7 +498,7 @@
   border-top: 1px solid var(--color-hair);
 }
 .prose tbody tr:hover {
-  background: rgba(0, 0, 0, 0.012);
+  background: rgba(255, 255, 255, 0.02);
 }
 .prose td code,
 .prose th code {
@@ -511,7 +547,7 @@
 }
 .fly-label {
   font-size: 11px;
-  color: #8b8577;
+  color: #7a887f;
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
@@ -789,4 +825,143 @@
   background: var(--color-mantis-soft);
   vertical-align: text-bottom;
   animation: blink 1.1s steps(1) infinite;
+}
+
+/* ---- feature art ---- */
+/* Keyframes for components/landing/FeatureArt.tsx. Every base style is the
+   resting frame, so the global reduced-motion rule leaves a clean still. */
+@keyframes fa-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fa-in {
+  animation: fa-in 0.45s ease-out;
+}
+@keyframes fa-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.fa-flow {
+  animation: fa-flow 0.9s linear infinite;
+}
+@keyframes fa-travel {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+.fa-travel {
+  stroke-dasharray: 10 200;
+  stroke-dashoffset: -100;
+  animation: fa-travel 1.3s cubic-bezier(0.45, 0, 0.25, 1);
+}
+@keyframes fa-breathe {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+.fa-breathe {
+  animation: fa-breathe 1.2s ease-in-out infinite;
+}
+@keyframes fa-squeeze {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  8%,
+  30% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  48%,
+  100% {
+    transform: translateX(var(--dx, 0));
+    opacity: 0;
+  }
+}
+.fa-squeeze {
+  opacity: 0;
+  animation: fa-squeeze 8s cubic-bezier(0.6, 0, 0.3, 1) infinite;
+}
+@keyframes fa-summary {
+  0%,
+  38% {
+    opacity: 0;
+  }
+  52%,
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.fa-summary {
+  animation: fa-summary 8s ease infinite;
+}
+@keyframes fa-caret {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+.fa-caret {
+  animation: fa-caret 1.1s steps(1) infinite;
+}
+@keyframes fa-draw {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  55%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+.fa-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  animation: fa-draw 7s cubic-bezier(0.4, 0, 0.3, 1) infinite;
+}
+@keyframes fa-late {
+  0%,
+  52% {
+    opacity: 0;
+  }
+  62%,
+  100% {
+    opacity: 1;
+  }
+}
+.fa-fadein,
+.fa-stop {
+  animation: fa-late 7s ease infinite;
+}
+@keyframes fa-grow {
+  0% {
+    transform: scaleX(0);
+  }
+  10%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+.fa-grow {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: fa-grow 7s cubic-bezier(0.3, 0, 0.2, 1) infinite;
 }

@@ -29,7 +29,7 @@ export default async function SkillPage() {
         <p className="mt-4 text-[15px] text-ink-2 leading-relaxed max-w-[560px]">
           This page is an{" "}
           <a
-            className="ul text-clay"
+            className="ul text-accent"
             href="https://code.claude.com/docs/en/skills"
             target="_blank"
             rel="noopener noreferrer"
@@ -39,7 +39,7 @@ export default async function SkillPage() {
           — drop it into Claude Code (or any agent that reads{" "}
           <span className="mono text-ink">SKILL.md</span>) and it knows how to install, route,
           and build with the SDK. The raw file lives at{" "}
-          <a className="ul text-clay" href="/skill.md">
+          <a className="ul text-accent" href="/skill.md">
             /skill.md
           </a>
           .
@@ -54,7 +54,7 @@ export default async function SkillPage() {
         </h2>
         <p className="mt-2 text-[13.5px] leading-relaxed text-ink-2 max-w-[620px]">
           Give your agent{" "}
-          <a className="ul text-clay" href="/selfhost.md">
+          <a className="ul text-accent" href="/selfhost.md">
             /selfhost.md
           </a>{" "}
           and say <span className="mono text-ink">&quot;host GLM-4-9B for me&quot;</span> — it
@@ -75,7 +75,7 @@ export default async function SkillPage() {
         </p>
         <div className="mt-3 mono text-[12.5px] text-ink-2 flex flex-col gap-1">
           {["modal", "runpod", "lambda", "vastai", "hf-endpoints"].map((s) => (
-            <a key={s} className="ul text-clay" href={`/skills/${s}.md`}>
+            <a key={s} className="ul text-accent" href={`/skills/${s}.md`}>
               /skills/{s}.md
             </a>
           ))}

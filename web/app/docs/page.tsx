@@ -118,12 +118,12 @@ export default function DocsHome() {
                   className="group flex items-baseline justify-between gap-4 py-3 rule-t hover:pl-2 transition-all"
                 >
                   <span>
-                    <span className="text-[14.5px] font-medium text-ink group-hover:text-clay transition-colors">
+                    <span className="text-[14.5px] font-medium text-ink group-hover:text-accent transition-colors">
                       {l.title}
                     </span>
                     <span className="block text-[12.5px] text-ink-3">{l.desc}</span>
                   </span>
-                  <span className="mono text-ink-3 group-hover:text-clay transition-colors">→</span>
+                  <span className="mono text-ink-3 group-hover:text-accent transition-colors">→</span>
                 </Link>
               ))}
             </div>

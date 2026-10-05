@@ -21,16 +21,20 @@ def _no_sleep(monkeypatch):
 
 
 def test_search_sends_the_verified_query_shape():
+    """One request per chat pipeline — text-generation AND image-text-to-text,
+    where the 2026 multimodal frontier is filed — each with the same shape,
+    merged without duplicates."""
     with respx.mock(assert_all_called=True) as router:
         route = router.get("https://huggingface.co/api/models").mock(
             return_value=httpx.Response(200, json=[{"id": "Qwen/Qwen3-8B", "downloads": 5}, "junk"]))
         rows = anyio.run(lambda: hf_hub.search("qwen", limit=5, sort="downloads"))
-    assert rows == [{"id": "Qwen/Qwen3-8B", "downloads": 5}]
-    q = route.calls.last.request.url.params
-    assert q["pipeline_tag"] == "text-generation" and q["search"] == "qwen"
-    assert q["sort"] == "downloads" and q["direction"] == "-1" and q["limit"] == "5"
-    assert "safetensors" in q.get_list("expand[]") and q["filter"] == "safetensors"
-    assert "authorization" not in route.calls.last.request.headers
+    assert rows == [{"id": "Qwen/Qwen3-8B", "downloads": 5}]      # the same repo from both lists, once
+    assert sorted(c.request.url.params["pipeline_tag"] for c in route.calls) == ["image-text-to-text", "text-generation"]
+    for call in route.calls:
+        q = call.request.url.params
+        assert q["search"] == "qwen" and q["sort"] == "downloads" and q["direction"] == "-1" and q["limit"] == "5"
+        assert "safetensors" in q.get_list("expand[]") and q["filter"] == "safetensors"
+        assert "authorization" not in call.request.headers
 
 
 def test_token_is_sent_when_present(monkeypatch):
@@ -64,12 +68,17 @@ def test_fetch_config_degrades_on_401():
 
 def test_rate_limit_is_retried_with_retry_after():
     with respx.mock() as router:
-        router.get("https://huggingface.co/api/models").mock(side_effect=[
-            httpx.Response(429, headers={"retry-after": "1"}, json={"error": "slow down"}),
-            httpx.Response(200, json=[{"id": "a/b"}]),
-        ])
+        seen = {"n": 0}
+
+        def reply(request):
+            seen["n"] += 1
+            if seen["n"] == 1:
+                return httpx.Response(429, headers={"retry-after": "1"}, json={"error": "slow down"})
+            return httpx.Response(200, json=[{"id": "a/b"}])
+
+        router.get("https://huggingface.co/api/models").mock(side_effect=reply)
         rows = anyio.run(lambda: hf_hub.search("x"))
-    assert rows == [{"id": "a/b"}]
+    assert rows == [{"id": "a/b"}] and seen["n"] == 3   # the 429 was retried; both pipelines answered
 
 
 def test_ollama_tags_and_manifest():

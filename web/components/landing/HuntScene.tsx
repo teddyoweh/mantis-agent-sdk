@@ -59,19 +59,21 @@ function makeFly(id: number, name: string, lane: number): Fly {
   };
 }
 
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
 const STARS = Array.from({ length: 26 }, (_, i) => ({
-  left: rnd(i + 40, 1) * 96 + 1,
-  top: rnd(i + 40, 2) * 46 + 2,
+  left: r3(rnd(i + 40, 1) * 96 + 1),
+  top: r3(rnd(i + 40, 2) * 46 + 2),
   size: rnd(i + 40, 3) > 0.75 ? 2 : 1,
-  delay: rnd(i + 40, 4) * 5,
-  dur: 2.5 + rnd(i + 40, 5) * 4,
+  delay: r3(rnd(i + 40, 4) * 5),
+  dur: r3(2.5 + rnd(i + 40, 5) * 4),
 }));
 
 const MOTES = Array.from({ length: 9 }, (_, i) => ({
-  left: rnd(i + 80, 1) * 92 + 2,
-  top: 30 + rnd(i + 80, 2) * 60,
-  delay: rnd(i + 80, 3) * 12,
-  dur: 13 + rnd(i + 80, 4) * 11,
+  left: r3(rnd(i + 80, 1) * 92 + 2),
+  top: r3(30 + rnd(i + 80, 2) * 60),
+  delay: r3(rnd(i + 80, 3) * 12),
+  dur: r3(13 + rnd(i + 80, 4) * 11),
 }));
 
 type Arc = { x1: number; y1: number; x2: number; y2: number } | null;
@@ -209,12 +211,12 @@ export function HuntScene() {
       style={{ background: "var(--color-code)" }}
     >
       <div className="wrap py-20">
-        <div className="eyebrow" style={{ color: "#8b8577" }}>
+        <div className="eyebrow" style={{ color: "#7a887f" }}>
           why &ldquo;mantis&rdquo;
         </div>
         <h2
           className="font-display mt-3 text-[clamp(1.5rem,2.8vw,2.1rem)] max-w-[640px]"
-          style={{ color: "#e8e2d4" }}
+          style={{ color: "#e2eae4" }}
         >
           A new model drops every week. Your code doesn&apos;t move a line.
         </h2>
@@ -583,7 +585,7 @@ export function HuntScene() {
                 key={`${line}-${i}`}
                 className="mono text-[11.5px]"
                 style={{
-                  color: i === 0 ? "var(--color-mantis-soft)" : "#8b8577",
+                  color: i === 0 ? "var(--color-mantis-soft)" : "#7a887f",
                   opacity: 1 - i * 0.35,
                 }}
               >
@@ -591,17 +593,17 @@ export function HuntScene() {
               </div>
             ))}
             {log.length === 0 && (
-              <div className="mono text-[11.5px]" style={{ color: "#8b8577" }}>
+              <div className="mono text-[11.5px]" style={{ color: "#7a887f" }}>
                 {reduced ? "✓ any model, same loop" : "waiting…"}
               </div>
             )}
           </div>
         </div>
 
-        <p className="mt-5 text-[13.5px] max-w-[560px] leading-relaxed" style={{ color: "#8b8577" }}>
+        <p className="mt-5 text-[13.5px] max-w-[560px] leading-relaxed" style={{ color: "#7a887f" }}>
           The ecosystem keeps shipping; the loop keeps hunting. Same agent, same tools, same
           sessions — whatever lands next.{" "}
-          <span className="mono" style={{ color: "#e8e2d4" }}>
+          <span className="mono" style={{ color: "#e2eae4" }}>
             pip install mantis-agent-sdk
           </span>
         </p>

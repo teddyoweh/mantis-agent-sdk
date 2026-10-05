@@ -40,11 +40,14 @@ __all__ = [
     "wait_for_openai",
 ]
 
-# The vLLM release the official Modal recipe pins (Sept 2026 survey). Both
-# the Modal template (``uv_pip_install("vllm==<v>")``) and the Docker image
-# tag (``vllm/vllm-openai:v<v>``) derive from it; ``DeployOpts.engine_version``
-# overrides per deployment.
-DEFAULT_VLLM_VERSION = "0.21.0"
+# The vLLM release every template pins. Both the Modal template
+# (``uv_pip_install("vllm==<v>")``) and the Docker image tag
+# (``vllm/vllm-openai:v<v>``) derive from it; ``DeployOpts.engine_version``
+# overrides per deployment. 0.30.0 (2026-09) requires transformers>=5.10.4:
+# 0.21 shipped Transformers 4, which cannot even parse GLM-5.x's config
+# ("model type glm_moe_dsa ... Transformers does not recognize this
+# architecture") — the 2026 frontier would not boot on it at all.
+DEFAULT_VLLM_VERSION = "0.30.0"
 DEFAULT_SGLANG_IMAGE = "lmsysorg/sglang:latest"
 
 DEFAULT_PORT = 8000

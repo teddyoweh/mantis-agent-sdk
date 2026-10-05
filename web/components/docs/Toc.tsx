@@ -34,7 +34,7 @@ export function Toc({ headings }: { headings: Heading[] }) {
             <a
               href={`#${h.id}`}
               className="block leading-snug transition-colors"
-              style={{ color: active === h.id ? "var(--color-clay)" : "var(--color-ink-3)" }}
+              style={{ color: active === h.id ? "var(--color-accent)" : "var(--color-ink-3)" }}
             >
               {h.text}
             </a>

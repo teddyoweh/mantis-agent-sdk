@@ -39,10 +39,10 @@ export function DiffHero() {
         style={{ background: "var(--color-code)" }}
       >
         <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "var(--color-code-2)" }}>
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#3a352b" }} />
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#3a352b" }} />
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#3a352b" }} />
-          <span className="ml-2 text-[11.5px]" style={{ color: "#8b8577" }}>
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#25312a" }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#25312a" }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#25312a" }} />
+          <span className="ml-2 text-[11.5px]" style={{ color: "#7a887f" }}>
             agent.py
           </span>
         </div>
@@ -52,17 +52,17 @@ export function DiffHero() {
             className="flex items-start gap-3 transition-opacity duration-700"
             style={{ opacity: done ? 0.42 : 0.7 }}
           >
-            <span style={{ color: "#c86a4a" }}>-</span>
-            <span style={{ color: "#b8ac97" }}>
-              <span style={{ color: "#c86a4a" }}>from</span> claude_agent_sdk{" "}
-              <span style={{ color: "#c86a4a" }}>import</span> query, ClaudeAgentOptions, tool
+            <span style={{ color: "#e67e80" }}>-</span>
+            <span style={{ color: "#9aa79f" }}>
+              <span style={{ color: "#d699b6" }}>from</span> claude_agent_sdk{" "}
+              <span style={{ color: "#d699b6" }}>import</span> query, ClaudeAgentOptions, tool
             </span>
           </div>
           {/* added */}
           <div className="flex items-start gap-3">
             <span style={{ color: "var(--color-mantis-soft)" }}>+</span>
-            <span style={{ color: "#e8e2d4" }}>
-              <span style={{ color: "#c86a4a" }}>from</span>{" "}
+            <span style={{ color: "#e2eae4" }}>
+              <span style={{ color: "#d699b6" }}>from</span>{" "}
               <span
                 style={{
                   color: "var(--color-mantis-soft)",
@@ -78,7 +78,7 @@ export function DiffHero() {
               {typed.length === TARGET.length && (
                 <>
                   {" "}
-                  <span style={{ color: "#c86a4a" }}>import</span> query, MantisAgentOptions, tool
+                  <span style={{ color: "#d699b6" }}>import</span> query, MantisAgentOptions, tool
                 </>
               )}
             </span>
@@ -86,9 +86,9 @@ export function DiffHero() {
         </div>
       </div>
       <p className="mt-3 text-[13px] text-ink-3">
-        <span className="mono text-mantis">↑</span> That&apos;s the whole diff. Code written for
-        Anthropic&apos;s SDK runs as-is — mantis keeps the surface you know and swaps what&apos;s
-        underneath.
+        <span className="mono text-mantis">↑</span> Already on <span className="mono">claude-agent-sdk</span>?
+        That&apos;s the whole migration. Your code keeps its shape; the model underneath becomes
+        your choice.
       </p>
     </div>
   );
