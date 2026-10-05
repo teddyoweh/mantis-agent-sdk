@@ -529,6 +529,23 @@
   animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* the film's play button: a soft ring that keeps pulsing out, so the still reads as a video */
+@keyframes film-pulse {
+  from {
+    box-shadow: 0 0 0 0 rgba(116, 201, 143, 0.55);
+  }
+  to {
+    box-shadow: 0 0 0 22px rgba(116, 201, 143, 0);
+  }
+}
+.film-play::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  animation: film-pulse 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
 /* ---- the hunt scene ---- */
 .fly {
   display: flex;
