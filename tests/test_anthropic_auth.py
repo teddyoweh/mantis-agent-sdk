@@ -307,6 +307,34 @@ def test_service_account_json_is_directed_to_a_file(monkeypatch, tmp_path):
         persist_credential(detect_credential(blob))
 
 
+def test_a_pasted_token_drops_the_previous_logins_refresh_pair(monkeypatch, tmp_path):
+    """A bare ``sk-ant-oat`` token has no refresh token. Left behind, the old
+    login's refresh token + past expiry make ensure_fresh_anthropic_token
+    refresh the OLD login straight over the token just pasted."""
+    from mantis_agent.anthropic_auth import persist_credential
+    from mantis_agent.settings import load_setting_source, update_setting_source
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("ANTHROPIC_AUTH_EXPIRES_AT", "__isolated__")
+    monkeypatch.delenv("ANTHROPIC_AUTH_EXPIRES_AT")
+    update_setting_source("user", {"env": {"ANTHROPIC_AUTH_TOKEN": "old",
+                                           "ANTHROPIC_REFRESH_TOKEN": "old-refresh",
+                                           "ANTHROPIC_AUTH_EXPIRES_AT": "1",
+                                           "OPENAI_API_KEY": "kept"}})
+    import os
+    os.environ["ANTHROPIC_REFRESH_TOKEN"] = "old-refresh"
+    os.environ["ANTHROPIC_AUTH_EXPIRES_AT"] = "1"
+
+    persist_credential(detect_credential(OAUTH))
+
+    env = load_setting_source("user")["env"]
+    assert env["ANTHROPIC_AUTH_TOKEN"] == OAUTH
+    assert "ANTHROPIC_REFRESH_TOKEN" not in env and "ANTHROPIC_AUTH_EXPIRES_AT" not in env
+    assert env["OPENAI_API_KEY"] == "kept"
+    assert "ANTHROPIC_REFRESH_TOKEN" not in os.environ
+    assert "ANTHROPIC_AUTH_EXPIRES_AT" not in os.environ
+
+
 def test_persist_never_echoes_the_secret(monkeypatch, tmp_path):
     from mantis_agent.anthropic_auth import persist_credential
 

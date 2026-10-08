@@ -93,6 +93,7 @@ SLASH_COMMANDS = {
     "/pull": "download an open model with ollama + switch to it (free)",
     "/agents": "list subagent types; /agents live inspects running delegates",
     "/twin": "talk to the agent's twin yourself (/twin skeptic: <msg>)",
+    "/steer": "steer the running turn — /steer <message> (or just type while it works)",
     "/mcp": "inspect MCP servers — config, tools, add/edit JSON; /mcp trust for this project",
     "/skills": "list skills — run one with /<name>",
     "/status": "version · model · auth · session at a glance",
@@ -677,8 +678,10 @@ def switch_note(model: str, backend: str | None, auth: str = "") -> str:
     if where.endswith("/v1"):
         where = where[:-3]
     parts = [f"{fam['glyph']} {fam['name']}"]
-    if fam["provider_label"] and fam["provider_label"] != fam["name"] and fam["id"] != "selfhost":
-        parts[0] += f" ({fam['provider_label']})"
+    label = fam["provider_label"]
+    if label and label != fam["name"] and fam["id"] != "selfhost":
+        # "Grok (xAI)" already names the family — don't print "Grok (Grok (xAI))"
+        parts[0] = f"{fam['glyph']} {label}" if label.startswith(fam["name"]) else parts[0] + f" ({label})"
     if where:
         parts.append(f"via {where}")
     if auth:
@@ -1297,7 +1300,7 @@ _HELP_CATEGORIES: list[tuple[str, list[str]]] = [
     ("model", ["/models", "/model", "/advisor", "/effort", "/thinking", "/enable", "/disable",
                "/connect", "/pull", "/deploy"]),
     ("session", ["/resume", "/branch", "/rewind", "/clear", "/compact"]),
-    ("autonomy", ["/agi", "/goal", "/swarm", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
+    ("autonomy", ["/agi", "/goal", "/swarm", "/steer", "/watch", "/loop", "/cron", "/jobs", "/job", "/workflows"]),
     ("project", ["/init", "/memory", "/learn", "/context", "/agents", "/twin", "/mcp", "/skills"]),
     ("info", ["/dash", "/status", "/cost", "/doctor", "/permissions", "/sandbox", "/update", "/release-notes"]),
     ("review", ["/diff", "/copy", "/paste", "/export", "/cwd"]),
@@ -3129,6 +3132,46 @@ class MantisTUI:
         if getattr(self.agent, "_compactor", None) is not None:
             self.agent._compactor._artifact_store = artifacts
 
+    def _route_child_model(self, model_id: str) -> Any:
+        """``route_model`` for the task tool: where an agent type's pinned model
+        runs. ``None`` keeps the parent's provider, a Provider wires another
+        enabled family (a Claude scout under a GPT lead), a string is the
+        ``/enable`` step a single-family parent can't route around.
+
+        Open-model ids under a local/self-hosted parent stay put — that server
+        may serve them, and silently moving them to a paid API would be worse
+        than the old 404."""
+        from . import catalog  # noqa: PLC0415
+        from .providers.base import detect_provider, resolve  # noqa: PLC0415
+
+        prov = catalog.provider_for_model(model_id)
+        if prov is None:
+            return None
+        here = (self.backend or "").rstrip("/")
+        parent = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == here), None) \
+            if here else None
+        if parent is not None and (parent.id == prov.id or model_id in parent.models):
+            return None
+        if parent is None and family_of_provider(prov.id) == "oss":
+            return None
+        key = catalog.api_key_for(prov)
+        base = prov.base_url if key else catalog.bearer_backend(prov, self.backend)
+        if base is None:
+            if parent is not None and family_of_provider(parent.id) != "oss":
+                return f"{prov.label} isn't enabled — /enable {prov.id}"
+            return None   # a gateway parent may well serve it
+        cache = self.__dict__.setdefault("_child_providers", {})
+        if (prov.id, base) not in cache:
+            factory = resolve(detect_provider(base))
+            kwargs: dict[str, Any] = {"base_url": base}
+            if key:
+                kwargs["api_key"] = key
+            try:
+                cache[(prov.id, base)] = factory(**kwargs)
+            except TypeError:
+                cache[(prov.id, base)] = factory()
+        return cache[(prov.id, base)]
+
     def _build_agent(self) -> Any:
         from .agent import Agent  # noqa: PLC0415
         from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
@@ -3222,7 +3265,7 @@ class MantisTUI:
             registry.add(make_task_tool(
                 model=self.model, provider=provider, tools=_parent_kit,
                 permissions=permissions, on_progress=self._subagent_progress,
-                jobs=self._jobs))
+                jobs=self._jobs, route_model=self._route_child_model))
             # coordinate — the workflow engine's model-facing entry (Research →
             # Synthesis → Verification). Same shared deps as task; each worker
             # carves its own kit from the parent belt exactly as task does, and
@@ -5857,6 +5900,7 @@ class MantisTUI:
             if ev.get("phase") == "start":
                 self._live_subagents[rid] = {
                     "type": ev.get("type", "explore"), "desc": ev.get("desc", ""),
+                    "model": str(ev.get("model") or ""), "pinned": bool(ev.get("pinned")),
                     "tools": 0, "last_tool": "", "last_event": "starting",
                     "events": [], "started": time.monotonic()}
             elif ev.get("phase") == "tool" and rid in self._live_subagents:
@@ -5885,6 +5929,13 @@ class MantisTUI:
                     events[-1] = (events[-1][0], line)
                 else:
                     events.append((time.monotonic(), line))
+            elif ev.get("phase") == "background" and rid in self._live_subagents:
+                # The user steered past this child: it keeps working as a
+                # background job (its result arrives as a job notification).
+                rec = self._live_subagents[rid]
+                rec["bg_job"] = ev.get("job")
+                rec.setdefault("events", []).append(
+                    (time.monotonic(), f"moved to background · job #{ev.get('job')}"))
             elif ev.get("phase") == "end":
                 if rid in self._live_subagents:
                     self._live_subagents[rid]["last_event"] = "done"
@@ -6217,10 +6268,18 @@ class MantisTUI:
                 if streamed:
                     continue  # already shown live via the streaming sink
                 if block.text.strip():
-                    self.console.print(f"[{BODY}]●[/] ", end="")
                     # Tight markdown: code fences, bold, lists, tables — without
                     # the big vertical margins rich adds around code by default.
-                    self.console.print(_compact_markdown(block.text.strip()))
+                    # The bullet gets its own 2-cell column: printed inline
+                    # ahead of the markdown, the first line was laid out at
+                    # full width from column 2 and spilled its last two cells
+                    # onto a row of their own.
+                    from rich.table import Table as _Grid  # noqa: PLC0415
+                    grid = _Grid.grid(padding=0)
+                    grid.add_column(width=2, no_wrap=True)
+                    grid.add_column()
+                    grid.add_row(_T("● ", style=BODY), _compact_markdown(block.text.strip()))
+                    self.console.print(grid)
             elif isinstance(block, ToolUseBlock):
                 had_tool_call = True
                 verb, target = self._tool_label(block.name, block.input or {})
@@ -6649,7 +6708,7 @@ class MantisTUI:
         if cmd == "/workflows":
             await self._cmd_workflows(arg)
             return True
-        if cmd in ("/loop", "/goal", "/watch", "/swarm", "/agi",
+        if cmd in ("/loop", "/goal", "/watch", "/swarm", "/agi", "/steer",
                    "/compact", "/context", "/copy", "/paste", "/export", "/diff",
                    "/memory", "/vim"):
             # The loop engines need a UI that can fire turns while idle-waiting

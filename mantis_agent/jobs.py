@@ -327,6 +327,30 @@ class JobManager:
         job.task.add_done_callback(_finalize)
         return job
 
+    def adopt(self, task: Any, *, desc: str, kind: str = "task",
+              started: float | None = None,
+              max_runtime_s: float | None = _MAX_RUNTIME_S) -> Job:
+        """Make an ALREADY-RUNNING asyncio task a background job.
+
+        For work that started in the foreground and is being moved out of the
+        way — a ``task`` subagent the user steered past. It is the same job as
+        one :meth:`spawn` creates (same id space, ``/jobs`` row, ``on_event``
+        notification, ``job_output``), because it IS spawned: the job's body
+        awaits ``task``, so cancelling the job (``/jobs`` kill, the runtime
+        backstop, session exit) cancels the work too. No ``gate`` — the caller
+        already holds whatever slot the work needs. ``started`` backdates the
+        job's clock to when the work really began."""
+
+        async def _follow() -> Any:
+            # Awaiting the task directly: a cancelled job cancels the task it
+            # is waiting on (asyncio propagates cancel to the awaited future).
+            return await task
+
+        job = self.spawn(_follow(), desc=desc, kind=kind, max_runtime_s=max_runtime_s)
+        if started is not None:
+            job.started = started
+        return job
+
     def _prune(self) -> None:
         # Evict the oldest TERMINAL jobs once we exceed the retention cap so the
         # dict (and each job's retained result string + events deque) can't grow

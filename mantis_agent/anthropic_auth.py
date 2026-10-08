@@ -556,13 +556,31 @@ def persist_credential(cred: Credential) -> str:
         env = {"ANTHROPIC_AUTH_TOKEN": cred.secret}
         os.environ["ANTHROPIC_AUTH_TOKEN"] = cred.secret
         refresh = cred.extra.get("refresh_token")
+        # A bare pasted token (``claude setup-token``) has no refresh pair. An
+        # earlier login's refresh token + expiry would survive the settings
+        # merge, and ensure_fresh_anthropic_token would "refresh" that OLD login
+        # straight over the token just pasted — so they go with it.
+        stale = () if refresh else ("ANTHROPIC_REFRESH_TOKEN", "ANTHROPIC_AUTH_EXPIRES_AT")
         if refresh:
             env["ANTHROPIC_REFRESH_TOKEN"] = str(refresh)
             os.environ["ANTHROPIC_REFRESH_TOKEN"] = str(refresh)
+        for var in stale:
+            os.environ.pop(var, None)
         try:
-            from .settings import update_setting_source  # noqa: PLC0415
+            from .settings import (  # noqa: PLC0415
+                load_setting_source,
+                save_setting_source,
+                update_setting_source,
+            )
 
             update_setting_source("user", {"env": env})
+            if stale:
+                user = load_setting_source("user")
+                user_env = user.get("env")
+                if isinstance(user_env, dict) and any(v in user_env for v in stale):
+                    for var in stale:
+                        user_env.pop(var, None)
+                    save_setting_source("user", user)
         except Exception:  # noqa: BLE001 — persistence is best-effort, as elsewhere
             pass
         return f"OAuth token saved · {cred.hint}"

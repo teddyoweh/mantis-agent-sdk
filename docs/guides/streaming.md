@@ -117,6 +117,53 @@ making another model call.
 The cancelled tool call surfaces in the transcript as a tool result with
 `is_error=True` and message `"cancelled by signal"`.
 
+## Steering a running agent
+
+`Agent.steer(text)` adds a message to the run's **next** turn while it runs.
+Nothing is cancelled: the model call in flight finishes, the tools it asked
+for finish, and the next request includes your text as a user message.
+
+```python
+from mantis_agent import Agent, UserMessage
+
+agent = Agent(model="qwen2.5:7b", tools=[install_package])
+messages = [UserMessage(content="Add dark mode")]
+async for msg in agent.run_iter(messages):
+    if msg.role == "assistant" and "styled-components" in str(msg.content):
+        agent.steer("No new dependencies, please.")
+```
+
+Where the text lands depends on when it arrives:
+
+- **While tools run** — it rides the same user message as that turn's tool
+  results, as text blocks *after* every `tool_result`. Each `tool_use` is
+  still answered by the message right after it, and every wire format keeps
+  results first (OpenAI/Ollama: the `tool` messages, then a user message;
+  Anthropic: text blocks after the `tool_result` blocks).
+- **After the final answer** (or between turns) — its own user message, and
+  the run continues to answer it instead of stopping.
+
+Several steers keep their order. Each one also passes the `UserPromptSubmit`
+hook, and when it joins the history the agent fires a `SteerEvent` on
+`agent.on_event` (`status="delivered"` or `"blocked"`, `placement=
+"tool_results"` or `"user_turn"`) — what a UI needs to show it.
+
+`steer()` returns `False` when no run is live (not started, or already
+ended); the message is not kept. A run that stops before it can send an
+accepted steer — cancelled, the step cap — hands it back through
+`agent.take_undelivered_steers()`.
+
+If a `task` subagent is blocking the turn when you steer, it moves to the
+background: the `task` call returns "moved to background job #N", the turn
+continues with your message, and the subagent keeps working as a job (it
+needs `make_task_tool(jobs=JobManager(...))`). Its result arrives through
+the job's `on_event` callback or `job_output(job_id=N)`. The subagent keeps
+its concurrency slot until it finishes.
+
+`query()` returns a `QueryRun` with `await run.steer(text)`, and
+`ClaudeSDKClient` has `await client.steer(text)` — both call `Agent.steer` on
+the live run.
+
 ## `ClaudeSDKClient` — multi-turn streaming
 
 ```python

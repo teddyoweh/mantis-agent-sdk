@@ -58,6 +58,7 @@ from .events import (
     MessageDelta,
     MessageStart,
     MessageStop,
+    SteerEvent,
     StreamEvent,
     TextDelta,
     ThinkingDelta,
@@ -72,6 +73,7 @@ from .permissions import (
 )
 from .compact import Compactor, SimpleCompactor
 from .providers.base import Provider, detect_provider, extra_headers_from_env, resolve
+from .steering import ACTIVE_STEER, SteerInbox, steer_framing
 from .streaming.executor import (
     StreamingToolExecutor,
     normalize_tool_input,
@@ -1182,7 +1184,15 @@ class Agent:
     )
     # Optional sink for raw stream events during ``run_iter`` (token deltas,
     # block start/stop) so a UI can render text live. ``None`` = no overhead.
+    # Also receives :class:`~mantis_agent.events.SteerEvent` when a steering
+    # message joins the run (see :meth:`steer`).
     on_event: Any = field(default=None, init=False)
+    # Steering — messages added to the live run's NEXT request (``steer()``).
+    # Open only while ``run_iter`` runs; drained at each turn boundary.
+    _steer_inbox: SteerInbox = field(default_factory=SteerInbox, init=False, repr=False)
+    # Steers a run accepted but ended without sending (cancel, step cap, an
+    # error) — see :meth:`take_undelivered_steers`.
+    _undelivered_steers: list = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Normalize tools input — accept list[Tool] or pre-built ToolRegistry.
@@ -1374,6 +1384,152 @@ class Agent:
 
         if not self.cancellation_signal.is_set():
             self.cancellation_signal.set()
+
+    # ------------------------------------------------------------------
+    # Steering
+    # ------------------------------------------------------------------
+
+    def steer(self, text: str) -> bool:
+        """Add ``text`` to the running agent's NEXT turn. Not an interrupt.
+
+        The model call in flight finishes, the tool calls it asked for finish,
+        and the next request includes ``text`` as a user message: after that
+        turn's tool results (in the same user message, so every ``tool_use``
+        is still answered first), or as a new user message when the model had
+        already given its final answer — in which case the run keeps going
+        instead of stopping. Several steers keep their order.
+
+        If a ``task`` subagent is blocking the turn when the steer arrives, it
+        moves to the background (a job, when the task tool has a
+        ``JobManager``) and keeps working; the turn continues with the steer
+        and the subagent's result arrives later as a background job.
+
+        Returns ``True`` when the message was accepted for the live run, and
+        ``False`` when no run is in progress (not started yet, or already
+        ended) — the message is then NOT kept for a later run; send it as an
+        ordinary prompt instead. Safe to call from any thread or task.
+
+        A run that ends before it can send an accepted steer (cancelled, the
+        step cap, an error) hands it back through
+        :meth:`take_undelivered_steers`.
+        """
+        if not isinstance(text, str):
+            raise TypeError(f"steer() takes a str, not {type(text).__name__}")
+        if not text.strip():
+            raise ValueError("steer() needs a non-empty message")
+        return self._steer_inbox.put(text)
+
+    def take_undelivered_steers(self) -> list[str]:
+        """Steering messages the last run accepted but never sent, oldest
+        first, and forget them. Empty after a run that delivered everything."""
+        out, self._undelivered_steers = list(self._undelivered_steers), []
+        return out
+
+    def _another_turn_possible(self, step: int, effective_max: int) -> bool:
+        """Will the loop make another model call after the current one? Steers
+        are only taken when it will — one sent into a turn nothing answers
+        would be marked delivered yet never acted on."""
+        if self.cancellation_signal.is_set():
+            return False
+        if step + 1 < effective_max:
+            return True
+        return (
+            self.persist
+            and self._step_extensions < _MAX_STEP_EXTENSIONS
+            and self._has_unfinished_work()
+            and self._has_runway()
+        )
+
+    def _emit_steer(self, ev: SteerEvent) -> None:
+        if ev.status == "delivered":
+            _log.info("steer delivered (%s): %.80r", ev.placement, ev.text)
+        else:
+            _log.info("steer blocked by UserPromptSubmit hook: %s", ev.note)
+        if self.on_event is not None:
+            try:
+                self.on_event(ev)
+            except Exception:  # noqa: BLE001 — a UI callback must never break the loop
+                _log.debug("on_event callback raised", exc_info=True)
+
+    async def _admit_steers(
+        self, texts: list[str], messages: list[Message],
+    ) -> list[tuple[str, str | None]]:
+        """Run each steer through the ``UserPromptSubmit`` gate (a steer is a
+        user prompt; a guardrail must not be bypassable by sending mid-run).
+        Returns ``(text, hook note)`` for the admitted ones, in order."""
+        if not self._dispatcher.has("UserPromptSubmit"):  # type: ignore[union-attr]
+            return [(t, None) for t in texts]
+        admitted: list[tuple[str, str | None]] = []
+        for t in texts:
+            res = await self._dispatcher.dispatch(  # type: ignore[union-attr]
+                "UserPromptSubmit",
+                HookContext(
+                    event="UserPromptSubmit",
+                    messages_snapshot=[*messages, UserMessage(content=t)],
+                    arbitrary={"steer": True, "prompt": t},
+                ),
+            )
+            if res.block:
+                self._emit_steer(SteerEvent(text=t, status="blocked", note=res.note))
+                continue
+            admitted.append((t, res.note))
+        return admitted
+
+    @staticmethod
+    def _steer_blocks(admitted: list[tuple[str, str | None]]) -> list[ContentBlock]:
+        from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+        blocks: list[ContentBlock] = []
+        for text, note in admitted:
+            blocks.append(TextBlock(text=text))
+            if note:
+                blocks.append(TextBlock(text=wrap_system_reminder(note)))
+        return blocks
+
+    async def _steer_turn_message(
+        self, messages: list[Message], texts: list[str],
+    ) -> tuple[UserMessage, list[str]] | None:
+        """Steers as their own user message (``placement="user_turn"``): a
+        plain string for the common single message, so it reads exactly like
+        a typed prompt. Returns the message and the texts it carries, or
+        ``None`` when a hook blocked them all."""
+        admitted = await self._admit_steers(texts, messages)
+        if not admitted:
+            return None
+        if len(admitted) == 1 and not admitted[0][1]:
+            msg = UserMessage(content=admitted[0][0])
+        else:
+            msg = UserMessage(content=self._steer_blocks(admitted))
+        return msg, [t for t, _ in admitted]
+
+    def _deliver_steer_turn(
+        self, messages: list[Message], steered: tuple[UserMessage, list[str]],
+    ) -> UserMessage:
+        """Append a ``user_turn`` steer message, announce each text in it, and
+        return the message for the loop to yield."""
+        msg, texts = steered
+        messages.append(msg)
+        for t in texts:
+            self._emit_steer(SteerEvent(text=t, placement="user_turn"))
+        return msg
+
+    async def _final_stop_steer(
+        self, messages: list[Message], step: int, effective_max: int,
+    ) -> tuple[UserMessage, list[str]] | None:
+        """At a final stop: a steer that is pending NOW becomes the next turn;
+        otherwise the inbox closes in the same breath, so a later ``steer()``
+        is refused instead of accepted-then-dropped. With no turn left (the
+        step cap), pending steers are handed back as undelivered."""
+        if not self._another_turn_possible(step, effective_max):
+            self._undelivered_steers.extend(self._steer_inbox.close())
+            return None
+        while True:
+            texts = self._steer_inbox.take_or_close()
+            if not texts:
+                return None
+            steered = await self._steer_turn_message(messages, texts)
+            if steered is not None:
+                return steered
 
     @staticmethod
     def _latest_user_text(messages: list[Message]) -> str:
@@ -1809,6 +1965,14 @@ class Agent:
           * Nothing after the final natural-stop turn — callers use the
             yielded AssistantMessage's ``stop_reason`` to detect end.
 
+        Steering (:meth:`steer`) adds to this stream, never reorders it: a
+        steer that arrives while tools run is appended to that turn's
+        tool-result ``UserMessage`` (text blocks after the results); one that
+        arrives after the final answer, or between turns, is yielded as its
+        own non-meta ``UserMessage`` and the loop runs another turn. Each
+        delivery also fires a :class:`~mantis_agent.events.SteerEvent` on
+        ``on_event`` just before the message carrying it is yielded.
+
         ``messages`` is mutated in place — every yielded item is also
         appended to the list — so the caller can inspect the running
         conversation between iterations.
@@ -1850,150 +2014,164 @@ class Agent:
         # well-formed instead of erroring.
         close_open_tool_calls(messages, note="[previous turn interrupted]")
 
-        # UserPromptSubmit hook — fires once as the user's turn begins, BEFORE any
-        # model call. A hook may inject extra context (its ``note``, wrapped as a
-        # system-reminder) or BLOCK the prompt entirely (``block=True``) — a
-        # guardrail integrators asked for. No hook configured → skipped. This runs
-        # before the run span opens, so a block returns cleanly.
-        if self._dispatcher.has("UserPromptSubmit"):
-            ups = await self._dispatcher.dispatch(
-                "UserPromptSubmit",
-                HookContext(event="UserPromptSubmit", messages_snapshot=messages),
-            )
-            if ups.block:
-                _log.info("prompt blocked by UserPromptSubmit hook: %s", ups.note)
-                if ups.note:
-                    blocked = AssistantMessage(content=[TextBlock(text=ups.note)])
-                    messages.append(blocked)
-                    yield blocked
-                return
-            if ups.note:
-                from .system_reminder import wrap_system_reminder  # noqa: PLC0415
-                extra = UserMessage(content=wrap_system_reminder(ups.note), isMeta=True)
-                messages.append(extra)
-                yield extra
-
-        # Inject persistent user-context (memory + custom) as a synthetic
-        # ``<system-reminder>``-wrapped UserMessage at the head of the
-        # conversation. Matches Claude SDK 1:1. No-op when context is
-        # empty. We do this once per run_iter() call; subsequent turns
-        # reuse the already-injected message. Yield it so streaming-mode
-        # consumers can see what context the agent saw (and skip it via
-        # the ``isMeta`` flag if they're rendering to a UI).
-        if not self._has_user_context_message(messages):
-            # _build_user_context shells out to git and scans disk (memory,
-            # skills, rules); run it in a worker thread so the first turn doesn't
-            # block the shared event loop (freezing background jobs / sibling
-            # subagents) for the up-to-several-seconds it can take.
-            import anyio  # noqa: PLC0415
-            user_ctx = await anyio.to_thread.run_sync(self._build_user_context)
-            if user_ctx:
-                from .system_reminder import prepend_user_context  # local import
-                prepend_user_context(messages, user_ctx, in_place=True)
-                # The first message is now the synthetic meta UserMessage.
-                if messages and isinstance(messages[0], UserMessage) and getattr(messages[0], "isMeta", False):
-                    yield messages[0]
-
-        # Memory recall — surface the topic files most relevant to THIS turn's
-        # user message (query-specific, so it rides the current turn rather than
-        # the cached head), deduped across the session. Appended after the user
-        # message so it's the freshest context the model sees before replying.
-        query = self._latest_user_text(messages)
-        self._recall_text = ""
-        if self.include_recall and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
-            if query:
-                try:
-                    from .memory_recall import recall_block
-                    # Historical exposure isn't active context: compaction may
-                    # have evicted a recalled note since the previous turn.
-                    active_paths = {
-                        path for path in self._surfaced
-                        if any(
-                            isinstance(m, UserMessage) and m.isMeta
-                            and isinstance(m.content, str) and path in m.content
-                            and "Memory" in m.content
-                            for m in messages[1:]
-                        )
-                    }
-                    self._surfaced.intersection_update(active_paths)
-                    for m in reversed(messages):
-                        if (isinstance(m, UserMessage) and m.isMeta
-                                and isinstance(m.content, str)
-                                and any(path in m.content for path in active_paths)):
-                            self._recall_text = m.content
-                            break
-                    text, paths = recall_block(
-                        query, already_surfaced=frozenset(active_paths)
-                    )
-                    if text:
-                        self._recall_text = text
-                        self._surfaced.update(paths)
-                        reminder = UserMessage(content=text, isMeta=True)
-                        messages.append(reminder)
-                        yield reminder
-                except Exception:  # noqa: BLE001 — recall is best-effort
-                    _log.debug("memory recall skipped", exc_info=True)
-
-        # Skills auto-relevance — the catalog stays in the stable context head,
-        # but matching skill bodies ride the current turn like Claude Code's
-        # progressive disclosure. Explicit Claude-SDK-style skills preload their
-        # bodies here; "all" loads every discovered skill. Dedup by skill name
-        # across the session so a long task does not keep re-paying.
-        if query and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
-            try:
-                from .skills import discover_skills, match_skills, render_relevant_skills
-
-                all_skills = discover_skills()
-                if self.skills == "all":
-                    selected = all_skills
-                elif self.skills == "auto":
-                    selected = match_skills(query, all_skills)
-                elif isinstance(self.skills, list):
-                    wanted = set(self.skills)
-                    selected = [s for s in all_skills if s.name in wanted]
-                else:
-                    selected = []  # ``None`` means off — see the catalog site.
-                matches = [s for s in selected if s.name not in self._skills_surfaced]
-                if matches:
-                    self._skills_surfaced.update(s.name for s in matches)
-                    skill_msg = UserMessage(
-                        content=render_relevant_skills(matches),
-                        isMeta=True,
-                    )
-                    messages.append(skill_msg)
-                    yield skill_msg
-            except Exception:  # noqa: BLE001 — broken SKILL.md should not break turns
-                _log.debug("skill auto-relevance skipped", exc_info=True)
-
-        # Path-scoped conditional rules — inject a ``.mantis/rules/*.md`` rule
-        # only when a file matching its globs is active in the conversation (an
-        # @-mention or a file just read/edited). Deduped by path across the
-        # session. Keeps project instructions lean: SQL rules ride only SQL work.
-        if os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
-            try:
-                from .rules import (
-                    active_files_from_messages,
-                    discover_conditional_rules,
-                    render_rules_reminder,
-                    select_matching_rules,
+        # Steering opens with the run — a steer sent while the context head is
+        # still being built is just as valid as one sent mid-tool. The main
+        # loop's ``finally`` closes it; this guard covers an exit before then
+        # (a blocking UserPromptSubmit hook, or the consumer abandoning the
+        # stream during context injection), so ``steer()`` never answers True
+        # for a run that is already gone.
+        self._undelivered_steers = []
+        self._steer_inbox.open()
+        _steer_handed_to_loop = False
+        try:
+            # UserPromptSubmit hook — fires once as the user's turn begins, BEFORE any
+            # model call. A hook may inject extra context (its ``note``, wrapped as a
+            # system-reminder) or BLOCK the prompt entirely (``block=True``) — a
+            # guardrail integrators asked for. No hook configured → skipped. This runs
+            # before the run span opens, so a block returns cleanly.
+            if self._dispatcher.has("UserPromptSubmit"):
+                ups = await self._dispatcher.dispatch(
+                    "UserPromptSubmit",
+                    HookContext(event="UserPromptSubmit", messages_snapshot=messages),
                 )
-                all_rules = discover_conditional_rules(self._agent_cwd())
-                if all_rules:
-                    active = active_files_from_messages(messages)
-                    fresh = [
-                        (p, body) for p, body in select_matching_rules(all_rules, active)
-                        if str(p) not in self._rules_surfaced
-                    ]
-                    if fresh:
-                        self._rules_surfaced.update(str(p) for p, _ in fresh)
-                        rules_msg = UserMessage(
-                            content=render_rules_reminder([b for _, b in fresh]),
+                if ups.block:
+                    _log.info("prompt blocked by UserPromptSubmit hook: %s", ups.note)
+                    if ups.note:
+                        blocked = AssistantMessage(content=[TextBlock(text=ups.note)])
+                        messages.append(blocked)
+                        yield blocked
+                    return
+                if ups.note:
+                    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+                    extra = UserMessage(content=wrap_system_reminder(ups.note), isMeta=True)
+                    messages.append(extra)
+                    yield extra
+
+            # Inject persistent user-context (memory + custom) as a synthetic
+            # ``<system-reminder>``-wrapped UserMessage at the head of the
+            # conversation. Matches Claude SDK 1:1. No-op when context is
+            # empty. We do this once per run_iter() call; subsequent turns
+            # reuse the already-injected message. Yield it so streaming-mode
+            # consumers can see what context the agent saw (and skip it via
+            # the ``isMeta`` flag if they're rendering to a UI).
+            if not self._has_user_context_message(messages):
+                # _build_user_context shells out to git and scans disk (memory,
+                # skills, rules); run it in a worker thread so the first turn doesn't
+                # block the shared event loop (freezing background jobs / sibling
+                # subagents) for the up-to-several-seconds it can take.
+                import anyio  # noqa: PLC0415
+                user_ctx = await anyio.to_thread.run_sync(self._build_user_context)
+                if user_ctx:
+                    from .system_reminder import prepend_user_context  # local import
+                    prepend_user_context(messages, user_ctx, in_place=True)
+                    # The first message is now the synthetic meta UserMessage.
+                    if messages and isinstance(messages[0], UserMessage) and getattr(messages[0], "isMeta", False):
+                        yield messages[0]
+
+            # Memory recall — surface the topic files most relevant to THIS turn's
+            # user message (query-specific, so it rides the current turn rather than
+            # the cached head), deduped across the session. Appended after the user
+            # message so it's the freshest context the model sees before replying.
+            query = self._latest_user_text(messages)
+            self._recall_text = ""
+            if self.include_recall and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+                if query:
+                    try:
+                        from .memory_recall import recall_block
+                        # Historical exposure isn't active context: compaction may
+                        # have evicted a recalled note since the previous turn.
+                        active_paths = {
+                            path for path in self._surfaced
+                            if any(
+                                isinstance(m, UserMessage) and m.isMeta
+                                and isinstance(m.content, str) and path in m.content
+                                and "Memory" in m.content
+                                for m in messages[1:]
+                            )
+                        }
+                        self._surfaced.intersection_update(active_paths)
+                        for m in reversed(messages):
+                            if (isinstance(m, UserMessage) and m.isMeta
+                                    and isinstance(m.content, str)
+                                    and any(path in m.content for path in active_paths)):
+                                self._recall_text = m.content
+                                break
+                        text, paths = recall_block(
+                            query, already_surfaced=frozenset(active_paths)
+                        )
+                        if text:
+                            self._recall_text = text
+                            self._surfaced.update(paths)
+                            reminder = UserMessage(content=text, isMeta=True)
+                            messages.append(reminder)
+                            yield reminder
+                    except Exception:  # noqa: BLE001 — recall is best-effort
+                        _log.debug("memory recall skipped", exc_info=True)
+
+            # Skills auto-relevance — the catalog stays in the stable context head,
+            # but matching skill bodies ride the current turn like Claude Code's
+            # progressive disclosure. Explicit Claude-SDK-style skills preload their
+            # bodies here; "all" loads every discovered skill. Dedup by skill name
+            # across the session so a long task does not keep re-paying.
+            if query and os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+                try:
+                    from .skills import discover_skills, match_skills, render_relevant_skills
+
+                    all_skills = discover_skills()
+                    if self.skills == "all":
+                        selected = all_skills
+                    elif self.skills == "auto":
+                        selected = match_skills(query, all_skills)
+                    elif isinstance(self.skills, list):
+                        wanted = set(self.skills)
+                        selected = [s for s in all_skills if s.name in wanted]
+                    else:
+                        selected = []  # ``None`` means off — see the catalog site.
+                    matches = [s for s in selected if s.name not in self._skills_surfaced]
+                    if matches:
+                        self._skills_surfaced.update(s.name for s in matches)
+                        skill_msg = UserMessage(
+                            content=render_relevant_skills(matches),
                             isMeta=True,
                         )
-                        messages.append(rules_msg)
-                        yield rules_msg
-            except Exception:  # noqa: BLE001 — rules are best-effort
-                _log.debug("conditional rules skipped", exc_info=True)
+                        messages.append(skill_msg)
+                        yield skill_msg
+                except Exception:  # noqa: BLE001 — broken SKILL.md should not break turns
+                    _log.debug("skill auto-relevance skipped", exc_info=True)
+
+            # Path-scoped conditional rules — inject a ``.mantis/rules/*.md`` rule
+            # only when a file matching its globs is active in the conversation (an
+            # @-mention or a file just read/edited). Deduped by path across the
+            # session. Keeps project instructions lean: SQL rules ride only SQL work.
+            if os.environ.get("MANTIS_AGENT_NO_CONTEXT") != "1":
+                try:
+                    from .rules import (
+                        active_files_from_messages,
+                        discover_conditional_rules,
+                        render_rules_reminder,
+                        select_matching_rules,
+                    )
+                    all_rules = discover_conditional_rules(self._agent_cwd())
+                    if all_rules:
+                        active = active_files_from_messages(messages)
+                        fresh = [
+                            (p, body) for p, body in select_matching_rules(all_rules, active)
+                            if str(p) not in self._rules_surfaced
+                        ]
+                        if fresh:
+                            self._rules_surfaced.update(str(p) for p, _ in fresh)
+                            rules_msg = UserMessage(
+                                content=render_rules_reminder([b for _, b in fresh]),
+                                isMeta=True,
+                            )
+                            messages.append(rules_msg)
+                            yield rules_msg
+                except Exception:  # noqa: BLE001 — rules are best-effort
+                    _log.debug("conditional rules skipped", exc_info=True)
+            _steer_handed_to_loop = True
+        finally:
+            if not _steer_handed_to_loop:
+                self._undelivered_steers = self._steer_inbox.close()
 
         # Todo state is NOT written into history here: removing a stale reminder
         # from mid-history and re-appending it rewrote bytes deep in the prompt,
@@ -2118,6 +2296,10 @@ class Agent:
         _cwd_token = AGENT_CWD.set(
             self.cwd if self.cwd is not None else AGENT_CWD.get()
         )
+        # Tools dispatched by this run see its steer inbox — the ``task`` tool
+        # uses it to move a blocking subagent to the background when the user
+        # steers. A subagent's own run sets its own inbox in its own scope.
+        _steer_token = ACTIVE_STEER.set(self._steer_inbox)
 
         # Spans are hoisted so the exception guard below can close whichever
         # is still open. The loop's normal-exit paths close them explicitly.
@@ -2257,6 +2439,19 @@ class Agent:
                 # Task evidence rides the per-request tail projection
                 # (``_tail_projections``), never persisted history — see the todo
                 # note above on prefix-cache stability.
+
+                # Steering that arrived after the last boundary — before the
+                # first call, while the previous results were being consumed,
+                # or during compaction — rides THIS request as its own user
+                # message. (Steers that land during tools are folded into the
+                # tool-result message below instead.) Real user input, so it
+                # is persisted, appended after everything already sent.
+                if self._steer_inbox.pending():
+                    steered = await self._steer_turn_message(
+                        messages, self._steer_inbox.take()
+                    )
+                    if steered is not None:
+                        yield self._deliver_steer_turn(messages, steered)
 
                 # Per-turn span — nests under agent.run when tracing is on.
                 turn_span = maybe_start_span(
@@ -2613,6 +2808,23 @@ class Agent:
                             step += 1
                             continue
                     if not tool_uses:
+                        # Steering beats both the persist gate and the stop: the
+                        # user said something while this answer was being
+                        # written, so the run answers it instead of ending.
+                        if (
+                            self._steer_inbox.pending()
+                            and self._another_turn_possible(step, effective_max)
+                        ):
+                            steered = await self._steer_turn_message(
+                                messages, self._steer_inbox.take()
+                            )
+                            if steered is not None:
+                                yield self._deliver_steer_turn(messages, steered)
+                                if turn_span is not None:
+                                    turn_span.set_attributes({"turn.steered": True})
+                                _close_span(turn_span)
+                                step += 1
+                                continue
                         # Completion contract. A no-tool-use turn is a candidate
                         # stop — but persist mode re-drives it when there's a
                         # real unfinished-work signal (open todos / unmet target)
@@ -2631,6 +2843,19 @@ class Agent:
                                 close_fn = getattr(mirror, "_close", None)
                                 if callable(close_fn):
                                     close_fn(turn_span)
+                            step += 1
+                            continue
+                        # A steer that slipped in while the gate above ran
+                        # still gets its turn; otherwise the inbox closes here,
+                        # atomically, so a later steer() is refused, not lost.
+                        steered = await self._final_stop_steer(
+                            messages, step, effective_max
+                        )
+                        if steered is not None:
+                            yield self._deliver_steer_turn(messages, steered)
+                            if turn_span is not None:
+                                turn_span.set_attributes({"turn.steered": True})
+                            _close_span(turn_span)
                             step += 1
                             continue
                         # Natural turn-end. Fire Stop hook and exit cleanly —
@@ -2713,10 +2938,42 @@ class Agent:
                     elif n_err == len(results_in_order):
                         self._tool_error_streak += 1
 
-                tool_result_msg = UserMessage(content=list(results_in_order))
+                # Steering that arrived while this turn ran rides the SAME user
+                # message, after every tool_result: each tool_use stays answered
+                # by the message that immediately follows it (the invariant),
+                # and every wire format keeps results first — OpenAI/Ollama emit
+                # the ``tool`` messages, then one user message for the text;
+                # Anthropic takes text blocks after tool_result blocks; the
+                # text-channel path folds results, then text. A short framing
+                # reminder says the prose is the user, not more tool output.
+                # Only taken when another model call will happen; otherwise
+                # it stays queued and is handed back as undelivered.
+                steered_texts: list[str] = []
+                steer_blocks: list[ContentBlock] = []
+                if (
+                    self._steer_inbox.pending()
+                    and self._another_turn_possible(step, effective_max)
+                ):
+                    admitted = await self._admit_steers(
+                        self._steer_inbox.take(), messages
+                    )
+                    if admitted:
+                        steered_texts = [t for t, _ in admitted]
+                        steer_blocks = [
+                            TextBlock(text=steer_framing()),
+                            *self._steer_blocks(admitted),
+                        ]
+
+                tool_result_msg = UserMessage(
+                    content=[*results_in_order, *steer_blocks]
+                )
                 messages.append(tool_result_msg)
                 if self.task_state is not None:
                     self.task_state.observe(executor.executed_calls, executor_results)
+                for t in steered_texts:
+                    self._emit_steer(SteerEvent(text=t, placement="tool_results"))
+                if steered_texts and turn_span is not None:
+                    turn_span.set_attributes({"turn.steered": True})
                 yield tool_result_msg
 
                 # Escalation rung 3: after a sustained tool-error streak, persist
@@ -2789,6 +3046,13 @@ class Agent:
                 AGENT_CWD.reset(_cwd_token)
             except (ValueError, LookupError):  # pragma: no cover — defensive
                 pass
+            try:
+                ACTIVE_STEER.reset(_steer_token)
+            except (ValueError, LookupError):  # pragma: no cover — defensive
+                pass
+            # The run is over: refuse further steers, and keep any it accepted
+            # but never sent (cancel / step cap / error) for the caller.
+            self._undelivered_steers.extend(self._steer_inbox.close())
 
     async def _maybe_dispatch_closed_block(
         self,

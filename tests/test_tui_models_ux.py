@@ -145,8 +145,12 @@ def test_missing_key_line_prints_the_exact_enable_command() -> None:
 def test_switch_note_says_where_the_model_routes() -> None:
     assert switch_note("gpt-5.6", "https://api.openai.com/v1", "$OPENAI_API_KEY (env)") == \
         "model → gpt-5.6 · ◯ OpenAI · via api.openai.com · $OPENAI_API_KEY (env)"
+    # A provider label that already starts with the family name is printed once,
+    # not as "Claude (Claude (Anthropic))".
     assert switch_note("claude-opus-5", "https://api.anthropic.com/v1", "OAuth token") == \
-        "model → claude-opus-5 · ✦ Claude (Claude (Anthropic)) · via api.anthropic.com · OAuth token"
+        "model → claude-opus-5 · ✦ Claude (Anthropic) · via api.anthropic.com · OAuth token"
+    assert switch_note("grok-4.7", "https://api.x.ai/v1", "$XAI_API_KEY (env)") == \
+        "model → grok-4.7 · ✕ Grok (xAI) · via api.x.ai · $XAI_API_KEY (env)"
     note = switch_note("gemini-2.5-pro", "https://generativelanguage.googleapis.com/v1beta/openai", "saved key")
     assert note.startswith("model → gemini-2.5-pro · ◆ Gemini")
     assert switch_note("qwen3:8b", "http://localhost:11434/v1", "local") == \

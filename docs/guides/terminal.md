@@ -189,6 +189,12 @@ A few rendering rules keep the transcript scannable at 80 columns:
   reads `⚒ Run pytest -q… (38s · esc to interrupt)` — the tool's own elapsed
   seconds, not the turn clock — so a long build reads as a build, not as the
   model thinking.
+- **Typing while it works steers it.** Enter on a message while a turn runs
+  sends it into that turn: `⇢ steering: … · lands next turn` stays under the
+  spinner until the model's next request takes it in, then it prints as your
+  message. A subagent blocking the turn moves to the background (its row
+  reads `→ background job #N`, its result arrives as a job). Tab queues the
+  line to run after the turn instead; Esc drops anything not yet sent.
 - **Provider errors are one box.** A 401, 404, 429, context overflow or an
   unreachable backend renders as a single red panel titled with the failure
   class and carrying the fix, never a traceback:

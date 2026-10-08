@@ -5773,6 +5773,9 @@ async function loadSessions(pr) {
   SESSIONS = sessions;
   document.querySelector("#sessionlist .col-head").textContent = "Sessions · " + sessions.length;
   if (!sessions.length) { c.innerHTML = ""; c.append(emptyState("session", "No sessions", "Nothing recorded in this project yet.")); return; }
+  // loadProjects may have parked a "Pick a project" placeholder here before
+  // this list arrived; patchList only manages keyed cards, so it would stay.
+  c.querySelectorAll(":scope > .zero").forEach(n => n.remove());
   patchList(c, sessions, s => s.session_id, s => [s.display_title, s.last_prompt, s.message_count, s.modified_at, s.usd_est, s.tokens_est, s.model],
     (card, s) => {
       card = card || el("div"); card.innerHTML = "";

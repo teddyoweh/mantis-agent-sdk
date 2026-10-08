@@ -57,6 +57,7 @@ async def query(
     prompt: str | AsyncIterable[Any],
     options: MantisAgentOptions | dict[str, Any] | None = None,
     _history: list[Message] | None = None,
+    _live: dict[str, Any] | None = None,
 ) -> AsyncIterator[Message]:
     """Drop-in replacement for ``claude_agent_sdk.query``.
 
@@ -78,6 +79,10 @@ async def query(
     from .http import sharing_http_clients  # noqa: PLC0415
     with sharing_http_clients():
         agent = _build_agent(opts)
+    # The steering handle (``QueryRun`` / ``ClaudeSDKClient.steer``) reaches
+    # the live run through this slot.
+    if _live is not None:
+        _live["agent"] = agent
     # Claude-SDK parity that used to be silently dropped:
     #   * options.agents={"name": AgentDefinition(...)} → each becomes a real
     #     delegatable subagent tool (named after the agent).

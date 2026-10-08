@@ -914,6 +914,143 @@ def make_coordinate_tool(*args: Any, **kwargs: Any) -> Tool:
     return _impl(*args, **kwargs)
 
 
+def _steer_inbox_if_detachable(jobs: Any) -> Any:
+    """The live parent run's steer inbox when a foreground ``task`` child could
+    be moved to the background on a steer: inside an ``Agent`` run, with a
+    ``JobManager`` to adopt it, on asyncio (jobs are asyncio tasks). ``None``
+    otherwise — and then the call runs exactly as it always did."""
+    if jobs is None or not callable(getattr(jobs, "adopt", None)):
+        return None
+    from .steering import current_steer_inbox  # noqa: PLC0415
+
+    inbox = current_steer_inbox()
+    if inbox is None:
+        return None
+    import asyncio  # noqa: PLC0415
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:   # trio, or no loop: stay in the foreground
+        return None
+    return inbox
+
+
+def _progress_background(on_progress: Any, run_id: Any, job_id: int) -> None:
+    if on_progress is None or run_id is None:
+        return
+    try:
+        on_progress({"id": run_id, "phase": "background", "job": job_id})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _moved_to_background_note(job_id: int, type_name: str, desc: str, *,
+                              started: bool = False) -> str:
+    how = ("Started this subagent as background job" if started
+           else "Moved this subagent to background job")
+    return (f"{how} #{job_id} ({type_name}: {desc}) because the user sent a new "
+            f"message — it keeps working on its own. Its result will arrive as a "
+            f"notification, or fetch it with job_output(job_id={job_id}). Read "
+            f"the user's message and continue.")
+
+
+async def _steerable(
+    execute: Callable[..., Awaitable[str]],
+    *,
+    inbox: Any,
+    jobs: Any,
+    limiter: Any,
+    bg_limiter: Any,
+    desc: str,
+    type_name: str,
+    on_progress: Any,
+    run_id: Any,
+) -> str:
+    """Run a foreground ``task`` child so a steer can move it to the background.
+
+    The child runs as its own asyncio task (a coroutine on this call's stack
+    could never be handed off). This call waits for whichever comes first:
+
+    * the child finishing → its result, exactly as an inline run returns it;
+    * a steer on the parent → the child is adopted by the ``JobManager`` as a
+      background job and this call returns at once, so the parent's turn ends
+      and its next request carries the steer. The child keeps running, and its
+      result arrives later through the job machinery (``on_event`` /
+      ``job_output``).
+
+    Concurrency limits hold across the hand-off. The child keeps the shared
+    slot it took here until it actually ends, and before it is detached it
+    must also take a background-gate token — the ``cap - 1`` gate that stops
+    background jobs from holding every slot — so a detached child counts
+    exactly like one started with ``run_in_background``. With the gate full it
+    stays in the foreground until a token frees or it finishes; the steer then
+    lands at the next boundary as usual.
+
+    Cancelling the parent's tool call (Esc / ``Agent.cancel``) before the
+    hand-off cancels the child, as an inline run would be."""
+    import asyncio  # noqa: PLC0415
+
+    import anyio  # noqa: PLC0415
+
+    slot = object()       # borrower token for the shared concurrency slot
+    await limiter.acquire_on_behalf_of(slot)
+    bg_held: list[object] = []
+    holder: dict[str, Any] = {}
+    started = time.monotonic()
+
+    async def _child() -> str:
+        try:
+            return await execute(None, holder)
+        finally:
+            limiter.release_on_behalf_of(slot)
+            for token in bg_held:
+                bg_limiter.release_on_behalf_of(token)
+
+    try:
+        child = asyncio.ensure_future(_child())
+    except BaseException:
+        limiter.release_on_behalf_of(slot)
+        raise
+
+    async def _detach_ready(token: object) -> bool:
+        await inbox.wait()                         # the user steered…
+        await bg_limiter.acquire_on_behalf_of(token)   # …and a bg slot is free
+        return True
+
+    try:
+        token = object()
+        waiter = asyncio.ensure_future(_detach_ready(token))
+        try:
+            await asyncio.wait({child, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+                with anyio.CancelScope(shield=True):
+                    await asyncio.wait({waiter})
+        got_token = (waiter.done() and not waiter.cancelled()
+                     and waiter.exception() is None)
+        if got_token and not child.done():
+            bg_held.append(token)   # released by the child when it ends
+            job = jobs.adopt(child, desc=desc, kind=f"task:{type_name}",
+                             started=started)
+            holder["job"] = job
+            _progress_background(on_progress, run_id, job.id)
+            return _moved_to_background_note(job.id, type_name, desc)
+        if got_token:   # the child finished in the same instant: keep its result
+            bg_limiter.release_on_behalf_of(token)
+        if not child.done():   # the steer watcher broke — finish in the foreground
+            await asyncio.wait({child})
+        return child.result()
+    except BaseException:
+        # Cancelled (Esc / Agent.cancel) or failed while still in the
+        # foreground: the child goes with the call, as an inline run would.
+        if not child.done():
+            child.cancel()
+            with anyio.CancelScope(shield=True):
+                await asyncio.wait({child})
+        raise
+
+
 def make_task_tool(
     *,
     model: str,
@@ -929,6 +1066,7 @@ def make_task_tool(
     registry: Any = None,
     activity_parent_id: Any = None,
     max_concurrent: int | None = None,
+    route_model: Any = None,
 ) -> Tool:
     """Build the ``task`` tool: the parent delegates a focused, multi-step task
     to a fresh subagent that runs to completion and returns just its findings.
@@ -969,7 +1107,13 @@ def make_task_tool(
     occupy every slot and starve foreground ``task`` calls (with the cap at 2,
     one slot is always left for the foreground). A background job's slot is
     acquired before its ``max_runtime_s`` clock starts — queue time isn't
-    runtime."""
+    runtime.
+
+    ``route_model`` lets an agent type pin a model from ANOTHER provider (a
+    Claude ``scout`` under a GPT parent). Called with the type's model id, it
+    returns ``None`` (run on the parent's provider — the default, and the only
+    behaviour when it's unset), a ready :class:`Provider` for that model, or a
+    string saying why it can't run, which the call returns to the parent."""
     types = agent_types if agent_types is not None else discover_agent_types()
     by_name = {t.name: t for t in types}
     reg = registry   # the ACTIVITY registry, distinct from the child's ToolRegistry
@@ -1014,6 +1158,20 @@ def make_task_tool(
         if at is None:
             return (f"task: unknown subagent_type {type_name!r} — available: "
                     f"{', '.join(sorted(by_name))}")
+        # A type pinned to a model the parent's endpoint doesn't serve (a Claude
+        # scout under a GPT lead) needs its own provider. ``route_model`` is the
+        # host's answer — the terminal resolves it from its saved keys. None
+        # means "same endpoint as the parent"; a string is why it can't run.
+        child_provider, child_backend = provider, backend
+        if at.model and route_model is not None:
+            try:
+                routed = route_model(at.model)
+            except Exception as e:  # noqa: BLE001
+                routed = f"{type(e).__name__}: {e}"
+            if isinstance(routed, str):
+                return f"task: {type_name} can't run on {at.model} — {routed}"
+            if routed is not None:
+                child_provider, child_backend = routed, None
         kit = resolve_agent_tools(at, tools)
         # Live progress: wrap this run's kit so every child tool call pings
         # on_progress — the TUI renders "⎿ explore · 6 tools · 42s" under the
@@ -1028,7 +1186,7 @@ def make_task_tool(
             try:
                 on_progress({"id": run_id, "phase": "start", "type": type_name,
                              "desc": str((args or {}).get("description") or ""),
-                             "model": at.model or model})
+                             "model": at.model or model, "pinned": bool(at.model)})
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1083,10 +1241,9 @@ def make_task_tool(
         # the live tool node found is the call that is running right now.
         parent_node_id = _activity_parent(reg, activity_parent_id)
 
-        async def _execute(job: Any = None) -> str:
-            # A type-level model override still uses the PARENT's provider/
-            # backend: the common case is a cheaper sibling on the same
-            # endpoint. Cross-provider overrides are the parent's job to wire.
+        async def _execute(job: Any = None, holder: dict[str, Any] | None = None) -> str:
+            # A type-level model override runs on the PARENT's provider unless
+            # ``route_model`` (above) found it a different endpoint.
             #
             # Read-only investigators (explore/plan + user read-only agents) and
             # the verifier start with a LIGHT env block — cwd, a shallow dir
@@ -1096,8 +1253,8 @@ def make_task_tool(
             starts_with_env = at.tools == "read-only" or at.name == "verify"
             child = Agent(
                 model=at.model or model,
-                provider=provider,
-                backend=backend,
+                provider=child_provider,
+                backend=child_backend,
                 system=at.system_prompt,
                 tools=child_tools,
                 max_steps=max(max_steps, at.max_steps),
@@ -1141,12 +1298,16 @@ def make_task_tool(
                 if hasattr(child, "run_iter"):
                     _stream = child.run_iter(messages)
                     async for msg in _stream:
-                        if job is not None or node_id:
+                        # A foreground run that was steered into the background
+                        # gets its job mid-run (``holder``); from then on its
+                        # progress feeds that job like any background run's.
+                        cur_job = job if job is not None else (holder or {}).get("job")
+                        if cur_job is not None or node_id:
                             # One call, two destinations: the parent job's
                             # counters (what the live inspector reads today) and
                             # this run's own node (what stops the child from
                             # being readable only as its parent).
-                            _update_job_progress(job, msg, reg=reg, node_id=node_id)
+                            _update_job_progress(cur_job, msg, reg=reg, node_id=node_id)
                         # Additive per-turn progress: carry the child's model and
                         # accumulated token usage so a viewer (e.g. /workflows)
                         # can show per-agent tokens/model. Existing consumers read
@@ -1193,8 +1354,14 @@ def make_task_tool(
             ) or "(subagent produced no output)"
 
         wants_bg = bool((args or {}).get("run_in_background"))
-        if wants_bg and jobs is not None:
-            desc = str((args or {}).get("description") or prompt[:60])
+        desc = str((args or {}).get("description") or prompt[:60])
+        # Steering: inside a live agent run with a job manager, a foreground
+        # child can step aside when the user steers (see ``_steerable``). A
+        # steer ALREADY waiting when the call starts means the parent's next
+        # turn is due now — start the child straight in the background.
+        inbox = _steer_inbox_if_detachable(jobs)
+        steered_start = inbox is not None and not wants_bg and inbox.pending() > 0
+        if (wants_bg or steered_start) and jobs is not None:
             holder: dict[str, Any] = {}
 
             async def _bg_execute() -> str:
@@ -1203,9 +1370,18 @@ def make_task_tool(
             job = jobs.spawn(_bg_execute(), desc=desc, kind=f"task:{type_name}",
                              gate=_bg_slot)
             holder["job"] = job
+            if steered_start:
+                _progress_background(on_progress, run_id, job.id)
+                return _moved_to_background_note(job.id, type_name, desc, started=True)
             return (f"Started background job #{job.id} ({type_name}: {desc}). "
                     f"Keep working — the result will arrive as a notification, "
                     f"or fetch it with job_output(job_id={job.id}).")
+        if inbox is not None:
+            return await _steerable(
+                _execute, inbox=inbox, jobs=jobs, limiter=_limiter(),
+                bg_limiter=_bg_limiter(), desc=desc, type_name=type_name,
+                on_progress=on_progress, run_id=run_id,
+            )
         async with _limiter():
             result = await _execute()
         if wants_bg:

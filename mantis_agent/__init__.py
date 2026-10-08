@@ -33,6 +33,7 @@ from .events import (
     MessageDelta,
     MessageStart,
     MessageStop,
+    SteerEvent,
     StreamEvent,
     TextDelta,
     ThinkingDelta,
@@ -98,6 +99,7 @@ from .query import (
     SDKStatusMessage,
     SDKSystemMessage,
     SDKUserMessage,
+    QueryRun,
     query,
 )
 from .system_reminder import (
@@ -185,6 +187,7 @@ __all__ = [
     # Core
     "Agent",
     "query",
+    "QueryRun",
     "tool",
     # Tools
     "Tool",
@@ -257,6 +260,7 @@ __all__ = [
     "MessageDelta",
     "MessageStart",
     "MessageStop",
+    "SteerEvent",
     "StreamEvent",
     "TextDelta",
     "ThinkingDelta",

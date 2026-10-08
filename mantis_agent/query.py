@@ -49,7 +49,7 @@ from __future__ import annotations
 import re
 import time
 import uuid as _uuid
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from typing import Any, Literal, Union
 
 import msgspec
@@ -530,12 +530,64 @@ def _to_model_usage(
 # ---------------------------------------------------------------------------
 
 
-async def query(
+class QueryRun(AsyncGenerator):
+    """What :func:`query` returns: the message stream, plus :meth:`steer`.
+
+    Iterate it exactly as before — ``async for msg in query(...)`` — it is an
+    async generator in every way that matters (``__anext__``, ``asend``,
+    ``athrow``, ``aclose``). Hold on to it and you can steer the run::
+
+        run = query(prompt="Add dark mode", options=opts)
+        async for msg in run:
+            if wants_to_add_a_dependency(msg):
+                await run.steer("No new dependencies, please.")
+    """
+
+    def __init__(self, start: Callable[[dict[str, Any]], AsyncGenerator[Any, None]]) -> None:
+        # ``live["agent"]`` is set by the stream once its Agent exists.
+        self._live: dict[str, Any] = {}
+        self._agen = start(self._live)
+
+    def __aiter__(self) -> QueryRun:
+        return self
+
+    def __anext__(self) -> Any:
+        return self._agen.__anext__()
+
+    def asend(self, value: Any) -> Any:
+        return self._agen.asend(value)
+
+    def athrow(self, *args: Any) -> Any:
+        return self._agen.athrow(*args)
+
+    def aclose(self) -> Any:
+        return self._agen.aclose()
+
+    async def steer(self, text: str) -> bool:
+        """Add ``text`` to the run's NEXT turn — not an interrupt. Whatever the
+        model and its tools are doing finishes; the next request carries
+        ``text`` as a user message, and a ``task`` subagent that was blocking
+        the turn moves to the background and keeps working.
+
+        Returns ``True`` when the live run accepted it, ``False`` when there is
+        no live run (iteration hasn't reached the model yet, or the run has
+        ended); a refused message is not kept. Returns at once — it never
+        waits for delivery, which only happens as you keep iterating. See
+        :meth:`mantis_agent.Agent.steer`."""
+        agent = self._live.get("agent")
+        return agent.steer(text) if agent is not None else False
+
+
+def query(
     *,
     prompt: str | AsyncIterable[Any],
     options: Any = None,
-) -> AsyncIterator[Any]:
+) -> QueryRun:
     """Run an agent and yield SDK-shaped messages.
+
+    Returns a :class:`QueryRun` — iterate it like the async generator it
+    always was; it also has ``await run.steer(text)`` to add a message to the
+    live run's next turn.
 
     Two output modes share this entry point:
 
@@ -558,6 +610,20 @@ async def query(
     cleanup.
     """
 
+    return QueryRun(
+        lambda live: _query_stream(prompt=prompt, options=options, _live=live)
+    )
+
+
+async def _query_stream(
+    *,
+    prompt: str | AsyncIterable[Any],
+    options: Any,
+    _live: dict[str, Any],
+) -> AsyncIterator[Any]:
+    """The generator behind :func:`query`. ``_live["agent"]`` is set to the
+    run's Agent as soon as it exists, which is what ``QueryRun.steer`` uses."""
+
     # Claude Python SDK shape detection — MantisAgentOptions OR no options.
     # When options is a plain dict, fall through to legacy TS-SDK shape so
     # existing dict-shaped callers don't break.
@@ -565,7 +631,7 @@ async def query(
     if _is_claude_compat:
         from .compat_query import query as _compat_query
 
-        async for msg in _compat_query(prompt=prompt, options=options):
+        async for msg in _compat_query(prompt=prompt, options=options, _live=_live):
             yield msg
         return
 
@@ -577,6 +643,7 @@ async def query(
     from .http import sharing_http_clients  # noqa: PLC0415
     with sharing_http_clients():
         agent = _agent_from_options(opts)
+    _live["agent"] = agent
 
     session_id = opts.get("session_id") or _new_uuid()
     seeds = await _collect_prompt(prompt)
@@ -705,12 +772,15 @@ async def query(
                 #      agent loop after a tool batch finishes.
                 # Both map to ``isSynthetic=True`` in the SDK shape so
                 # downstream renderers can tell them apart from
-                # user-typed messages.
+                # user-typed messages. The one user-typed message the loop
+                # yields is a steer (``QueryRun.steer``) given its own turn —
+                # a non-meta plain string — and that one is NOT synthetic.
+                typed = not msg.isMeta and isinstance(msg.content, str)
                 yield _persist(SDKUserMessage(
                     message=APIUserMessage(content=msg.content),
                     uuid=_new_uuid(),
                     session_id=session_id,
-                    isSynthetic=True,
+                    isSynthetic=not typed,
                 ))
             elif isinstance(msg, SystemMessage):
                 content = msg.content if isinstance(msg.content, str) else ""
@@ -828,5 +898,6 @@ __all__ = [
     "SDKStatusMessage",
     "SDKSystemMessage",
     "SDKUserMessage",
+    "QueryRun",
     "query",
 ]

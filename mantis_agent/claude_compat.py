@@ -838,6 +838,9 @@ class ClaudeSDKClient:
         # (the documented "over multiple turns" contract) instead of each
         # ``receive_response()`` starting from a blank conversation.
         self._history: list[Any] = []
+        # ``{"agent": Agent}`` while a ``receive_response()`` is running — the
+        # run :meth:`steer` talks to.
+        self._live: dict[str, Any] = {}
 
     async def __aenter__(self) -> ClaudeSDKClient:
         await self.connect()
@@ -910,7 +913,25 @@ class ClaudeSDKClient:
         # Thread the persistent history so this turn continues the prior
         # conversation; ``_compat_query`` appends this turn's messages back into
         # the same list for the next ``receive_response()``.
-        async for msg in _compat_query(
-            prompt=prompt, options=self.options, _history=self._history
-        ):
-            yield msg
+        self._live.clear()
+        try:
+            async for msg in _compat_query(
+                prompt=prompt, options=self.options, _history=self._history,
+                _live=self._live,
+            ):
+                yield msg
+        finally:
+            self._live.clear()
+
+    async def steer(self, text: str) -> bool:
+        """Add ``text`` to the in-progress response's NEXT turn — not an
+        interrupt (Cursor's ``run.steer()``). The model call and tool calls in
+        flight finish; the next request carries ``text`` as a user message,
+        and a ``task`` subagent blocking the turn moves to the background and
+        keeps working. Call it while iterating :meth:`receive_response`.
+
+        Returns ``True`` when the live run accepted it, ``False`` when no
+        response is in progress — send it with :meth:`query` instead. Never
+        waits for delivery. See :meth:`mantis_agent.Agent.steer`."""
+        agent = self._live.get("agent")
+        return agent.steer(text) if agent is not None else False

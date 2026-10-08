@@ -10,10 +10,13 @@ def query(
     *,
     prompt: str | list[Message],
     options: MantisAgentOptions | dict | None = None,
-) -> AsyncIterator[SDKMessage]: ...
+) -> QueryRun: ...
 ```
 
-Runs a single agent loop and yields every message it produces.
+Runs a single agent loop and yields every message it produces. The
+returned `QueryRun` is an async generator (`async for`, `aclose()`) with
+one extra method, `await run.steer(text) -> bool` — see
+[Steering](#steering-a-running-query) below.
 
 **Arguments**
 
@@ -50,6 +53,29 @@ async def main():
 asyncio.run(main())
 ```
 
+### Steering a running query
+
+Hold on to the run and you can add a message to its **next** turn while it
+works. It is not an interrupt: the model call and tool calls in flight
+finish, then the next request carries your text as a user message. If the
+model had already given its final answer, the run keeps going and answers
+you; if a `task` subagent was blocking the turn, it moves to the background
+(a job) and its result arrives later.
+
+```python
+from mantis_agent import query
+
+run = query(prompt="Add dark mode", options={"model": "qwen2.5:7b"})
+async for msg in run:
+    if msg.type == "assistant" and "styled-components" in str(msg.message.content):
+        await run.steer("No new dependencies, please.")
+```
+
+`steer()` returns `True` when the live run accepted the message and `False`
+when there is no live run (iteration hasn't reached the model yet, or the
+run has ended) — a refused message is not kept. It returns at once; delivery
+happens as you keep iterating.
+
 ## `ClaudeSDKClient`
 
 ```python
@@ -67,6 +93,10 @@ class ClaudeSDKClient:
 
 Streaming context manager. The session persists across multiple
 `query()` calls within the `async with`.
+
+`await client.steer(text) -> bool` adds a message to the in-progress
+response's next turn (call it while iterating `receive_response()`); same
+semantics as `QueryRun.steer`, `False` when no response is in progress.
 
 **Lifetime**
 
@@ -127,6 +157,10 @@ agent.cancel()
 - `agent.run_iter(messages) -> AsyncIterator[Message]` — messages as they finish
 - `agent.stream(messages) -> AsyncIterator[StreamEvent]` — every low-level event
 - `agent.cancel()` — fires the cancellation signal
+- `agent.steer(text) -> bool` — add a message to the live run's next turn
+  (not an interrupt; `False` when no run is live). Thread-safe.
+- `agent.take_undelivered_steers() -> list[str]` — steers the last run
+  accepted but ended before sending (cancelled, step cap, an error)
 - `await agent.aclose()` — releases the HTTP client
 
 See [Streaming](../guides/streaming.md) for the full event taxonomy.

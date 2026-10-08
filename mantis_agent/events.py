@@ -129,3 +129,30 @@ StreamEvent = Union[
     MessageStop,
     ErrorEvent,
 ]
+
+
+class SteerEvent(
+    msgspec.Struct,
+    frozen=True,
+    tag="steer",
+    tag_field="type",
+    omit_defaults=True,
+):
+    """A steering message (``Agent.steer``) was taken into the run.
+
+    Not a provider event, so not part of :data:`StreamEvent`: the run loop
+    emits it on ``Agent.on_event`` at the turn boundary where the message
+    joins the history, just before the message carrying it is yielded.
+
+    ``status`` is ``"delivered"`` (the next request includes ``text``) or
+    ``"blocked"`` (a ``UserPromptSubmit`` hook refused it; ``note`` says why).
+    ``placement`` says where a delivered steer went: ``"tool_results"`` —
+    appended after this turn's tool results, in the same user message — or
+    ``"user_turn"`` — its own user message (after a final answer, or when it
+    arrived after the results were already sent).
+    """
+
+    text: str
+    status: str = "delivered"
+    placement: str = "user_turn"
+    note: str | None = None

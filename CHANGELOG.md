@@ -8,6 +8,50 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Steer an agent while it runs.** `Agent.steer(text)` adds a message to the
+  live run's next turn — not an interrupt: the model call and tool calls in
+  flight finish, then the next request carries the text (folded after the
+  turn's tool results, or as a new user message after a final answer, which
+  keeps the run going). Returns `False` when no run is live. `query()` now
+  returns a `QueryRun` (still an async generator) with `await run.steer()`, and
+  `ClaudeSDKClient.steer()` steers the in-progress response. Each delivery
+  fires a new `SteerEvent` on `Agent.on_event`; steers pass the
+  `UserPromptSubmit` hook; `Agent.take_undelivered_steers()` returns any a
+  cancelled or capped run couldn't send.
+- **A steered `task` subagent moves to the background.** If a foreground
+  `task` child is blocking the turn when a steer arrives, it becomes a
+  background job (`JobManager.adopt`) and keeps working; the turn continues
+  with the steer and the child's result arrives through the job machinery.
+  Concurrency caps hold: the child keeps its slot and takes a background-gate
+  token before it detaches.
+- **Terminal: typing mid-turn steers.** In the `mantis` terminal, Enter on a
+  message while a turn runs steers it (`⇢ steering: …` under the spinner until
+  it lands); Tab queues the line for after the turn, the old behaviour.
+- **`/steer <message>`.** The same steer as an explicit command: it joins the
+  running turn's next step (a busy subagent moves to the background); with
+  nothing running it simply sends the message. Listed in `/` and `/help`.
+- **Subagents on other providers.** An agent type may pin a model from a
+  different provider than the lead (a Claude `scout` under a GPT lead): the
+  terminal routes it with that provider's saved key, says `/enable <provider>`
+  when the family isn't set up, and keeps open models on a local/self-hosted
+  lead where they are. `make_task_tool(route_model=…)` for library callers.
+- **Live subagent rows show the helper's model** (`◇ #1 scout · claude-sonnet-5-5 · …`)
+  whenever its agent type pins one.
+
+### Fixed
+
+- The model-switch line no longer doubles the provider name
+  (`Grok (Grok (xAI))` → `Grok (xAI)`).
+- A long answer's first line no longer overflows onto a row of its own after
+  the `●` bullet.
+- Saving a bare Claude subscription token (`sk-ant-oat…`) now drops the
+  previous login's refresh token and expiry, which would otherwise refresh the
+  old login over the new token.
+- Dashboard Sessions: the "Pick a project" placeholder no longer stays under
+  the session list once a project is picked.
+
 ## [2.65.0] - 2026-10-04
 
 ### Added

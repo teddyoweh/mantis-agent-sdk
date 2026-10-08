@@ -112,6 +112,16 @@ What the loop guarantees (there are tests for each — `tests/test_engine_*.py`)
 - **Read-only bash** is auto-allowed via `permission_shell.classify_bash_readonly`
   (conservative allowlist, in-tree paths only). Any change there needs a
   security-review pass — see `test_permission_readonly_bash.py`.
+- **Steering** (`Agent.steer` / `QueryRun.steer` / `ClaudeSDKClient.steer`,
+  `steering.py`): never an interrupt. The inbox is open only while `run_iter`
+  runs (`steer()` → `False` otherwise, nothing kept) and is drained at turn
+  boundaries: folded into the tool-result message *after* every
+  `tool_result`, or its own persisted user message (after a final answer the
+  run continues). Taken only when another model call will happen; the rest
+  comes back via `take_undelivered_steers()`. Steers pass the
+  `UserPromptSubmit` gate. A steer while a foreground `task` child runs moves
+  it to a `JobManager` job (`JobManager.adopt`) — it keeps its shared slot and
+  must take a background-gate token first (`test_engine_steer.py`).
 
 ## Conventions & gotchas (don't trip on these)
 

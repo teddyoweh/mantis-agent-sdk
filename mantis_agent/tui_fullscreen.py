@@ -904,6 +904,12 @@ async def run_fullscreen(tui: Any) -> int:
         # Label of whatever attachable thing is sitting on the system clipboard
         # ("Image", "shot.png"), refreshed by _poll_clipboard.
         "clip": None,
+        # Steering: a message typed mid-turn joins the RUNNING turn instead of
+        # waiting for it (Agent.steer). ``run_agent`` is the agent of the live
+        # turn; ``steering`` the texts sent but not yet taken into a request
+        # (pinned under the spinner); ``steer_delivered`` the ones the run just
+        # took in, echoed into scrollback after the message that carries them.
+        "run_agent": None, "steering": [], "steer_delivered": [],
     }
 
     def _ctx_window() -> int:
@@ -2591,14 +2597,34 @@ async def run_fullscreen(tui: Any) -> int:
             # wraps under the prompt.
             word = _cut(inflight[0], max(20, _width() - 30))
             el = int(time.monotonic() - inflight[1])
+        steering = _steering_rows()
         return ANSI(
             f"\n{_GREEN}{frame} {word}…{_RESET} "
             f"{_DIM}({el}s · esc to interrupt){_RESET}{queued}{extra}"
+            + "".join("\n" + r for r in steering)
         )
+
+    _STEER_ROWS = 3
+
+    def _steering_rows() -> list[str]:
+        """'⇢ steering …' rows under the spinner: messages sent INTO the running
+        turn that it hasn't taken in yet (they land with the next request, then
+        echo into scrollback like any prompt). Oldest first, one row each."""
+        pending = list(state.get("steering") or []) if state["working"] else []
+        if not pending:
+            return []
+        room = max(12, _width() - 34)
+        rows = [f"  {_CYAN}⇢ steering:{_RESET} {_ellipsize(t, room)} "
+                f"{_DIM}· lands next turn{_RESET}" for t in pending[:_STEER_ROWS]]
+        if len(pending) > _STEER_ROWS:
+            rows.append(f"  {_DIM}  +{len(pending) - _STEER_ROWS} more{_RESET}")
+        return rows
 
     def _spinner_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        return Dimension.exact(2 if state["working"] else 0)  # blank + spinner
+        if not state["working"]:
+            return Dimension.exact(0)
+        return Dimension.exact(2 + len(_steering_rows()))  # blank + spinner + steers
 
     def attach_ft() -> Any:
         """The line directly above the prompt: what's staged for the next
@@ -2608,6 +2634,8 @@ async def run_fullscreen(tui: Any) -> int:
         into a terminal at all, so someone with a screenshot copied has no way
         to find out the app would take it. This is the whole affordance."""
         pending = getattr(tui, "pending_attachments", None) or []
+        if _steer_hint_showing():
+            return ANSI(f"{_DIM}↵ steer the running turn · tab queue it for after{_RESET}")
         if pending:
             n = len(pending)
             imgs = sum(1 for p, _ in pending if p.startswith("[Image"))
@@ -2630,8 +2658,34 @@ async def run_fullscreen(tui: Any) -> int:
 
     def _attach_height() -> Any:
         from prompt_toolkit.layout.dimension import Dimension  # noqa: PLC0415
-        showing = bool(getattr(tui, "pending_attachments", None)) or bool(state.get("clip"))
+        showing = (bool(getattr(tui, "pending_attachments", None)) or bool(state.get("clip"))
+                   or _steer_hint_showing())
         return Dimension.exact(1 if showing else 0)
+
+    def _steer_hint_showing() -> bool:
+        """Typing a plain message while a turn runs: say what Enter does now
+        (steer the live turn) and how to get the old behaviour (Tab queues)."""
+        if not state["working"] or state.get("run_agent") is None:
+            return False
+        msg = _steer_command_text(input_buffer.text)
+        if msg is not None:
+            return bool(msg)
+        return _steerable_text(input_buffer.text)
+
+    def _steer_command_text(text: str) -> str | None:
+        """``/steer <message>`` → the message ("" when it was left off); None
+        for anything that isn't the /steer command."""
+        t = text.strip()
+        if t == "/steer" or t.startswith("/steer ") or t.startswith("/steer\n"):
+            return t[len("/steer"):].strip()
+        return None
+
+    def _steerable_text(text: str) -> bool:
+        """A plain message (not a /command, !shell or #note, nothing attached)
+        — the only kind that can join a running turn."""
+        t = text.strip()
+        return (bool(t) and not t.startswith(("/", "!", "#"))
+                and not getattr(tui, "pending_attachments", None))
 
     def _rail_items() -> list:
         """Live work as rail rows. Cheap enough for the render path: it walks the
@@ -2718,12 +2772,14 @@ async def run_fullscreen(tui: Any) -> int:
         """
         items = list(_live_agent_items())
         seen_ids = {rid for rid, _ in items}
+        # A steered-into-the-background subagent is already listed as itself.
+        moved_jobs = {s.get("bg_job") for _, s in items if s.get("bg_job")}
         for item in _rail_items():
             try:
                 jid = int(str(item.id).split(":", 1)[1])
             except (ValueError, IndexError):
                 continue
-            if jid in seen_ids:
+            if jid in seen_ids or jid in moved_jobs:
                 continue
             events = []
             jobs = getattr(tui, "_jobs", None)
@@ -3052,11 +3108,21 @@ async def run_fullscreen(tui: Any) -> int:
             desc = f" — {s['desc']}" if s.get("desc") else ""
             last = s.get("last_event") or ""
             activity = f" · {last}" if last and last != "starting" else ""
+            # Name the child's model when its agent type pins one, or when it
+            # differs from the lead's — an inherited one is noise.
+            model = s.get("model") or ""
+            on = f" · {model}" if model and (s.get("pinned") or model != tui.model) else ""
+            # A child the user steered past keeps working as a background job:
+            # say so on its row, in the background colour, so it reads as
+            # "still going, no longer blocking" rather than as the turn's work.
+            bg = s.get("bg_job")
+            moved = f" → background job #{bg}" if bg else ""
             body = _ellipsize(
-                f"◇ #{rid} {s.get('type', '?')} · {s.get('tools', 0)} tools · {el}s{activity}{desc}",
+                f"◇ #{rid} {s.get('type', '?')}{on}{moved} · {s.get('tools', 0)} tools · {el}s{activity}{desc}",
                 max(width - 6, 20))
             branch = "  ⎿ " if (i == 0 and not tui.todos) else "    "
-            rows.append(f"{_DIM}{branch}{_CYAN}{body}{_RESET}{_RESET}")
+            colour = _GREY if bg else _CYAN
+            rows.append(f"{_DIM}{branch}{colour}{body}{_RESET}{_RESET}")
         return rows
 
     def live_todos_ft() -> Any:
@@ -3196,15 +3262,41 @@ async def run_fullscreen(tui: Any) -> int:
         n = len(_live_preview_rows())
         return Dimension.exact(n + 1 if n else 0)
 
+    def _on_steer_event(ev: Any) -> None:
+        """The run took a steering message in (or a UserPromptSubmit hook
+        refused it). Move it off the pinned "⇢ steering" rows; a delivered one
+        is echoed into scrollback right after the message that carries it (see
+        the turn loop), so it sits where the model actually read it."""
+        pending = state.setdefault("steering", [])
+        if ev.text in pending:
+            pending.remove(ev.text)
+        if ev.status == "delivered":
+            state.setdefault("steer_delivered", []).append(ev.text)
+        else:
+            why = f" — {ev.note}" if ev.note else ""
+            try:
+                get_app().create_background_task(
+                    _announce(f"steer blocked by a hook{why}"))
+            except Exception:  # noqa: BLE001 — no app (tests)
+                pass
+        try:
+            get_app().invalidate()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _live_preview_sink(ev: Any) -> None:
         """agent.on_event for a fullscreen turn: buffer deltas, repaint
         throttled (the 8 Hz spinner ticker picks up the trailing tokens)."""
         from .events import (  # noqa: PLC0415
             ContentBlockDelta,
             MessageStart,
+            SteerEvent,
             TextDelta,
             ThinkingDelta,
         )
+        if isinstance(ev, SteerEvent):
+            _on_steer_event(ev)
+            return
         if isinstance(ev, MessageStart):
             # A new model call — or a truncation retry restarting the stream,
             # whose discarded partial text must disappear.
@@ -3562,12 +3654,15 @@ async def run_fullscreen(tui: Any) -> int:
         get_app().invalidate()
         _stream = None
         _turn_agent = None
+        cancelled_turn = False
         live_preview.reset()
         try:
             tui._bind_harness_state()
             # Tap the raw stream so the reply shows up while it generates.
             _turn_agent = tui.agent
             _turn_agent.on_event = _live_preview_sink
+            # Messages typed from here on steer THIS run (see the Enter key).
+            state["run_agent"] = _turn_agent
             _stream = tui.agent.run_iter(tui.messages)
             async for msg in _stream:
                 if isinstance(msg, AssistantMessage):
@@ -3606,13 +3701,28 @@ async def run_fullscreen(tui: Any) -> int:
                         _bash_tail_finish()   # the live window gives way to the preview
                         _result(m)
                     await _print(_result_after_tail)
+                # Steering the run just took in (SteerEvent, fired right before
+                # this message was yielded): echo it as the user's message, in
+                # the place the model read it — after the results it rode with.
+                delivered = state.get("steer_delivered") or []
+                if delivered:
+                    texts = list(delivered)
+                    delivered.clear()
+
+                    def _echo_steers(ts: list[str] = texts) -> None:
+                        for t in ts:
+                            _echo(t)
+                    await _print(_echo_steers)
         except asyncio.CancelledError:
             # Keep the work done so far; just close any tool_use left unanswered
             # by the interrupt so the next turn's request stays well-formed and
             # the user can redirect or continue. An interrupt also drops any
-            # queued messages — the user is taking the wheel back.
-            dropped = len(state.get("queue") or [])
+            # queued messages — the user is taking the wheel back — and any
+            # steering the run hadn't taken in yet.
+            cancelled_turn = True
+            dropped = len(state.get("queue") or []) + len(state.get("steering") or [])
             state.get("queue", []).clear()
+            state.get("steering", []).clear()
             goal_note = ""
             if state.get("goal"):
                 # esc PAUSES autopilot (keeps the goal + cycle state) rather than
@@ -3626,7 +3736,7 @@ async def run_fullscreen(tui: Any) -> int:
                 live_preview.reset()  # the half-streamed reply goes with the turn
                 tui.console.print(
                     "[ansibrightblack](interrupted — you can continue or redirect"
-                    + (f" · {d} queued message{'s' if d != 1 else ''} dropped" if d else "")
+                    + (f" · {d} pending message{'s' if d != 1 else ''} dropped" if d else "")
                     + gn + ")[/]")
             await _print(_show_interrupted)
         except Exception as e:  # noqa: BLE001
@@ -3653,6 +3763,16 @@ async def run_fullscreen(tui: Any) -> int:
                 await aclose_stream(_stream)
             if _turn_agent is not None and _turn_agent.on_event is _live_preview_sink:
                 _turn_agent.on_event = None
+            # Steering ends with the run. Anything it accepted but never sent
+            # (the step cap, an error) becomes the next prompt — ahead of the
+            # queue, since it was typed first; an Esc already dropped it.
+            state["run_agent"] = None
+            state["steering"] = []
+            state["steer_delivered"] = []
+            if _turn_agent is not None:
+                left = _turn_agent.take_undelivered_steers()
+                if left and not cancelled_turn:
+                    state["queue"][:0] = [(t, []) for t in left]
             live_preview.reset()
             state["tool_inflight"] = None
             if state.get("bash_tail") is not None:   # interrupted mid-command
@@ -5561,6 +5681,21 @@ async def run_fullscreen(tui: Any) -> int:
         input_buffer.reset(append_to_history=True)
         if not text:
             return
+        steer_msg = _steer_command_text(text)
+        if steer_msg is not None:
+            if not steer_msg:
+                event.app.create_background_task(_announce(
+                    "usage: /steer <message> — joins the running turn's next step"))
+                return
+            if not state["working"]:
+                # Nothing to steer: the message simply starts the next turn.
+                _spawn_handle(steer_msg)
+                return
+            if _steer_running_turn(steer_msg):
+                event.app.invalidate()
+                return
+            _queue_for_after_turn(steer_msg)
+            return
         if state["working"]:
             # Mid-turn fast-path commands run IMMEDIATELY, not queued — the
             # whitelist here mirrors _handle's mid-turn branch, which needs the
@@ -5570,16 +5705,41 @@ async def run_fullscreen(tui: Any) -> int:
             if _cmd0 in {"/agents", "/jobs", "/job", "/cost", "/status", "/effort", "/workflows"}:
                 _spawn_handle(text)
                 return
-            # A turn is running: QUEUE the message (Claude Code behavior) —
-            # it fires the moment this turn finishes. Esc-interrupt clears it.
-            q = state["queue"]
-            attachments = list(tui.pending_attachments)
-            tui.pending_attachments = []
-            q.append((text, attachments))
-            event.app.create_background_task(_announce(
-                f"⧉ queued ({len(q)}) — sends when this turn finishes · esc clears"))
+            # A turn is running: a plain message STEERS it — it joins the
+            # run's next request (after the tools in flight finish), and a
+            # subagent blocking the turn moves to the background. Commands,
+            # attachments, or a run that can no longer take it: queue.
+            if _steer_running_turn(text):
+                event.app.invalidate()
+                return
+            _queue_for_after_turn(text)
             return
         _spawn_handle(text)
+
+    def _steer_running_turn(text: str) -> bool:
+        """Send ``text`` into the live run (Agent.steer). False when it isn't a
+        plain message or the run won't take it (not started / already ending)
+        — the caller queues it instead, so nothing typed is ever lost."""
+        agent = state.get("run_agent")
+        if agent is None or not _steerable_text(text):
+            return False
+        try:
+            accepted = bool(agent.steer(text))
+        except Exception:  # noqa: BLE001 — fall back to the queue, never drop input
+            return False
+        if accepted:
+            state.setdefault("steering", []).append(text)
+        return accepted
+
+    def _queue_for_after_turn(text: str) -> None:
+        """QUEUE ``text`` to run as its own turn the moment this one finishes
+        (Tab while working, or anything that can't steer). Esc clears it."""
+        q = state["queue"]
+        attachments = list(tui.pending_attachments)
+        tui.pending_attachments = []
+        q.append((text, attachments))
+        get_app().create_background_task(_announce(
+            f"⧉ queued ({len(q)}) — sends when this turn finishes · esc clears"))
 
     def _stop_dash_live() -> bool:
         rec = state.get("dash_live")
@@ -5747,6 +5907,28 @@ async def run_fullscreen(tui: Any) -> int:
     @kb.add("tab", filter=_has_ghost & ~_picker_open)
     def _(event: Any) -> None:
         input_buffer.insert_text(input_buffer.suggestion.text)
+        event.app.invalidate()
+
+    # Tab while a turn runs: QUEUE the line for after the turn instead of
+    # steering it in (Enter's default) — the pre-steering behaviour, one key away.
+    _can_queue = Condition(lambda: bool(
+        state["working"] and input_buffer.text.strip() and not _menu_options()
+        and not (input_buffer.suggestion and input_buffer.suggestion.text)
+        and all(state.get(k) is None for k in (
+            "pending_perm", "pending_question", "picking_model", "picking_effort",
+            "picking_auth", "awaiting_key", "agent_inspector", "workflows", "mcp_view"))))
+
+    @kb.add("tab", filter=_can_queue & ~_picker_open)
+    def _(event: Any) -> None:
+        raw = input_buffer.text
+        full = pasted.expand(raw)
+        pasted.clear()
+        if full != raw:
+            input_buffer.text = full
+        text = full.strip()
+        input_buffer.reset(append_to_history=True)
+        if text:
+            _queue_for_after_turn(text)
         event.app.invalidate()
 
     @kb.add("right", filter=_has_ghost & ~_picker_open)
