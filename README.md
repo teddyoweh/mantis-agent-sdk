@@ -22,6 +22,40 @@ That's the whole diff. Every canonical Claude SDK example runs verbatim — the 
 
 **Two ways in**, one `pip install`: the **[`mantis` terminal](#the-mantis-terminal)** — a Claude-Code-style coding agent you run in any directory — and the **[Python library](#quick-start)** for building your own agents on top of the same engine.
 
+## See it in action
+
+Every clip is a live recording of the real terminal and dashboard. Click a preview to watch.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/demos/dashboard.mp4"><img src="docs/demos/dashboard.jpg" alt="One dashboard for everything" width="100%"></a>
+      <br><b>One dashboard for everything</b><br>Skills, MCP servers, memory and every session across your projects, in <code>mantis serve</code>.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/demos/any-model.mp4"><img src="docs/demos/any-model.jpg" alt="Any model, switch mid-conversation" width="100%"></a>
+      <br><b>Any model, switch mid-conversation</b><br>Start on Claude, <code>/models</code> over to Grok, keep the whole conversation. One line in the SDK.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/demos/subagents.mp4"><img src="docs/demos/subagents.jpg" alt="Subagents on different models" width="100%"></a>
+      <br><b>Subagents on different models</b><br>One lead, helpers on Claude and GPT, all working at the same time.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/demos/local-and-deploy.mp4"><img src="docs/demos/local-and-deploy.jpg" alt="Run open models locally or deploy your own" width="100%"></a>
+      <br><b>Run open models locally, or deploy your own</b><br><code>/pull</code> a model for free, or deploy GLM on your GPU provider in one click, then code with it.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/demos/steer.mp4"><img src="docs/demos/steer.jpg" alt="Steer your agent while it works" width="100%"></a>
+      <br><b>Steer your agent while it works</b><br><code>/steer</code> mid-run; busy helpers keep working in the background. <code>run.steer()</code> in code.
+    </td>
+    <td width="50%"></td>
+  </tr>
+</table>
+
 ---
 
 ## The `mantis` terminal
@@ -63,6 +97,7 @@ It's built to feel like the real thing. The **input stays pinned to the bottom a
 A few things worth knowing:
 
 - **Switch models mid-conversation** — `/model qwen2.5:7b`, or `/models` to browse everything you can run locally, self-host, or reach over an API.
+- **Steer while it works** — `/steer <message>` (or just type and press Enter) adds your message to the agent's next step without stopping it; a subagent that's mid-task moves to the background and keeps going.
 - **Paste images and files** — `Ctrl+V` drops a copied screenshot or file path straight into the prompt.
 - **Stay in control** — `Esc`/`Ctrl+C` interrupts a running reply, `Ctrl+D` quits, `shift+tab` cycles the permission mode. Prefer a plain scrolling REPL? `MANTIS_CLASSIC=1`.
 
