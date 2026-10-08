@@ -8,6 +8,8 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-10-08
+
 ### Added
 
 - **Steer an agent while it runs.** `Agent.steer(text)` adds a message to the
@@ -3015,7 +3017,8 @@ A non-exhaustive summary:
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.65.0...HEAD
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.66.0...HEAD
+[2.66.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.65.0...v2.66.0
 [2.65.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.1...v2.65.0
 [2.64.1]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.0...v2.64.1
 [2.64.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.63.0...v2.64.0

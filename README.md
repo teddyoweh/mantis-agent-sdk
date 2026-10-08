@@ -29,27 +29,27 @@ Every clip is a live recording of the real terminal and dashboard. Click a previ
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/demos/dashboard.mp4"><img src="docs/demos/dashboard.jpg" alt="One dashboard for everything" width="100%"></a>
+      <a href="https://github.com/teddyoweh/mantis-agent-sdk/blob/main/docs/demos/dashboard.mp4"><img src="https://raw.githubusercontent.com/teddyoweh/mantis-agent-sdk/main/docs/demos/dashboard.jpg" alt="One dashboard for everything" width="100%"></a>
       <br><b>One dashboard for everything</b><br>Skills, MCP servers, memory and every session across your projects, in <code>mantis serve</code>.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/demos/any-model.mp4"><img src="docs/demos/any-model.jpg" alt="Any model, switch mid-conversation" width="100%"></a>
+      <a href="https://github.com/teddyoweh/mantis-agent-sdk/blob/main/docs/demos/any-model.mp4"><img src="https://raw.githubusercontent.com/teddyoweh/mantis-agent-sdk/main/docs/demos/any-model.jpg" alt="Any model, switch mid-conversation" width="100%"></a>
       <br><b>Any model, switch mid-conversation</b><br>Start on Claude, <code>/models</code> over to Grok, keep the whole conversation. One line in the SDK.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/demos/subagents.mp4"><img src="docs/demos/subagents.jpg" alt="Subagents on different models" width="100%"></a>
+      <a href="https://github.com/teddyoweh/mantis-agent-sdk/blob/main/docs/demos/subagents.mp4"><img src="https://raw.githubusercontent.com/teddyoweh/mantis-agent-sdk/main/docs/demos/subagents.jpg" alt="Subagents on different models" width="100%"></a>
       <br><b>Subagents on different models</b><br>One lead, helpers on Claude and GPT, all working at the same time.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/demos/local-and-deploy.mp4"><img src="docs/demos/local-and-deploy.jpg" alt="Run open models locally or deploy your own" width="100%"></a>
+      <a href="https://github.com/teddyoweh/mantis-agent-sdk/blob/main/docs/demos/local-and-deploy.mp4"><img src="https://raw.githubusercontent.com/teddyoweh/mantis-agent-sdk/main/docs/demos/local-and-deploy.jpg" alt="Run open models locally or deploy your own" width="100%"></a>
       <br><b>Run open models locally, or deploy your own</b><br><code>/pull</code> a model for free, or deploy GLM on your GPU provider in one click, then code with it.
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/demos/steer.mp4"><img src="docs/demos/steer.jpg" alt="Steer your agent while it works" width="100%"></a>
+      <a href="https://github.com/teddyoweh/mantis-agent-sdk/blob/main/docs/demos/steer.mp4"><img src="https://raw.githubusercontent.com/teddyoweh/mantis-agent-sdk/main/docs/demos/steer.jpg" alt="Steer your agent while it works" width="100%"></a>
       <br><b>Steer your agent while it works</b><br><code>/steer</code> mid-run; busy helpers keep working in the background. <code>run.steer()</code> in code.
     </td>
     <td width="50%"></td>
