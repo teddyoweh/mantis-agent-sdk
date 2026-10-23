@@ -737,6 +737,26 @@ def thinking_tokens(thinking: str) -> int:
     return max(1, len((thinking or "").strip()) // 4) if (thinking or "").strip() else 0
 
 
+def _transcript_pager() -> Any:
+    """rich's pager, opened at the END of the transcript (``less +G``): what
+    someone opening it mid-run wants is the latest thought, with everything
+    before it a scroll up. Falls back to rich's system pager without less."""
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    from rich.pager import Pager, SystemPager  # noqa: PLC0415
+
+    less = shutil.which("less")
+    if less is None:
+        return SystemPager()
+
+    class _AtEnd(Pager):
+        def show(self, content: str) -> None:
+            subprocess.run([less, "-R", "+G"], input=content.encode("utf-8", "replace"), check=False)
+
+    return _AtEnd()
+
+
 def thinking_summary(thinking: str, width: int = 80) -> Any:
     """The collapsed form of a ThinkingBlock: one dim ``✻ thinking (n tokens)``
     line with the opening words, cut to ``width``. ``None`` when empty."""
@@ -747,7 +767,9 @@ def thinking_summary(thinking: str, width: int = 80) -> Any:
         return None
     n = thinking_tokens(thinking)
     head = f"✻ thinking ({n} token{'s' if n != 1 else ''})"
-    tail = " · /thinking show"
+    # the whole thought, and every earlier one, is in the ctrl+o transcript —
+    # mid-turn too; /thinking show only changes how future ones print
+    tail = " · ctrl+o to read"
     room = max(8, width - len(head) - len(tail) - 4)
     preview = body if len(body) <= room else body[: room - 1].rstrip() + "…"
     t = _T(head, style="italic bright_black")
@@ -6400,7 +6422,7 @@ class MantisTUI:
         if not self.messages:
             self.console.print("[bright_black](no conversation yet)[/]")
             return
-        with self.console.pager(styles=True):
+        with self.console.pager(pager=_transcript_pager(), styles=True):
             self.console.print("[bold]Transcript[/]  [bright_black](q to close)[/]\n")
             for m in self.messages:
                 if isinstance(m, UserMessage):
@@ -8577,11 +8599,39 @@ def _run_cron_cli(argv: list[str]) -> int:
     return 0
 
 
+def follow_live_terminal_size() -> bool:
+    """On a real terminal, drop an inherited ``COLUMNS`` / ``LINES``.
+
+    rich (at Console creation) and ``shutil.get_terminal_size`` both prefer
+    those variables to the terminal's own size, so a launcher that exports
+    them pins mantis to the window size it had at launch. After the pane
+    narrows — a sidebar opening — every thinking line, answer and tool output
+    was laid out for the old, wider window and ran off the right edge. The
+    terminal reports its live size itself; it should win. Returns whether
+    anything was dropped. Leaves a pipe or a test harness alone."""
+    import os  # noqa: PLC0415
+
+    try:
+        if not sys.stdout.isatty():
+            return False
+        os.get_terminal_size(sys.stdout.fileno())
+    except (OSError, ValueError, AttributeError):
+        return False
+    dropped = False
+    for name in ("COLUMNS", "LINES"):
+        if name in os.environ:
+            del os.environ[name]
+            dropped = True
+    return dropped
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse  # noqa: PLC0415
 
     if argv is None:
         argv = sys.argv[1:]
+    # Before any Console exists — rich reads COLUMNS once, when it's created.
+    follow_live_terminal_size()
 
     # `mantis setup [...]` → the first-run wizard (detect machine, pick & pull a
     # coding model, set it as default). Everything else launches the terminal.

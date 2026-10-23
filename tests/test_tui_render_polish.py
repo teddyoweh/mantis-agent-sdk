@@ -52,7 +52,7 @@ def test_thinking_collapses_to_one_dim_line_by_default() -> None:
     assert len(lines) == 1
     assert re.search(r"✻ thinking \(\d+ tokens\)", lines[0])
     assert "Let me reason" in lines[0]            # the opening words
-    assert "/thinking show" in lines[0]           # how to see the rest
+    assert "ctrl+o to read" in lines[0]           # how to see the rest (and every earlier thought)
     assert "Step 30" not in out                   # not dumped
     assert "42" in out
     assert max(len(ln.rstrip()) for ln in out.splitlines()) <= 80

@@ -44,6 +44,16 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
   them. `disallowed_tools` reaches MCP tools, and `mcp__server` removes a
   whole server.
 - Skills are discovered from the agent's `cwd`, not the process's.
+- **The terminal follows a resize.** A launcher that exports `COLUMNS` and
+  `LINES` pinned mantis to its launch width (rich and `shutil` prefer those
+  variables to the terminal's own size). After the pane narrowed, thinking
+  lines, answers and tool output ran off the right edge. On a real terminal
+  the live size now wins.
+- **Ctrl+O works mid-turn.** The full transcript, every earlier thought
+  included, opens while the agent keeps working underneath, starting at the
+  end; `q` returns. It used to wait for the turn to finish, so a long run's
+  earlier thoughts couldn't be read at all. The thinking line now says
+  `ctrl+o to read`.
 
 ## [2.68.0] - 2026-10-23
 

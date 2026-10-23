@@ -5945,17 +5945,18 @@ async def run_fullscreen(tui: Any) -> int:
 
     @kb.add("c-o")
     def _(event: Any) -> None:
-        # Ctrl+O: the "… +N more lines (ctrl+o to expand)" hints point here —
-        # the whole conversation, every tool output and thinking block in full,
-        # through the system pager (q closes it and returns to the prompt).
-        # Mid-turn the synchronous pager would freeze the loop (stream, spinner,
-        # job monitors) until it closes — so it waits for the turn to end.
-        if state.get("working"):
-            event.app.create_background_task(
-                _announce("ctrl+o: the full transcript opens once this turn finishes")
-            )
-            return
-        event.app.create_background_task(_print(tui._show_transcript))
+        # Ctrl+O: the "… +N more lines (ctrl+o to expand)" and thinking hints
+        # point here — the whole conversation, every tool output and thought in
+        # full, through the system pager, opened at the end (q closes it). It
+        # works mid-turn: the pager runs in a worker thread, so the loop (the
+        # stream, tools, job monitors) keeps going underneath; anything the
+        # turn prints meanwhile waits for the terminal and lands once q closes
+        # the pager. Waiting for the turn to end meant a long run's earlier
+        # thoughts could not be read at all while it worked.
+        from prompt_toolkit.application.run_in_terminal import (  # noqa: PLC0415
+            run_in_terminal as _rit,
+        )
+        event.app.create_background_task(_rit(tui._show_transcript, in_executor=True))
 
     # Ctrl+R: reverse-search prompt history (the toolbar under the input).
     add_history_search_keys(kb)
