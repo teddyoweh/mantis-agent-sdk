@@ -8,6 +8,80 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.67.0] - 2026-10-23
+
+### Added
+
+- **Per-token options in the Deploy sheet.** When Fireworks serves a model
+  serverless or Modal has a Shared Endpoint for it, the sheet lists that first,
+  priced per 1M tokens in · out, above the GPUs by the hour. A ready one is
+  selected by default; **Use it** switches mantis to the provider's own serving
+  with no deployment. Fireworks availability is read live
+  (`supports_serverless=true`); Modal shared endpoints are connected by their
+  model id and proxy token. `GET /api/deploy/inspect` carries `per_token`;
+  `POST /api/deploy/per-token/use` switches.
+- Fireworks serverless prices (October 2026) in `budget.PRICING_TABLE`, so the
+  cost readout bills those models at their real rate.
+- **My models, rebuilt around what you can use.** The header names what
+  you're running ("GLM 5.3 Flash · Z.ai · via Fireworks · per token") with the
+  window that provider serves; the connection check is one button. "Your
+  models" shows only what you can use by default — connected families first,
+  each with its newest eight and "Show all N" for the rest (aliases, previews
+  and retired generations at the back) — while a search, the Everything filter
+  or a family's own tab still finds the rest with its Connect. Tabs and group
+  labels count usable models. Providers you haven't connected, a local Ollama
+  and your own server move to **Add more models** at the foot of the page. The
+  page is about a third as long.
+- **One card per model line.** A provider's variants of one model are one
+  card with a chip per variant — GPT-6 (Luna · Sol · Astra), GPT-5.4 (Standard
+  · Mini · Nano · Pro), Grok 4.20 (Non-reasoning · Reasoning · Multi agent) —
+  with a readable name ("Claude Haiku 4.5", not claude-haiku-4-5) and the chosen
+  variant's context, price and id. OpenAI's 51 ids are 17 cards.
+- **Quick picks** above the grid answer "which one?" with facts only: the
+  cheapest, the biggest context, and what you used recently.
+- **Models are named the way people read them on every page** — the rail's
+  foot, Overview's providers and spend, My models, the Switch menu: "GLM 5.3
+  Flash", "GPT-6 Astra", "Claude Sonnet 5.5", never a provider path. The id
+  stays on the tooltip. The Deploy page's model cards say their size, memory
+  and pulls on one quiet line, as My models does.
+- **Per-token open models on My models.** Open models now lead with one card
+  per model you can use per token right now, listing each provider you're
+  connected to that serves it with its price (Fireworks serverless; Cerebras
+  and OpenRouter from their live model lists, once you have their key; Modal
+  shared endpoints you've made). Pick a provider, Use. The raw per-provider ids
+  they cover, and Fireworks' routers, are no longer separate cards.
+  `GET /api/deploy/per-token`.
+- **The Deploy page leads with who you're connected to**: a chip per provider
+  ("Fireworks · Connected · 14 models per token · GPUs"), a link to the
+  per-token models, then your deployments and the GPU model browser. Model
+  cards show the per-token price instead of "Won't fit any GPU" when a provider
+  serves the model. Saved keys are validated once per visit (read-only), and
+  records mantis can't call fold into one line.
+
+### Fixed
+
+- Modal's Shared Endpoint gateway (`inference.<region>.modal.direct`) routes
+  to the Modal adapter and authenticates with the joined proxy token, even when
+  a stale `MANTIS_AGENT_API_KEY` is set.
+- The deploy sheet wrote a GPU count twice for labelled cards ("B300 288GB ×2 ×2").
+- MiniMax M3 / M3.1, Nemotron 3.5 Lightning / 3 Ultra, Inkling, Muse Spark and
+  Ember-1 had no capability row, so they ran with no native tools and an 8k
+  window — a coding task ended after one turn of prose. They now get native
+  tool calls and the windows their providers serve.
+- **Opening the Deploy page could boot a Modal GPU.** When Modal's control
+  plane couldn't be read (no `modal` package in the dashboard's environment,
+  or another profile active), `status()` fell back to `GET /health` on the
+  endpoint, which wakes a scaled-to-zero app and resets its idle timer. It now
+  reports the state as unknown and says why; only `wait_ready` probes.
+- A deployment card said "up 30d" for the time since it was deployed, even
+  while scaled to zero; it now says "deployed 30d ago".
+- The terminal restored a saved model to the provider its id suggested, not
+  the one its saved backend names (`openai/gpt-oss-120b` saved on OpenRouter
+  reopened on Groq).
+- `query()` (and `mantis -p --json`) reported `total_cost_usd: 0` for any run
+  without a USD budget, beside a correctly priced `modelUsage`; it now bills at
+  the same per-model rates.
+
 ## [2.66.0] - 2026-10-08
 
 ### Added
