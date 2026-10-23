@@ -8,6 +8,8 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.69.0] - 2026-10-23
+
 ### Added
 
 - **A system prompt for drop-in agents.** A `MantisAgentOptions` agent with
@@ -3208,7 +3210,8 @@ A non-exhaustive summary:
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.68.0...HEAD
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.69.0...HEAD
+[2.69.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.68.0...v2.69.0
 [2.68.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.67.0...v2.68.0
 [2.67.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.66.0...v2.67.0
 [2.66.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.65.0...v2.66.0
