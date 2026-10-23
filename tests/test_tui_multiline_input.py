@@ -298,7 +298,9 @@ def test_ctrl_o_is_bound_in_fullscreen(
 
 def test_reset_drops_stale_paste_tokens_and_editor_keeps_text():
     """Review fixes: Buffer.reset() (Esc clear) forgets paste tokens; C-x C-e
-    doesn't validate-and-drop the buffer; Ctrl+O waits for the turn."""
+    doesn't validate-and-drop the buffer; Ctrl+O works mid-turn by running the
+    pager in a worker thread (it used to wait for the turn, so a long run's
+    earlier thoughts couldn't be read — see test_tui_transcript_midturn.py)."""
     import inspect
 
     from mantis_agent import tui_fullscreen as tf
@@ -307,7 +309,8 @@ def test_reset_drops_stale_paste_tokens_and_editor_keeps_text():
     assert "input_buffer.open_in_editor()" in src
     assert "open_in_editor(event.app)" not in src
     assert "_reset_and_forget_pastes" in src
-    assert 'if state.get("working"):' in src.split('@kb.add("c-o")', 1)[1][:800]
+    ctrl_o = src.split('@kb.add("c-o")', 1)[1][:1400]
+    assert "in_executor=True" in ctrl_o and "opens once this turn finishes" not in ctrl_o
 
     p = tf.PastedTexts()
     from prompt_toolkit.buffer import Buffer
