@@ -320,7 +320,14 @@ class TaskState:
 def make_task_state_tool(state: TaskState) -> Tool:
     """Create the non-concurrent ``task_state`` tool; validation errors propagate."""
 
-    async def run(operation: str, **kwargs: Any) -> Any:
+    async def run(operation: str | None = None, **kwargs: Any) -> Any:
+        # Models get this call's shape wrong in a few predictable ways (no
+        # operation, ``action`` for ``operation``, a description on
+        # record_check, recording a check never added). Each used to come back
+        # as a raw TypeError/ValueError; take the plain intent instead, and
+        # say exactly what to send when there is none.
+        import inspect as _inspect  # noqa: PLC0415
+
         methods = {
             "set_objective": state.set_objective,
             "add_check": state.add_check,
@@ -328,9 +335,25 @@ def make_task_state_tool(state: TaskState) -> Tool:
             "record_check": state.record_check,
             "inspect": state.inspect,
         }
+        operation = operation or kwargs.pop("action", None) or kwargs.pop("op", None)
+        if not operation:
+            operation = ("set_objective" if "objective" in kwargs else
+                         "record_check" if kwargs.get("status") in ("passed", "failed") else
+                         "add_check" if {"id", "description"} <= set(kwargs) else
+                         "inspect" if not kwargs else None)
         if operation not in methods:
-            raise ValueError("Unknown task-state operation")
-        result = methods[operation](**kwargs)
+            raise ValueError(f"Unknown task-state operation {operation!r}; send operation= one of "
+                             + ", ".join(methods))
+        if operation == "record_check" and kwargs.get("id") not in state.inspect()["checks"]:
+            if not kwargs.get("description"):
+                known = ", ".join(state.inspect()["checks"]) or "none yet"
+                raise ValueError(f"No check {kwargs.get('id')!r} to record (checks: {known}); "
+                                 "add_check(id, description) first, or pass a description to add it now")
+            state.add_check(kwargs["id"], kwargs["description"])
+        if operation == "record_check":
+            kwargs.setdefault("evidence_call_ids", [])
+        accepted = set(_inspect.signature(methods[operation]).parameters)
+        result = methods[operation](**{k: v for k, v in kwargs.items() if k in accepted})
         return _json(result) if result is not None else state.render()
 
     return Tool(
@@ -367,7 +390,6 @@ def make_task_state_tool(state: TaskState) -> Tool:
                 "evidence_call_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
             },
             "required": ["operation"],
-            "additionalProperties": False,
         },
         fn=run,
         is_concurrency_safe=False,

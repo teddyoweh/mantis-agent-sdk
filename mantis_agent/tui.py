@@ -5037,12 +5037,16 @@ class MantisTUI:
         from .compact import CompactBoundaryMessage  # noqa: PLC0415
         from .types import AssistantMessage, TextBlock, UserMessage  # noqa: PLC0415
 
-        # Detect an in-place compaction since the last persist: the previously
-        # persisted messages are no longer the identity-prefix of the live list
-        # (compaction shrinks it and/or swaps in a fresh summary message).
+        # Detect a compaction since the last persist: the live list got SHORTER
+        # (``messages[:] = compacted`` only ever replaces it with fewer, a
+        # summary in front). Same length with a message swapped is
+        # micro-compaction clearing an old tool result's body in place — the
+        # transcript already holds the full result, a resume clears it again,
+        # and treating it as compaction re-persisted the whole conversation
+        # behind a count-0 boundary every time (three full copies in one real
+        # session file).
         prev = getattr(self, "_persisted_snapshot", None) or []
-        compacted = len(self.messages) < len(prev) or any(
-            self.messages[i] is not prev[i] for i in range(len(prev)))
+        compacted = len(self.messages) < len(prev)
 
         try:
             if compacted:

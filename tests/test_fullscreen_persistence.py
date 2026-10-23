@@ -64,3 +64,45 @@ def test_meta_messages_skipped() -> None:
     sid = t.transcript.session_id
     found = [s for s in list_sessions() if s.session_id == sid]
     assert "real question" in (found[0].first_prompt or "")   # not "<ctx>"
+
+
+def _entries(t: MantisTUI) -> list[dict]:
+    import json
+    return [json.loads(ln) for ln in t.transcript.path.read_text().splitlines() if ln.strip()]
+
+
+def _boundaries(t: MantisTUI) -> list[dict]:
+    return [e for e in _entries(t)
+            if isinstance((e.get("message") or {}).get("content"), dict)
+            and e["message"]["content"].get("__compact_boundary__")]
+
+
+def test_clearing_an_old_tool_result_is_not_a_compaction() -> None:
+    """Micro-compaction swaps an old tool result for a cleared copy, same
+    length. That used to re-persist the whole conversation behind a count-0
+    boundary on every such turn (a real session held three full copies)."""
+    from mantis_agent.types import ToolResultBlock, ToolUseBlock
+
+    t = _tui()
+    t.transcript = SessionTranscript(new_session_id())
+    t.messages = [UserMessage(content="scan the network"),
+                  AssistantMessage(content=[ToolUseBlock(id="b1", name="bash", input={"command": "arp -a"})]),
+                  UserMessage(content=[ToolResultBlock(tool_use_id="b1", content="x" * 5000)]),
+                  AssistantMessage(content=[TextBlock(text="8 hosts")])]
+    t._persist_messages(0)
+    before = len(_entries(t))
+    t.messages[2] = UserMessage(content=[ToolResultBlock(tool_use_id="b1", content="[cleared]")])
+    t.messages += [UserMessage(content="next"), AssistantMessage(content=[TextBlock(text="ok")])]
+    t._persist_messages(4)
+    assert not _boundaries(t)
+    assert len(_entries(t)) - before == 2 + 1          # the new turn (+ its last-prompt record)
+
+
+def test_a_real_compaction_still_cuts_and_re_persists() -> None:
+    t = _tui()
+    t.transcript = SessionTranscript(new_session_id())
+    t.messages = [UserMessage(content=f"q{i}") for i in range(6)]
+    t._persist_messages(0)
+    t.messages[:] = [UserMessage(content="Summary of prior conversation: …"), UserMessage(content="q5")]
+    t._persist_messages(2)
+    assert len(_boundaries(t)) == 1

@@ -172,3 +172,29 @@ def test_tool_api_and_detached_snapshot():
     assert state.has_unfinished_work
     with pytest.raises(ValueError):
         asyncio.run(tool.fn(operation="observe"))
+
+
+def test_the_tool_takes_the_calls_models_actually_make():
+    """From a real GLM session: no ``operation`` (TypeError), a description on
+    record_check (TypeError), and recording a check never added (ValueError).
+    Each came back as a raw Python error; the plain intent now goes through."""
+    state = TaskState()
+    tool = make_task_state_tool(state)
+    run = lambda **kw: asyncio.run(tool.fn(**kw))  # noqa: E731
+    run(objective="find traffic cameras near the address")             # no operation
+    assert state.inspect()["objective"] == "find traffic cameras near the address"
+    run(action="add_check", id="feeds", description="every feed URL loads")  # `action`
+    assert "feeds" in state.inspect()["checks"]
+    observe(state, "c1")
+    run(operation="record_check", id="port", description="port 3000 closed from outside",
+        status="passed", evidence_call_ids=["c1"])                     # adds the check it names
+    assert state.inspect()["checks"]["port"]["status"] == "passed"
+    assert json.loads(run())["objective"]                               # bare call = inspect
+
+
+def test_unrecoverable_calls_say_what_to_send():
+    tool = make_task_state_tool(TaskState())
+    with pytest.raises(ValueError, match="one of set_objective"):
+        asyncio.run(tool.fn(operation="observe"))
+    with pytest.raises(ValueError, match="add_check"):
+        asyncio.run(tool.fn(operation="record_check", id="ghost", status="passed", evidence_call_ids=[]))

@@ -92,15 +92,26 @@ async def aclose_builtin_clients() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_search_provider() -> str:
-    """Pick the best available search provider based on env."""
+# Providers whose key the service refused (401/403) in this process. A dead
+# key doesn't come back to life mid-session; trying it first on every search
+# cost a failed round trip each time (and a warning) before the fallback.
+_REJECTED_KEYS: set[str] = set()
 
-    if os.environ.get("EXA_API_KEY"):
-        return "exa"
-    if os.environ.get("BRAVE_API_KEY"):
-        return "brave"
-    if os.environ.get("TAVILY_API_KEY"):
-        return "tavily"
+
+def _reject_key(provider: str, status: int) -> None:
+    if provider not in _REJECTED_KEYS:
+        _REJECTED_KEYS.add(provider)
+        _LOG.warning("%s rejected its API key (HTTP %s) — not using %s again this session",
+                     provider.capitalize(), status, provider.capitalize())
+
+
+def _resolve_search_provider() -> str:
+    """Pick the best available search provider based on env, skipping any
+    whose key was refused this session."""
+
+    for name, env in (("exa", "EXA_API_KEY"), ("brave", "BRAVE_API_KEY"), ("tavily", "TAVILY_API_KEY")):
+        if os.environ.get(env) and name not in _REJECTED_KEYS:
+            return name
     return "ddg"
 
 
@@ -179,7 +190,10 @@ async def _exa_search(
         json=payload,
     )
     if r.status_code >= 400:
-        _LOG.warning("Exa search failed (status %s) — falling back to DDG", r.status_code)
+        if r.status_code in (401, 403):
+            _reject_key("exa", r.status_code)
+        else:
+            _LOG.warning("Exa search failed (status %s) — falling back to DDG", r.status_code)
         return await _ddg_search(query, allowed=allowed, blocked=blocked, num=num)
     data = r.json()
 
@@ -215,7 +229,10 @@ async def _brave_search(
         params=params,
     )
     if r.status_code >= 400:
-        _LOG.warning("Brave search failed (%s) — falling back to DDG", r.status_code)
+        if r.status_code in (401, 403):
+            _reject_key("brave", r.status_code)
+        else:
+            _LOG.warning("Brave search failed (%s) — falling back to DDG", r.status_code)
         return await _ddg_search(query, allowed=allowed, blocked=blocked, num=num)
     data = r.json()
     rows: list[str] = []
@@ -249,7 +266,10 @@ async def _tavily_search(
         payload["exclude_domains"] = [_strip_scheme(d) for d in blocked]
     r = await _client().post("https://api.tavily.com/search", json=payload)
     if r.status_code >= 400:
-        _LOG.warning("Tavily search failed (%s) — falling back to DDG", r.status_code)
+        if r.status_code in (401, 403):
+            _reject_key("tavily", r.status_code)
+        else:
+            _LOG.warning("Tavily search failed (%s) — falling back to DDG", r.status_code)
         return await _ddg_search(query, allowed=allowed, blocked=blocked, num=num)
     data = r.json()
     rows: list[str] = []
@@ -384,14 +404,18 @@ async def web_fetch(url: str, prompt: str | None = None) -> str:
     # but pre-processes the page to extract clean text + highlights tuned
     # to ``prompt``. Fall through to raw HTTP if Exa errors OR returns
     # an empty/useless response (which happens for pages it hasn't indexed).
-    if os.environ.get("EXA_API_KEY"):
+    if os.environ.get("EXA_API_KEY") and "exa" not in _REJECTED_KEYS:
         try:
             exa_out = await _exa_fetch(url, prompt=prompt)
             if exa_out and exa_out != "(empty)" and exa_out != "(no content)":
                 return exa_out
             _LOG.info("Exa fetch returned empty for %s — falling back to raw HTTP", url)
         except Exception as e:  # noqa: BLE001 — degraded fallback
-            _LOG.warning("Exa fetch failed (%r) — falling back to raw HTTP", e)
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (401, 403):
+                _reject_key("exa", status)
+            else:
+                _LOG.warning("Exa fetch failed (%r) — falling back to raw HTTP", e)
 
     return await _raw_fetch(url)
 

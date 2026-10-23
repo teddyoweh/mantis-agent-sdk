@@ -8,6 +8,21 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sessions stop re-saving the whole conversation.** Clearing an old tool
+  result's body (micro-compaction) looked like a compaction to the terminal's
+  save step, which then wrote the entire conversation again behind an empty
+  boundary. One real session file held three full copies. Only a history that
+  actually got shorter counts as compacted now.
+- **`task_state` takes the calls models actually make**: no `operation` (the
+  intent is inferred), `action` for `operation`, a `description` on
+  `record_check` (it adds the check it names), and a bare call (inspect).
+  Each used to come back as a raw `TypeError` or `ValueError`.
+- **A refused search key is dropped for the session.** A 401/403 from Exa,
+  Brave or Tavily used to be retried first on every search, a failed round
+  trip each time before the fallback. The next configured provider takes over.
+
 ## [2.69.0] - 2026-10-23
 
 ### Added
