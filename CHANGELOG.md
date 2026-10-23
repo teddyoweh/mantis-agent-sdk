@@ -8,6 +8,76 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+## [2.68.0] - 2026-10-23
+
+### Added
+
+- **Bundled skills: `pdf`, `xlsx` and `dataviz`.** mantis ships its own
+  counterparts of the skills Claude Code bundles:
+  - `pdf`: client-ready reports with reportlab, and reading PDFs;
+  - `xlsx`: workbooks built on live formulas;
+  - `dataviz`: chart form, colour and labels.
+
+  Each one matches its effort to the ask and ends in a check loop: render the
+  output and look at it, recompute the numbers independently, recalculate the
+  formulas. On a Goldman-bar PDF and Excel task, GLM 5.3 Flash went from not
+  finishing to 0.95 and 1.00. Skills live in `mantis_agent/data/skills/`, and a
+  user or project skill of the same name replaces one.
+- **`skills="bundled"`**, the drop-in default for a `MantisAgentOptions` agent
+  that can write or run something (`Bash`, `Write`, `Edit`), as Claude Code's
+  bundled skills are on by default. A chat or read-only agent gets none, and
+  `disallowed_tools=["Skill"]` turns them off. Claude's `Skill` tool name
+  means `load_skill`.
+- **`read_file` reads PDFs**, page by page via pypdf or poppler's `pdftotext`.
+  `pages="1-5"` picks a range, at most 20 pages per call, like Claude Code's
+  `Read`.
+- **`permission_mode="plan"`**: read-only tools run, and everything else is
+  refused rather than asked.
+- **A guide to moving a project off (and back to) claude-agent-sdk**, one
+  module at a time, with eval numbers: Claude Opus 5.5 against GLM 5.3 Flash on
+  twelve everyday tasks and two Goldman-bar ones. See
+  `docs/guides/migrating-from-claude-agent-sdk.md`.
+
+### Changed
+
+- **Skills ride a turn only on a real signal**: the skill's name or a
+  search-hint word in the request, or two description words. Filler words
+  ("the", "and", "with") used to make every skill match every turn. File
+  names count, so `report.pdf` says "pdf".
+- A skills catalog you ask for is no longer switched off by
+  `include_memory=False`.
+- The GLM family's output cap is 32,768 tokens (a run starts at 8,192). It
+  used to fall back to a 4,096 placeholder.
+
+### Fixed
+
+- **Claude's built-in tool names give real tools.** `allowed_tools=["Read",
+  "Bash", …]`, `tools=[…]` and the `claude_code` preset register mantis's own
+  implementations. A drop-in agent used to run with no tools at all.
+  `allowed_tools` and `disallowed_tools` compare names canonically.
+- **A turn that runs out of output room no longer ends the run as a
+  success.** It gets a continuation nudge (at most 3 per run). When the
+  caller left `max_tokens` at its default, the cap rises to 64k, bounded by
+  the model and a quarter of the window. A cut-off tool call raises it too,
+  and a provider that refuses the cap is retried at the limit it states.
+- **A model that can't take images finishes the turn anyway.** On an image
+  refusal mantis retries with each image replaced by a one-line note, for the
+  rest of the run.
+- **Compaction works on reasoning models.** GLM 5.3 could spend the whole
+  summary budget thinking and return nothing, so history was never compacted.
+  The summary call now retries once with room to think, and keeps that room.
+- **`permission_mode="bypassPermissions"` bypasses.** Claude's name for the
+  mode used to reach the engine unmapped: the danger list still blocked
+  `rm -f` headless, and Claude's `plan` mode fell through to allowing writes.
+- **The terminal's "can't see images" warning goes by evidence.** It checks
+  what the endpoint was seen to do, then Fireworks' published
+  `supportsImageInput`, and only then the old name list. GLM 5.3 Flash was
+  warned about although it reads images.
+- The Fireworks key is found in saved deploy credentials, not only the
+  environment and the model catalogue.
+- The README's "Before" line imported `MantisAgentOptions` from
+  `claude_agent_sdk`. It's `ClaudeAgentOptions` there.
+
 ## [2.67.0] - 2026-10-23
 
 ### Added
@@ -3091,7 +3161,9 @@ A non-exhaustive summary:
   `vllm_self_hosted`, `multi_agent_research`.
 - **Docs site**: mkdocs-material at `docs/`.
 
-[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.66.0...HEAD
+[Unreleased]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.68.0...HEAD
+[2.68.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.67.0...v2.68.0
+[2.67.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.66.0...v2.67.0
 [2.66.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.65.0...v2.66.0
 [2.65.0]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.1...v2.65.0
 [2.64.1]: https://github.com/teddyoweh/mantis-agent-sdk/compare/v2.64.0...v2.64.1
