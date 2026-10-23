@@ -84,6 +84,7 @@ from .tracing import Span, Tracer, maybe_start_span
 from .types import (
     AssistantMessage,
     ContentBlock,
+    ImageBlock,
     Message,
     SystemMessage,
     TailProjection,
@@ -99,6 +100,12 @@ _log = logging.getLogger("mantis_agent.agent")
 _JSON_DECODER = msgspec.json.Decoder()
 _DEFAULT_MAX_TOKENS = 1024  # the conservative field default; a caller who left this
 #                                gets bumped to the model's output budget in __post_init__
+# Where a turn that ran out of output room takes the cap next (Claude Code's
+# escalation target), bounded by the model's published limit and the window.
+_ESCALATED_MAX_TOKENS = 64_000
+# Continuations granted to turns that hit max_tokens before a tool call or a
+# finished answer, per run.
+_MAX_OUTPUT_LIMIT_RECOVERIES = 3
 # Marker stuffed into a tool_use block's input when the model's tool-call
 # arguments were not parseable JSON (even leniently). The run loop detects it
 # and returns an is_error tool_result asking the model to re-emit valid JSON,
@@ -355,6 +362,70 @@ def _is_context_overflow(err: BaseException) -> bool:
     recover from by compacting and retrying, rather than failing the turn."""
     low = str(err).lower()
     return any(p in low for p in _OVERFLOW_MARKERS)
+
+
+def _is_image_rejection(err: BaseException) -> bool:
+    """The provider refused the request because this model takes no images —
+    Fireworks' "This model does not support image inputs", and its kin. The
+    turn is recoverable: send the same history with the images described."""
+    low = str(err).lower()
+    return "image" in low and any(p in low for p in (
+        "not support", "unsupported", "doesn't support", "does not accept", "no vision"))
+
+
+_IMAGE_OMITTED = "[image omitted — this model can't view images]"
+
+
+def _remember_vision(model: str, sees: bool) -> None:
+    try:
+        from . import vision  # noqa: PLC0415
+
+        vision.record(model, sees)
+    except Exception:  # noqa: BLE001 — bookkeeping never breaks a turn
+        pass
+
+
+def _carries_images(messages: list[Message]) -> bool:
+    for m in messages:
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            continue
+        for b in content:
+            if _is_image(b) or (isinstance(b, ToolResultBlock) and isinstance(b.content, list)
+                                and any(_is_image(x) for x in b.content)):
+                return True
+    return False
+
+
+def _is_image(b: Any) -> bool:
+    return isinstance(b, ImageBlock) or (isinstance(b, dict) and b.get("type") == "image")
+
+
+def _without_images(messages: list[Message]) -> list[Message]:
+    """The request view for a model that takes no images: every image, at the
+    top level or inside a tool result, becomes a one-line note. A projection —
+    the persisted history keeps its images and stays append-only."""
+    out: list[Message] = []
+    for m in messages:
+        content = getattr(m, "content", None)
+        if not isinstance(content, list):
+            out.append(m)
+            continue
+        changed = False
+        blocks: list[Any] = []
+        for b in content:
+            if _is_image(b):
+                blocks.append(TextBlock(text=_IMAGE_OMITTED))
+                changed = True
+            elif (isinstance(b, ToolResultBlock) and isinstance(b.content, list)
+                  and any(_is_image(x) for x in b.content)):
+                blocks.append(msgspec.structs.replace(b, content=[
+                    TextBlock(text=_IMAGE_OMITTED) if _is_image(x) else x for x in b.content]))
+                changed = True
+            else:
+                blocks.append(b)
+        out.append(msgspec.structs.replace(m, content=blocks) if changed else m)
+    return out
 
 
 def _missing_tool_result(call: ToolUseBlock) -> ToolResultBlock:
@@ -693,6 +764,40 @@ def _truncation_nudge() -> "UserMessage":
         ),
         isMeta=True,
     )
+
+
+def _output_limit_nudge(old_cap: int, new_cap: int, *, reasoning_only: bool) -> "UserMessage":
+    """Meta nudge after a turn that hit ``max_tokens`` with no tool call: it
+    didn't stop, it ran out of room. Thinking isn't replayed on most backends,
+    so a turn cut off while still reasoning has to be told its plan is gone."""
+    from .system_reminder import wrap_system_reminder  # noqa: PLC0415
+
+    where = ("while you were still reasoning, before any tool call or answer"
+             if reasoning_only else "before you finished")
+    room = (f" You now have up to {new_cap} output tokens." if new_cap > old_cap else "")
+    return UserMessage(
+        content=wrap_system_reminder(
+            f"Your last response hit the output limit (max_tokens={old_cap}) {where}, "
+            f"so it was cut off.{room} Continue from where it stopped without repeating "
+            "or recapping it: keep the reasoning short and make the next tool call or "
+            "give the answer. Write a large file in parts — the first part now, the "
+            "rest in follow-up calls — rather than in one call."
+        ),
+        isMeta=True,
+    )
+
+
+def _max_tokens_limit_from(err: BaseException) -> int | None:
+    """The output cap a provider says it allows, when it refused the request's
+    ``max_tokens`` as too large — OpenAI's "supports at most 16384 completion
+    tokens", Groq's "must be less than or equal to `8192`", and kin."""
+    low = str(err).lower()
+    if not re.search(r"max_(?:completion_|new_|output_)?tokens", low):
+        return None
+    m = re.search(
+        r"(?:at most|less than or equal to|<=|≤|maximum(?: value)?(?: for `?max_\w*`?)? is)\s*`?(\d{3,7})",
+        low)
+    return int(m.group(1)) if m else None
 
 
 def _persist_nudge() -> "UserMessage":
@@ -1121,6 +1226,17 @@ class Agent:
     _primary_model: str | None = field(default=None, init=False)
     _primary_model_capability: ModelCapability | None = field(default=None, init=False)
     _refusal_retried: bool = field(default=False, init=False)
+    # set when the provider refuses images for this model: from then on every
+    # request describes images in a line instead of sending them
+    _no_images: bool = field(default=False, init=False)
+    # True when the caller left ``max_tokens`` at its default: only then may a
+    # turn that ran out of output room raise the cap for the rest of the run
+    _output_cap_escalatable: bool = field(default=False, init=False)
+    # set once a summary came back empty because reasoning used up its cap;
+    # later summaries then ask for room to think up front
+    _summary_thinks: bool = field(default=False, init=False)
+    # whether this agent has already recorded that its model accepted an image
+    _vision_recorded: bool = field(default=False, init=False)
     _budget_wrapup_done: bool = field(default=False, init=False)
     # Absolute paths of memory files already surfaced this session, so recall
     # doesn't re-inject the same note every turn.
@@ -1136,6 +1252,10 @@ class Agent:
     #   "auto"  — discover + inject the ones matching each turn (what the
     #             mantis terminal uses).
     #   "all"   — every discovered skill.
+    #   "bundled" — only the skills that ship with mantis (pdf, xlsx,
+    #             dataviz), matched per turn like "auto". The drop-in
+    #             ``MantisAgentOptions`` default for an agent with built-in
+    #             tools, as Claude Code's bundled skills are.
     #   [names] — exactly these.
     skills: list[str] | str | None = None
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
@@ -1233,6 +1353,7 @@ class Agent:
         # completion reservation eat half+ of a small context window.
         cap = self.model_capability
         default_max_tokens = self.max_tokens == _DEFAULT_MAX_TOKENS
+        self._output_cap_escalatable = default_max_tokens
         if cap is not None:
             model_max = getattr(cap, "max_output_tokens", 0) or 0
             ctx_window = getattr(cap, "context_window", 0) or 0
@@ -1756,34 +1877,38 @@ class Agent:
             except Exception:  # noqa: BLE001
                 _log.debug("MANTIS.md load skipped (I/O error)", exc_info=True)
 
-            # Skills catalog — frontmatter only (name + description). The model
-            # sees what's available and calls load_skill for the body on demand.
-            try:
-                from .skills import discover_skills, render_skill_catalog
-                all_skills = discover_skills()
-                if self.skills == "all":
-                    catalog_skills = all_skills
-                elif self.skills == "auto":
-                    catalog_skills = all_skills
-                elif isinstance(self.skills, list):
-                    wanted = set(self.skills)
-                    catalog_skills = [s for s in all_skills if s.name in wanted]
-                else:
-                    # ``None`` means OFF. A library caller's agent should not
-                    # silently inherit whatever SKILL.md files happen to sit in
-                    # the developer's home directory — that made behavior depend
-                    # on the machine it ran on. The terminal opts in with
-                    # ``skills="auto"``.
-                    catalog_skills = []
-                catalog = render_skill_catalog(catalog_skills).strip()
-                if catalog:
-                    ctx["skills"] = catalog
-                    registry: ToolRegistry = self.tools  # type: ignore[assignment]
-                    if registry.get("load_skill") is None:
-                        from .builtin_tools.skill_tool import load_skill
-                        registry.add(load_skill)
-            except Exception:  # noqa: BLE001
-                _log.debug("skills catalog skipped", exc_info=True)
+        # Skills catalog — frontmatter only (name + description). The model
+        # sees what's available and calls load_skill for the body on demand.
+        # Outside the memory gate: ``skills=`` is its own switch, and turning
+        # memory off used to switch an explicitly requested catalog off too.
+        try:
+            from .skills import discover_skills, render_skill_catalog
+            all_skills = discover_skills()
+            if self.skills == "all":
+                catalog_skills = all_skills
+            elif self.skills == "auto":
+                catalog_skills = all_skills
+            elif self.skills == "bundled":
+                catalog_skills = [s for s in all_skills if s.source == "bundled"]
+            elif isinstance(self.skills, list):
+                wanted = set(self.skills)
+                catalog_skills = [s for s in all_skills if s.name in wanted]
+            else:
+                # ``None`` means OFF. A library caller's agent should not
+                # silently inherit whatever SKILL.md files happen to sit in
+                # the developer's home directory — that made behavior depend
+                # on the machine it ran on. The terminal opts in with
+                # ``skills="auto"``.
+                catalog_skills = []
+            catalog = render_skill_catalog(catalog_skills).strip()
+            if catalog:
+                ctx["skills"] = catalog
+                registry: ToolRegistry = self.tools  # type: ignore[assignment]
+                if registry.get("load_skill") is None:
+                    from .builtin_tools.skill_tool import load_skill
+                    registry.add(load_skill)
+        except Exception:  # noqa: BLE001
+            _log.debug("skills catalog skipped", exc_info=True)
 
         # User-supplied extras flow through ``extra={"user_context": {...}}``.
         if isinstance(self.extra, dict):
@@ -2122,6 +2247,9 @@ class Agent:
                         selected = all_skills
                     elif self.skills == "auto":
                         selected = match_skills(query, all_skills)
+                    elif self.skills == "bundled":
+                        selected = match_skills(
+                            query, [s for s in all_skills if s.source == "bundled"])
                     elif isinstance(self.skills, list):
                         wanted = set(self.skills)
                         selected = [s for s in all_skills if s.name in wanted]
@@ -2262,6 +2390,7 @@ class Agent:
         # any turn that ends cleanly.
         truncation_continues = 0
         _MAX_TRUNCATION_CONTINUES = 1
+        output_limit_recoveries = 0
         self._refusal_retried = False
         self._budget_wrapup_done = False
         # Reset persistence / escalation counters for this run.
@@ -2761,6 +2890,39 @@ class Agent:
                     tool_uses = [
                         b for b in assistant.content if isinstance(b, ToolUseBlock)
                     ]
+                    if (
+                        not tool_uses
+                        and assistant.stop_reason == "max_tokens"
+                        and output_limit_recoveries < _MAX_OUTPUT_LIMIT_RECOVERIES
+                        and step + 1 < effective_max
+                    ):
+                        # Out of output room is not a natural stop: a reasoning
+                        # model that plans at length can spend the whole cap
+                        # before its first tool call, and the run used to end
+                        # there as a "success" with nothing done. Raise the cap
+                        # (when the caller left it at the default) and ask the
+                        # model to carry on — bounded per run.
+                        output_limit_recoveries += 1
+                        old_cap = self.max_tokens
+                        self._raise_output_cap()
+                        nudge = _output_limit_nudge(
+                            old_cap, self.max_tokens,
+                            reasoning_only=not any(
+                                isinstance(b, TextBlock) and b.text.strip()
+                                for b in assistant.content
+                            ),
+                        )
+                        messages.append(nudge)
+                        yield nudge
+                        if turn_span is not None and self.tracer is not None:
+                            turn_span.set_attributes({"turn.output_limit_recovered": True})
+                            turn_span.end()
+                            mirror = getattr(self.tracer, "_mirror", None) or self.tracer
+                            close_fn = getattr(mirror, "_close", None)
+                            if callable(close_fn):
+                                close_fn(turn_span)
+                        step += 1
+                        continue
                     if not tool_uses and assistant.stop_reason == "truncated":
                         # A text-only turn cut off mid-stream is NOT a natural
                         # stop — the answer likely ends mid-sentence. Ask the
@@ -3135,13 +3297,16 @@ class Agent:
             # which truncates at the identical point. That loop is what a big
             # write_file looks like when the content doesn't fit under the cap.
             if _looks_truncated(raw):
+                old_cap = self.max_tokens
+                room = (f" The limit is now {self.max_tokens} tokens."
+                        if self._raise_output_cap() else "")
                 return call, ToolResultBlock(
                     tool_use_id=call.id,
                     content=(
                         f"The arguments for `{call.name}` were CUT OFF mid-call — "
                         f"the response hit its output limit (max_tokens="
-                        f"{self.max_tokens}), so the JSON ended part-way through. "
-                        f"Your syntax was fine; there was just no room left.\n"
+                        f"{old_cap}), so the JSON ended part-way through. "
+                        f"Your syntax was fine; there was just no room left.{room}\n"
                         f"Re-issue it SMALLER: send less in one call (for a file, "
                         f"write the first part now and append the rest with "
                         f"follow-up calls). Repeating the same call unchanged will "
@@ -3329,6 +3494,8 @@ class Agent:
 
         attempt = 0
         overflow_retried = False
+        images_retried = False
+        cap_clamped = False
         while True:
             produced = False
             produced_content = False
@@ -3355,6 +3522,12 @@ class Agent:
                     # replay), so retry rather than accept an empty turn as done.
                     raise StreamProtocolError(
                         "stream produced no content blocks (empty response)")
+                # A request that carried an image and succeeded is proof the
+                # model takes images — remembered, so the terminal stops
+                # warning about a model it only guessed from the name.
+                if not self._no_images and not self._vision_recorded and _carries_images(messages):
+                    self._vision_recorded = True
+                    _remember_vision(self.model, True)
                 return
             except Exception as err:  # noqa: BLE001
                 # Once a CONTENT block has streamed downstream we can't safely
@@ -3363,6 +3536,27 @@ class Agent:
                 # cold-start cases above — are still retryable.
                 if produced_content:
                     raise  # can't retry partial output
+                # The provider refused max_tokens as too large (an escalated
+                # cap, or a capability row that overstates the model): take
+                # the limit its error states and retry once.
+                limit = _max_tokens_limit_from(err)
+                if not cap_clamped and limit is not None and limit < self.max_tokens:
+                    cap_clamped = True
+                    _log.warning("%s allows max_tokens<=%d (asked %d); retrying", self.model,
+                                 limit, self.max_tokens)
+                    self.max_tokens = limit
+                    self._output_cap_escalatable = False
+                    continue
+                # The model takes no images (a tool read a PNG, the caller sent
+                # a screenshot): retry ONCE with every image described in a
+                # line, and keep describing them for the rest of the run —
+                # rather than failing a turn the model could finish without them.
+                if not images_retried and not self._no_images and _is_image_rejection(err):
+                    images_retried = True
+                    self._no_images = True
+                    _remember_vision(self.model, False)
+                    _log.warning("%s takes no images (%r); retrying with them described", self.model, err)
+                    continue
                 # Context-overflow: the prompt is too long. Emergency-compact
                 # (clear old tool results + summarize) and retry ONCE, rather than
                 # failing the turn — a last-resort safety net when auto-compaction
@@ -3434,6 +3628,27 @@ class Agent:
             return self.backend
         base = getattr(self.provider, "base_url", None)
         return str(base) if base else None
+
+    def _raise_output_cap(self) -> bool:
+        """After a turn ran out of output room, give the rest of the run more:
+        up to ``_ESCALATED_MAX_TOKENS``, the model's published limit, and a
+        quarter of the window. Only when the caller left ``max_tokens`` at its
+        default; an explicit cap is theirs. False when nothing changed."""
+        if not self._output_cap_escalatable:
+            return False
+        ceiling = _ESCALATED_MAX_TOKENS
+        published = getattr(self.model_capability, "max_output_tokens", 0) or 0
+        if published > 4096:            # 4096 is the placeholder, not a real limit
+            ceiling = min(ceiling, published)
+        window = self._effective_context_window()
+        if window > 0:
+            ceiling = min(ceiling, max(1024, window // 4))
+        if ceiling <= self.max_tokens:
+            return False
+        _log.info("%s ran out of output room at max_tokens=%d; raising to %d",
+                  self.model, self.max_tokens, ceiling)
+        self.max_tokens = ceiling
+        return True
 
     def _effective_context_window(self) -> int:
         """The context window to plan against.
@@ -3780,6 +3995,8 @@ class Agent:
             *(m for m in provider_messages if not _is_tail_projection(m)),
             *self._tail_projections(provider_messages),
         ]
+        if self._no_images:
+            provider_messages = _without_images(provider_messages)
         # The repair makes this hold by construction; a violation here is an
         # engine bug and must read as one, not as a provider 400.
         _assert_message_invariants(provider_messages)
@@ -3943,8 +4160,6 @@ class Agent:
         and bills the summary's tokens through the budget tracker (via
         ``add_usage`` only — never ``check()``, so compaction can't raise
         ``BudgetExceededError`` mid-summary). Returns "" on cancellation."""
-        import anyio  # noqa: PLC0415
-
         sig = self.cancellation_signal
         if sig is not None and sig.is_set():
             return ""
@@ -3959,14 +4174,46 @@ class Agent:
             "tools": None,
             # The summary is trimmed to the compactor's budget anyway; asking for
             # the agent's full max_tokens only makes the call overflow a small
-            # window (prompt + reserved reply > ceiling).
-            "max_tokens": self._summary_max_tokens(),
+            # window (prompt + reserved reply > ceiling). A model that has shown
+            # it reasons before answering gets room for that reasoning too.
+            "max_tokens": (self._summary_thinking_room(prompt) if self._summary_thinks
+                           else self._summary_max_tokens()),
             "temperature": self.temperature,
             "extra": None,
         }
-        # Retry the summarization on a transient failure (rate limit / 5xx /
-        # connection blip) the same way a normal turn does — a throttle during
-        # compaction shouldn't kill the whole run.
+        msg = await self._summary_call(kwargs)
+        text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+        if (not text.strip() and msg.stop_reason == "max_tokens" and not self._summary_thinks
+                and self._summary_thinking_room(prompt) > kwargs["max_tokens"]):
+            # A reasoning model (GLM 5.3) can spend the whole summary cap thinking
+            # about a long transcript and write nothing — compaction then no-ops
+            # every time and the history only grows. Ask once more with room to
+            # think, and keep that room for this agent's later summaries.
+            self._summary_thinks = True
+            _log.info("%s spent the summary budget reasoning; retrying with room to think",
+                      self.model)
+            kwargs["max_tokens"] = self._summary_thinking_room(prompt)
+            msg = await self._summary_call(kwargs)
+            text = "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+        return text
+
+    def _summary_thinking_room(self, prompt: str) -> int:
+        """The summary cap plus room to reason first — inside a quarter of the
+        window, what the window leaves after this prompt (~3 chars a token, as
+        the compactor sizes it), and the escalation ceiling."""
+        base = self._summary_max_tokens()
+        cap = base + 16_384
+        window = self._effective_context_window()
+        if window > 0:
+            cap = min(cap, max(1024, window // 4), window - len(prompt) // 3 - 1024)
+        return max(base, min(cap, _ESCALATED_MAX_TOKENS))
+
+    async def _summary_call(self, kwargs: dict[str, Any]) -> AssistantMessage:
+        """One summarize request, billed. Retries a transient failure (rate
+        limit / 5xx / connection blip) the way a normal turn does — a throttle
+        during compaction shouldn't kill the whole run."""
+        import anyio  # noqa: PLC0415
+
         attempt = 0
         while True:
             asm = _AssistantAssembler()
@@ -3996,7 +4243,7 @@ class Agent:
             self._budget_tracker.add_usage(
                 msg.usage, self.model, backend_hint=self._provider_hint
             )
-        return "".join(b.text for b in msg.content if isinstance(b, TextBlock))
+        return msg
 
 
 # ---------------------------------------------------------------------------

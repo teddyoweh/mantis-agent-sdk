@@ -61,10 +61,11 @@ class Skill(msgspec.Struct, frozen=True, omit_defaults=True):
     ``category`` — optional taxonomy bucket for filtering ("safety",
     "domain/finance", "personality"). Free-form; the SDK doesn't enforce.
 
-    ``source`` — which tier the skill came from: ``"user"`` (the host's own —
-    a programmatically registered skill, or ``~/.mantis-agent/skills``) or
-    ``"project"`` (``<cwd>/.mantis/skills``, i.e. whatever the cloned repo
-    ships). Project-tier bodies are attacker-controlled system-prompt input, so
+    ``source`` — which tier the skill came from: ``"bundled"`` (shipped
+    inside the package — ``pdf``, ``xlsx``, ``dataviz``), ``"user"`` (the
+    host's own — a programmatically registered skill, or
+    ``~/.mantis-agent/skills``) or ``"project"`` (``<cwd>/.mantis/skills``,
+    i.e. whatever the cloned repo ships). Project-tier bodies are attacker-controlled system-prompt input, so
     :mod:`mantis_agent.skill_trust` gates them; the default is ``"user"``
     because anything constructed in-process belongs to the host.
     """
@@ -264,6 +265,35 @@ def _parse_skill_md(text: str) -> tuple[dict[str, str], str]:
     return meta, body.strip()
 
 
+# Skills that ship with the package — the document and chart playbooks a
+# Claude Code agent gets from its bundled skills. Lowest tier: a user or
+# project skill of the same name replaces one.
+BUNDLED_SKILLS_DIR = Path(__file__).parent / "data" / "skills"
+BUNDLED_SOURCE = "bundled"
+
+
+def _read_skill_dir(d: Path, tier: str) -> list[Skill]:
+    out: list[Skill] = []
+    for md in sorted(d.glob("*/SKILL.md")):
+        try:
+            meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        name = (meta.get("name") or md.parent.name).strip()
+        if not name:
+            continue
+        out.append(Skill(
+            name=name,
+            description=meta.get("description", ""),
+            body=body,
+            search_hint=meta.get("search_hint") or meta.get("keywords"),
+            always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
+            category=meta.get("category"),
+            source=tier,
+        ))
+    return out
+
+
 def _skill_dirs(cwd: str | Path | None = None) -> list[Path]:
     """User-level then project-level skill directories (project wins on name)."""
     from .paths import get_mantis_agent_dir  # noqa: PLC0415
@@ -273,11 +303,12 @@ def _skill_dirs(cwd: str | Path | None = None) -> list[Path]:
     return [d for d in dirs if d.is_dir()]
 
 
-def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
+def discover_skills(cwd: str | Path | None = None, *, bundled: bool = True) -> list[Skill]:
     """Scan the skill directories and return every ``SKILL.md`` as a
     :class:`Skill` (name defaults to the folder slug). Best-effort — unreadable
-    or malformed files are skipped. Later dirs (project) override earlier ones
-    (user) by name.
+    or malformed files are skipped. Later tiers override earlier ones by name:
+    bundled, then user, then project. ``bundled=False`` leaves out the skills
+    that ship with the package.
 
     Project-tier skills (``<cwd>/.mantis/skills``) are withheld entirely until
     the user trusts that repo's skill files — a skill body goes straight into
@@ -294,29 +325,14 @@ def discover_skills(cwd: str | Path | None = None) -> list[Skill]:
     # project-tier, which is the fail-closed direction.
     user_dir = get_mantis_agent_dir() / SKILLS_SUBDIR
     scanned: list[Skill] = []
+    if bundled and BUNDLED_SKILLS_DIR.is_dir():
+        scanned.extend(_read_skill_dir(BUNDLED_SKILLS_DIR, BUNDLED_SOURCE))
     for d in _skill_dirs(cwd):
         try:
             same = d.resolve() == user_dir.resolve()
         except OSError:  # pragma: no cover — unresolvable path
             same = d == user_dir
-        tier = "user" if same else "project"
-        for md in sorted(d.glob("*/SKILL.md")):
-            try:
-                meta, body = _parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
-            except OSError:
-                continue
-            name = (meta.get("name") or md.parent.name).strip()
-            if not name:
-                continue
-            scanned.append(Skill(
-                name=name,
-                description=meta.get("description", ""),
-                body=body,
-                search_hint=meta.get("search_hint") or meta.get("keywords"),
-                always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
-                category=meta.get("category"),
-                source=tier,
-            ))
+        scanned.extend(_read_skill_dir(d, "user" if same else "project"))
     # Filter BEFORE the name merge, so an untrusted project skill can't shadow
     # (or delete) a user skill of the same name just by claiming it.
     kept, _withheld = filter_untrusted_project_skills(scanned, cwd)
@@ -344,8 +360,29 @@ def render_skill_catalog(skills: list[Skill]) -> str:
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9_+.#-]*", re.IGNORECASE)
 
 
+# Words every request and every description share. Counting them made every
+# skill "relevant" to every turn, so each one injected its whole body.
+_FILLER = frozenset("""
+a an and any are as at be been but by can could do does each for from has have
+how i if in into is it its make me my no not of on one or our out per please
+should so than that the their them then there these this those to two up use
+using via was we what when which while who will with would you your
+""".split())
+
+
 def _tokens(text: str) -> set[str]:
-    return {t.lower() for t in _WORD_RE.findall(text or "") if len(t) >= 2}
+    out: set[str] = set()
+    for t in _WORD_RE.findall(text or ""):
+        t = t.lower()
+        # ``report.pdf`` / ``sales.csv`` also say "pdf" / "csv"
+        parts = [t, *t.split(".")] if "." in t else [t]
+        out.update(p for p in parts if len(p) >= 2 and p not in _FILLER)
+    return out
+
+
+# A skill rides a turn only on a real signal: one of its name or search-hint
+# words in the request (8), or two description words (4 each).
+_MIN_MATCH_SCORE = 8
 
 
 def match_skills(query: str, skills: list[Skill], limit: int = 3) -> list[Skill]:
@@ -370,7 +407,8 @@ def match_skills(query: str, skills: list[Skill], limit: int = 3) -> list[Skill]
         if skill.category:
             haystacks.append(skill.category)
         hay = " ".join(haystacks).lower()
-        fields = _tokens(" ".join(haystacks))
+        keywords = _tokens(" ".join([skill.name, skill.search_hint or ""]))
+        prose = _tokens(" ".join([skill.description, skill.category or ""])) - keywords
         name_l = skill.name.lower()
         score = 0
         if q == name_l:
@@ -379,15 +417,13 @@ def match_skills(query: str, skills: list[Skill], limit: int = 3) -> list[Skill]
             score += 50
         if q and q in hay:
             score += 25
-        overlap = q_tokens & fields
-        if overlap:
-            score += 8 * len(overlap)
+        score += 8 * len(q_tokens & keywords) + 4 * len(q_tokens & prose)
         # Hyphenated skill names should match natural-language mentions such as
         # "pdf forms" as well as slash-style "pdf-forms".
         name_words = _tokens(skill.name.replace("-", " ").replace("_", " "))
         if name_words and name_words <= q_tokens:
             score += 30
-        if score > 0:
+        if score >= _MIN_MATCH_SCORE:
             scored.append((-score, idx, skill))
     scored.sort()
     return [s for _, _, s in scored[:limit]]
@@ -414,6 +450,7 @@ def load_skill_body(name: str, cwd: str | Path | None = None) -> str | None:
 
 
 __all__ = [
+    "BUNDLED_SKILLS_DIR",
     "SKILLS_SUBDIR",
     "Skill",
     "SkillRegistry",

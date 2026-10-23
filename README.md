@@ -1,16 +1,16 @@
 # mantis-agent-sdk
 
-**The Claude Agent SDK, for every model.** Write to Anthropic's `claude-agent-sdk` API once; run the same loop against **Claude, OpenAI, Gemini, Grok, or any open-weight model** — Llama, Qwen, DeepSeek, GLM, Kimi, Phi, Gemma — served through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter. The migration is one import:
+**The Claude Agent SDK, for every model.** Write to Anthropic's `claude-agent-sdk` API once; run the same loop against **Claude, OpenAI, Gemini, Grok, or any open-weight model** — Llama, Qwen, DeepSeek, GLM, Kimi, Phi, Gemma — served through Ollama, vLLM, llama.cpp, TGI, Together, Fireworks, Groq, or OpenRouter. The migration is the import and the options class:
 
 ```python
 # Before
-from claude_agent_sdk import query, MantisAgentOptions, tool
+from claude_agent_sdk import query, ClaudeAgentOptions, tool
 
 # After
 from mantis_agent import query, MantisAgentOptions, tool
 ```
 
-That's the whole diff. Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, and underneath it speaks Anthropic Messages, OpenAI chat completions, or Ollama, whichever the model you named needs. Five provider families, one env var each:
+That's the whole diff — and it can be one file you flip both ways, a module at a time: see [Migrating from claude-agent-sdk](docs/guides/migrating-from-claude-agent-sdk.md). Every canonical Claude SDK example runs verbatim — the surface is Anthropic-shaped, and underneath it speaks Anthropic Messages, OpenAI chat completions, or Ollama, whichever the model you named needs. Five provider families, one env var each:
 
 | Family | `model=` | Key |
 | --- | --- | --- |

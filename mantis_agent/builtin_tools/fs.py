@@ -1861,20 +1861,111 @@ _IMAGE_MEDIA = {
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB — refuse absurd images
 
 
+_MAX_PDF_PAGES = 20  # pages per read_file call, as Claude Code's Read
+
+
+def _pdf_page_numbers(spec: str | None, total: int) -> list[int]:
+    """``"3"`` / ``"1-5"`` / ``"2,7-9"`` → 1-based page numbers within the
+    document, at most ``_MAX_PDF_PAGES``. Empty or unparseable → the first pages."""
+    picked: list[int] = []
+    for part in (spec or "").replace(" ", "").split(","):
+        a, _, b = part.partition("-")
+        try:
+            lo = int(a)
+            hi = int(b) if b else lo
+        except ValueError:
+            continue
+        picked.extend(n for n in range(lo, hi + 1) if 1 <= n <= total and n not in picked)
+    if not picked:
+        picked = list(range(1, total + 1))
+    return picked[:_MAX_PDF_PAGES]
+
+
+def _read_pdf_text(p: Path, shown: str, pages: str | None, cap: int) -> str:
+    """A PDF's text, page by page — pypdf when it's installed, else poppler's
+    ``pdftotext``. Scanned pages have no text; say so and how to look at them."""
+    texts: dict[int, str] = {}
+    total = 0
+    try:
+        from pypdf import PdfReader  # noqa: PLC0415
+
+        reader = PdfReader(str(p))
+        total = len(reader.pages)
+        wanted = _pdf_page_numbers(pages, total)
+        for n in wanted:
+            texts[n] = reader.pages[n - 1].extract_text() or ""
+    except ImportError:
+        import subprocess  # noqa: PLC0415
+
+        exe = shutil.which("pdftotext")
+        info = shutil.which("pdfinfo")
+        if exe is None:
+            return (f"[{shown} is a PDF; to read its text install pypdf (pip install pypdf) "
+                    "or poppler (pdftotext)]")
+        try:
+            if info:
+                out = subprocess.run([info, str(p)], capture_output=True, text=True, timeout=30)
+                m = re.search(r"^Pages:\s+(\d+)", out.stdout, re.M)
+                total = int(m.group(1)) if m else 0
+            wanted = _pdf_page_numbers(pages, total or _MAX_PDF_PAGES)
+            out = subprocess.run([exe, "-layout", "-f", str(min(wanted)), "-l", str(max(wanted)),
+                                  str(p), "-"], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"[{shown} is a PDF; pdftotext failed: {e}]"
+        if out.returncode != 0:
+            return f"[{shown} is a PDF; pdftotext failed: {out.stderr.strip()[:300]}]"
+        chunks = out.stdout.split("\f")
+        for n in wanted:
+            i = n - min(wanted)
+            texts[n] = chunks[i] if i < len(chunks) else ""
+        total = total or max(wanted)
+    except Exception as e:  # noqa: BLE001 — a damaged file is a result, not a crash
+        return f"[{shown} is a PDF that could not be read: {type(e).__name__}: {e}]"
+
+    if not texts:
+        return f"[{shown} is a PDF with no pages]"
+    shown_pages = sorted(texts)
+    rng = (f"{shown_pages[0]}" if len(shown_pages) == 1 else f"{shown_pages[0]}-{shown_pages[-1]}")
+    head = f"[{shown}: PDF, {total} page{'s' if total != 1 else ''}; pages {rng} below]"
+    parts = [head]
+    used = len(head)
+    for n in shown_pages:
+        body = texts[n].strip() or ("(no text on this page — a scan or an image; render it with "
+                                    f"`pdftoppm -png -r 80 -f {n} -l {n}` and read the PNG to look at it)")
+        block = f"\n--- page {n} ---\n{body}"
+        if used + len(block) > cap - 200:
+            parts.append(f"\n[stopped at page {n} to stay within the read limit; "
+                         f"read on with pages=\"{n}-{min(total, n + _MAX_PDF_PAGES - 1)}\"]")
+            break
+        parts.append(block)
+        used += len(block)
+    else:
+        last = shown_pages[-1]
+        if last < total and not pages:
+            parts.append(f"\n[{total - last} more page(s); read them with pages=\"{last + 1}-"
+                         f"{min(total, last + _MAX_PDF_PAGES)}\"]")
+    return "".join(parts)
+
+
 @tool(is_read_only=True)
-async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) -> Any:
+async def read_file(
+    path: str, offset: int = 1, limit: int = _MAX_READ_LINES, pages: str | None = None,
+) -> Any:
     """Read a file from the local filesystem. Use this instead of ``cat``,
     ``head``, ``tail``, or ``sed``. Text files come back with 1-based line
     numbers (``cat -n`` style): the number+tab prefix is not file content, so
     never include it in edit_file old_string/new_string. For long files, use
     ``offset`` and ``limit`` to read the relevant range. Images (png/jpg/gif/
     webp/bmp) come back as an image the model can see (if the backend model is
-    vision-capable). Other binaries are noted, not dumped as mojibake.
+    vision-capable). PDFs come back as their text, page by page (``pages`` picks
+    which, e.g. "1-5"; at most 20 per call). Other binaries are noted, not
+    dumped as mojibake.
 
     Args:
         path: File to read (absolute or relative to the working directory).
         offset: 1-based line number to start from (default 1). Text only.
         limit: Maximum number of lines to return (default 2000). Text only.
+        pages: PDF only — pages to read, like "3", "1-5" or "2,7-9" (default: the first 20).
     """
 
     offset = _coerce_int(offset, default=1, lo=1)
@@ -1901,7 +1992,8 @@ async def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES) ->
             "data": base64.b64encode(data).decode("ascii"),
         })
     if suffix == ".pdf":
-        return f"[{path} is a PDF — mantis can't render PDF pages yet; extract text with a tool like pdftotext]"
+        return await anyio.to_thread.run_sync(
+            lambda: _read_pdf_text(p, path, pages, _executor_cap(_MAX_READ_OUTPUT)))
 
     text = await anyio.to_thread.run_sync(lambda: p.read_text("utf-8", "replace"))
 

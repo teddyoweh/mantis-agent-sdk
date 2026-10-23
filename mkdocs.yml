@@ -91,6 +91,7 @@ nav:
   - Guides:
       - guides/index.md
       - Recipes: guides/recipes.md
+      - Migrating from claude-agent-sdk: guides/migrating-from-claude-agent-sdk.md
       - How configuration works: guides/how-it-works.md
       - Models and backends: guides/models-and-backends.md
       - The mantis terminal: guides/terminal.md

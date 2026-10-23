@@ -84,19 +84,35 @@ options = MantisAgentOptions(model="qwen2.5:7b", raise_on_error=True)
   — port 8000 is the vLLM default …`. The query string is stripped, because
   some providers carry the API key there and an error message ends up in logs.
 
-## Skills are off unless you ask
+## Skills: bundled ones for agents that do work, nothing from your machine by default
 
-`skills=None` (the default) means **no** skills. An earlier default discovered
-every `SKILL.md` under `~/.mantis-agent/skills/` and injected the matching ones
-into any agent — including a library caller's, in an unrelated directory. That
-made behavior depend on whose machine the code ran on.
+mantis ships three skills inside the package: `pdf` (client-ready reports and
+reading PDFs), `xlsx` (workbooks built on live formulas) and `dataviz` (chart
+design). Each one ends in a check loop: render the output and look at it, and
+recompute the numbers independently. They are the counterpart of the skills
+Claude Code bundles.
+
+A `MantisAgentOptions` agent that can write or run something (`Bash`, `Write`,
+`Edit`) gets them by default, as `skills="bundled"`. A chat agent, or one
+that can only read, gets none. The catalog lists them in the context head, and
+a turn that is clearly about a PDF, a workbook or a chart gets the matching
+skill's body. A coding turn pays for nothing.
+
+What never happens by default is the earlier behaviour: discovering every
+`SKILL.md` under `~/.mantis-agent/skills/` and injecting it into any agent,
+including a library caller's in an unrelated directory. That made behaviour
+depend on whose machine the code ran on.
 
 | `skills=` | Effect |
 |---|---|
-| `None` (default) | off |
-| `"auto"` | discover, inject the ones matching each turn — what the `mantis` terminal uses |
-| `"all"` | every discovered skill |
+| `None` (the plain `Agent` default) | off |
+| `"bundled"` (the drop-in default with file tools) | only the skills that ship with mantis |
+| `"auto"` | everything discovered (bundled, `~/.mantis-agent/skills`, a trusted project's `.mantis/skills`), injected when a turn matches. The `mantis` terminal uses this |
+| `"all"` | every discovered skill, every turn |
 | `["name", …]` | exactly these |
+
+`disallowed_tools=["Skill"]` turns the drop-in default off. A user or project
+skill with the same name as a bundled one replaces it.
 
 ## Some knobs are `Agent`-only
 

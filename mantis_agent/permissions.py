@@ -3,7 +3,7 @@
 Permissions gate every tool call. The model is intentionally identical to
 upstream so integrators can lift their existing config files across:
 
-* **Modes**: ``default | acceptEdits | auto | bypass``.
+* **Modes**: ``default | acceptEdits | plan | auto | bypass``.
 * **Rules**: separate ``allow``/``deny``/``ask`` lists matched against
   ``(tool_name, input)``. ``deny`` always wins. A rule pattern is written
   either in the structured ``Tool(param:value)`` grammar (``Bash(git status:*)``,
@@ -26,6 +26,7 @@ Decision precedence on each call (``check_permission``)::
     bypass mode                       -> Allow
     (tool, input) in session_allows   -> Allow
     any deny rule matches             -> Deny
+    plan mode                         -> Allow if read-only, else Deny
     any allow rule matches            -> Allow
     any ask rule matches              -> Ask*
     acceptEdits mode + edit tool      -> Allow
@@ -58,7 +59,7 @@ from .permission_shell import (
 )
 from .tools import Tool
 
-PermissionMode = Literal["default", "acceptEdits", "auto", "bypass"]
+PermissionMode = Literal["default", "acceptEdits", "plan", "auto", "bypass"]
 
 # The interactive "asker": the human-in-the-loop hook. When a decision lands on
 # Ask and an asker is wired, the resolver awaits it and honors the answer.
@@ -895,6 +896,13 @@ async def _decide(
     seg_deny = _segment_deny_hit(tool, input, ctx)
     if seg_deny is not None:
         return Deny(reason=f"denied by rule {seg_deny.pattern!r}")
+
+    # Plan mode looks but doesn't touch: reads (and read-only shell) run,
+    # anything that could change something is refused — never asked.
+    if ctx.mode == "plan":
+        if is_read_only_call(tool, input):
+            return Allow()
+        return Deny(reason="plan mode: only read-only tools run — present the plan instead")
 
     # A dangerous shell command can NEVER be auto-allowed by a broad allow rule,
     # by acceptEdits, by the mode default, or by a prior "allow for session" —

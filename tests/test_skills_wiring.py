@@ -20,6 +20,8 @@ from mantis_agent.skills import (
 @pytest.fixture
 def skills_home(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("MANTIS_AGENT_HOME", str(tmp_path))
+    # these tests pin the user tier exactly; the bundled tier has its own file
+    monkeypatch.setattr("mantis_agent.skills.BUNDLED_SKILLS_DIR", tmp_path / "no-bundled")
     monkeypatch.delenv("MANTIS_AGENT_NO_CONTEXT", raising=False)
     return tmp_path
 

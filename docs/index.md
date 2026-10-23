@@ -11,7 +11,7 @@ Messages API (`claude-*` model names route there automatically).
 If you have working Claude SDK code, you almost always change two lines:
 
 ```python
-# from claude_agent_sdk import query, MantisAgentOptions
+# from claude_agent_sdk import query, ClaudeAgentOptions
 from mantis_agent import query, MantisAgentOptions
 ```
 

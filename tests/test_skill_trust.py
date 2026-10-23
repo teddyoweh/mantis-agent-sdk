@@ -34,6 +34,8 @@ def home_and_project(monkeypatch, tmp_path: Path) -> tuple[Path, Path]:
     proj.mkdir()
     monkeypatch.setenv("MANTIS_AGENT_HOME", str(home))
     monkeypatch.delenv("MANTIS_SKILLS_TRUST_PROJECT", raising=False)
+    # the trust gate is about user vs project; keep the bundled tier out of the lists
+    monkeypatch.setattr("mantis_agent.skills.BUNDLED_SKILLS_DIR", tmp_path / "no-bundled")
     return home, proj
 
 

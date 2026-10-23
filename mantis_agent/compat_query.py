@@ -359,6 +359,10 @@ def _normalize_options(options: MantisAgentOptions | dict[str, Any] | None) -> d
     )
 
 
+# An agent holding any of these can act on a document skill's instructions.
+_SKILL_USING_TOOLS = frozenset({"bash", "write_file", "edit_file", "multi_edit"})
+
+
 def _build_agent(opts: dict[str, Any]) -> Agent:
     """Construct an Agent from the dict-form options with sensible defaults."""
 
@@ -461,13 +465,20 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # `allowed_tools` filters what the model can see. The compat layer
     # stashes it under `opts["extra"]["allowed_tools"]`, not top-level —
     # check both. If set, drop anything not on the list (Claude-SDK parity).
+    # Names compare canonically, so Claude's "Bash" / "Read" keep mantis's
+    # bash / read_file; ``disallowed_tools`` takes tools away the same way.
+    from .permission_grammar import canonical_tool_name  # noqa: PLC0415
+
     extra_opt = opts.get("extra") or {}
     allowed = opts.get("allowed_tools") or extra_opt.get("allowed_tools")
-    if allowed:
-        allowed_set = set(allowed)
+    disallowed = opts.get("disallowed_tools") or extra_opt.get("disallowed_tools")
+    if allowed or disallowed:
+        allowed_set = {canonical_tool_name(n) for n in allowed or ()}
+        denied_set = {canonical_tool_name(n) for n in disallowed or ()}
         filtered = ToolRegistry()
         for t in registry:
-            if t.name in allowed_set:
+            key = canonical_tool_name(t.name)
+            if (not allowed or key in allowed_set) and key not in denied_set:
                 filtered.add(t)
         registry = filtered
 
@@ -484,6 +495,17 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "max_steps": opts.get("max_turns", opts.get("max_steps", 20)),
         "max_usd": opts.get("max_usd"),
     }
+    # Claude Code gives an agent that has its built-in tools the bundled
+    # skills (dataviz and the document playbooks) without being asked. Do the
+    # same: an agent that can read, write and run gets mantis's bundled pdf /
+    # xlsx / dataviz skills — unless the caller chose skills, or disallowed
+    # the Skill tool. A chat agent with no file tools gets none.
+    if (
+        "skills" not in opts
+        and any(canonical_tool_name(t.name) in _SKILL_USING_TOOLS for t in registry)
+        and "load_skill" not in {canonical_tool_name(n) for n in disallowed or ()}
+    ):
+        kw["skills"] = "bundled"
     # ``fallback_model`` is forwarded here for the same reason it is in
     # ``query._agent_from_options``: Agent implements the retry-on-a-second-model
     # path, and leaving the key out meant a documented option did nothing.

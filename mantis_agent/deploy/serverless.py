@@ -152,11 +152,20 @@ def _route_rank(r: Route) -> tuple[bool, bool, float]:
 
 
 def _fireworks_key() -> str:
-    """The Fireworks key from wherever it was saved — the deploy credentials
-    (``FIREWORKS_API_KEY`` in the environment) or the model catalogue."""
+    """The Fireworks key from wherever it was saved — the environment, the
+    saved deploy credentials (mantis settings, read without exporting them),
+    or the model catalogue."""
     key = (os.environ.get("FIREWORKS_API_KEY") or "").strip()
     if key:
         return key
+    try:
+        from ..settings import SETTING_SOURCES, load_settings_env_safe  # noqa: PLC0415
+
+        key = str((load_settings_env_safe(SETTING_SOURCES) or {}).get("FIREWORKS_API_KEY") or "").strip()
+        if key:
+            return key
+    except Exception:  # noqa: BLE001 — unreadable settings: try the catalogue
+        pass
     try:
         from .. import catalog  # noqa: PLC0415
 

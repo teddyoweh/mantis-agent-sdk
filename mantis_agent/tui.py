@@ -1986,11 +1986,23 @@ _VISION_MARKERS = (
 
 
 def model_supports_vision(model_id: str) -> bool:
-    """Best-effort: can this model SEE images? Used to warn at paste time —
-    attaching a screenshot to a text-only model silently does nothing, which
-    reads as 'image paste is broken'. Unknown ids default to False (warn)."""
+    """Can this model SEE images? Used to warn at paste time — attaching a
+    screenshot to a text-only model silently does nothing, which reads as
+    'image paste is broken'.
+
+    Evidence first (:mod:`mantis_agent.vision`): what the endpoint has been
+    seen to do, then what the provider publishes (looked up in the background
+    — no warning while that answer may still come). The name markers are the
+    last resort, and an unknown id there defaults to False (warn)."""
+    from . import vision  # noqa: PLC0415
+
+    seen = vision.known(model_id)
+    if seen is not None:
+        return seen
     low = (model_id or "").lower()
-    return any(m in low for m in _VISION_MARKERS)
+    if any(m in low for m in _VISION_MARKERS):
+        return True
+    return vision.look_up(model_id)
 
 
 _PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b")

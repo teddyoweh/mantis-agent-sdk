@@ -160,3 +160,17 @@ def recorded_fixture():
         return data
 
     return _load
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vision_verdicts(monkeypatch, tmp_path_factory):
+    """Keep image-support verdicts the engine records out of the developer's
+    real ~/.mantis-agent, and out of the next test."""
+    from mantis_agent import vision as _vision  # noqa: PLC0415
+
+    store = tmp_path_factory.mktemp("vision") / "vision.json"
+    monkeypatch.setattr(_vision, "_path", lambda: store)
+    monkeypatch.setattr(_vision, "published", lambda _model: None)   # no network in tests
+    _vision._reset_for_tests()
+    yield
+    _vision._reset_for_tests()

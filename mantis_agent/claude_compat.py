@@ -185,7 +185,7 @@ class MantisAgentOptions:
     # ``skills`` matches Claude SDK's run-level skill enablement. ``None`` means
     # normal auto-relevance/catalog behavior; a list preloads only those skill
     # bodies; "all" preloads every discovered skill.
-    skills: list[str] | Literal["all"] | None = None
+    skills: list[str] | Literal["all", "auto", "bundled"] | None = None
 
     # ``tools`` accepts either:
     #   * list[str]  — built-in tool names (e.g. ["Read", "Glob"])
@@ -197,7 +197,10 @@ class MantisAgentOptions:
     mcp_servers: dict[str, Any] = field(default_factory=dict)
 
     # Safety + budget
-    permission_mode: Literal["default", "auto", "bypass"] | None = None
+    # Claude's names are accepted as-is: ``bypassPermissions`` is ``bypass``,
+    # ``plan`` runs read-only tools only.
+    permission_mode: Literal["default", "acceptEdits", "plan", "auto", "bypass",
+                             "bypassPermissions"] | None = None
     can_use_tool: Callable[..., Awaitable[Any]] | None = None
     hooks: dict[str, list[Any]] | None = None
     max_budget_usd: float | None = None
@@ -297,18 +300,22 @@ class MantisAgentOptions:
         if self.temperature is not None:
             opts["temperature"] = self.temperature
 
-        # Tools — only Tool instances are usable today. Built-in name
-        # strings like "Read"/"Glob" don't have implementations in
-        # mantis-agent-sdk (we're OSS-first, no filesystem-tool runtime).
-        # We stash them on extra so the SystemMessage(subtype="init")
-        # can still emit them as configured, and skip the agent's
-        # actual tool registry (which only wants Tool instances).
+        # Tools. Claude's built-in names ("Read", "Write", "Edit", "Bash",
+        # "Glob", "Grep", "WebSearch", "WebFetch"…) become mantis's own
+        # implementations of them, from ``tools=[...]``, the claude_code
+        # preset, or — the common Claude SDK pattern — ``allowed_tools=[...]``
+        # alone. Nothing is added that the caller didn't name: with neither
+        # list set the agent gets no file or shell tools. The names are also
+        # stashed on extra for the SystemMessage(subtype="init").
         real_tools_acc: list[Tool] = []
         builtin_names_acc: list[str] = []
         if self.tools is not None:
             real_tools, builtin_names = _split_tools(self.tools)
             real_tools_acc.extend(real_tools)
             builtin_names_acc.extend(builtin_names)
+            real_tools_acc.extend(_builtin_tools_named(builtin_names, preset=isinstance(self.tools, dict)))
+        elif self.allowed_tools:
+            real_tools_acc.extend(_builtin_tools_named(self.allowed_tools))
 
         # Plugins — bundles of (tools, system_prompt_addition, hooks).
         # Merge into the same buckets so the agent sees one combined view.
@@ -372,8 +379,9 @@ class MantisAgentOptions:
             # each as a delegatable tool (previously accepted but dropped here)
             opts["agents"] = dict(self.agents)
 
-        if self.permission_mode is not None:
-            opts["permission_mode"] = self.permission_mode
+        mode = _CLAUDE_PERMISSION_MODES.get(self.permission_mode, self.permission_mode)
+        if mode is not None:
+            opts["permission_mode"] = mode
         # can_use_tool plumbing: build a PermissionContext so the agent
         # loop actually calls the callback at dispatch time. Without
         # this, ``MantisAgentOptions(can_use_tool=...)`` was silently
@@ -383,7 +391,7 @@ class MantisAgentOptions:
             from .permissions import PermissionContext  # local: cycle avoidance
 
             opts["permissions"] = PermissionContext(
-                mode=self.permission_mode or "default",
+                mode=mode or "default",
                 can_use_tool=_name_first_can_use_tool(self.can_use_tool),
             )
         # Merge user-supplied hooks dict with any plugin-contributed dicts.
@@ -455,15 +463,44 @@ def _stringify_system_prompt(sp: dict[str, Any]) -> str:
     return ""
 
 
+# claude-agent-sdk's permission-mode names → mantis's. Unmapped, an unknown
+# mode fell through every check: ``bypassPermissions`` still blocked the danger
+# list headless, and ``plan`` allowed writes.
+_CLAUDE_PERMISSION_MODES = {"bypassPermissions": "bypass"}
+
+
+def _builtin_tools_named(names: Any, *, preset: bool = False) -> list[Tool]:
+    """mantis's own implementations of Claude's built-in tools, for the names
+    given (``"Read"`` → ``read_file``, ``"Bash"`` → ``bash``,
+    ``"WebSearch"`` → ``web_search``…), or all of them for the claude_code
+    preset. Names mantis has no tool for (``TodoWrite``, ``Task``) are skipped;
+    MCP names and Tool instances are not built-ins and pass by."""
+    from .builtin_tools import CODING_TOOLS, web_fetch, web_search  # noqa: PLC0415
+    from .permission_grammar import canonical_tool_name  # noqa: PLC0415
+
+    table: dict[str, Tool] = {}
+    for t in (*CODING_TOOLS, web_search, web_fetch):
+        table.setdefault(canonical_tool_name(t.name), t)
+    if preset:
+        return list(table.values())
+    out: list[Tool] = []
+    for n in names or ():
+        if not isinstance(n, str):
+            continue
+        t = table.get(canonical_tool_name(n))
+        if t is not None and t not in out:
+            out.append(t)
+    return out
+
+
 def _split_tools(
     tools: list[Any] | dict[str, Any],
 ) -> tuple[list[Tool], list[str]]:
     """Partition the ``tools`` field into real Tool instances vs built-in name strings."""
 
     if isinstance(tools, dict):
-        # Preset form (e.g. ``{"type": "preset", "preset": "claude_code"}``).
-        # We don't ship the Claude Code presets; treat as "no real tools,
-        # report the preset name to the system message for parity."
+        # Preset form (e.g. ``{"type": "preset", "preset": "claude_code"}``):
+        # the caller's built-in tool set — see _builtin_tools_named(preset=True)
         return [], [str(tools)]
     real: list[Tool] = []
     names: list[str] = []

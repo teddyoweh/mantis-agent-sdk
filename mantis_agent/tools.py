@@ -611,6 +611,7 @@ _TOOL_ALIASES: dict[str, str] = {
     "todowrite": "todo_write", "todo": "todo_write", "updatetodos": "todo_write",
     "remember": "remember", "savememory": "remember",
     "looklsp": "lsp", "lsplookup": "lsp",
+    "skill": "load_skill", "useskill": "load_skill",
 }
 
 

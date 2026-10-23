@@ -30,7 +30,7 @@ Anthropic-shaped. `routing.py` infers the backend from the model-name shape.
 | **Model routing / providers** | `routing.py`, `providers/`, `capabilities.py` (per-model tool-use path table), `http.py`, `retry.py`, `catalog.py` (saved keys + last model) |
 | **Context / memory** | `compact.py` (`SimpleCompactor` — wired: the default `auto_compact=True` compactor, plus micro/emergency compaction on overflow), `system_reminder.py` (`<env>` block — wired via `render_environment_context` into the isMeta context head), `memory.py`, `project_memory.py`, `memory_recall.py` |
 | **Sessions** | `session.py`, `session_tree.py` (fork/rewind/checkpoint — strong, ahead of the reference), `transcripts.py` |
-| **Extensibility** | `hooks.py` (28-event taxonomy), `permissions.py`, `skills.py` (wired: catalog in the context head + `load_skill` tool; `skills="auto"` in the terminal, off by default for library callers), `mcp/` (stdio/sse/http/in-process), `settings.py`, `response_format.py` / `response_model.py` (structured output; native envelope or instruct-and-parse per backend) |
+| **Extensibility** | `hooks.py` (28-event taxonomy), `permissions.py`, `skills.py` (wired: catalog in the context head + `load_skill` tool; `skills="auto"` in the terminal, `"bundled"` for a drop-in agent with write/run tools, off for a plain `Agent`; bundled `pdf`/`xlsx`/`dataviz` playbooks live in `data/skills/`), `mcp/` (stdio/sse/http/in-process), `settings.py`, `response_format.py` / `response_model.py` (structured output; native envelope or instruct-and-parse per backend) |
 | **Observability / budget** | `tracing.py` (`InMemoryTracer`/`OTelTracer`), `budget.py` (pricing, `max_usd`) |
 | **Terminal (TUI)** | `tui.py` (REPL, rendering, slash commands, model picker, `_render_diff`), `tui_fullscreen.py` (the default full-screen app), `clipboard.py` |
 | **CLIs / setup** | `cli.py` (`mantis-agent` diagnostics — stdlib-only), `setup_wizard.py` (`mantis setup`), `setup_local.py`, `setup_local_llamacpp.py` |
@@ -104,6 +104,12 @@ What the loop guarantees (there are tests for each — `tests/test_engine_*.py`)
   summarizer is sized to the window, tool-result caps scale with the message budget
   (`result_char_budget_for`), and small/prompt-path models get compact tool
   descriptions (memoized per model so the prefix doesn't flip).
+- **Out of output room is not a stop**: a turn that hits `max_tokens` with no
+  tool call gets a continuation nudge (≤3 per run), and a default cap rises to
+  `_ESCALATED_MAX_TOKENS` (bounded by the model and ¼ window); a cut-off tool
+  call raises it too, and a provider that refuses the cap is retried at the
+  limit it states (`test_engine_output_limit.py`). A model that refuses images
+  gets them described for the rest of the run (`test_engine_image_rejection.py`).
 - **Arg aliases are normalized BEFORE permissions/hooks** (`normalize_tool_input`) —
   never let a permission check see a different input than the one executed.
 - **Retry authority**: transport retries pre-body failures and tags them

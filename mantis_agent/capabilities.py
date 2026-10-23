@@ -689,10 +689,12 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         supports_native_tools=True, supports_reasoning_effort=True,
         context_window=1000000,
     ),
+    # GLM 4.5+ / 5.x emit long outputs (Z.ai lists 96k–128k); the 4096
+    # placeholder starved a reasoning turn before its first tool call.
     "glm": ModelCapability(
         name="glm-unknown", family="glm",
         supports_native_tools=True, supports_reasoning_effort=True,
-        context_window=128000,
+        context_window=128000, max_output_tokens=32768,
     ),
     # xAI Grok (api.x.ai, OpenAI-compatible). Native tools; the reasoning knob
     # is per-model (only grok-3-mini takes ``reasoning_effort``), so the family
