@@ -733,11 +733,12 @@ def _trim_summary_to_token_budget(summary: str, token_budget: int) -> str:
 
 
 _SUMMARIZER_INSTRUCTIONS = """\
-You are compressing an agent CODING conversation so a future turn can resume it
-with NO loss of technical fidelity. Another agent will read ONLY your summary to
-continue the work — so preserve exact file paths, function/symbol names, key code
-snippets, error messages, and the precise next action. Losing a path or an error
-means the resumed turn redoes or breaks work.
+You are compressing an agent conversation (coding, research, data or operations
+work) so a future turn can resume it with NO loss of fidelity. Another agent will
+read ONLY your summary to continue the work, so preserve exact file paths,
+names and identifiers, key code snippets, error messages, and the precise next
+action. Losing a path, an error or a record of something already done means the
+resumed turn redoes, repeats or breaks work.
 
 Produce the summary under these EXACT section headers, in order:
 
@@ -750,10 +751,16 @@ Produce the summary under these EXACT section headers, in order:
 4. Errors and Fixes — each error encountered and how it was resolved, plus any
    user feedback on the fix.
 5. Problem Solving — what has been solved and the approach taken.
-6. Pending Tasks — everything still to do, stated explicitly.
-7. Current Work — precisely what was being done right before this summary, with
+6. Actions Already Taken — EVERY action with an effect outside this conversation:
+   messages or emails sent, orders placed, records created or changed, files
+   written, commands that changed state. One line each with its target and any
+   id (who was emailed, which order, which file). The resumed agent uses this
+   list to never repeat an action — it must be complete.
+7. Pending Tasks — everything still to do, stated explicitly (and what is
+   already done, if a task is partly done).
+8. Current Work — precisely what was being done right before this summary, with
    file paths and code.
-8. Next Step — the single next action to take, quoting the relevant task/request.
+9. Next Step — the single next action to take, quoting the relevant task/request.
    If there is genuinely no next step, say so.
 
 Be exhaustive on technical detail, terse on prose. Do NOT invent anything not in
@@ -875,9 +882,19 @@ def _build_summarization_prompt(
     rendered = [_truncate_middle(_render_message(m), per_msg) for m in messages]
     total = sum(len(r) for r in rendered) + len(_SUMMARIZER_INSTRUCTIONS)
     if total > max_chars:
-        # Keep the oldest turns (where the goal was set) and the newest (where
-        # the current state lives); elide the middle.
-        budget = max(0, max_chars - len(_SUMMARIZER_INSTRUCTIONS) - len(_ELISION)) // 2
+        # Too big whole: shrink the tool RESULTS first. They are the bulk and
+        # can be fetched again; the calls and the agent's own words are the
+        # record of what was done and why.
+        rendered = [_truncate_middle(_render_message(m, result_cap=_LEAN_RESULT_CHARS), per_msg)
+                    for m in messages]
+        total = sum(len(r) for r in rendered) + len(_SUMMARIZER_INSTRUCTIONS)
+    if total > max_chars:
+        # Still too big: keep the oldest turns (where the goal was set) and the
+        # newest (where the current state lives), and from the middle keep the
+        # one thing a resumed agent can't recover — the calls it made, so a
+        # sent email or a placed order is never made twice.
+        log_budget = max_chars // 4
+        budget = max(0, max_chars - len(_SUMMARIZER_INSTRUCTIONS) - len(_ELISION) - log_budget) // 2
         head: list[str] = []
         used = 0
         for r in rendered:
@@ -892,12 +909,36 @@ def _build_summarization_prompt(
                 break
             tail.append(r)
             used += len(r)
-        rendered = [*head, _ELISION, *reversed(tail)]
+        middle = messages[len(head):len(messages) - len(tail)]
+        rendered = [*head, _ELISION + _action_log(middle, log_budget), *reversed(tail)]
     parts: list[str] = [_SUMMARIZER_INSTRUCTIONS, "\n--- Transcript ---\n", *rendered]
     return "\n".join(parts)
 
 
-def _render_message(msg: Message) -> str:
+# How much of a tool result survives when the transcript is too big whole.
+_LEAN_RESULT_CHARS = 300
+
+
+def _action_log(messages: list[Message], budget: int) -> str:
+    """The tool calls in ``messages``, one line each, within ``budget`` chars —
+    what the elided middle of a transcript DID."""
+    lines: list[str] = []
+    used = 0
+    calls = [blk for m in messages for blk in (getattr(m, "content", None) or [])
+             if isinstance(blk, ToolUseBlock)]
+    for i, blk in enumerate(calls):
+        line = f"- {blk.name} {_truncate_middle(repr(blk.input), 240)}"
+        if used + len(line) + 1 > budget:
+            lines.append(f"- … and {len(calls) - i} more calls")
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if not lines:
+        return ""
+    return "[tool calls made in the elided part, in order:]\n" + "\n".join(lines) + "\n"
+
+
+def _render_message(msg: Message, *, result_cap: int | None = None) -> str:
     if isinstance(msg, CompactBoundaryMessage):
         return f"[previous summary] {msg.summary}"
     role = getattr(msg, "role", "?")
@@ -907,6 +948,9 @@ def _render_message(msg: Message) -> str:
     if isinstance(content, list):
         chunks: list[str] = []
         for blk in content:
+            if result_cap is not None and isinstance(blk, ToolResultBlock):
+                chunks.append(_truncate_middle(_render_block(blk), result_cap))
+                continue
             chunks.append(_render_block(blk))
         return f"[{role}] " + " ".join(c for c in chunks if c)
     return f"[{role}]"

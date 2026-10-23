@@ -106,6 +106,10 @@ _ESCALATED_MAX_TOKENS = 64_000
 # Continuations granted to turns that hit max_tokens before a tool call or a
 # finished answer, per run.
 _MAX_OUTPUT_LIMIT_RECOVERIES = 3
+# What ``skills="bundled"`` (the drop-in default) can see: mantis's bundled
+# skills, plus the Claude Code skill folders the caller's setting_sources
+# opted into — the skills a claude-agent-sdk agent would have.
+_DROP_IN_SKILL_TIERS = frozenset({"bundled", "claude-project", "claude-user"})
 # Marker stuffed into a tool_use block's input when the model's tool-call
 # arguments were not parseable JSON (even leniently). The run loop detects it
 # and returns an is_error tool_result asking the model to re-emit valid JSON,
@@ -1258,6 +1262,10 @@ class Agent:
     #             tools, as Claude Code's bundled skills are.
     #   [names] — exactly these.
     skills: list[str] | str | None = None
+    # claude-agent-sdk's ``setting_sources``: "project" / "user" add the Claude
+    # Code skill folders (``.claude/skills``, ``~/.claude/skills``) to what the
+    # skills setting above can see. None reads neither.
+    setting_sources: list[str] | None = None
     # Resolved compactor (built from ``compactor``/``auto_compact`` in post-init).
     _compactor: Compactor | None = field(default=None, init=False)
     # AbortSignal-like cancellation event — see __post_init__ for wiring.
@@ -1883,13 +1891,13 @@ class Agent:
         # memory off used to switch an explicitly requested catalog off too.
         try:
             from .skills import discover_skills, render_skill_catalog
-            all_skills = discover_skills()
+            all_skills = discover_skills(self.cwd, sources=self.setting_sources or ())
             if self.skills == "all":
                 catalog_skills = all_skills
             elif self.skills == "auto":
                 catalog_skills = all_skills
             elif self.skills == "bundled":
-                catalog_skills = [s for s in all_skills if s.source == "bundled"]
+                catalog_skills = [s for s in all_skills if s.source in _DROP_IN_SKILL_TIERS]
             elif isinstance(self.skills, list):
                 wanted = set(self.skills)
                 catalog_skills = [s for s in all_skills if s.name in wanted]
@@ -2242,14 +2250,14 @@ class Agent:
                 try:
                     from .skills import discover_skills, match_skills, render_relevant_skills
 
-                    all_skills = discover_skills()
+                    all_skills = discover_skills(self.cwd, sources=self.setting_sources or ())
                     if self.skills == "all":
                         selected = all_skills
                     elif self.skills == "auto":
                         selected = match_skills(query, all_skills)
                     elif self.skills == "bundled":
                         selected = match_skills(
-                            query, [s for s in all_skills if s.source == "bundled"])
+                            query, [s for s in all_skills if s.source in _DROP_IN_SKILL_TIERS])
                     elif isinstance(self.skills, list):
                         wanted = set(self.skills)
                         selected = [s for s in all_skills if s.name in wanted]
@@ -2425,6 +2433,10 @@ class Agent:
         _cwd_token = AGENT_CWD.set(
             self.cwd if self.cwd is not None else AGENT_CWD.get()
         )
+        # load_skill sees the Claude skill folders this run's setting_sources
+        # opted into — the same set the catalog was built from.
+        from .skills import SKILL_SOURCES  # noqa: PLC0415
+        _skill_src_token = SKILL_SOURCES.set(tuple(self.setting_sources or ()))
         # Tools dispatched by this run see its steer inbox — the ``task`` tool
         # uses it to move a blocking subagent to the background when the user
         # steers. A subagent's own run sets its own inbox in its own scope.
@@ -3206,6 +3218,10 @@ class Agent:
                 pass
             try:
                 AGENT_CWD.reset(_cwd_token)
+            except (ValueError, LookupError):  # pragma: no cover — defensive
+                pass
+            try:
+                SKILL_SOURCES.reset(_skill_src_token)
             except (ValueError, LookupError):  # pragma: no cover — defensive
                 pass
             try:

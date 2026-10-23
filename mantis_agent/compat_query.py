@@ -359,6 +359,22 @@ def _normalize_options(options: MantisAgentOptions | dict[str, Any] | None) -> d
     )
 
 
+def _tool_denied(name: str, disallowed: Any) -> bool:
+    """``disallowed_tools`` match: a canonical name (``"Bash"`` = ``bash``), an
+    exact MCP tool (``mcp__inv__place_order``), or a whole MCP server
+    (``mcp__inv``), as Claude's rules match."""
+    from .permission_grammar import canonical_tool_name  # noqa: PLC0415
+
+    key = canonical_tool_name(name)
+    for pattern in disallowed or ():
+        if not isinstance(pattern, str):
+            continue
+        if canonical_tool_name(pattern) == key or name == pattern or (
+                pattern.startswith("mcp__") and name.startswith(pattern + "__")):
+            return True
+    return False
+
+
 # An agent holding any of these can act on a document skill's instructions.
 _SKILL_USING_TOOLS = frozenset({"bash", "write_file", "edit_file", "multi_edit"})
 
@@ -474,11 +490,24 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     disallowed = opts.get("disallowed_tools") or extra_opt.get("disallowed_tools")
     if allowed or disallowed:
         allowed_set = {canonical_tool_name(n) for n in allowed or ()}
-        denied_set = {canonical_tool_name(n) for n in disallowed or ()}
+        # MCP servers ``allowed_tools`` speaks about (``mcp__calc__add`` or
+        # ``mcp__calc``): only those are narrowed to the tools it names.
+        named_servers = {n.split("__")[1] for n in allowed or ()
+                         if isinstance(n, str) and n.startswith("mcp__") and len(n.split("__")) >= 2}
         filtered = ToolRegistry()
         for t in registry:
-            key = canonical_tool_name(t.name)
-            if (not allowed or key in allowed_set) and key not in denied_set:
+            # A configured MCP server the list never mentions keeps its tools:
+            # listing Claude's built-ins must not take away the server the
+            # caller wired up (in the Claude SDK ``allowed_tools`` pre-approves;
+            # it never hides an MCP tool).
+            server = t.name.split("__")[1] if t.name.startswith("mcp__") else None
+            if server is not None and server not in named_servers:
+                narrowed = False
+            elif server is not None:
+                narrowed = not (t.name in allowed or f"mcp__{server}" in allowed)
+            else:
+                narrowed = bool(allowed) and canonical_tool_name(t.name) not in allowed_set
+            if not narrowed and not _tool_denied(t.name, disallowed):
                 filtered.add(t)
         registry = filtered
 
@@ -495,6 +524,15 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "max_steps": opts.get("max_turns", opts.get("max_steps", 20)),
         "max_usd": opts.get("max_usd"),
     }
+    # An agent with tools works under mantis's agent prompt (the counterpart
+    # of Claude Code's preset) unless the caller's own string replaces it; a
+    # preset ``append`` or plugin addition is layered on top. A chat agent
+    # with no tools keeps whatever it was given.
+    if not opts.get("system_replaces") and (any(True for _ in registry) or opts.get("mcp_servers")):
+        from .agent_prompt import AGENT_SYSTEM_PROMPT  # noqa: PLC0415
+
+        added = (opts.get("system") or "").strip()
+        kw["system"] = AGENT_SYSTEM_PROMPT + (f"\n\n{added}" if added else "")
     # Claude Code gives an agent that has its built-in tools the bundled
     # skills (dataviz and the document playbooks) without being asked. Do the
     # same: an agent that can read, write and run gets mantis's bundled pdf /
@@ -510,7 +548,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
     # ``query._agent_from_options``: Agent implements the retry-on-a-second-model
     # path, and leaving the key out meant a documented option did nothing.
     for key in ("hooks", "permissions", "budget", "include_memory", "response_format",
-                "tracer", "skills", "persist", "effort", "fallback_model"):
+                "tracer", "skills", "persist", "effort", "fallback_model", "setting_sources"):
         if key in opts:
             kw[key] = opts[key]
 
@@ -525,7 +563,7 @@ def _build_agent(opts: dict[str, Any]) -> Agent:
         "response_model",
         "persist", "session_id", "cwd", "permission_mode",
         "mcp_servers", "agents", "setting_sources", "response_format",
-        "tracer", "skills",
+        "tracer", "skills", "system_replaces",
     }
     extra = {k: v for k, v in opts.items() if k not in consumed}
     if isinstance(extra.get("extra"), dict):
@@ -609,6 +647,9 @@ async def _connect_external_mcp(agent: Agent, opts: dict[str, Any]) -> Any:
     mgr = MCPManager(configs)
     try:
         tools = await mgr.start()   # dedicated-task lifetime — generator-safe
+        extra_opt = opts.get("extra") or {}
+        disallowed = opts.get("disallowed_tools") or extra_opt.get("disallowed_tools")
+        tools = [t for t in tools or () if not _tool_denied(t.name, disallowed)]
         if tools:
             agent.tools.add(*tools)
         return mgr

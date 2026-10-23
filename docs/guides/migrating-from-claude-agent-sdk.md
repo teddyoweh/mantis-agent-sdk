@@ -81,6 +81,17 @@ A sensible order:
   `allowed_tools`, `tools`, or `disallowed_tools` map to mantis's own
   implementations, and `tools={"type": "preset", "preset": "claude_code"}`
   gives an agent all of them.
+- **System prompts.** With no `system_prompt`, or the `claude_code` preset,
+  an agent with tools works under mantis's agent prompt, the counterpart of
+  Claude Code's own. A preset `append` is added to it, and a string replaces
+  it.
+- **`setting_sources`.** With `"project"`, mantis reads the project's
+  `.claude/skills/`; with `"user"`, `~/.claude/skills/`. `load_skill` gives
+  the skill's folder, so a skill's own scripts run as they do under Claude.
+- **MCP servers.** `allowed_tools` never hides a server you configured,
+  unless it names some of that server's tools. `disallowed_tools` takes away
+  MCP tools (`mcp__crm__send_email`) or whole servers (`mcp__crm`). A tool
+  result can be up to 25,000 tokens (`MAX_MCP_OUTPUT_TOKENS`).
 - **Bundled skills.** Claude Code gives an agent its bundled skills unasked.
   mantis ships its own `pdf`, `xlsx` and `dataviz` skills, and an agent that
   can write or run something gets them by default. `Skill` in a tool list
@@ -102,6 +113,8 @@ A sensible order:
   refuses an image (a tool read a PNG, say), mantis sends the request again
   with each image replaced by a one-line note, and keeps doing that for the
   rest of the run.
+- **`CLAUDE.md` isn't read.** mantis loads `AGENTS.md` and `MANTIS.md` as
+  project memory. Rename the file, or import it from one of those.
 - **A few Claude Code tools have no built-in here**: `TodoWrite`, `Task` and
   `ExitPlanMode` are skipped if named. Sub-agents are `agents=` instead.
 - **The options class is `MantisAgentOptions`**, and `model` / `backend` /

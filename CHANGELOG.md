@@ -8,6 +8,43 @@ The full versioning policy is in [SEMVER.md](SEMVER.md).
 
 ## [Unreleased]
 
+### Added
+
+- **A system prompt for drop-in agents.** A `MantisAgentOptions` agent with
+  tools used to run with no system prompt at all. It now works under mantis's
+  agent prompt (`mantis_agent.agent_prompt`), the counterpart of Claude Code's
+  `claude_code` preset: treat the problem as solvable, build what's missing,
+  keep going until it's done, and verify before reporting. It applies with no
+  `system_prompt` or with the preset (whose `append` is added). A string
+  `system_prompt` replaces it, and a chat agent without tools gets none.
+- **`setting_sources` reads Claude Code's skill folders**: "project" →
+  `.claude/skills`, "user" → `~/.claude/skills`. A migrated project's skills
+  were invisible. `load_skill` now starts with `Base directory for this
+  skill: …`, as Claude Code's Skill tool does, so a skill can ship and run its
+  own scripts.
+
+### Changed
+
+- **Compaction keeps what the agent did.** The summary has a new "Actions
+  Already Taken" section (emails sent, orders placed, files written), so a
+  resumed agent never repeats a side effect. When a transcript is too big to
+  summarize whole, tool results shrink first, and calls from any elided middle
+  survive as an action log. The instructions now cover all agent work, not
+  only coding.
+- **MCP results get Claude Code's limit**: 25,000 tokens
+  (`MAX_MCP_OUTPUT_TOKENS`), still bounded by the window. The generic
+  30k-character cap cut a 43k-character CRM record's middle, and the
+  do-not-contact line in it with it.
+
+### Fixed
+
+- **`allowed_tools` no longer hides a configured MCP server.** Listing
+  Claude's built-ins (`["Bash", "Read"]`) took an in-process server's tools
+  away. A server's tools are now narrowed only when the list names some of
+  them. `disallowed_tools` reaches MCP tools, and `mcp__server` removes a
+  whole server.
+- Skills are discovered from the agent's `cwd`, not the process's.
+
 ## [2.68.0] - 2026-10-23
 
 ### Added

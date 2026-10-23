@@ -104,6 +104,13 @@ What the loop guarantees (there are tests for each — `tests/test_engine_*.py`)
   summarizer is sized to the window, tool-result caps scale with the message budget
   (`result_char_budget_for`), and small/prompt-path models get compact tool
   descriptions (memoized per model so the prefix doesn't flip).
+- **Drop-in agents get a system prompt** (`agent_prompt.AGENT_SYSTEM_PROMPT`)
+  when they have tools and the caller gave no string `system_prompt`
+  (`test_compat_agent_prompt.py`). **Compaction keeps the action log**: an
+  "Actions Already Taken" summary section, results shrink before calls are
+  dropped (`test_structured_compaction.py`). **MCP**: results capped at
+  `MAX_MCP_OUTPUT_TOKENS` (25k tokens) within the window; `allowed_tools` never
+  hides an unnamed configured server (`test_compat_builtin_tools.py`).
 - **Out of output room is not a stop**: a turn that hits `max_tokens` with no
   tool call gets a continuation nudge (≤3 per run), and a default cap rises to
   `_ESCALATED_MAX_TOKENS` (bounded by the model and ¼ window); a cut-off tool

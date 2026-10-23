@@ -282,6 +282,10 @@ class MantisAgentOptions:
             )
             if system:
                 opts["system"] = system
+            # A string replaces the agent prompt, as in the Claude SDK; the
+            # claude_code preset keeps it and adds its ``append``.
+            if isinstance(self.system_prompt, str):
+                opts["system_replaces"] = True
         if self.model:
             opts["model"] = self.model
         if self.backend:

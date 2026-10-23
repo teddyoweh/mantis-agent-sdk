@@ -50,3 +50,31 @@ def test_nothing_named_means_no_file_or_shell_tools():
 
 def test_names_mantis_has_no_tool_for_are_skipped():
     assert _names(MantisAgentOptions(model="mock", allowed_tools=["TodoWrite", "Task", "Read"])) == ["read_file"]
+
+
+def _calc_server():
+    from mantis_agent import create_sdk_mcp_server, tool
+
+    @tool("add", "Add two numbers", {"a": float, "b": float})
+    async def add(args):
+        return {"content": [{"type": "text", "text": str(args["a"] + args["b"])}]}
+
+    @tool("sub", "Subtract", {"a": float, "b": float})
+    async def sub(args):
+        return {"content": [{"type": "text", "text": str(args["a"] - args["b"])}]}
+
+    return create_sdk_mcp_server(name="calc", version="1.0", tools=[add, sub])
+
+
+def test_listing_built_ins_keeps_a_configured_mcp_server() -> None:
+    # Claude's allowed_tools pre-approves; it never hides the server the caller wired up
+    got = _names(MantisAgentOptions(model="mock", allowed_tools=["Bash"], mcp_servers={"calc": _calc_server()}))
+    assert got == ["bash", "mcp__calc__add", "mcp__calc__sub"]
+
+
+def test_disallowed_tools_reach_mcp_tools_and_whole_servers() -> None:
+    calc = _calc_server()
+    one = _names(MantisAgentOptions(model="mock", mcp_servers={"calc": calc}, disallowed_tools=["mcp__calc__sub"]))
+    assert one == ["mcp__calc__add"]
+    none = _names(MantisAgentOptions(model="mock", mcp_servers={"calc": calc}, disallowed_tools=["mcp__calc"]))
+    assert none == []

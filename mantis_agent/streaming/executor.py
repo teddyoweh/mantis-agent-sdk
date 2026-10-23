@@ -175,6 +175,16 @@ _TOOL_RESULT_CAPS = {
 # single 60k-char read is the whole window, so when the loop knows its budget
 # the per-result cap shrinks to a slice of it (``result_char_budget_for``) —
 # never below this floor, never above the static cap.
+# MCP tools return whole records (a customer with years of notes, a page of
+# search hits) that can't be re-asked for "the middle". Claude Code allows them
+# 25,000 tokens (MAX_MCP_OUTPUT_TOKENS); the generic 30k-char cap elided a
+# 43k-char CRM record's middle, and with it the one line that mattered. Same
+# limit and the same variable here, still bounded by the window below.
+try:
+    _MCP_RESULT_CAP = max(2000, int(os.environ.get("MAX_MCP_OUTPUT_TOKENS", "25000")) * 4)
+except ValueError:
+    _MCP_RESULT_CAP = 100_000
+
 _MIN_RESULT_CAP = 4_000
 # Share of the conversation's token budget one tool result may take, and the
 # chars-per-token rule of thumb used to turn that into a char cap.
@@ -210,7 +220,8 @@ def result_char_budget_for(message_budget_tokens: int | None) -> int | None:
 
 
 def _result_cap(tool_name: str, budget: int | None) -> int:
-    static = _TOOL_RESULT_CAPS.get(tool_name, _DEFAULT_TOOL_RESULT_CAP)
+    static = _TOOL_RESULT_CAPS.get(
+        tool_name, _MCP_RESULT_CAP if tool_name.startswith("mcp__") else _DEFAULT_TOOL_RESULT_CAP)
     if budget is None or budget <= 0:
         return static
     return min(static, max(_MIN_RESULT_CAP, budget))

@@ -18,10 +18,14 @@ async def load_skill(name: str) -> str:
     Args:
         name: The skill's name, exactly as listed in the catalog.
     """
-    from ..skills import discover_skills, load_skill_body
+    from ..skills import discover_skills, find_skill
 
-    body = load_skill_body(name)
-    if body is not None:
-        return body
+    skill = find_skill(name)
+    if skill is not None:
+        # Claude Code's Skill tool says where the skill lives, so a skill that
+        # ships scripts or references (``scripts/validate.py``) can be used.
+        if skill.base_dir:
+            return f"Base directory for this skill: {skill.base_dir}\n\n{skill.body}"
+        return skill.body
     available = ", ".join(s.name for s in discover_skills()) or "none"
     return f"no skill named {name!r} (available: {available})"

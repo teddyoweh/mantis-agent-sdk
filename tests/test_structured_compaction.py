@@ -77,3 +77,35 @@ def test_compaction_still_produces_boundary() -> None:
     out = anyio.run(lambda: c.compact(list(msgs)))
     assert len(out) < len(msgs)                       # actually compacted
     assert all(h in seen["prompt"] for h in _SECTIONS)  # structured prompt was used
+
+
+def test_a_summary_must_record_actions_already_taken() -> None:
+    p = _build_summarization_prompt(_transcript())
+    assert "Actions Already Taken" in p and "never repeat" in p.lower()
+
+
+def _crm_like_transcript(n: int = 60) -> list:
+    """An agent emailing customers one by one, each step reading a big record."""
+    msgs: list = [UserMessage(content="email every overdue customer once")]
+    for i in range(n):
+        msgs.append(AssistantMessage(content=[ToolUseBlock(id=f"g{i}", name="mcp__crm__get_customer",
+                                                           input={"customer_id": f"C-{i}"})]))
+        msgs.append(UserMessage(content=[ToolResultBlock(tool_use_id=f"g{i}", content="notes " * 2000)]))
+        msgs.append(AssistantMessage(content=[ToolUseBlock(id=f"s{i}", name="mcp__crm__send_email",
+                                                           input={"to": f"c{i}@x.example", "subject": "Reminder"})]))
+        msgs.append(UserMessage(content=[ToolResultBlock(tool_use_id=f"s{i}", content="sent")]))
+    return msgs
+
+
+def test_every_side_effect_survives_a_prompt_too_big_to_send_whole() -> None:
+    # the results are shrunk before anything else; every send survives
+    p = _build_summarization_prompt(_crm_like_transcript(), max_chars=60_000)
+    assert len(p) <= 60_000
+    assert all(f"c{i}@x.example" in p for i in range(60))
+
+
+def test_the_elided_middle_keeps_its_calls_as_an_action_log() -> None:
+    p = _build_summarization_prompt(_crm_like_transcript(200), max_chars=40_000)
+    assert len(p) <= 40_000 + 500
+    assert "tool calls made in the elided part" in p
+    assert "c100@x.example" in p                 # a send from deep in the middle

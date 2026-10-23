@@ -25,10 +25,12 @@ callers.
 
 from __future__ import annotations
 
+import contextvars
+
 from dataclasses import dataclass, field
 from pathlib import Path
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 import msgspec
 
@@ -77,6 +79,9 @@ class Skill(msgspec.Struct, frozen=True, omit_defaults=True):
     always_load: bool = False
     category: str | None = None
     source: str = "user"
+    # the folder the SKILL.md lives in, for a skill that ships its own scripts
+    # or references; told to the model with the body, as Claude Code does
+    base_dir: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +228,9 @@ def render_skills(skills: list[Skill]) -> str:
         if s.description:
             parts.append(s.description)
             parts.append("")
+        if s.base_dir:
+            parts.append(f"Base directory for this skill: {s.base_dir}")
+            parts.append("")
         parts.append(s.body.rstrip())
         parts.append("</skill>")
         parts.append("")
@@ -290,8 +298,34 @@ def _read_skill_dir(d: Path, tier: str) -> list[Skill]:
             always_load=str(meta.get("always_load", "")).lower() in ("1", "true", "yes"),
             category=meta.get("category"),
             source=tier,
+            base_dir=str(md.parent),
         ))
     return out
+
+
+# Which Claude Code skill folders an agent reads, from the caller's
+# ``setting_sources`` (claude-agent-sdk's opt-in): "project" →
+# ``<cwd>/.claude/skills``, "user" → ``~/.claude/skills``. Set per run by the
+# Agent so the ``load_skill`` tool sees the same set as the catalog.
+SKILL_SOURCES: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "mantis_skill_sources", default=())
+CLAUDE_PROJECT_SOURCE = "claude-project"
+CLAUDE_USER_SOURCE = "claude-user"
+
+
+def _claude_home() -> Path:
+    import os  # noqa: PLC0415
+
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+
+
+def _claude_skill_dirs(base: Path, sources: tuple[str, ...]) -> list[tuple[Path, str]]:
+    out: list[tuple[Path, str]] = []
+    if "user" in sources:
+        out.append((_claude_home() / SKILLS_SUBDIR, CLAUDE_USER_SOURCE))
+    if "project" in sources:
+        out.append((base / ".claude" / SKILLS_SUBDIR, CLAUDE_PROJECT_SOURCE))
+    return [(d, t) for d, t in out if d.is_dir()]
 
 
 def _skill_dirs(cwd: str | Path | None = None) -> list[Path]:
@@ -303,12 +337,20 @@ def _skill_dirs(cwd: str | Path | None = None) -> list[Path]:
     return [d for d in dirs if d.is_dir()]
 
 
-def discover_skills(cwd: str | Path | None = None, *, bundled: bool = True) -> list[Skill]:
+def discover_skills(
+    cwd: str | Path | None = None, *, bundled: bool = True, sources: Any = None,
+) -> list[Skill]:
     """Scan the skill directories and return every ``SKILL.md`` as a
     :class:`Skill` (name defaults to the folder slug). Best-effort — unreadable
     or malformed files are skipped. Later tiers override earlier ones by name:
-    bundled, then user, then project. ``bundled=False`` leaves out the skills
-    that ship with the package.
+    bundled, Claude user, mantis user, Claude project, mantis project.
+    ``bundled=False`` leaves out the skills that ship with the package.
+
+    ``cwd`` defaults to the running agent's working directory (then the
+    process's). ``sources`` is claude-agent-sdk's ``setting_sources``: with
+    "project" / "user" the Claude Code skill folders are read too (defaults to
+    what the running agent set). Those need no trust prompt — naming the
+    source IS the opt-in, as in the Claude SDK.
 
     Project-tier skills (``<cwd>/.mantis/skills``) are withheld entirely until
     the user trusts that repo's skill files — a skill body goes straight into
@@ -323,11 +365,22 @@ def discover_skills(cwd: str | Path | None = None, *, bundled: bool = True) -> l
     # Tiering is decided by "is this the USER's own directory?", never by
     # position in the list: anything else _skill_dirs turns up is treated as
     # project-tier, which is the fail-closed direction.
+    if cwd is None:
+        from .builtin_tools.fs import AGENT_CWD  # noqa: PLC0415
+
+        cwd = AGENT_CWD.get()
+    srcs = tuple(SKILL_SOURCES.get() if sources is None else (sources or ()))
+    base = Path(cwd) if cwd is not None else Path.cwd()
     user_dir = get_mantis_agent_dir() / SKILLS_SUBDIR
     scanned: list[Skill] = []
     if bundled and BUNDLED_SKILLS_DIR.is_dir():
         scanned.extend(_read_skill_dir(BUNDLED_SKILLS_DIR, BUNDLED_SOURCE))
-    for d in _skill_dirs(cwd):
+    claude = dict((t, d) for d, t in _claude_skill_dirs(base, srcs))
+    if CLAUDE_USER_SOURCE in claude:
+        scanned.extend(_read_skill_dir(claude[CLAUDE_USER_SOURCE], CLAUDE_USER_SOURCE))
+    if CLAUDE_PROJECT_SOURCE in claude:
+        scanned.extend(_read_skill_dir(claude[CLAUDE_PROJECT_SOURCE], CLAUDE_PROJECT_SOURCE))
+    for d in _skill_dirs(base):
         try:
             same = d.resolve() == user_dir.resolve()
         except OSError:  # pragma: no cover — unresolvable path
@@ -443,9 +496,15 @@ def render_relevant_skills(skills: list[Skill]) -> str:
 
 def load_skill_body(name: str, cwd: str | Path | None = None) -> str | None:
     """Return the full body of the named skill, or ``None`` if not found."""
+    s = find_skill(name, cwd)
+    return s.body if s is not None else None
+
+
+def find_skill(name: str, cwd: str | Path | None = None) -> Skill | None:
+    """The named skill as discovered for ``cwd`` (default: the running agent's)."""
     for s in discover_skills(cwd):
         if s.name == name:
-            return s.body
+            return s
     return None
 
 
@@ -455,6 +514,7 @@ __all__ = [
     "Skill",
     "SkillRegistry",
     "discover_skills",
+    "find_skill",
     "load_skill_body",
     "match_skills",
     "render_relevant_skills",
