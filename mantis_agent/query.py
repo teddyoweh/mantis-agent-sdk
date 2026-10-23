@@ -836,6 +836,11 @@ async def _query_stream(
         model_usage[agent.model] = _to_model_usage(
             agent.model, agg_usage, backend_hint=backend_hint
         )
+    # No budget means no tracker, but the price is still known: bill the run
+    # at the same per-model rates ``modelUsage`` reports, as compat_query does,
+    # instead of a top-line $0 beside a priced breakdown.
+    if agent._budget_tracker is None:
+        total_cost_usd = sum(mu.costUSD for mu in model_usage.values())
 
     # A run the step cap cut off mid-task (the model still wanted tools on its
     # last allowed turn) is ``error_max_turns``, exactly as when a

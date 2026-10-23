@@ -27,6 +27,11 @@ fits the count, the create is retried with the type alone and Fireworks picks
 the count. Scale to zero is native (idle for an hour → 0 replicas → 503 on the
 next request while one comes up); a deployment with min 0 is deleted by
 Fireworks after 7 days without traffic.
+
+Serverless: part of the library also runs on Fireworks' own fleet, billed per
+token with nothing to deploy (``supports_serverless=true`` on the library
+listing). :meth:`FireworksDedicatedProvider.serverless_models` reads that list
+so the Deploy sheet can offer it before a GPU (``deploy.serverless``).
 """
 
 from __future__ import annotations
@@ -76,6 +81,7 @@ _STATUS: dict[str, DeploymentStatus] = {
 
 _LIBRARY_TTL_S = 3600.0
 _library_cache: tuple[float, list[dict[str, Any]]] | None = None
+_serverless_cache: tuple[float, list[dict[str, Any]]] | None = None
 
 
 def _norm(s: str) -> str:
@@ -134,8 +140,8 @@ class FireworksDedicatedProvider:
     def configured(self) -> bool:
         return require_env("FIREWORKS_API_KEY")
 
-    def _http(self, **kw: Any) -> DeployHttp:
-        key = (os.environ.get("FIREWORKS_API_KEY") or "").strip()
+    def _http(self, *, key: str | None = None, **kw: Any) -> DeployHttp:
+        key = (key or os.environ.get("FIREWORKS_API_KEY") or "").strip()
         if not key:
             raise DeployError(
                 "FIREWORKS_API_KEY is not set",
@@ -186,6 +192,31 @@ class FireworksDedicatedProvider:
             if not token:
                 break
         _library_cache = (now, out)
+        return out
+
+    async def serverless_models(self, *, key: str | None = None) -> list[dict[str, Any]]:
+        """Library entries Fireworks serves per token on its own fleet — the
+        ``supports_serverless=true`` slice of the public library. Cached an
+        hour, like the library itself; ``key`` is for a caller whose key lives
+        in the model catalogue rather than the environment."""
+        global _serverless_cache
+        now = time.monotonic()
+        if _serverless_cache and now - _serverless_cache[0] < _LIBRARY_TTL_S:
+            return _serverless_cache[1]
+        out: list[dict[str, Any]] = []
+        token = ""
+        http = self._http(key=key, timeout=30.0)
+        for _ in range(5):
+            params: dict[str, Any] = {"filter": "supports_serverless=true", "pageSize": 200}
+            if token:
+                params["pageToken"] = token
+            data = await http.json("GET", "/v1/accounts/fireworks/models", params=params,
+                                   what="read the serverless models")
+            out.extend(m for m in (data.get("models") or []) if isinstance(m, dict) and m.get("name"))
+            token = str(data.get("nextPageToken") or "")
+            if not token:
+                break
+        _serverless_cache = (now, out)
         return out
 
     async def validate_credentials(self) -> Account:

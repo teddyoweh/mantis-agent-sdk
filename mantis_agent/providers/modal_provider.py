@@ -78,6 +78,10 @@ MODAL_HOST_SUFFIX = "modal.run"
 # whitespace and the segment-separator chars we use in the URL.
 _VALID_SLUG_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
+# Modal's Shared Endpoint gateway, and the joined proxy-token bearer it takes.
+_SHARED_GATEWAY_RE = re.compile(r"//inference\.[a-z0-9-]+\.modal\.direct(?:[/:]|$)", re.I)
+_PROXY_BEARER_RE = re.compile(r"^wk-[^.\s]+\.ws-\S+$")
+
 
 class ModalProviderError(ValueError):
     """Raised when ``ModalProvider`` can't figure out where to send the call.
@@ -287,6 +291,13 @@ class ModalProvider:
         # gateway's own bearer) and goes in ``Authorization: Bearer``. ``""``
         # keeps the explicit-no-auth meaning; ``None`` means "use the pair".
         bearer: str = (api_key or "").strip()
+        # The Shared Endpoint gateway (``inference.<region>.modal.direct``)
+        # takes only the proxy token, joined, as the bearer. A key that isn't
+        # one is a leftover — the terminal hands every non-catalogue URL the
+        # generic MANTIS_AGENT_API_KEY, which may belong to an old self-hosted
+        # endpoint — so the pair wins over it here.
+        if tid and tsec and _SHARED_GATEWAY_RE.search(url) and not _PROXY_BEARER_RE.match(bearer):
+            bearer = f"{tid}.{tsec}"
 
         headers: dict[str, str] = {}
         if tid and tsec:

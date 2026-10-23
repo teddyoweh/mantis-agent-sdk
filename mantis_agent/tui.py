@@ -3963,13 +3963,14 @@ class MantisTUI:
         if not last:
             return
         model = last["model"]
-        prov = catalog.provider_for_model(model)
-        if prov is None and last.get("backend"):
-            # The model-id heuristic missed it (e.g. an OpenRouter ":free"
-            # variant, or any hosted id not in the prefix map) — match the saved
-            # backend URL to a catalog provider so its saved key still gets wired.
-            _back = last["backend"].rstrip("/")
-            prov = next((p for p in catalog.CATALOG if p.base_url.rstrip("/") == _back), None)
+        # The saved backend says which provider it was — the same open id is
+        # served by several (``openai/gpt-oss-120b`` is on Groq AND OpenRouter),
+        # so the URL wins over the model-id heuristic, which is only the
+        # fallback for a record saved without a catalogue URL.
+        _back = (last.get("backend") or "").rstrip("/")
+        prov = next((p for p in catalog.CATALOG if _back and p.base_url.rstrip("/") == _back), None)
+        if prov is None:
+            prov = catalog.provider_for_model(model)
         if prov is not None:
             # Guard against a stored *alias word* (e.g. a literal "newest" or a
             # provider name from an older build that persisted the raw `/model`

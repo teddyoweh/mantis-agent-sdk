@@ -429,15 +429,14 @@ def test_a_model_card_says_each_fact_once():
     # the vendor's mark, in the same optically normalised square the Deploy
     # card uses — not a second mark treatment
     assert 'fillMark(el("span","omark"), a.pid, a.label)' in card
-    # The numbers are READINGS, not pills: context, then what it charges going
-    # in and coming out, each in the same one of three columns on every card.
-    assert 'stat(a.info.ctx ? fmtCtx(a.info.ctx) : "\u2014", "context"' in card
-    assert 'stat("$" + price2(pr.in), "in / 1M")' in card
-    assert 'stat("$" + price2(pr.out), "out / 1M")' in card
-    # a single price tile spans the in/out pair's space, so no card ends in a hole
-    assert 'stat("Free", a.local ? "runs on your machine" : "no API charge", "acc span2")' in card
-    assert 'stat("—", "no price listed", "mute span2")' in card
-    assert "pricePill" not in card, "the price is a reading now, not a pill"
+    # The facts are ONE quiet line — the window, then the price in · out per
+    # 1M — not a row of boxed readings, half of which said "—" on most cards.
+    # A price nobody listed is left unsaid.
+    assert "stat(" not in card and "mstats" not in card
+    assert 'fmtCtx(a.info.ctx) + (a.info.ctx_learned ? "*" : "") + " context"' in card
+    assert '"$" + price2(pr.in) + " · $" + price2(pr.out) + " / 1M"' in card
+    assert "no price listed" not in card
+    assert "pricePill" not in card, "the price is a fact on the line, not a pill"
     # The quiet line is STATE, never a capability list: "tools · effort" was
     # on nearly every card, and a fact true of everything says nothing about
     # any one of them. Only what differs card to card and changes what you do.
@@ -454,8 +453,11 @@ def test_a_model_card_says_each_fact_once():
     assert 'a.enabled ? "Use model" : "Connect"' in card
     assert "if (!on) {" in card
     assert "use \u2192" not in card and "mm-act" not in card
-    # the same slanted Current tag the provider cards wear — and that alone
-    assert 'el("span","ac-st cur cornertag")' in card and 'el("span","ac-stl", "Current")' in card
+    # the same slanted Current tag the provider cards wear — and that alone,
+    # from the one helper every model card (per-token ones too) uses
+    assert "if (on) card.append(modelCurrentTag());" in card
+    tagfn = js[js.index("function modelCurrentTag() {"):js.index("function myModelCard(")]
+    assert 'el("span","ac-st cur cornertag")' in tagfn and 'el("span","ac-stl", "Current")' in tagfn
     assert "Motif" not in card and "ac-mot" not in card
     # unlock still deep-links into that family's setup
     assert "unlockFamily(fid, a.pid)" in card and "useModel(a.model, a.backend)" in card
@@ -486,10 +488,11 @@ def test_dated_snapshots_fold_under_the_alias_they_pin():
     for gone in ("snapb", "snaptag", "SNAPS_OPEN", '" dated"'):
         assert gone not in INDEX_HTML, gone
     assert 'const okS = !r.dataset.snap || !!q;' in js
-    assert "const on = okQ && okF && okT && okS;" in js
+    assert "let on = okQ && okF && okT && okS;" in js
     # the counts describe the cards on screen, not the folded total
-    assert "const nPrimary = allModels.filter(a => !a.snapOf).length;" in js
-    assert 'const tabs = [{ id: "all", label: "All", n: nPrimary }];' in js
+    assert "const nPrimary = units.filter(u => !u.snap).length;" in js
+    # ...and of what you can use: "All" counts usable aliases, never snapshots
+    assert 'const tabs = [{ id: "all", label: "All", n: units.filter(u => !u.snap && u.enabled).length }];' in js
 
 
 def test_the_model_cards_foot_holds_the_pin_and_the_one_action():
@@ -553,8 +556,13 @@ def test_my_models_leads_with_what_you_are_running():
 
     css, js = _css(), INDEX_HTML.split("<script>")[1]
     hero = js[js.index("function nowRunning(pad, m) {"):js.index("function reachRow(")]
-    # the id at a size you read without meaning to
-    assert 'el("div","now-id", cur)' in hero
+    # the model's NAME at a size you read without meaning to — a per-token
+    # model by its name ("GLM 5.3 Flash"), never its provider path — with the
+    # id that goes in model= kept on the tooltip and the via line
+    assert 'el("div","now-id", ptRow ? ptRow.name : cur); id.title = cur;' in hero
+    assert "if (ptRow) via.push(cur);" in hero
+    # ...and the window that provider serves, not the family default
+    assert "if (ptRow && ptRow.context) info.ctx = ptRow.context;" in hero
     assert "  .now-id { font-family: var(--mono); font-size: 24px;" in css
     # the route in, said once
     assert r'via.push("local \u00b7 Ollama")' in hero
@@ -581,8 +589,12 @@ def test_the_hero_never_claims_a_check_it_did_not_run():
 
     js = INDEX_HTML.split("<script>")[1]
     row = js[js.index("function reachRow(cur, prov, local) {"):js.index("async function checkReach(")]
-    assert "Reachability not checked this session." in row
-    assert 'btn("Check now", "gho"' in row
+    unchecked = row[row.index("if (!r) {"):row.index("if (r.pending)")]
+    assert 'btn("Check connection", "gho"' in unchecked
+    # until something checks, it claims nothing — a button, not a status
+    for claim in ("Answering", "ok", "dot2"):
+        assert claim not in unchecked.split("//")[0] or claim == "ok", claim
+    assert "Answering" not in unchecked and "dot2" not in unchecked
     # only after a check does it make a claim, and it says when and how fast
     assert 'r.ok ? "Answering" : "Did not answer"' in row
     assert 'bits.push("checked " + ago(r.at));' in row
@@ -611,7 +623,10 @@ def test_setup_folds_away_but_opens_itself_when_it_is_the_job():
     # the strip is written by the grid, so summary and grid cannot disagree
     grid = js[js.index('ph.append(el("span","setup-n"'):]
     assert 'sum.innerHTML = "";' in grid[:900]
-    assert 'connected ? String(connected) + " connected" : "Nothing connected yet"' in js
+    # under "Add more models" it names what you could ADD
+    assert "const rest = entries.filter(e => !conn.includes(e));" in grid
+    assert 'rest.length === 1 ? " isn\\u2019t connected" : " aren\\u2019t connected"' in grid
+    assert '"Nothing connected yet"' in grid and '"Connect more \\u2192"' in grid
     # the three things that open it
     assert "const forced = !connected || !!AUTH.open || qp.get(\"prov\") === \"open\";" in js
     # everything the grid had is still inside it
@@ -679,8 +694,8 @@ def test_a_page_states_its_situation_as_readings_not_a_paragraph():
     assert "pageReads(w, reads," in js
     for probe in ('k: "sessions"', 'k: "projects"', 'k: "first run"',
                   'k: "running"', 'k: "done"', 'k: "failed"',
-                  'k: "burn · unpriced"', 'k: "providers ready"', 'k: "deploying"',
-                  'k: "models"', 'k: "families"',
+                  'k: "burn · unpriced"', 'k: "per token"', 'k: "deploying"',
+                  'k: "ready to use"', 'k: "families"',
                   'k: "always loaded"', 'k: "on demand"',
                   'k: "connected"', 'k: "tools for the agent"', 'k: "settings"'):
         assert probe in js, probe
@@ -924,11 +939,11 @@ def test_no_signal_path_and_short_captions():
     for m in re.finditer(r'pageHead\(pad, "([^"]+)", [^,]+,\s*"([^"]*)"', js):
         assert len(m.group(2)) <= 70, (m.group(1), m.group(2))
     assert 'cardHead(pcard, "key", "Providers", readyN + "/" + fams.length + " ready"' in js
-    assert "renderProvSection(pSec, !ready.length);" in js and "GPU providers ready" in js
+    assert "renderProvSection(pSec, !ready.length);" in js and '"Add a provider"' in js
     # section labels are normal-weight title case now — the all-caps mono style is gone
     sec = css.split(".sec-t {")[1].split("}")[0]
     assert "uppercase" not in sec and "var(--mono)" not in sec
-    for lab in ('"Active"', '"Deployments"', '"Choose a model"', '"Local models · Ollama"',
+    for lab in ('"Active"', '"Deployments"', '"Your models"', '"Add more models"',
                 '"Providers"', '"Spend & usage"', '"MCP servers"'):
         assert lab in js, lab
     # The model grid holds cards and nothing else. A "Curated · good first
@@ -1107,7 +1122,7 @@ def test_a_stat_never_invents_a_trend_or_a_second_opinion():
     # the folded provider strip is written by the grid it summarises
     grid = js[js.index('ph.append(el("span","setup-n"'):]
     assert 'document.getElementById("provsum")' in grid[:400]
-    assert "AUTH.setProv" in grid[:1400]
+    assert "AUTH.setProv" in grid[:2400]
     # an unpriced endpoint is never counted as free
     assert "const priced = billing.filter(d => depRate(d) != null);" in js
     # the burn is what bills NOW: serving or booting, never an app asleep at zero
@@ -1366,3 +1381,121 @@ def test_the_bar_says_where_you_are():
     assert js.count("const PAGE_NAMES = ") == 1        # the rail and the palette share one list
     # the crumb names the page; the page's readings carry its numbers
     assert 'if (curView === "home") setCrumb();' in js
+
+
+def test_my_models_puts_what_you_can_use_first():
+    """Connected models lead every family and the families you're connected to
+    lead the rest (Self-hosted stays first); the flat sorts keep that too."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    load = js[js.index("async function loadModels() {"):]
+    # connected first, then the provider's own order with aliases, previews
+    # and retired generations at the back of each half
+    assert "allModels.sort((x, y) => (y.enabled ? 1 : 0) - (x.enabled ? 1 : 0) || mmBack(x) - mmBack(y));" in js
+    assert 'MM_BACK_RE = /(^|[-/])(chat-latest|latest)$|search|preview|' in js
+    # what you can use is the default view; a family shows its newest few
+    assert 'const FILTERS = [["ready","Ready to use"], ["all","Everything"], ["free","Free"]];' in load
+    assert 'let mode = "ready";' in load and "const MM_CAP = 8, MM_FLAT_CAP = 24;" in load
+    assert 'r.dataset.state === "ready" || !!q || (MODEL_TAB !== "all" && !famHasReady[r.dataset.fam])' in load
+    # what you could add sits at the foot of the page, after the models
+    assert load.index('section(pad, "Your models"') < load.index('section(pad, "Add more models")')
+    assert 'famOrder.sort((x, y) => (y === "selfhost") - (x === "selfhost") || famReady(y) - famReady(x));' in load
+    assert "const d = ((b.enabled ? 1 : 0) - (a.enabled ? 1 : 0)) || keyOf(a) - keyOf(b);" in load
+
+
+def test_a_model_line_is_one_card_with_a_chip_per_variant():
+    """gpt-6-sol, gpt-6-luna and gpt-6-astra are one model, GPT-6: one card
+    with a chip per variant, a readable name, and the chosen variant's own
+    facts and id. Quick picks above the grid answer "which one?" with facts
+    only — the cheapest, the biggest window, what you used recently."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], _css()
+    load = js[js.index("async function loadModels() {"):]
+    # variants of one model are one unit; a per-token model, a deployment, a
+    # local model and a dated snapshot stand alone
+    assert "if (a.pt || a.dep || a.local || a.snapOf) { units.push(" in load
+    assert 'const sr = seriesOf(a.model), k = a.fam + "\\u0000" + a.pid + "\\u0000" + sr.base;' in load
+    assert "famUnits.forEach(u => grid.append(unitCard(u, fid, cur, famLabel[fid] || fid)));" in load
+    line = js[js.index("function lineCard(u, fid, cur, famName, prefer) {"):js.index("function unitCard(")]
+    assert 'el("div","mt mname", prettyModel(u.base)' in line and 'el("span","ml-id", pick.model)' in line
+    assert "c.onclick = e => { e.stopPropagation(); pick = a; paint(); };" in line
+    # the plain variant leads, and a date every variant shares is the line's
+    assert "(seriesOf(x.model).variant ? 1 : 0) - (seriesOf(y.model).variant ? 1 : 0)" in line
+    assert "dated.every(ds => ds.includes(d))" in line
+    # quick picks: facts, every usable variant a candidate, never a ranking
+    picks = load[load.index("// ---- quick picks"):load.index('const sec = section(pad, "Your models"')]
+    for label in ('"Cheapest"', '"Biggest context"', '"Used recently"'):
+        assert label in picks, label
+    assert "u.rows.filter(a => a.enabled)" in picks
+    for claim in ("Best", "Smartest", "Recommended", "Fastest"):
+        assert claim not in picks, claim
+    for rule in (".ml-vs {", ".ml-v {", ".ml-v.on {", ".ml-id {", ".qp-l {", ".mcard .mt.mname {"):
+        assert rule in css, rule
+
+
+def test_model_lines_name_and_split_ids_the_way_people_read_them(tmp_path):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    src = js[js.index("const ML_VARIANT = new Set("):js.index("// A model line, as the same model card")]
+    f = tmp_path / "ml.js"
+    f.write_text(src + """
+const ids = ["gpt-6-sol", "gpt-6.1-sol", "gpt-5.4-mini", "gpt-5", "o4-mini", "gpt-3.5-turbo-16k",
+             "grok-4.20-0309-non-reasoning", "grok-4.20-multi-agent-0309", "grok-build-0.1",
+             "claude-haiku-4-5", "claude-opus-5", "gemini-2.5-flash-lite", "qwen/qwen3-32b"];
+console.log(JSON.stringify(ids.map(i => { const s = seriesOf(i); return [s.base, s.variant, prettyModel(s.base), variantLabel(s.variant)]; })));
+""", encoding="utf-8")
+    import subprocess
+
+    r = subprocess.run(["node", str(f)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    got = {row[0] + "|" + row[1]: (row[2], row[3]) for row in json.loads(r.stdout)}
+    assert got["gpt-6|sol"] == ("GPT-6", "Sol")
+    assert got["gpt-6.1|sol"] == ("GPT-6.1", "Sol")
+    assert got["gpt-5.4|mini"] == ("GPT-5.4", "Mini")
+    assert got["gpt-5|"] == ("GPT-5", "Standard")
+    assert got["o4|mini"] == ("o4", "Mini")
+    assert got["gpt-3.5|turbo-16k"] == ("GPT-3.5", "Turbo 16k")
+    assert got["grok-4.20|0309-non-reasoning"] == ("Grok 4.20", "Non-reasoning 0309")
+    assert got["grok-4.20|multi-agent-0309"] == ("Grok 4.20", "Multi agent 0309")
+    assert got["grok-build-0.1|"] == ("Grok Build 0.1", "Standard")
+    assert got["claude-haiku-4-5|"] == ("Claude Haiku 4.5", "Standard")
+    assert got["claude-opus-5|"] == ("Claude Opus 5", "Standard")
+    assert got["gemini-2.5|flash-lite"] == ("Gemini 2.5", "Flash lite")
+    assert got["qwen3-32b|"] == ("Qwen3 32B", "Standard")
+
+
+def test_every_page_names_a_model_the_way_people_read_it(tmp_path):
+    """One helper names a model everywhere — the rail's foot, Overview's
+    providers and spend, My models, the Switch menu — and the id stays on the
+    tooltip for code."""
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    src = js[js.index("const ML_VARIANT = new Set("):js.index("// A model line, as the same model card")]
+    f = tmp_path / "mn.js"
+    f.write_text("const PT = { data: null };\n" + src + """
+console.log(JSON.stringify(["accounts/fireworks/models/glm-5p3-flash", "gpt-6-astra", "claude-sonnet-5-5",
+  "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b", "grok-4.7", "o3-mini"].map(modelName)));
+PT.data = { models: [{ name: "GLM 5.3 Flash (from the list)", routes: [{ model: "accounts/fireworks/models/glm-5p3-flash" }] }] };
+console.log(JSON.stringify(modelName("accounts/fireworks/models/glm-5p3-flash")));
+""", encoding="utf-8")
+    import subprocess
+
+    r = subprocess.run(["node", str(f)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    first, second = r.stdout.strip().splitlines()
+    assert json.loads(first) == ["GLM 5.3 Flash", "GPT-6 Astra", "Claude Sonnet 5.5",
+                                 "Nemotron Lightning 3.5 30B A3B", "Grok 4.7", "o3 Mini"]
+    # a per-token model is named by its provider's own list when it has one
+    assert json.loads(second) == "GLM 5.3 Flash (from the list)"
+    # ...and it is the name on every page that shows one
+    rail = js[js.index("function renderTopStatus(o) {"):]
+    assert 'el("span","rf-v", o.current && o.current.model ? modelName(cur) : cur)' in rail
+    assert "const sub = f.last_model ? modelName(f.last_model)" in js
+    assert '"Sessions <b>estimated</b> at <b>" + esc(modelName(pr.model)) + "</b> rates' in js
+    assert '" tokens at " + ((sp.pricing || {}).model ? modelName(sp.pricing.model) : "current")' in js
+    assert "label: modelName(a.model), mark:" in js
+    assert "function ensurePerTokenNames() {" in js

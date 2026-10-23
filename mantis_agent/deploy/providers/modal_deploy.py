@@ -592,7 +592,8 @@ class ModalDeployProvider:
             try:
                 out = await self._cli(["app", "list", "--json"], timeout_s=30.0)
                 cache = (now, self._parse_app_list(out))
-            except Exception:  # noqa: BLE001 — no CLI, no auth: fall back
+            except Exception as e:  # noqa: BLE001 — no CLI, no auth: say so, never probe
+                self._apps_error = str(e) or type(e).__name__
                 return None
             self._apps_cache = cache
         live = [a for a in cache[1] if a["name"] == app_name and a["state"] != "stopped"]
@@ -612,41 +613,47 @@ class ModalDeployProvider:
 
         A Modal endpoint that has scaled to zero boots a GPU container for any
         request that reaches it — /health included — and bills from then. So
-        this asks the control plane first: stopped is stopped, no containers is
-        asleep, and only an app that already has a container up gets an HTTP
-        health probe (which then costs nothing extra)."""
+        this reads the control plane only: stopped is stopped, no containers is
+        asleep, a container up is running or booting by its log. When the
+        control plane can't be read (no ``modal`` package here, no signed-in
+        profile) the state is unknown — it used to fall back to probing
+        /health, which booted an H200 ×4 every time a dashboard listed it."""
         if not dep.endpoint_url:
             dep.status = "unknown"
             dep.message = "no endpoint URL recorded"
             return dep
         seen = await self._app_tasks(dep.id)
-        if seen is not None:
-            state, n = seen
-            if state == "stopped":
-                dep.status, dep.message = "deleted", "the Modal app is stopped"
-                return dep
-            if state == "missing":
-                dep.status = "unknown"
-                dep.message = "not in this Modal workspace's app list (another profile?)"
-                return dep
-            if n == 0:
-                dep.status = "scaled_to_zero"
-                dep.message = "asleep — no containers up; the first request wakes one"
-                return dep
-            # A container is up. Even then, no HTTP: every request through
-            # Modal's proxy resets the scale-down timer, so a status check
-            # that probed /health would keep an idle GPU billing for as long
-            # as a dashboard stayed open. The container log says whether the
-            # server inside it has finished booting.
-            ready = await self._ready_from_log(dep)
-            if ready is None:
-                dep.status, dep.message = "running", f"{n} container{'s' if n != 1 else ''} up"
-            elif ready:
-                dep.status, dep.message = "running", f"ready — {n} container{'s' if n != 1 else ''} up"
-            else:
-                dep.status, dep.message = "starting", "a container is booting — loading the weights"
+        if seen is None:
+            why = getattr(self, "_apps_error", "") or "the app list is unreadable"
+            dep.status = "unknown"
+            dep.message = (f"can't read Modal's app list here ({why}) — the endpoint isn't checked, "
+                           "because any request to it wakes the GPU")
             return dep
-        return await self._probe_health(dep)
+        state, n = seen
+        if state == "stopped":
+            dep.status, dep.message = "deleted", "the Modal app is stopped"
+            return dep
+        if state == "missing":
+            dep.status = "unknown"
+            dep.message = "not in this Modal workspace's app list (another profile?)"
+            return dep
+        if n == 0:
+            dep.status = "scaled_to_zero"
+            dep.message = "asleep — no containers up; the first request wakes one"
+            return dep
+        # A container is up. Even then, no HTTP: every request through
+        # Modal's proxy resets the scale-down timer, so a status check
+        # that probed /health would keep an idle GPU billing for as long
+        # as a dashboard stayed open. The container log says whether the
+        # server inside it has finished booting.
+        ready = await self._ready_from_log(dep)
+        if ready is None:
+            dep.status, dep.message = "running", f"{n} container{'s' if n != 1 else ''} up"
+        elif ready:
+            dep.status, dep.message = "running", f"ready — {n} container{'s' if n != 1 else ''} up"
+        else:
+            dep.status, dep.message = "starting", "a container is booting — loading the weights"
+        return dep
 
     async def _ready_from_log(self, dep: Deployment) -> bool | None:
         """Has the newest container reported "Application startup complete"?

@@ -155,6 +155,24 @@ PRICING_TABLE: Final[dict[tuple[str, str], Pricing]] = {
     ("fireworks", "llama-3.3-70b-instruct"): Pricing(0.90, 0.90),
     ("fireworks", "llama-3.1-70b-instruct"): Pricing(0.90, 0.90),
     ("fireworks", "deepseek-v3"): Pricing(0.90, 0.90),
+    # Fireworks serverless, standard tier (in / out / cached in) —
+    # docs.fireworks.ai/serverless/pricing + fireworks.ai/models, October 2026.
+    # Keyed by the library slug (``accounts/fireworks/models/<slug>``);
+    # ``deploy.serverless`` reads these rows exactly for the Deploy sheet.
+    ("fireworks", "glm-5p3-flash"): Pricing(0.15, 0.50, 0.03),
+    ("fireworks", "glm-5p3"): Pricing(1.40, 4.40, 0.26),
+    ("fireworks", "kimi-k3"): Pricing(3.00, 15.00, 0.30),
+    ("fireworks", "deepseek-v4p1-flash"): Pricing(0.30, 1.20, 0.006),
+    ("fireworks", "deepseek-v4p1-flash-1017"): Pricing(0.30, 1.20, 0.006),
+    ("fireworks", "gpt-oss-120b"): Pricing(0.15, 0.60, 0.015),
+    ("fireworks", "minimax-m3"): Pricing(0.30, 1.20, 0.06),
+    ("fireworks", "minimax-m3p1-flash"): Pricing(0.15, 0.60, 0.015),
+    ("fireworks", "qwen3p8-max"): Pricing(2.00, 6.00, 0.25),
+    ("fireworks", "muse-spark-open"): Pricing(1.25, 4.25, 0.15),
+    ("fireworks", "inkling"): Pricing(1.00, 4.05, 0.17),
+    ("fireworks", "ember-1"): Pricing(3.00, 15.00, 0.30),
+    ("fireworks", "nemotron-3-ultra-nvfp4"): Pricing(0.60, 2.40, 0.12),
+    ("fireworks", "nemotron-lightning-3p5-30b-a3b"): Pricing(0.05, 0.20, 0.01),
     # ------------------------------------------------------------------
     # Groq — extremely low input price, slightly higher completion
     # ------------------------------------------------------------------

@@ -2808,13 +2808,56 @@ def deploy_inspect(model: str | None, *, ttl_s: float = INSPECT_TTL_S) -> dict[s
         except Exception as e:  # noqa: BLE001 — one provider's outage must not blank the panel
             entry["error"] = _deploy_err(e)["error"]
         fits.append(entry)
+    # Before any GPU: the providers that already serve this model on their
+    # own fleet, billed per token — nothing to boot, scale or stop.
+    try:
+        per_token = [_dc(o) for o in _run_async(_dm.per_token_offers, model)]
+    except Exception:  # noqa: BLE001 — a bonus row, never a failed inspect
+        per_token = []
     out = _deploy_redact({"ok": True, "model": _dc(info), "fits": fits,
-                          "recommended": _recommend_gpu(fits),
+                          "recommended": _recommend_gpu(fits), "per_token": per_token,
                           "checked_at": time.time(), "cache_ttl_s": ttl_s,
                           "hf_token_set": hf_token_set()})
     with _deploy_lock:
         _inspect_cache[model] = (now, out)
     return out
+
+
+def deploy_per_token() -> dict[str, Any]:
+    """The Deploy page's "Use now" list: every model a connected provider
+    serves per token, which one mantis is on, and who it came from. One cached
+    provider call; nothing is created or woken."""
+    from . import catalog  # noqa: PLC0415
+    from .deploy import manager as _dm  # noqa: PLC0415
+
+    try:
+        rows = [_dc(o) for o in _run_async(_dm.per_token_catalog)]
+    except Exception as e:  # noqa: BLE001
+        return {**_deploy_err(e), "models": []}
+    last = catalog.get_last_model() or {}
+    cur, cur_b = last.get("model"), (last.get("backend") or "").rstrip("/")
+    for r in rows:
+        for rt in r["routes"]:
+            rt["in_use"] = rt["model"] == cur and (not cur_b or rt["backend"].rstrip("/") == cur_b)
+        r["in_use"] = any(rt["in_use"] for rt in r["routes"])
+    return {"ok": True, "models": rows, "current": cur}
+
+
+def deploy_use_per_token(provider: Any, hf_model: Any, model: Any,
+                         token_id: Any = None, token_secret: Any = None) -> dict[str, Any]:
+    """Switch mantis to a per-token offer from the Deploy sheet. Nothing is
+    deployed: the provider's own serving answers, and the bill is per token."""
+    from .deploy import serverless as _sl  # noqa: PLC0415
+
+    hf = str(hf_model or "").strip()
+    try:
+        r = _sl.use_offer(str(provider or ""), hf_model=hf, model=str(model or ""),
+                          token_id=str(token_id or ""), token_secret=str(token_secret or ""))
+    except Exception as e:  # noqa: BLE001
+        return _deploy_err(e)
+    with _deploy_lock:
+        _inspect_cache.pop(hf, None)
+    return {"ok": True, **r}
 
 
 # -- jobs: deploy / teardown run in the background; the page polls -------------
@@ -4042,6 +4085,10 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/api/deploy/down":
                 self._json(deploy_down(body.get("id")))
                 return
+            if path == "/api/deploy/per-token/use":
+                self._json(deploy_use_per_token(body.get("provider"), body.get("hf_model"), body.get("model"),
+                                                body.get("token_id"), body.get("token_secret")))
+                return
             self._send(404, b"not found", "text/plain; charset=utf-8")
         except Exception as e:  # noqa: BLE001
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
@@ -4160,6 +4207,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/deploy/inspect":
             self._json(deploy_inspect((q.get("model") or [""])[0]))
+            return
+        if path == "/api/deploy/per-token":
+            self._json(deploy_per_token())
             return
         if path == "/api/deploy/list":
             self._json(deploy_list((q.get("refresh") or ["0"])[0]))

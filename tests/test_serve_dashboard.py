@@ -540,7 +540,7 @@ def test_new_endpoints_over_http_and_page_sections(home):
         page = html.decode()
         assert code == 200
         for marker in ("renderFamilies", "renderSpend", "renderActivityPage", "ctxChart", "openRun",
-                       "fam-grid", "spend-card", "Local models", "sessfind",
+                       "fam-grid", "spend-card", "mm-addrow", "sessfind",
                        "CHORDS", "visibilitychange", "prefers-color-scheme: dark", "max-width: 900px",
                        'data-v="home" class="on"><i class="ic" data-i="home"></i>', "mm-grid", "myModelCard",
                        'id="rail"', 'id="crumb"', "ICONS", "paintSubs", "ov-tiles"):

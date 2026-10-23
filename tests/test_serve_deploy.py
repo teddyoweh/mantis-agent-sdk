@@ -104,7 +104,7 @@ def fake(tmp_path, monkeypatch):
             "console_url": FakeGpu.console_url, "scale_to_zero": True, "public_by_default": True})
         return d
 
-    state = {"configured": False, "validate_fails": False, "logs_unsupported": False}
+    state = {"configured": False, "validate_fails": False, "logs_unsupported": False, "per_token": []}
 
     def make_dep(status="running"):
         return Deployment(
@@ -141,6 +141,14 @@ def fake(tmp_path, monkeypatch):
         if model == "missing/model":
             raise DeployError("not found on the Hub", hint="check the id")
         return info
+
+    async def per_token_offers(model):
+        rec("per_token_offers", model)
+        return list(state["per_token"])
+
+    async def per_token_catalog():
+        rec("per_token_catalog")
+        return list(state.get("catalog") or [])
 
     async def search_models(query="", *, limit=25, sort="trending"):
         rec("search_models", query, limit, sort)
@@ -198,7 +206,8 @@ def fake(tmp_path, monkeypatch):
 
     for name, fn in [("providers", providers), ("save_credentials", save_credentials), ("validate", validate),
                      ("gpus", gpus_fn), ("inspect_model", inspect_model), ("search_models", search_models),
-                     ("fit", fit), ("deploy", deploy), ("status", status),
+                     ("fit", fit), ("deploy", deploy), ("status", status), ("per_token_offers", per_token_offers),
+                     ("per_token_catalog", per_token_catalog),
                      ("list_deployments", list_deployments), ("logs", logs), ("connect", connect),
                      ("teardown", teardown)]:
         monkeypatch.setattr(manager, name, fn)
@@ -858,9 +867,10 @@ def test_the_deploy_sheet_is_one_decision(fake):
     for gone in ("function renderFit", "function fitTable", "function confirmDeploy", "function pickModel",
                  "function openJobSheet", "function renderDeployDone", "function providerToggle", 'id = "dp-fit"'):
         assert gone not in js, gone
-    # the server's recommendation is selected and listed first
+    # the server's recommendation is listed first, and selected unless a
+    # provider already serves the model per token (that row comes first)
     assert "const isRec = o =>" in sheet and "opts.sort((a, b) => (isRec(b) - isRec(a))" in sheet
-    assert "let sel = opts[0];" in sheet
+    assert "let sel = pts.find(o => o.pt.ready) || opts[0] || pts[0];" in sheet
     # only cards that hold it, are in stock, and shard the way vLLM can
     assert 'if (g.verdict === "no" || g.available === false) return;' in sheet
     assert "if (g.count > 1 && ![2, 4, 8].includes(g.count)) return;" in sheet
@@ -949,14 +959,18 @@ def test_page_carries_the_deploy_sections_and_key_binding(fake):
     for pid in ("runpod", "hf", "modal", "deepinfra", "baseten", "vastai"):
         assert f'"{pid}"' in page, pid
     assert "cdn." not in page and "googleapis" not in page
-    # Section order: what is Active → the model picker → the providers folded
-    # to one line. The providers lead only while nothing can deploy yet.
+    # Section order: who you're connected to → what is Active → what you can
+    # use right now, per token → usage → your own copy on a GPU. The providers
+    # lead as chips; their full cards open only while nothing is connected.
     js = page.split("<script>")[1]
     load = js[js.index("async function loadDeploy() {"):js.index("function renderProvSection(")]
-    order = [load.index('section(pad, "Active")'), load.index("if (!ready.length) pad.append(pSec);"),
-             load.index("renderDpPicker(mSec);"), load.index("if (ready.length) pad.append(pSec);")]
+    order = [load.index('pSec.id = "dp-provsec"; pad.append(pSec);'), load.index('section(pad, "Active")'),
+             load.index('section(pad, "Usage")'), load.index('section(pad, "Run your own on a GPU"'),
+             load.index("renderDpPicker(mSec);")]
     assert order == sorted(order), order
-    assert "renderProvSection(pSec, !ready.length);" in load
+    assert "renderProvSection(pSec, !ready.length);" in load and "loadPerToken();" in load
+    # the per-token models live on My models; Deploy links there
+    assert 'section(pad, "Use now' not in js
     assert 'section(pad, "Pick a model"' not in js
     # the page is never scoped to one provider: the sheet looks across all
     for gone in ("providerToggle", "setDeployProvider", "dp-ptoggle\"", "f.provider === DEPLOY.provider"):
@@ -1440,7 +1454,7 @@ def test_my_models_has_a_self_hosted_family_that_connects_through_the_job():
     assert 'fid === "selfhost" ? hostMark()' in js
     # the card: the model's maker, where it runs, and the hourly GPU rate
     assert 'a.dep ? orgMark(_orgOf(a.model))' in js
-    assert '"GPU while running"' in js
+    assert 'fmtRate(r) + " GPU while running"' in js
     # current means mantis points at ITS endpoint, not a same-named rented model
     assert "const on = a.dep ? !!a.dep.in_use : (a.model === cur && !MM_SELFCUR);" in js
     # switching goes through the cold-start-aware connect job, shown on the button
@@ -1468,3 +1482,226 @@ def test_serve_reads_settings_env_like_the_terminal(monkeypatch, tmp_path):
     assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "sk-ant-oat-saved"
     assert os.environ["OPENAI_API_KEY"] == "from-shell"
     assert "GEMINI_API_KEY" not in os.environ and set(got) == {"ANTHROPIC_AUTH_TOKEN"}
+
+
+# ---------------------------------------------------------------------------
+# per token: a provider's own serving, offered before any GPU
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_carries_per_token_offers_and_survives_their_failure(fake, monkeypatch):
+    from mantis_agent.deploy import manager
+    from mantis_agent.deploy.serverless import Offer
+
+    serve = fake["serve"]
+    fake["state"]["configured"] = True
+    fake["state"]["per_token"] = [Offer(
+        provider="fireworks", display_name="Fireworks", kind="serverless",
+        model="accounts/fireworks/models/model-8b", backend="https://api.fireworks.ai/inference/v1",
+        price_in=0.15, price_out=0.5, price_cached=0.03, ready=True, auth_ready=True, logo="fireworks-dedicated")]
+    r = serve.deploy_inspect("org/model-8b", ttl_s=0)
+    assert r["ok"] and r["per_token"][0]["model"] == "accounts/fireworks/models/model-8b"
+    assert r["per_token"][0]["price_out"] == 0.5 and r["per_token"][0]["ready"] is True
+    assert r["fits"]  # the GPUs are still there, below
+
+    async def boom(model):
+        raise RuntimeError("fireworks down")
+
+    monkeypatch.setattr(manager, "per_token_offers", boom)
+    r = serve.deploy_inspect("org/model-8b", ttl_s=0)
+    assert r["ok"] and r["per_token"] == [] and r["fits"]
+
+
+def test_use_per_token_switches_and_busts_the_sheet_cache(fake, monkeypatch):
+    from mantis_agent.deploy import serverless
+
+    serve = fake["serve"]
+    seen = {}
+
+    def use_offer(provider, *, hf_model, model="", token_id="", token_secret=""):
+        seen.update(provider=provider, hf_model=hf_model, model=model, token_id=token_id, token_secret=token_secret)
+        if provider == "nope":
+            from mantis_agent.deploy.base import DeployError
+            raise DeployError("no per-token offer from 'nope'", hint="pick a row")
+        return {"model": model, "backend": "https://api.fireworks.ai/inference/v1", "provider": provider}
+
+    monkeypatch.setattr(serverless, "use_offer", use_offer)
+    serve.deploy_inspect("org/model-8b")
+    assert "org/model-8b" in serve._inspect_cache
+    r = serve.deploy_use_per_token("fireworks", " org/model-8b ", "accounts/fireworks/models/model-8b")
+    assert r == {"ok": True, "model": "accounts/fireworks/models/model-8b",
+                 "backend": "https://api.fireworks.ai/inference/v1", "provider": "fireworks"}
+    assert seen["hf_model"] == "org/model-8b" and seen["token_id"] == ""
+    assert "org/model-8b" not in serve._inspect_cache
+    bad = serve.deploy_use_per_token("nope", "org/model-8b", "x", "wk-" + SECRET_VALUE, "ws-x")
+    assert bad["ok"] is False and bad["hint"] == "pick a row"
+
+    httpd, base = _boot(token="tok123")
+    try:
+        req = urllib.request.Request(base + "/api/deploy/per-token/use", method="POST",
+                                     data=json.dumps({"provider": "fireworks", "hf_model": "org/model-8b",
+                                                      "model": "accounts/fireworks/models/model-8b"}).encode(),
+                                     headers={"Content-Type": "application/json", "X-Mantis-Token": "tok123"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert json.loads(resp.read())["ok"] is True
+        req = urllib.request.Request(base + "/api/deploy/per-token/use", method="POST", data=b"{}",
+                                     headers={"Content-Type": "application/json"})
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(req, timeout=5)
+        assert ei.value.code == 401
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_the_sheet_offers_per_token_first_and_hides_the_gpu_parts_for_it(fake):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    sheet = js[js.index("function paintDeploySheet(body, id, r) {"):js.index("function noGpuPanel(")]
+    # its own section, above the GPUs, which are relabelled as the other way
+    assert sheet.index('"Per token — on their serving, no GPU"') < sheet.index('"Or your own GPU, by the hour"')
+    # nothing to offer only when there is neither
+    assert "if (!opts.length && !pts.length) { body.append(noGpuPanel(m, r, runnable)); return; }" in sheet
+    # choosing one switches mantis — nothing is deployed, so no GPU warning,
+    # engine, gate or "switch once it answers" box applies
+    assert 'gpuOnly.forEach(n => { n.style.display = isPt() ? "none" : ""; });' in sheet
+    for part in ("gpuOnly.push(cold)", "gpuOnly.push(adv)", "gpuOnly.push(ul)"):
+        assert part in sheet, part
+    # ...but the GPU list itself stays, or there'd be no way back to a GPU
+    assert "gpuOnly.push(sec)" not in sheet
+    assert 'post("/api/deploy/per-token/use", req)' in sheet
+    assert 'go.textContent = "Use it" + priced;' in sheet
+    # Modal's shared endpoint is made on Modal; the sheet links there and
+    # waits for the model id (and the proxy token when it isn't saved)
+    assert "go.disabled = !(hostOk && tokOk);" in sheet and "p.setup_url" in sheet
+    assert ".ds-setup {" in css
+    # "B300 288GB ×2 ×2": a label that carries its count isn't counted twice
+    assert ".replace(/\\s*×\\s*\\d+$/, \"\")) + (g.count > 1" in js
+
+
+def test_gpu_name_writes_the_count_once(tmp_path):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    i = js.index("const gpuName = g =>")
+    src = js[i:js.index("\n", js.index("g.count > 1 ? \" ×\"", i))] + "\n"
+    f = tmp_path / "g.js"
+    f.write_text(src + 'console.log(JSON.stringify([gpuName({family: "other", label: "B300 288GB ×2", count: 2}),'
+                       ' gpuName({family: "H200", label: "H200 141GB ×4", count: 4}),'
+                       ' gpuName({family: "other", label: "B300 288GB", count: 1})]));', encoding="utf-8")
+    r = subprocess.run(["node", str(f)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == ["B300 288GB ×2", "H200 ×4", "B300 288GB"]
+
+
+def test_the_per_token_list_says_which_one_mantis_is_on(fake):
+    from mantis_agent import catalog
+    from mantis_agent.deploy.serverless import Route, Served
+
+    serve = fake["serve"]
+    assert serve.deploy_per_token() == {"ok": True, "models": [], "current": None}
+    fw = "https://api.fireworks.ai/inference/v1"
+    or_ = "https://openrouter.ai/api/v1"
+    fake["state"]["catalog"] = [
+        Served(name="GLM 5.3 Flash", hf_id="zai-org/GLM-5.3-Flash", tools=True, routes=(
+            Route(provider="fireworks", provider_name="Fireworks", model="accounts/fireworks/models/glm-5p3-flash",
+                  backend=fw, price_in=0.15, price_out=0.5, connected=True),)),
+        Served(name="Kimi K3", hf_id="moonshotai/Kimi-K3", tools=True, routes=(
+            Route(provider="fireworks", provider_name="Fireworks", model="accounts/fireworks/models/kimi-k3",
+                  backend=fw, price_in=3.0, price_out=15.0, connected=True),
+            Route(provider="openrouter", provider_name="OpenRouter", model="moonshotai/kimi-k3", backend=or_,
+                  price_in=0.24, price_out=11.9, needs="an OpenRouter key")))]
+    catalog.set_last_model("accounts/fireworks/models/kimi-k3", fw)
+    r = serve.deploy_per_token()
+    assert [m["name"] for m in r["models"]] == ["GLM 5.3 Flash", "Kimi K3"]
+    assert [m["in_use"] for m in r["models"]] == [False, True]
+    assert [rt["in_use"] for rt in r["models"][1]["routes"]] == [True, False]
+    assert r["models"][1]["routes"][1]["needs"] == "an OpenRouter key"
+    assert r["current"] == "accounts/fireworks/models/kimi-k3"
+    httpd, base = _boot(token="tok123")
+    try:
+        with urllib.request.urlopen(base + "/api/deploy/per-token", timeout=5) as resp:
+            body = json.loads(resp.read())
+        assert body["ok"] and len(body["models"]) == 2
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_the_deploy_page_leads_with_who_is_connected_and_what_you_can_use(fake):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js, css = INDEX_HTML.split("<script>")[1], INDEX_HTML.split("<style>")[1].split("</style>")[0]
+    prov = js[js.index("function renderProvSection("):js.index("// ---- use now: per token")]
+    # a chip per connected provider; "Connected" only when the provider
+    # confirmed it (a validated key, or the per-token list it just served)
+    assert "const ok = ready && ((p.account && p.account.ok) || provGivesN(p) > 0);" in prov
+    assert '"Connected"' in prov and '"Key rejected"' in prov and "reqShort(p)" in prov
+    # saved keys are checked once per visit, read-only, behind the paint
+    assert 'post("/api/deploy/validate", { provider: p.id })' in js and "validateSaved();" in js
+    # the per-token list: one row per model, price, one click to use
+    pt = js[js.index("// ---- use now: per token"):js.index("// ---- providers strip ----")]
+    assert 'api("/api/deploy/per-token")' in pt and 'post("/api/deploy/per-token/use"' in pt
+    # a per-token model is a model card: one action, none on the one in use
+    assert 'el("div","mcard mmcard pt-card"' in pt and 'el("button","mbtn", "Use model")' in pt
+    assert "if (pick && pick.connected && !pick.in_use) {" in pt
+    # the provider list appears only when there is a choice to make
+    assert 'rs.style.display = routes.length > 1 ? "" : "none";' in pt
+    # every provider that serves the model is on its row: the connected ones
+    # are picked from, the rest open their own connect sheet
+    assert "if (!rt.connected) { connectRoute(m, rt); return; } pick = rt; paint(); };" in pt
+    assert 'openConnectSheet("oss", rt.provider);' in pt
+    # key-only providers (Cerebras, OpenRouter) get a connected chip of their own
+    assert "deployIds.has(PROV_OF_PT[r.provider])" in prov
+    # a model you can use per token isn't flagged as not fitting a GPU
+    rows = js[js.index("function renderModelRows(grid, r) {"):js.index("// DEPLOY — two clicks from a model")]
+    assert 'if (vcls) vs.className = vcls === "red" ? "bad" : "amb";' in rows and 'el("span", null, "Per token")' in rows
+    assert rows.index("if (!pt) {") < rows.index("vcls = frac > 1")
+    # the card's facts are one quiet line, the same line My models draws
+    assert 'const stats = el("div","mmeta");' in rows and "stat(" not in rows
+    # records mantis can't call fold into one line, never a card each
+    assert "const isStale = it =>" in js and "activeItems().filter(it => !isStale(it))" in js
+    assert '"drops mantis\'s record only — nothing is stopped on the provider"' in js
+    # a deployment's card states its age, not an uptime it can't know
+    assert '"deployed " + fmtDur(Date.now() / 1000 - d.created_at) + " ago"' in js
+    # a card per model; its providers are a list inside it, three shown
+    assert "function ptCard(m) {" in js and "const PT_SHOW = 3;" in js
+    assert '" you can use per token right now — on My models \\u2192"' in js
+    for rule in (".dp-cchip, .dp-cadd {", ".pt-routes {", ".pt-route {", ".mpt {", ".dp-stale {"):
+        assert rule in css, rule
+
+
+def test_gb_sizes_fit_their_tile(tmp_path):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    i = js.index("const fmtGb = g =>")
+    src = js[i:js.index(";\n", i) + 2]
+    f = tmp_path / "f.js"
+    f.write_text(src + "console.log(JSON.stringify([fmtGb(880.5), fmtGb(2868.2), fmtGb(19.5), fmtGb(80), fmtGb(null)]));",
+                 encoding="utf-8")
+    r = subprocess.run(["node", str(f)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == ["881 GB", "2.9 TB", "19.5 GB", "80 GB", "—"]
+
+
+def test_my_models_shows_each_per_token_model_once_first_in_open_models(fake):
+    from mantis_agent.serve_ui import INDEX_HTML
+
+    js = INDEX_HTML.split("<script>")[1]
+    load = js[js.index("async function loadModels() {"):js.index("function fillLockStrips() {")] if js.index("function fillLockStrips() {") > js.index("async function loadModels() {") else js[js.index("async function loadModels() {"):]
+    # fetched with the page, counted in its readings
+    assert 'api("/api/deploy/per-token")' in load and '{ v: ptRows.length, k: "per token" }' in load
+    # one card per model, first in the family; the raw ids it covers — and
+    # Fireworks' / Cerebras' whole raw lists, routers and twins included — go
+    assert load.index("ptRows.forEach(r => {") < load.index("m.providers.forEach(p => (p.models || []).forEach(x => {")
+    assert 'if (p.enabled && hidden(p.id, x)) return;' in load
+    assert '((pid === "fireworks" || pid === "cerebras") && ptProv.has(pid))' in load
+    # the card joins the grid's search, filters and sorts, and wears Current
+    card = js[js.index("function ptModelCard(a, fid, famName) {"):js.index("function myModelCard(a, fid, cur, famName) {")]
+    assert 'card.dataset.fam = fid;' in card and 'card.dataset.state = "ready";' in card
+    assert "if (r.in_use) card.append(modelCurrentTag());" in card
+    assert "if (a.pt) return ptModelCard(a, fid, famName);" in js
+    # Use from a card repaints My models
+    assert 'if (curView === "models") loadModels();' in js

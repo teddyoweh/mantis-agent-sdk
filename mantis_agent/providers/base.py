@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, Protocol, runtime_checkable
 
@@ -254,6 +255,9 @@ def resolve(name: str) -> type[Provider]:
     return cls
 
 
+_MODAL_SHARED_GATEWAY = re.compile(r"//inference\.[a-z0-9-]+\.modal\.direct(?:[/:]|$)")
+
+
 def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> str:
     """Best-effort backend detection from a model name OR a backend URL.
 
@@ -266,7 +270,8 @@ def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> st
     * ``vertex:anthropic`` / a ``publishers/anthropic`` URL → anthropic_vertex;
       ``bedrock:anthropic`` / a ``bedrock-runtime`` host → anthropic_bedrock;
       ``vertex:gemini`` / an ``endpoints/openapi`` URL → openai_compat.
-    * ``modal:...`` model spec or URL ending in ``modal.run`` → modal.
+    * ``modal:...`` model spec, a URL on ``modal.run``, or Modal's Shared
+      Endpoint gateway (``inference.<region>.modal.direct``) → modal.
     * URL with ``:11434`` or ``ollama`` → ollama.
     * URL with ``llamacpp`` or ``:8080`` → llamacpp.
     * URL with ``tgi`` or ``text-generation-inference`` → tgi.
@@ -311,11 +316,12 @@ def detect_provider(model_or_url: str, *, backend_hint: str | None = None) -> st
             or "/anthropic/" in s or _stripped.endswith("/anthropic")
             or s.startswith(("claude-", "claude/"))):
         return "anthropic_passthrough"
-    # Modal serverless: ``modal:workspace/app`` spec form, or any URL on
-    # the modal.run host. Checked before the generic URL fallback so a
-    # Modal endpoint doesn't silently route to the openai_compat default
-    # (which would skip Modal-Key auth + the modal backend profile).
-    if s.startswith("modal:") or "modal.run" in s:
+    # Modal serverless: ``modal:workspace/app`` spec form, any URL on the
+    # modal.run host, or Modal's Shared Endpoint gateway
+    # (``inference.<region>.modal.direct``). Checked before the generic URL
+    # fallback so a Modal endpoint doesn't silently route to the openai_compat
+    # default (which would skip Modal-Key auth + the modal backend profile).
+    if s.startswith("modal:") or "modal.run" in s or _MODAL_SHARED_GATEWAY.search(s):
         return "modal"
     if "11434" in s or "ollama" in s:
         return "ollama"

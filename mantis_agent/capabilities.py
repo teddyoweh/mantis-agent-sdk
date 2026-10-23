@@ -617,6 +617,39 @@ _FAMILY_DEFAULTS: dict[str, ModelCapability] = {
         chat_template_id="kimi",
         family_specific_stops=("<|im_end|>",),
     ),
+    # MiniMax M3 / M3.1 (Fireworks serverless, OpenRouter, MiniMax's own API).
+    # Native tool calls (Fireworks reports supportsTools for both); the window
+    # is M3's 512k — M3.1 Flash serves 1M, so this is the floor. Without it the
+    # ids fell to the generic no-tools / 8192 default and a coding task ended
+    # after one turn of prose.
+    "minimax": ModelCapability(
+        name="minimax-unknown",
+        family="minimax",
+        supports_native_tools=True,
+        context_window=512000,
+        chat_template_id="chatml",
+    ),
+    # 2026 open models served per token (Fireworks serverless, OpenRouter): all
+    # take native tool calls (Fireworks reports supportsTools for each), and
+    # the windows are what their providers serve — the smaller one where two
+    # disagree (Inkling: 1M on Fireworks, 524k on OpenRouter). Without these
+    # they fell to the no-tools / 8192 generic default.
+    "nemotron": ModelCapability(
+        name="nemotron-unknown", family="nemotron",
+        supports_native_tools=True, context_window=262144, chat_template_id="chatml",
+    ),
+    "inkling": ModelCapability(
+        name="inkling-unknown", family="inkling",
+        supports_native_tools=True, context_window=524288, chat_template_id="chatml",
+    ),
+    "muse": ModelCapability(
+        name="muse-unknown", family="muse",
+        supports_native_tools=True, context_window=1048576, chat_template_id="chatml",
+    ),
+    "ember": ModelCapability(
+        name="ember-unknown", family="ember",
+        supports_native_tools=True, context_window=1048576, chat_template_id="chatml",
+    ),
     # IBM Granite uses a ChatML-style template with <|im_end|>-style delimiters
     # (see the in-table granite row), NOT llama3 headers/<|eot_id|>. Give it its
     # own default so unknown variants (granite-3.2-2b-instruct, …) template right.
@@ -704,6 +737,11 @@ _FAMILY_HINTS: tuple[tuple[str, str], ...] = (
     ("aya", "cohere"),
     ("kimi", "kimi"),
     ("moonshot", "kimi"),
+    ("minimax", "minimax"),
+    ("nemotron", "nemotron"),
+    ("inkling", "inkling"),
+    ("muse-spark", "muse"),
+    ("ember-1", "ember"),
     ("internlm", "qwen2.5"),  # ChatML-shaped
     ("granite", "granite"),
     ("yi", "qwen2.5"),

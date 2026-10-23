@@ -1287,6 +1287,7 @@ INDEX_HTML = r"""<!doctype html>
   .now-reach b { font-weight: 600; color: var(--ink-2); }
   .now-reach.ok b { color: var(--ok); }
   .now-reach.bad b { color: var(--bad); }
+  .now-facts .now-reach { margin-left: auto; }
   .now-none { font-size: 14px; color: var(--ink-2); }
 
   /* SETUP, ONE CLICK AWAY — the provider grid is the same subject at a lower
@@ -1342,6 +1343,42 @@ INDEX_HTML = r"""<!doctype html>
   .mm-flat.on { display: block; }
   /* a group the SORT has put away, as opposed to one a filter has emptied */
   .mm-off { display: none !important; }
+  /* a family's newest few, then one quiet way to the rest of it */
+  .mm-more { display: block; margin: 8px 0 4px; padding: 6px 2px; border: 0; background: none; font: inherit;
+    font-size: 13px; font-weight: 500; color: var(--ink-3); cursor: pointer; transition: color var(--t); }
+  .mm-more:hover { color: var(--accent); }
+  /* a model line: its readable name, a chip per variant, the variant's id */
+  .mcard .mt.mname { font-family: var(--sans); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .ml-vs { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ml-v { border: 0; border-radius: 6px; padding: 4px 9px; background: var(--bg); font: inherit; font-size: 12px;
+    font-weight: 500; color: var(--ink-2); cursor: pointer; transition: background var(--t), color var(--t); }
+  .ml-v:hover { background: var(--fill); color: var(--ink); }
+  .ml-v.on { background: var(--accent-soft-2); color: var(--ink); }
+  .ml-v.off { color: var(--ink-3); }
+  .ml-v.cur::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-right: 6px; vertical-align: 1px; }
+  .ml-id { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--ink-3);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* quick picks: the same card, wearing what it is the answer to */
+  .qp-grid { margin-bottom: 4px; }
+  .qp-l { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: -2px; }
+  .mtabs .fchip.off { color: var(--ink-3); }
+  .mtabs .fchip.off .tn2 { color: var(--warn); }
+  .mm-grid.mm-flat.on { display: grid; }
+  /* add more models: a local runtime in one line, and your own server folded */
+  .mm-addrow { display: flex; align-items: center; gap: 12px; margin-top: 8px; padding: 12px 16px;
+    border-radius: var(--radius); background: var(--panel); }
+  .mm-addrow .omark { width: 28px; height: 28px; }
+  .mm-addt { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.35; }
+  .mm-addt b { font-size: 14px; font-weight: 600; }
+  .mm-addt span { font-size: 13px; color: var(--ink-3); font-family: var(--mono); }
+  .mm-own { margin-top: 8px; border-radius: var(--radius); background: var(--panel); }
+  .mm-own > summary { list-style: none; cursor: pointer; padding: 14px 16px; font-size: 14px; color: var(--ink-3); }
+  .mm-own > summary::-webkit-details-marker { display: none; }
+  .mm-own > summary b { color: var(--ink); font-weight: 600; }
+  .mm-own > summary:hover b { color: var(--accent); }
+  .mm-own[open] > summary { padding-bottom: 6px; }
+  .mm-own .selfhost-card { background: none; margin: 0; padding-top: 4px; }
 
   /* a labelled grid per source */
   .mm-glabel { display: flex; align-items: center; gap: 9px; padding: 12px 2px 8px; font-size: 14px;
@@ -1716,6 +1753,13 @@ INDEX_HTML = r"""<!doctype html>
   .ds-tight { flex: none; font-size: 12px; color: var(--warn); }
   .ds-price { flex: none; min-width: 72px; text-align: right; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 14px;
     font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ds-ptsec { margin-bottom: 18px; }
+  .ds-lblrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .ds-lblr { font-weight: 400; }
+  .ds-setup { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin-top: 8px;
+    padding: 12px 14px; border-radius: 8px; background: var(--panel-2); }
+  .ds-setup .a-link { align-self: flex-start; font-size: 14px; }
+  .ds-setup .ds-advgrid { margin-top: 0; }
   .ds-more { align-self: flex-start; border: 0; background: none; padding: 6px 2px 0; font: inherit;
     font-size: 13px; color: var(--ink-3); cursor: pointer; }
   .ds-more:hover { color: var(--ink); }
@@ -2080,6 +2124,49 @@ INDEX_HTML = r"""<!doctype html>
   .dc-inuse { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--accent); }
   .dc-inuse::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 
+  /* who mantis can reach: a chip per connected provider, then + Connect */
+  .dp-prov { margin-top: 28px; }
+  .dp-conn { display: flex; flex-wrap: wrap; gap: 8px; }
+  .dp-cchip, .dp-cadd { display: inline-flex; align-items: center; gap: 11px; padding: 10px 16px 10px 12px; border: 0;
+    border-radius: var(--radius); background: var(--panel); font: inherit; color: var(--ink); text-align: left;
+    cursor: pointer; transition: background var(--t), color var(--t); min-width: 0; }
+  .dp-cchip:hover, .dp-cadd:hover { background: var(--panel-2); }
+  .dp-cchip .mark2 { width: 24px; height: 24px; flex: none; }
+  .dp-ct { display: flex; flex-direction: column; gap: 1px; line-height: 1.3; min-width: 0; }
+  .dp-ct b { font-size: 14px; font-weight: 600; }
+  .dp-cs { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
+  .dp-cok { color: var(--ok); font-weight: 500; } .dp-cwarn { color: var(--warn); font-weight: 500; }
+  .dp-cadd { color: var(--ink-3); font-size: 14px; font-weight: 500; }
+  .dp-cadd:hover { color: var(--ink); }
+  .dp-cplus { width: 24px; text-align: center; font-size: 18px; line-height: 1; }
+  .dp-stale { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--ink-3); }
+  .dp-stale .b { padding: 3px 9px; font-size: 13px; }
+
+  /* a per-token model is a model card; when 2+ providers serve it, it lists them */
+  .pt-routes { display: flex; flex-direction: column; gap: 4px; }
+  .pt-route { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 7px 10px; border: 0;
+    border-radius: 6px; background: var(--bg); font: inherit; font-size: 13px; color: var(--ink-2); text-align: left;
+    cursor: pointer; transition: background var(--t), color var(--t); }
+  .pt-route:hover { background: var(--fill); color: var(--ink); }
+  .pt-route.on { background: var(--accent-soft-2); color: var(--ink); }
+  .pt-route .mark2 { width: 16px; height: 16px; flex: none; }
+  .pt-route .ds-radio { width: 13px; height: 13px; }
+  .pt-route.on .ds-radio { box-shadow: inset 0 0 0 4px var(--accent); }
+  .pt-rn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pt-route b { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .pt-route.off { color: var(--ink-3); } .pt-route.off b { color: var(--ink-3); font-weight: 500; }
+  .pt-more { align-self: flex-start; border: 0; background: none; padding: 2px 2px 0; font: inherit; font-size: 12px;
+    color: var(--ink-3); cursor: pointer; }
+  .pt-more:hover { color: var(--ink); }
+  .dp-ptlink { display: inline-flex; align-items: baseline; gap: 0; margin-top: 12px; padding: 0; border: 0;
+    background: none; font: inherit; font-size: 14px; color: var(--ink-3); cursor: pointer; }
+  .dp-ptlink b { color: var(--ink); font-weight: 600; margin-right: 4px; }
+  .dp-ptlink:hover { color: var(--accent); }
+  .mpt { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+  .mpt .mark2 { width: 16px; height: 16px; flex: none; }
+  .mpt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mpt b { margin-left: auto; flex: none; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+
   /* the providers, folded to one line once one of them can deploy */
   .dp-provsum { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; border: 0;
     border-radius: var(--radius); background: var(--panel); font: inherit; color: var(--ink); text-align: left;
@@ -2394,7 +2481,11 @@ function showModal(wide) {
 function hideModal() {
   const wasConnect = typeof CONNECT !== "undefined" && CONNECT.fam && connectOpen();
   document.getElementById("modal").className = "";
-  if (wasConnect) { const d = CONNECT.dirty; CONNECT.fam = null; if (d && curView === "models") loadModels(); }
+  if (wasConnect) {
+    const d = CONNECT.dirty; CONNECT.fam = null;
+    if (d && curView === "models") loadModels();
+    if (d && curView === "deploy") loadPerToken();
+  }
 }
 document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") hideModal(); });
 window.addEventListener("keydown", e => { if (e.key === "Escape") { hideModal(); hidePalette(); } });
@@ -2641,14 +2732,15 @@ function renderFamilies(box, g) {
     card.append(el("div","fn", f.label));
     // the second line is the most specific true thing about this family: the
     // model you last ran from it, or — before you ever have — where it points
-    const sub = f.last_model ? f.last_model
+    const sub = f.last_model ? modelName(f.last_model)
       : f.id === "oss" && f.local && f.local.reachable
         ? f.local.model_count + " local model" + (f.local.model_count === 1 ? "" : "s") + " · " + f.local.loaded_count + " loaded"
       : target ? "no model used yet"
       : "not in catalog";
     // an endpoint URL is not a caption; it is still there on hover
     const sl = el("div","fm" + (f.last_model ? "" : " none"), sub);
-    sl.title = target && target.base_url ? target.base_url : sub;
+    sl.title = f.last_model ? f.last_model + (target && target.base_url ? " · " + target.base_url : "")
+      : target && target.base_url ? target.base_url : sub;
     card.append(sl);
     const fr = el("div","fr");
     // state, until you hover — then the one action that changes the state
@@ -2754,8 +2846,8 @@ function renderSpend(box, sp, win) {
   const pr = sp.pricing || {};
   const n2 = el("div","note2");
   n2.innerHTML = pr.known
-    ? "Sessions <b>estimated</b> at <b>" + esc(pr.model) + "</b> rates · runs recorded"
-    : "Sessions <b>estimated</b>" + (pr.model ? " · no price row for <b>" + esc(pr.model) + "</b>" : " · pick a model to price them");
+    ? "Sessions <b>estimated</b> at <b>" + esc(modelName(pr.model)) + "</b> rates · runs recorded"
+    : "Sessions <b>estimated</b>" + (pr.model ? " · no price row for <b>" + esc(modelName(pr.model)) + "</b>" : " · pick a model to price them");
   box.append(n2);
   const lcd = el("div","lcd tight");
   lcdCell(lcd, fmtTok(t.est_tokens), "est. tokens", "");
@@ -3135,7 +3227,7 @@ async function loadHome() {
     const toks = cut.reduce((x, d) => x + tok(d), 0);
     tile(tiles, "spend", "Spend" + (WIN ? wlab : " · " + span + "d"), priced ? "≈" + fmtUsd(usd(cut)) : fmtTok(toks),
       priced ? null : " tok",
-      priced ? fmtTok(toks) + " tokens at " + ((sp.pricing || {}).model || "current") + " rates"
+      priced ? fmtTok(toks) + " tokens at " + ((sp.pricing || {}).model ? modelName(sp.pricing.model) : "current") + " rates"
              : "no price row for this model — tokens only",
       sparkLine(cut.map(tok)), priced ? deltaEl(usd(cut), usd(prevCut), span + " days") : null);
     if (!SPEND_TOUCHED) SPEND_WIN = WIN === 7 ? 7 : 30;
@@ -3385,7 +3477,8 @@ function dtypeWords(dt) {
     : /^(U4|I4|INT4|Q4)/.test(t) ? "4-bit quantized weights" : "";
   return (w ? w + " · " : "") + "the format the weights are stored in";
 }
-const fmtGb = g => g == null ? "—" : (Number.isInteger(g) ? g : Number(g).toFixed(1)) + " GB";
+const fmtGb = g => g == null ? "—" : g >= 1000 ? (g / 1000).toFixed(1) + " TB"
+  : (g >= 100 || Number.isInteger(g) ? Math.round(g) : Number(g).toFixed(1)) + " GB";
 const fmtRate = v => v == null ? "—" : "$" + (v < 1 ? v.toFixed(3) : v.toFixed(2)) + "/h";
 const fmtParams = b => b == null ? "—" : (b >= 1000 ? (b/1000).toFixed(1) + "T" : b >= 10 ? Math.round(b) + "B" : Number(b).toFixed(1) + "B");
 const depEnv = d => d.auth_env ? d.auth_env + " (bearer)" : Object.keys(d.auth_headers || {}).length ? Object.keys(d.auth_headers).join(", ") : "none";
@@ -3423,21 +3516,24 @@ async function loadDeploy() {
     const b = el("div","banner"); const t = el("div","sp");
     t.innerHTML = "<b>Deploy isn't available:</b> " + esc(errText(pv)); b.append(t); pad.append(b);
   }
-  // What is running, and what is on its way there — the first thing on the
-  // page whenever there is any, and not on the page at all when there isn't.
+  // Who mantis can reach comes first: a chip per connected provider, and the
+  // way to connect another. Nothing below means anything until one is there.
+  const pSec = el("div","sec dp-prov"); pSec.id = "dp-provsec"; pad.append(pSec);
+  renderProvSection(pSec, !ready.length);
+  validateSaved();
+  // What is running, and what is on its way there — whenever there is any,
+  // and not on the page at all when there isn't.
   const aSec = section(pad, "Active"); aSec.id = "dp-active";
   const cards = el("div","dcards"); cards.id = "dp-cards"; aSec.append(cards);
+  // The per-token models live on My models, with every other model you can
+  // use; here they only colour the chips and the cards below.
+  loadPerToken();
   const uSec = section(pad, "Usage"); uSec.id = "dp-usage";
   loadUsage();
-  // The providers are setup: the page leads with them only while nothing can
-  // deploy yet. Once one can, they fold to one line under the models.
-  const pSec = el("div","sec dp-prov"); pSec.id = "dp-provsec";
-  if (!ready.length) pad.append(pSec);
+  // Your own copy on GPUs you rent by the hour: the model browser.
   initDeployProvider(configured);
-  const mSec = el("div","sec"); pad.append(mSec);
+  const mSec = section(pad, "Run your own on a GPU", "billed by the hour while it runs"); mSec.id = "dp-own";
   renderDpPicker(mSec);
-  if (ready.length) pad.append(pSec);
-  renderProvSection(pSec, !ready.length);
   renderActive();
   kickDeployPoll(false);
   // the store's state can be minutes old — ask the providers once, behind the paint
@@ -3446,37 +3542,220 @@ async function loadDeploy() {
   const want = new URLSearchParams(location.search).get("model");
   if (want) openDeploySheet(want);
 }
-// The providers as one line — which are ready, and the way into setup —
-// opening onto the full cards. Open by default only when none is ready.
+// The providers as chips — each connected one with what it gives you, read
+// as a state ("Connected"), then + Connect for the rest. The full cards open
+// under it on demand; they lead only while nothing is connected.
 function renderProvSection(sec, open) {
   sec.innerHTML = "";
   const configured = DEPLOY.providers.filter(p => p.configured);
-  const ready = configured.filter(p => provReady(p));
-  const sum = el("button","dp-provsum"); sum.type = "button";
-  const marks = el("span","dp-provmarks");
-  (ready.length ? ready : DEPLOY.providers).slice(0, 6).forEach(p => marks.append(providerMark(p.logo || p.id, p.display_name)));
-  const txt = el("span","dp-provtxt");
-  if (ready.length)
-    txt.append(el("b", null, ready.length + " of " + DEPLOY.providers.length + " GPU providers ready"),
-               el("span", null, " · " + ready.map(p => PROV_SHORT[p.id] || p.display_name).join(", ")));
-  else if (configured.length)
-    txt.append(el("b", null, "Finish setting up " + configured.map(p => PROV_SHORT[p.id] || p.display_name).join(", ")),
-               el("span", null, " · " + configured.map(p => reqShort(p).toLowerCase()).join(", ") + " — or connect another provider"));
-  else
-    txt.append(el("b", null, "Connect a GPU provider"),
-               el("span", null, " · paste one API key and any model below is two clicks from running"));
-  const x = el("span","dp-provx");
-  sum.append(marks, txt, x);
+  const row = el("div","dp-conn");
+  configured.forEach(p => {
+    const ready = provReady(p);
+    // "Connected" is a fact the provider confirmed — a validated key, or the
+    // per-token list it just served — never just "a key is saved"
+    const ok = ready && ((p.account && p.account.ok) || provGivesN(p) > 0);
+    const bad = ready && !ok && p.account && !p.account.ok;
+    const c = el("button","dp-cchip"); c.type = "button";
+    c.append(providerMark(p.logo || p.id, p.display_name));
+    const t = el("span","dp-ct");
+    t.append(el("b", null, p.display_name || p.id));
+    const st = el("span","dp-cs");
+    st.append(el("span","dot2 " + (ok ? "ok" : ready && !bad ? "" : "warn")),
+              el("span", ok ? "dp-cok" : ready && !bad ? "" : "dp-cwarn",
+                 ok ? "Connected" : bad ? "Key rejected" : ready ? "Checking the key…" : reqShort(p)));
+    if (ok) st.append(el("span", null, " · " + provGives(p)));
+    t.append(st);
+    c.append(t);
+    c.title = bad ? (p.account.message || "the provider turned the key away") : ready ? "check or change the key" : "install what it needs";
+    c.onclick = () => (ready ? openCredSheet(p) : openInstallSheet(p));
+    row.append(c);
+  });
+  // providers you reach by key alone (Cerebras, OpenRouter, …) are connected
+  // too, for every per-token model they serve — a chip each, from that list
+  const deployIds = new Set(configured.map(p => p.id));
+  const perToken = {};
+  ((PT.data && PT.data.models) || []).forEach(m => (m.routes || []).forEach(r => {
+    if (!r.connected || deployIds.has(PROV_OF_PT[r.provider])) return;
+    const e = perToken[r.provider] = perToken[r.provider] || { name: r.provider_name, logo: r.logo, n: 0 };
+    e.n += 1;
+  }));
+  Object.entries(perToken).forEach(([pid, e]) => {
+    const c = el("button","dp-cchip"); c.type = "button";
+    c.append(providerMark(e.logo || pid, e.name));
+    const t = el("span","dp-ct");
+    t.append(el("b", null, e.name));
+    const st = el("span","dp-cs");
+    st.append(el("span","dot2 ok"), el("span","dp-cok", "Connected"),
+              el("span", null, " · " + e.n + (e.n === 1 ? " model" : " models") + " per token"));
+    t.append(st); c.append(t);
+    c.title = "check or change the key";
+    c.onclick = () => openConnectSheet("oss", pid);
+    row.append(c);
+  });
+  const add = el("button","dp-cadd"); add.type = "button";
+  const addI = el("span","dp-cplus"), addL = el("span");
+  add.append(addI, addL);
+  row.append(add);
   const box = el("div","dp-grid"); box.id = "dp-grid";
   const set = on => {
     box.style.display = on ? "" : "none";
-    x.textContent = on ? "Hide" : (ready.length ? "Manage" : "Set up");
-    sum.setAttribute("aria-expanded", on ? "true" : "false");
+    addI.textContent = on ? "−" : "+";
+    addL.textContent = on ? "Hide providers" : configured.length ? "Add a provider" : "Add a provider — paste one API key";
+    add.setAttribute("aria-expanded", on ? "true" : "false");
     if (on && !box.childElementCount) renderDpProviders(box);
   };
-  sum.onclick = () => set(box.style.display === "none");
-  sec.append(sum, box);
+  add.onclick = () => set(box.style.display === "none");
+  sec.append(row, box);
   set(open);
+  const nPt = ((PT.data && PT.data.models) || []).length;
+  if (nPt) {
+    const l = el("button","dp-ptlink"); l.type = "button";
+    l.append(el("b", null, nPt + " model" + (nPt === 1 ? "" : "s")),
+             document.createTextNode(" you can use per token right now — on My models \u2192"));
+    l.onclick = () => { MODEL_TAB = "oss"; location.hash = "models/" + (TAB_SLUG.oss || "oss"); };
+    sec.append(l);
+  }
+  paintStale();
+}
+// what a connected provider gives you, in its chip
+const provGivesN = p => ((PT.data && PT.data.models) || [])
+  .filter(m => (m.routes || []).some(r => r.connected && PROV_OF_PT[r.provider] === p.id)).length;
+const provGives = p => {
+  const n = provGivesN(p);
+  return p.id === "fireworks-dedicated" ? (n ? n + " models per token · GPUs" : "per token · GPUs by the hour")
+    : "GPUs by the hour";
+};
+// A saved key nobody has checked would read as "Key saved" forever: on each
+// visit the page checks the ones that can run, once, behind the paint. A
+// read-only call to each provider's control plane — nothing is woken.
+const DP_CHECKED = new Set();
+async function validateSaved() {
+  const todo = DEPLOY.providers.filter(p => p.configured && provReady(p) && !p.account && !DP_CHECKED.has(p.id));
+  for (const p of todo) {
+    DP_CHECKED.add(p.id);
+    let r;
+    try { r = await post("/api/deploy/validate", { provider: p.id }); } catch (e) { continue; }
+    p.account = r.account || { ok: false, message: errText(r) };
+  }
+  const ps = document.getElementById("dp-provsec");
+  if (todo.length && ps && curView === "deploy") {
+    const g = document.getElementById("dp-grid");
+    renderProvSection(ps, !!(g && g.style.display !== "none"));
+    if (g && g.style.display !== "none") renderDpProviders(document.getElementById("dp-grid"));
+  }
+}
+const PROV_OF_PT = { fireworks: "fireworks-dedicated", modal: "modal" };
+
+// ---- use now: per token -----------------------------------------------------
+// The models a connected provider already serves on its own fleet, billed by
+// the token. For one person that is nearly always the cheap way to run an
+// open model, so the page lists them before any GPU, cheapest first. A row is
+// one model and every provider that serves it: connected ones are one click
+// (the cheapest is picked), the rest say what they'd cost and open their
+// connect sheet — so a model is never tied to the one provider you started with.
+const PT = { data: null, req: 0 };
+const ptFor = id => {
+  const k = String(id || "").toLowerCase();
+  return k ? ((PT.data && PT.data.models) || []).find(x => x.hf_id && x.hf_id.toLowerCase() === k) || null : null;
+};
+const ptBest = m => (m && (m.routes || []).find(r => r.connected)) || null;
+const ptPrice2 = r => r.price_in == null ? "—" : "$" + price2(r.price_in) + " · $" + price2(r.price_out);
+async function loadPerToken() {
+  const my = ++PT.req;
+  let r;
+  try { r = await api("/api/deploy/per-token"); } catch (e) { r = { ok: false, error: e.message, models: [] }; }
+  if (my !== PT.req) return;
+  PT.data = r;
+  if (curView !== "deploy") return;
+  const ps = document.getElementById("dp-provsec");
+  if (ps) { const g = document.getElementById("dp-grid"); renderProvSection(ps, !!(g && g.style.display !== "none")); }
+  paintModels();
+}
+// A model you can use per token, drawn as the SAME model card as every other
+// one on My models: its name, who made it and who serves it, one line of
+// facts, one action. Only when more than one connected provider serves it does
+// the card grow a list of them (cheapest picked, three shown) — the one place
+// there is a choice to make, so the one place a choice is drawn.
+const PT_SHOW = 3;
+function ptCard(m) {
+  const routes = m.routes || [];
+  let pick = routes.find(x => x.in_use) || routes.find(x => x.connected) || routes[0];
+  let open = false;
+  const card = el("div","mcard mmcard pt-card" + (m.in_use ? " on" : ""));
+  const head = el("div","mh");
+  const org = _orgOf(m.hf_id);
+  head.append(org ? orgMark(org) : providerMark((routes[0] || {}).logo, (routes[0] || {}).provider_name));
+  const tt = el("div","mtt");
+  const t = el("div","mt mname", m.name); t.title = m.hf_id || (pick && pick.model) || ""; tt.append(t);
+  const cap = el("div","mo"); tt.append(cap);
+  head.append(tt);
+  const meta = el("div","mmeta"), rs = el("div","pt-routes"), foot = el("div","mfoot");
+  card.append(head, meta, rs, foot);
+  const paint = () => {
+    const by = routes.length > 1 ? routes.length + " providers" : pick ? "via " + pick.provider_name : "";
+    cap.textContent = [org ? orgName(org) : "", by].filter(Boolean).join(" \u00b7 ");
+    cap.title = cap.textContent;
+    meta.innerHTML = "";
+    if (m.context) meta.append(el("span", null, fmtCtx(m.context) + " context"));
+    if (pick && pick.price_in != null) {
+      const c = el("span", null, ptPrice2(pick) + " / 1M");
+      c.title = ptTitle({ ...pick, display_name: pick.provider_name }); meta.append(c);
+    }
+    if (pick && pick.price_cached != null) meta.append(el("span", null, "cached $" + price2(pick.price_cached)));
+    if (!m.tools) { const w = el("span","amb", "no tool calls"); w.title = "the provider says it can't call tools"; meta.append(w); }
+    rs.innerHTML = "";
+    rs.style.display = routes.length > 1 ? "" : "none";
+    if (routes.length > 1) {
+      let shown = open ? routes : routes.slice(0, PT_SHOW);
+      if (pick && !shown.includes(pick)) shown = shown.concat([pick]);
+      shown.forEach(rt => {
+        const c = el("button","pt-route" + (rt === pick ? " on" : "") + (rt.connected ? "" : " off")); c.type = "button";
+        c.append(el("span","ds-radio"), providerMark(rt.logo || rt.provider, rt.provider_name),
+                 el("span","pt-rn", rt.provider_name), el("b", null, ptPrice2(rt)));
+        c.title = rt.provider_name + " — " + ptTitle({ ...rt, display_name: rt.provider_name })
+          + (rt.connected ? "" : "\nneeds " + rt.needs + " — click to set it up");
+        c.onclick = e => { e.stopPropagation(); if (!rt.connected) { connectRoute(m, rt); return; } pick = rt; paint(); };
+        rs.append(c);
+      });
+      if (routes.length > PT_SHOW) {
+        const more = el("button","pt-more", open ? "Fewer" : "+" + (routes.length - PT_SHOW) + " more"); more.type = "button";
+        more.onclick = e => { e.stopPropagation(); open = !open; paint(); };
+        rs.append(more);
+      }
+    }
+    // one action, the model card's own button — none on the one in use, whose
+    // Current tag already says so
+    foot.innerHTML = "";
+    if (pick && pick.connected && !pick.in_use) {
+      const b = el("button","mbtn", "Use model");
+      b.title = "switch mantis to " + m.name + " on " + pick.provider_name;
+      foot.append(b);
+    }
+  };
+  paint();
+  // the whole card is the action, as on every model card
+  card.onclick = () => { if (pick && pick.connected && !pick.in_use) usePerToken(m, pick, foot.querySelector(".mbtn")); };
+  return card;
+}
+// A provider you haven't connected: its own setup. Modal's shared endpoint
+// is made per model, so that one lives in the model's sheet.
+function connectRoute(m, rt) {
+  if (rt.provider === "modal") { if (m.hf_id) openDeploySheet(m.hf_id); return; }
+  openConnectSheet("oss", rt.provider);
+}
+async function usePerToken(m, rt, b) {
+  if (b) { b.disabled = true; b.textContent = "…"; }
+  let r;
+  try { r = await post("/api/deploy/per-token/use", { provider: rt.provider, hf_model: m.hf_id, model: rt.model }); }
+  catch (e) { r = { ok: false, error: e.message }; }
+  if (!r.ok) { toast(errText(r), true); if (b) { b.disabled = false; b.textContent = "Use model"; } return; }
+  toast("mantis now uses " + m.name + " on " + rt.provider_name + ", billed per token");
+  ((PT.data && PT.data.models) || []).forEach(x => {
+    (x.routes || []).forEach(y => { y.in_use = y.model === rt.model && y.provider === rt.provider; });
+    x.in_use = (x.routes || []).some(y => y.in_use);
+  });
+  loadOverview();
+  if (curView === "models") loadModels();
 }
 
 // ---- providers strip ----
@@ -4250,7 +4529,7 @@ function renderModelRows(grid, r) {
   shown.forEach(m => items.push(m));
   patchList(grid, items, m => m.id, m => [m.params_b, m.dtype, m.license, m.gated, m.gated_kind, DEPLOY.hfToken,
                                           m.vllm_ok, m.est_vram_gb, m.reason, m.downloads, m._pending, m.last_modified,
-                                          DEPLOY.gpuMax[DEPLOY.provider] || 0], (card, m) => {
+                                          DEPLOY.gpuMax[DEPLOY.provider] || 0, (ptBest(ptFor(m.id)) || {}).model], (card, m) => {
     card = card || el("div"); card.innerHTML = "";
     card.className = "mcard" + (m.id === DEPLOY.model ? " on" : ""); card.dataset.model = m.id;
     const slash = m.id.indexOf("/");
@@ -4267,26 +4546,34 @@ function renderModelRows(grid, r) {
     // THE READINGS. How big it is, what it costs you in hardware, how many
     // other people run it — the three questions asked of an open model, in
     // the order they get asked, in the same place on every card.
-    const stats = el("div","mstats");
-    stats.append(stat(m.params_b != null ? fmtParams(m.params_b) : pend ? "…" : "—",
-                      "params", m.params_b == null ? "mute" : ""));
+    // ONE quiet line of facts — size, the memory it needs, how many people
+    // run it — the same line My models draws, where there were three boxes
+    const stats = el("div","mmeta");
+    stats.append(el("span", null, m.params_b != null ? fmtParams(m.params_b) + " params" : pend ? "…" : "size unknown"));
     // VRAM is measured against the biggest card the chosen provider rents, so
     // the verdict — and the colour — is about what you can actually book.
     const ceil = DEPLOY.gpuMax[DEPLOY.provider] || (DEPLOY.provider === "all"
       ? Math.max(1024, ...Object.values(DEPLOY.gpuMax).concat([0])) : 1024);
+    // Served per token by a connected provider: its size is a fact, not a
+    // problem — you don't need a GPU for it — so it is never coloured as one.
+    const pt = ptBest(ptFor(m.id)) ? ptFor(m.id) : null;
     let vcls = "";
-    const vs = stat(m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : pend ? "…" : "—", "memory", "mute");
     if (m.est_vram_gb != null) {
-      const frac = m.est_vram_gb / ceil;
-      vcls = frac > 1 ? "red" : frac > 0.85 ? "amb" : "";
-      vs.className = "mstat" + (vcls ? " " + vcls : "");
-      vs.title = fmtGb(m.est_vram_gb) + " of " + fmtGb(ceil) + " available"
-               + (frac > 1 ? " — larger than anything on offer" : frac > 0.85 ? " — tight" : "");
+      const vs = el("span", null, fmtGb(m.est_vram_gb) + " memory");
+      if (!pt) {
+        const frac = m.est_vram_gb / ceil;
+        vcls = frac > 1 ? "red" : frac > 0.85 ? "amb" : "";
+        if (vcls) vs.className = vcls === "red" ? "bad" : "amb";
+        vs.title = fmtGb(m.est_vram_gb) + " of " + fmtGb(ceil) + " available"
+                 + (frac > 1 ? " — larger than anything on offer" : frac > 0.85 ? " — tight" : "");
+      }
+      stats.append(vs);
     }
-    stats.append(vs);
-    const dl = stat(m.downloads != null ? fmtTok(m.downloads) : "—", "pulls", m.downloads == null ? "mute" : "");
-    dl.title = "downloads from the Hugging Face Hub";
-    stats.append(dl);
+    if (m.downloads != null) {
+      const dl = el("span", null, fmtTok(m.downloads) + " pulls");
+      dl.title = "downloads from the Hugging Face Hub";
+      stats.append(dl);
+    }
     card.append(stats);
     // No line of small print under the numbers. Precision and licence are the
     // card's tooltip; the date sits beside the name. A line appears only when
@@ -4303,15 +4590,26 @@ function renderModelRows(grid, r) {
       const w = el("span","mwhen" + (isFresh(m) ? " fresh" : ""), short);
       w.title = when; mh.append(w);
     }
-    const warn = el("div","mwarn");
-    if (m.vllm_ok === false) { const v = el("span","bad", "vLLM can't serve it"); v.title = m.reason || ""; warn.append(v); }
-    if (vcls) warn.append(el("span", vcls === "red" ? "bad" : "amb", vcls === "red" ? "Won't fit any GPU on offer" : "Tight fit"));
-    if (warn.childElementCount) card.append(warn);
+    const ptr = ptBest(pt);
+    if (ptr) {
+      // the line that matters for this one: what it costs to use right now
+      const l = el("div","mpt");
+      l.append(providerMark(ptr.logo || ptr.provider, ptr.provider_name), el("span", null, "Per token"),
+               el("b", null, ptPrice2(ptr)));
+      l.title = "per token on " + ptr.provider_name + " — " + ptTitle({ ...ptr, display_name: ptr.provider_name })
+        + ((pt.routes || []).length > 1 ? " · " + (pt.routes.length - 1) + " more provider" + (pt.routes.length > 2 ? "s" : "") : "");
+      card.append(l);
+    } else {
+      const warn = el("div","mwarn");
+      if (m.vllm_ok === false) { const v = el("span","bad", "vLLM can't serve it"); v.title = m.reason || ""; warn.append(v); }
+      if (vcls) warn.append(el("span", vcls === "red" ? "bad" : "amb", vcls === "red" ? "Won't fit any GPU on offer" : "Tight fit"));
+      if (warn.childElementCount) card.append(warn);
+    }
     const foot = el("div","mfoot");
     const gc = gatedChip(m); if (gc) foot.append(gc);
     const sel = m.id === DEPLOY.model;
-    const go = el("button","mbtn" + (sel ? " on" : ""), sel ? "Selected ✓" : "Deploy");
-    go.title = sel ? "this is the model below" : "pick a GPU for it and deploy";
+    const go = el("button","mbtn" + (sel ? " on" : ""), sel ? "Selected ✓" : pt ? "Use or deploy" : "Deploy");
+    go.title = sel ? "this is the model below" : pt ? "use it per token, or pick a GPU for your own copy" : "pick a GPU for it and deploy";
     foot.append(go);
     card.append(foot);
     card.onclick = () => openDeploySheet(m.id);
@@ -4338,8 +4636,10 @@ function renderModelRows(grid, r) {
 // ==========================================================================
 const _orgOf = id => { const i = String(id || "").indexOf("/"); return i > 0 ? String(id).slice(0, i) : ""; };
 const shortId = id => { const s = String(id || ""), i = s.indexOf("/"); return i > 0 ? s.slice(i + 1) : s; };
-const gpuName = g => !g ? "" : (g.family && g.family !== "other" ? g.family : (g.display || g.label || g.provider_id))
-  + (g.count > 1 ? " ×" + g.count : "");
+// A label already carries its count ("B300 288GB ×2"); it is dropped here so
+// the count is written once.
+const gpuName = g => !g ? "" : (g.family && g.family !== "other" ? g.family
+  : String(g.display || g.label || g.provider_id).replace(/\s*×\s*\d+$/, "")) + (g.count > 1 ? " ×" + g.count : "");
 const provName = pid => { const p = DEPLOY.providers.find(x => x.id === pid); return (p && p.display_name) || pid || ""; };
 const depRate = d => { const c = (d && d.cost) || {};
   return c.per_hour_usd != null ? c.per_hour_usd : (d && d.gpu && d.gpu.price_per_hour != null ? d.gpu.price_per_hour : null); };
@@ -4376,6 +4676,12 @@ async function openDeploySheet(id) {
   DEPLOY.inspect = r;
   paintDeploySheet(body, id, r);
 }
+// A per-token offer's price: in then out, per 1M tokens, the same way the
+// Models page writes it.
+const ptPrice = p => p.price_in == null ? "—" : "$" + price2(p.price_in) + " · $" + price2(p.price_out);
+const ptTitle = p => p.price_in == null ? "billed per token at " + p.display_name + "'s rate — no price on file"
+  : "$" + p.price_in + " in · $" + p.price_out + " out" + (p.price_cached != null ? " · $" + p.price_cached + " cached in" : "")
+    + ", per 1M tokens";
 function paintDeploySheet(body, id, r) {
   body.innerHTML = "";
   if (r.ok === false) {
@@ -4390,8 +4696,28 @@ function paintDeploySheet(body, id, r) {
                stat(m.est_vram_gb != null ? fmtGb(m.est_vram_gb) : "—", "GPU memory"),
                stat(m.context_len ? fmtCtx(m.context_len) : "—", "context"));
   body.append(facts);
-  if (m.vllm_ok === false)
-    body.append(el("div","ds-caution", "vLLM doesn't list this architecture (" + (m.reason || "unsupported") + ") — the deploy may fail."));
+
+  // Per token first. Fireworks serves a set of open models on its own fleet
+  // and Modal on Shared Endpoints, billed by the token with nothing to boot,
+  // scale or stop — for one person that is nearly always cheaper than any GPU
+  // below, so a ready one is what the sheet starts on.
+  const pts = (r.per_token || []).map(p => ({ pt: p }));
+  const ptList = el("div","ds-gpus"), setup = el("div","ds-setup");
+  if (pts.length) {
+    const sec = el("div","ds-sec ds-ptsec");
+    const lbl = el("div","ds-lbl ds-lblrow");
+    lbl.append(el("span", null, "Per token — on their serving, no GPU"), el("span","ds-lblr", "$ per 1M in · out"));
+    sec.append(lbl, ptList, setup);
+    body.append(sec);
+  }
+
+  // Everything below is about renting a GPU, and steps aside while a
+  // per-token row is chosen.
+  const gpuOnly = [];
+  if (m.vllm_ok === false) {
+    const c = el("div","ds-caution", "vLLM doesn't list this architecture (" + (m.reason || "unsupported") + ") — the deploy may fail.");
+    body.append(c); gpuOnly.push(c);
+  }
   // A big model's first start is mostly a download, and the GPU bills while
   // it happens. Say so before the button, in minutes and dollars, not after.
   if (m.est_vram_gb != null && m.est_vram_gb >= 60) {
@@ -4401,7 +4727,7 @@ function paintDeploySheet(body, id, r) {
     cold.append(el("b", null, "First start: ~" + gb + " GB of weights to pull onto the GPU"),
                 el("span", null, " — expect " + lo + "–" + hi + " minutes before it answers, billed at the GPU rate. "
                   + "Every cold start after scaling to zero pays that again."));
-    body.append(cold);
+    body.append(cold); gpuOnly.push(cold);
   }
 
   // Where it can run. Only providers that can actually deploy offer a GPU,
@@ -4418,18 +4744,41 @@ function paintDeploySheet(body, id, r) {
   const price = o => o.g.price_per_hour == null ? 1e9 : o.g.price_per_hour;
   opts.sort((a, b) => (isRec(b) - isRec(a)) || ((a.g.verdict === "fits" ? 0 : 1) - (b.g.verdict === "fits" ? 0 : 1))
     || (price(a) - price(b)) || ((b.g.total_vram_gb || 0) - (a.g.total_vram_gb || 0)));
-  if (!opts.length) { body.append(noGpuPanel(m, r, runnable)); return; }
+  if (!opts.length && !pts.length) { body.append(noGpuPanel(m, r, runnable)); return; }
 
-  let sel = opts[0];
-  const sec = el("div","ds-sec");
-  sec.append(el("div","ds-lbl", "Runs on"));
-  const list = el("div","ds-gpus"); sec.append(list);
-  body.append(sec);
+  let sel = pts.find(o => o.pt.ready) || opts[0] || pts[0];
+  const isPt = () => !!(sel && sel.pt);
+  const list = el("div","ds-gpus");
+  if (opts.length) {
+    const sec = el("div","ds-sec");
+    sec.append(el("div","ds-lbl", pts.length ? "Or your own GPU, by the hour" : "Runs on"), list);
+    body.append(sec);   // never hidden: it is how you switch back to a GPU
+  } else {
+    body.append(el("div","ds-note", "No GPU on offer for it right now — connect a GPU provider to run it on your own."));
+  }
   const SHOW = 3; let all = false;
+  const paintPts = () => {
+    ptList.innerHTML = "";
+    pts.forEach(o => {
+      const p = o.pt;
+      const row = el("button","ds-gpu" + (o === sel ? " on" : "")); row.type = "button";
+      row.setAttribute("aria-pressed", o === sel ? "true" : "false");
+      row.append(el("span","ds-radio"), providerMark(p.logo || p.provider, p.display_name));
+      const t = el("span","ds-gt");
+      t.append(el("b", null, p.display_name + (p.kind === "shared" ? " shared endpoint" : p.kind === "serverless" ? " serverless" : "")),
+               el("span", null, p.ready ? "ready now · nothing to boot or stop" + (p.context ? " · " + fmtCtx(p.context) + " context" : "")
+                                        : "needs " + p.needs));
+      row.append(t);
+      const pr = el("span","ds-price", ptPrice(p)); pr.title = ptTitle(p);
+      row.append(pr);
+      row.onclick = () => { sel = o; paintAll(); };
+      ptList.append(row);
+    });
+  };
   const paintList = () => {
     list.innerHTML = "";
     let shown = all ? opts : opts.slice(0, SHOW);
-    if (!shown.includes(sel)) shown = shown.concat([sel]);
+    if (!isPt() && !shown.includes(sel)) shown = shown.concat([sel]);
     shown.forEach(o => {
       const p = DEPLOY.providers.find(x => x.id === o.f.provider) || {};
       const row = el("button","ds-gpu" + (o === sel ? " on" : "")); row.type = "button";
@@ -4441,7 +4790,7 @@ function paintDeploySheet(body, id, r) {
       if (isRec(o)) row.append(el("span","ds-best", "best value"));
       if (o.g.verdict === "tight") { const v = el("span","ds-tight", "tight fit"); v.title = o.g.reason || "under 15% headroom"; row.append(v); }
       row.append(el("span","ds-price", o.g.price_per_hour == null ? "—" : fmtRate(o.g.price_per_hour)));
-      row.onclick = () => { sel = o; paintList(); paintGo(); };
+      row.onclick = () => { sel = o; paintAll(); };
       list.append(row);
     });
     if (opts.length > SHOW) {
@@ -4475,20 +4824,26 @@ function paintDeploySheet(body, id, r) {
   const tl = el("label","chk ds-chk"); tl.append(trc, document.createTextNode("Trust remote code"));
   tl.title = "only for models that ship their own Python code"; ag.append(tl);
   adv.append(ag);
-  body.append(adv);
+  body.append(adv); gpuOnly.push(adv);
 
   // Opt-in, never assumed: switching the model mantis uses is a change to
   // the whole tool, and a deploy can come up and still not answer. When it is
   // ticked, the server only switches after the model answers a real prompt.
   const useC = document.createElement("input"); useC.type = "checkbox"; useC.checked = false;
   const ul = el("label","ds-use"); ul.append(useC, el("span", null, "Switch mantis to it once it answers a test prompt"));
-  body.append(ul);
+  body.append(ul); gpuOnly.push(ul);
   const note = el("div","ds-note"); body.append(note);
 
   const foot = el("div","ds-foot");
-  const go = btn("Deploy", "pri", () => doDeploy()); go.classList.add("ds-go");
+  const go = btn("Deploy", "pri", () => (isPt() ? doUse() : doDeploy())); go.classList.add("ds-go");
   foot.append(btn("Cancel", "gho", hideModal), go);
   body.append(foot);
+
+  // A Modal Shared Endpoint is made in Modal's dashboard (no API creates
+  // one), so the sheet links there and takes back the model id it shows.
+  const hostI = input("my-endpoint.us-west.modal.direct"); hostI.spellcheck = false;
+  const tokI = input("wk-…"), tokS = input("ws-…", true);
+  [hostI, tokI, tokS].forEach(i => { i.oninput = () => paintGoBtn(); });
 
   const paintEngines = () => {
     const cur = engS.value;
@@ -4496,12 +4851,52 @@ function paintDeploySheet(body, id, r) {
     (sel.f.engines && sel.f.engines.length ? sel.f.engines : ["vllm"]).forEach(e => { const o = el("option", null, e); o.value = e; engS.append(o); });
     if ([...engS.options].some(o => o.value === cur)) engS.value = cur;
   };
+  const paintGoBtn = () => {
+    if (!isPt()) return;
+    const p = sel.pt;
+    const priced = p.price_in != null ? " · " + ptPrice(p) : "";
+    if (p.ready) { go.textContent = "Use it" + priced; go.disabled = false; go.title = ptTitle(p); return; }
+    if (p.kind === "api") { go.textContent = "Connect " + p.display_name; go.disabled = false; go.title = "needs " + p.needs; return; }
+    const hostOk = !!(p.model || hostI.value.trim()), tokOk = p.auth_ready || !!(tokI.value.trim() && tokS.value.trim());
+    go.textContent = "Connect" + priced;
+    go.disabled = !(hostOk && tokOk);
+    go.title = go.disabled ? (hostOk ? "paste the proxy token" : "paste the endpoint's model id") : ptTitle(p);
+  };
   const paintGo = () => {
+    gpuOnly.forEach(n => { n.style.display = isPt() ? "none" : ""; });
+    if (gate) gate.style.display = isPt() ? "none" : "";
+    note.innerHTML = "";
+    setup.innerHTML = "";
+    if (isPt()) {
+      const p = sel.pt;
+      note.classList.remove("warn");
+      if (p.provider === "modal" && !p.ready) {
+        if (!p.model) {
+          setup.append(el("div","ds-gsub", "Shared Endpoints come with Modal's Team and Enterprise plans. Create one for this model, "
+            + "then paste the model id its request example sends."));
+          setup.append(extLink("a-link", "Create the shared endpoint on Modal ↗", p.setup_url));
+          const f1 = el("label","ds-field"); f1.append(el("span","ds-fl", "Endpoint model id"), hostI); setup.append(f1);
+        }
+        if (!p.auth_ready) {
+          const g = el("div","ds-advgrid");
+          const a = el("label","ds-field"); a.append(el("span","ds-fl", "Proxy token id"), tokI);
+          const b = el("label","ds-field"); b.append(el("span","ds-fl", "Proxy token secret"), tokS);
+          g.append(a, b); setup.append(g);
+          setup.append(extLink("a-link", "Make a proxy token ↗", "https://modal.com/settings/proxy-auth-tokens"));
+        }
+      }
+      setup.style.display = setup.childElementCount ? "" : "none";
+      note.append(el("span", null, "Billed per token by " + p.display_name + " on its own serving — no GPU to rent, "
+        + "nothing to boot or stop. mantis switches to it now."));
+      if (p.price_cached != null) note.append(el("span", null, " Cached input is $" + p.price_cached + " per 1M."));
+      paintGoBtn();
+      return;
+    }
+    setup.style.display = "none";
     const rate = sel.g.price_per_hour;
     go.textContent = "Deploy" + (rate != null ? " · " + fmtRate(rate) : "");
     go.disabled = !!gate;
     go.title = gate ? "save a Hugging Face token first" : "";
-    note.innerHTML = "";
     note.classList.toggle("warn", !sel.f.scale_to_zero);
     note.append(el("span", null, sel.f.scale_to_zero
       ? "Scales to zero when idle — you pay only while it serves; the first request after a pause waits for a cold start."
@@ -4509,6 +4904,22 @@ function paintDeploySheet(body, id, r) {
     if (sel.f.public_by_default) note.append(el("span", null, " Its URL is reachable by anyone who has it."));
     paintEngines();
   };
+  const paintAll = () => { paintPts(); paintList(); paintGo(); };
+  async function doUse() {
+    if (go.disabled) return;
+    const p = sel.pt;
+    if (!p.ready && p.kind === "api") { hideModal(); openConnectSheet("oss", p.provider); return; }
+    go.disabled = true; go.textContent = "Switching…";
+    const req = { provider: p.provider, hf_model: m.id, model: p.model || hostI.value.trim() };
+    if (p.provider === "modal" && !p.auth_ready) { req.token_id = tokI.value.trim(); req.token_secret = tokS.value.trim(); }
+    let res;
+    try { res = await post("/api/deploy/per-token/use", req); } catch (e) { res = { ok: false, error: e.message }; }
+    if (!res.ok) { toast(errText(res), true); paintGo(); return; }
+    hideModal();
+    toast("mantis now uses " + shortId(m.id) + " on " + p.display_name + ", billed per token"
+      + (res.warning ? " — " + res.warning : ""));
+    loadOverview(); loadPerToken();
+  }
   async function doDeploy() {
     if (go.disabled) return;
     go.disabled = true; go.textContent = "Starting…";
@@ -4531,7 +4942,7 @@ function paintDeploySheet(body, id, r) {
     toast(res.existing ? shortId(m.id) + " is already deploying" : "Deploying " + shortId(m.id));
     const sc = document.querySelector("#deploy .scroll"); if (sc) sc.scrollTo({ top: 0, behavior: "smooth" });
   }
-  paintList(); paintGo();
+  paintAll();
   setTimeout(() => go.focus(), 30);
 }
 // Nothing to offer: say which of the three reasons it is, and the one action
@@ -4612,10 +5023,36 @@ function activeItems() {
   items.sort((a, b) => rank(a) - rank(b) || when(b) - when(a));
   return items;
 }
+// A record mantis adopted from a provider but can't call — no endpoint and
+// nothing moving on it — isn't activity. They fold into one quiet line under
+// the providers instead of a card each.
+const isStale = it => !!(it.d && !it.job && !it.down && !it.conn && !it.d.endpoint_url && !it.d.is_live);
+function paintStale() {
+  const host = document.getElementById("dp-provsec"); if (!host) return;
+  const stale = activeItems().filter(isStale);
+  let line = document.getElementById("dp-stale");
+  if (!stale.length) { if (line) line.remove(); return; }
+  if (!line) { line = el("div","dp-stale"); line.id = "dp-stale"; }
+  host.append(line);
+  line.innerHTML = "";
+  const names = stale.map(it => it.d.name || shortId(it.d.model) || it.d.id);
+  const provs = [...new Set(stale.map(it => PROV_SHORT[it.d.provider] || it.d.provider))].join(", ");
+  line.append(el("span", null, stale.length + (stale.length === 1 ? " app" : " apps") + " on " + provs
+    + " that mantis can't call — " + names.join(", ")));
+  const f = btn(stale.length === 1 ? "Forget it" : "Forget them", "gho", async () => {
+    f.disabled = true;
+    for (const it of stale) { try { await post("/api/deploy/forget", { id: it.d.id }); } catch (e) { /* the next one */ } }
+    DEPLOY.deployments = (DEPLOY.deployments || []).filter(d => !stale.some(it => it.d.id === d.id));
+    renderActive();
+  });
+  f.title = "drops mantis's record only — nothing is stopped on the provider";
+  line.append(f);
+}
 function renderActive() {
   const sec = document.getElementById("dp-active"); if (!sec) return;
   const box = document.getElementById("dp-cards");
-  const items = activeItems();
+  const items = activeItems().filter(it => !isStale(it));
+  paintStale();
   sec.style.display = items.length ? "" : "none";
   patchList(box, items, it => it.key, it => {
     const d = it.d || {}, j = it.job || {}, dn = it.down || {};
@@ -4926,7 +5363,8 @@ function depCard(card, it) {
       : d.message || "no endpoint yet"));
     card.append(ep);
     const facts = el("div","dc-facts");
-    if (d.created_at) facts.append(el("span", null, (d.is_live ? "up " : "created ") + fmtDur(Date.now() / 1000 - d.created_at)));
+    // the record's age, not the container's — a scaled-to-zero GPU isn't "up"
+    if (d.created_at) facts.append(el("span", null, "deployed " + fmtDur(Date.now() / 1000 - d.created_at) + " ago"));
     if (d.engine) facts.append(el("span", null, d.engine));
     if (j && j.connect_error) facts.append(el("span","amb", j.connect_error));
     if (conn && conn.status === "error") facts.append(el("span","amb", "couldn't switch mantis to it — " + (conn.error || "it didn't answer")));
@@ -5075,7 +5513,6 @@ function paintDeployReads() {
   if (flying) reads.push({ v: flying, k: "deploying" });
   if (priced.length) reads.push({ v: fmtRate(burn), k: unpriced ? "burn · " + unpriced + " unpriced" : "burn" });
   else if (live.length) reads.push({ v: "—", k: "burn · unpriced" });
-  reads.push({ v: ready + " of " + DEPLOY.providers.length, k: "providers ready" });
   pageReads(w, reads, "Pick a model — it's two clicks to a running endpoint.",
     "Rates are the providers' own list prices; nothing here is billed by mantis.");
 }
@@ -5209,7 +5646,7 @@ function renderTopStatus(o) {
   f.innerHTML = "";
   f.append(el("span","live" + (h.label || h.kind === "selfhost" ? "" : " off")));
   const t = el("span","rf-t");
-  const v = el("span","rf-v", cur); t.append(v);
+  const v = el("span","rf-v", o.current && o.current.model ? modelName(cur) : cur); t.append(v);
   t.append(el("span","rf-s", "via " + (h.label || (h.kind === "selfhost" ? "your server" : "no provider")) +
     (o.deployments_live ? " · " + o.deployments_live + " deployed" : "") +
     (live ? " · " + live + " running" : "")));
@@ -5255,7 +5692,17 @@ function railCounts(o) {
   }
   paintSubs();
 }
+// the per-token names (one cached call), so the rail and Overview can say
+// "GLM 5.3 Flash" from the first page you land on
+let PT_REQ = null;
+function ensurePerTokenNames() {
+  if (PT.data || PT_REQ) return PT_REQ;
+  PT_REQ = api("/api/deploy/per-token").then(r => { if (!PT.data) PT.data = r; })
+    .catch(() => null).finally(() => { PT_REQ = null; });
+  return PT_REQ;
+}
 async function loadOverview() {
+  if (!PT.data) ensurePerTokenNames().then(() => { if (OVERVIEW && OVERVIEW.current) renderTopStatus(OVERVIEW); });
   const o = await api("/api/overview");
   OVERVIEW = o;
   renderTopStatus(o);
@@ -6176,17 +6623,26 @@ function renderAuthCards(box, r) {
   const sum = document.getElementById("provsum");
   if (sum) {
     sum.innerHTML = "";
+    // it sits under "Add more models", so it names what you could ADD; what
+    // is connected is already the grid above it
+    const rest = entries.filter(e => !conn.includes(e));
     const marks = el("span","provsum-m");
-    conn.slice(0, 6).forEach(e => { const mk = providerMark(e.logo || e.family, e.label); mk.title = e.label; marks.append(mk); });
-    if (connected) sum.append(marks);
+    (connected ? rest : entries).slice(0, 6).forEach(e => {
+      const mk = providerMark(e.logo || e.family, e.label); mk.title = e.label; marks.append(mk); });
+    if (marks.childElementCount) sum.append(marks);
     const txt = el("span");
-    txt.append(el("b", null, connected ? String(connected) + " connected" : "Nothing connected yet"));
-    txt.append(document.createTextNode(connected
-      ? " \u00b7 " + conn.slice(0, 3).map(e => e.label).join(", ") +
-        (connected > 3 ? " and " + (connected - 3) + " more" : "")
-      : " \u00b7 add a key and this machine can run models"));
+    if (!connected) {
+      txt.append(el("b", null, "Nothing connected yet"),
+                 document.createTextNode(" \u00b7 add a key and this machine can run models"));
+    } else if (rest.length) {
+      txt.append(el("b", null, rest.slice(0, 3).map(e => e.label).join(", ")
+                   + (rest.length > 3 ? " and " + (rest.length - 3) + " more" : "")),
+                 document.createTextNode(rest.length === 1 ? " isn\u2019t connected" : " aren\u2019t connected"));
+    } else {
+      txt.append(el("b", null, "Every provider is connected"));
+    }
     sum.append(txt);
-    sum.append(el("span","provsum-x", "Manage providers \u2192"));
+    sum.append(el("span","provsum-x", "Connect more \u2192"));
     if (AUTH.setProv) {
       // Setup opens itself when it IS the job (nothing connected), when a
       // deep link asked for a particular provider — a ?openprov= that landed
@@ -6823,6 +7279,14 @@ let MODEL_TAB = tabFromHash();
 // Which question the grid is answering. "family" is whose it is; the other
 // two are orderings computed from tables this machine actually has.
 let MODEL_SORT = "family";
+// which families (and the flat list, "__flat") are opened past their first few
+let MM_OPEN = {};
+// A family shows its newest few first, in the provider's own order — except
+// the ids that are not a model you'd pick: moving aliases ("chat-latest"),
+// search / audio / realtime / image variants, and retired generations. They
+// stay findable, at the back.
+const MM_BACK_RE = /(^|[-/])(chat-latest|latest)$|search|preview|audio|realtime|transcribe|tts|image|embed|moderation|instruct|-16k|gpt-3\.5|^gpt-4(-|$)|^gpt-4o|^o1(-|$)/;
+const mmBack = a => (!a.pt && !a.dep && MM_BACK_RE.test(String(a.model).toLowerCase())) ? 1 : 0;
 let applyModelFilter = null;
 let resort = () => {};
 
@@ -6850,29 +7314,41 @@ function nowRunning(pad, m) {
   const prov = provs.find(pv => (pv.models || []).includes(cur));
   const oll = m.ollama || {};
   const local = ((oll.models || []).some(o => o.name === cur));
-  const info = (m.model_info || {})[cur] || {};
-  const price = info.price || (prov ? (prov.prices || {})[cur] : null);
+  // A per-token open model is known by its name, not its provider path
+  // ("GLM 5.3 Flash", not accounts/fireworks/models/glm-5p3-flash), and its
+  // window is the one that provider serves, not the family default.
+  const ptRow = ((PT.data && PT.data.models) || []).find(r => r.in_use) || null;
+  const ptRt = ptRow ? (ptRow.routes || []).find(x => x.in_use) : null;
+  const info = { ...((m.model_info || {})[cur] || {}) };
+  if (ptRow && ptRow.context) info.ctx = ptRow.context;
+  const price = ptRt && ptRt.price_in != null ? { in: ptRt.price_in, out: ptRt.price_out, cache_read: ptRt.price_cached }
+    : info.price || (prov ? (prov.prices || {})[cur] : null);
 
   // your own deployment: the model's org wears the mark, and the route is
   // where it runs and on what, not a provider you rent tokens from
   const dep = (m.deployments || []).find(d => d.in_use);
   const top = el("div","now-top");
-  top.append(dep ? orgMark(_orgOf(cur)) : fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
+  top.append(dep ? orgMark(_orgOf(cur)) : ptRow && _orgOf(ptRow.hf_id) ? orgMark(_orgOf(ptRow.hf_id))
+    : fillMark(el("span","bigmark"), local ? "ollama" : (prov ? prov.id : ""), cur));
   const t = el("div","now-t");
-  const id = el("div","now-id", cur); id.title = cur; t.append(id);
+  const id = el("div","now-id", ptRow ? ptRow.name : cur); id.title = cur; t.append(id);
   // the route in, said once: who serves it and how mantis authenticates there
   const via = [];
   if (dep) via.push("self-hosted on " + (PROV_SHORT[dep.provider] || dep.provider) + (dep.gpu ? " \u00b7 " + gpuName(dep.gpu) : ""));
   else if (local) via.push("local \u00b7 Ollama");
+  else if (ptRow && ptRt) via.push((_orgOf(ptRow.hf_id) ? orgName(_orgOf(ptRow.hf_id)) + " \u00b7 " : "") + "via " + ptRt.provider_name, "per token");
   else if (prov) via.push("via " + (prov.label || prov.id));
-  if (prov && !local && !dep) {
+  if (prov && !local && !dep && !ptRow) {
     const how = prov.auth === "oauth" ? "subscription" : prov.auth === "env" ? "API key"
               : prov.key_source === "cli" ? "detected credentials"
               : prov.key_source ? "API key" : null;
     if (how) via.push(how);
   }
   const ep = (m.current || {}).backend;
-  if (ep) via.push(String(ep).replace(/^https?:\/\//, ""));
+  // the id that goes in model= is what you'd paste into code; the endpoint
+  // stays on the tooltip
+  if (ptRow) via.push(cur);
+  else if (ep) via.push(String(ep).replace(/^https?:\/\//, ""));
   const v = el("div","now-via", via.join(" \u00b7 ")); v.title = v.textContent; t.append(v);
   top.append(t);
   // the tag is a corner tag on the card, not an item in the action lane
@@ -6898,7 +7374,7 @@ function nowRunning(pad, m) {
     if (recents.length) {
       out.push({ head: "Recently used" });
       recents.forEach(a => out.push({
-        label: a.model, mark: fillMark(el("span","omark"), a.pid, a.label),
+        label: modelName(a.model), mark: fillMark(el("span","omark"), a.pid, a.label),
         side: a.enabled ? null : "not connected",
         title: a.enabled ? "switch to " + a.model + " \u00b7 " + a.label : a.label + " is not connected",
         run: () => a.enabled ? useModel(a.model, a.backend) : unlockFamily(a.fam),
@@ -6933,8 +7409,8 @@ function nowRunning(pad, m) {
     q.title = "this id is not in the SDK's capability table — mantis will still call it";
     facts.append(q);
   }
+  facts.append(reachRow(cur, prov, local));
   card.append(facts);
-  card.append(reachRow(cur, prov, local));
   pad.append(card);
   return card;
 }
@@ -6945,9 +7421,10 @@ function reachRow(cur, prov, local) {
   const row = el("div","now-reach"); row.id = "now-reach";
   const r = REACH[cur];
   if (!r) {
-    row.append(el("span", null, "Reachability not checked this session."));
-    const b = btn("Check now", "gho", () => checkReach(cur, prov, local));
-    b.id = "now-check";
+    // nothing is claimed until something is checked: a saved key is not an
+    // answering endpoint, so the honest state is a button, not a sentence
+    const b = btn("Check connection", "gho", () => checkReach(cur, prov, local));
+    b.id = "now-check"; b.title = "not checked this session — one request to see that it answers";
     row.append(b);
     return row;
   }
@@ -7088,7 +7565,146 @@ function pricePill(p) {
     (p.cache_read != null ? " · cache read $" + p.cache_read : "");
   return q;
 }
+// ---- model lines -----------------------------------------------------------
+// Providers sell a model as a LINE of variants under one name — gpt-6-sol,
+// gpt-6-luna and gpt-6-astra are GPT-6; grok-4.20-0309-reasoning and its
+// non-reasoning twin are Grok 4.20. Drawn as one card per id they were rows of
+// boxes that differed by a suffix, and nothing on the page said how. One card
+// per line, with a chip per variant, says it once.
+const ML_VARIANT = new Set(("sol luna terra astra mini nano pro max flash lite fast turbo codex chat latest " +
+  "reasoning non multi agent high low preview instruct thinking plus search api audio realtime").split(" "));
+const mlDate = w => /^\d{4}$|^\d{8}$|^\d+k$/.test(w);
+function seriesOf(id) {
+  const raw = String(id || "");
+  const tail = raw.includes("/") ? raw.slice(raw.lastIndexOf("/") + 1) : raw;
+  const t = tail.split("-");
+  for (let i = 1; i < t.length; i++) {
+    if (t.slice(i).every(w => ML_VARIANT.has(w.toLowerCase()) || mlDate(w)))
+      return { base: t.slice(0, i).join("-"), variant: t.slice(i).join("-") };
+  }
+  return { base: tail, variant: "" };
+}
+// "gpt-6.1" → "GPT-6.1", "claude-haiku-4-5" → "Claude Haiku 4.5", "grok-4.20" →
+// "Grok 4.20", Fireworks' "glm-5p3" → "GLM 5.3"; the id stays on the card
+const ML_UPPER = new Set(["gpt", "glm", "oss"]);
+function prettyModel(base) {
+  const parts = String(base || "").split("-"), out = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (/^\d$/.test(parts[i]) && i + 2 === parts.length && /^\d$/.test(parts[i + 1])) { out.push(parts[i] + "." + parts[i + 1]); break; }
+    out.push(parts[i]);
+  }
+  return out.map((w, i) => {
+    w = w.replace(/^(\d+)p(\d+)$/, "$1.$2");                       // Fireworks writes 5.3 as 5p3
+    if (ML_UPPER.has(w.toLowerCase())) return w.toUpperCase();
+    if (/^\d+b$/i.test(w) || /^a\d+b$/i.test(w)) return w.toUpperCase();   // 30B, A3B
+    return (i === 0 && /^o\d/.test(w)) || /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ").replace(/^GPT (\d)/, "GPT-$1");
+}
+// The name a person reads for a model id, on every page: a per-token model by
+// its provider's own name ("GLM 5.3 Flash", not accounts/fireworks/models/
+// glm-5p3-flash), anything else by its line and variant ("GPT-6 Astra",
+// "Claude Sonnet 5.5"). Callers keep the id on the tooltip.
+function modelName(id) {
+  const s = String(id || "");
+  if (!s) return s;
+  for (const r of ((PT.data && PT.data.models) || []))
+    if ((r.routes || []).some(x => x.model === s)) return r.name;
+  const sr = seriesOf(s);
+  return prettyModel(sr.base) + (sr.variant ? " " + variantLabel(sr.variant) : "");
+}
+function variantLabel(v) {
+  if (!v) return "Standard";
+  const ws = v.split("-"), dates = ws.filter(mlDate), rest = ws.filter(w => !mlDate(w));
+  const s = rest.join(" ").replace(/\bnon /, "non-");
+  return (s ? s.charAt(0).toUpperCase() + s.slice(1) : "") + (dates.length ? (s ? " " : "") + dates.join(" ") : "");
+}
+// A model line, as the same model card the rest of the page draws: its name,
+// its provider, a chip per variant when it has more than one, the chosen
+// variant's facts and id, one action. `prefer` picks the variant shown first.
+function lineCard(u, fid, cur, famName, prefer) {
+  // the plain variant leads; the rest keep the provider's order
+  const vs = u.rows.slice().sort((x, y) => (seriesOf(x.model).variant ? 1 : 0) - (seriesOf(y.model).variant ? 1 : 0));
+  // a date every variant carries belongs to the line, not to each chip
+  const dated = vs.map(a => seriesOf(a.model).variant.split("-").filter(mlDate));
+  const shared = vs.length > 1 ? (dated[0] || []).filter(d => dated.every(ds => ds.includes(d))) : [];
+  const chipLabel = a => variantLabel(seriesOf(a.model).variant.split("-").filter(w => !shared.includes(w)).join("-"));
+  const isCur = a => a.model === cur && !MM_SELFCUR;
+  let pick = vs.find(a => a.model === prefer) || vs.find(isCur)
+    || vs.find(a => a.enabled && !seriesOf(a.model).variant) || vs.find(a => a.enabled) || vs[0];
+  const on = vs.some(isCur);
+  const card = el("div","mcard mmcard mline" + (on ? " on" : "") + (u.enabled ? "" : " locked"));
+  card.dataset.fam = fid; card.dataset.pid = u.pid;
+  card.dataset.state = u.enabled ? "ready" : "locked";
+  card.dataset.free = vs.some(a => a.price && a.price.free) ? "1" : "";
+  card.dataset.q = [prettyModel(u.base), famName || fid, vs[0].label, u.pid].concat(vs.map(a => a.model))
+    .concat(vs.map(a => a.info.ctx ? Math.round(a.info.ctx / 1000) + "k" : "")).join(" ").toLowerCase();
+  const head = el("div","mh");
+  head.append(fillMark(el("span","omark"), u.pid, vs[0].label));
+  const tt = el("div","mtt");
+  const t = el("div","mt mname", prettyModel(u.base) + (shared.length ? " \u00b7 " + shared.join(" ") : "")); tt.append(t);
+  const o = el("div","mo", vs[0].label); o.title = vs[0].label; tt.append(o);
+  head.append(tt);
+  card.append(head);
+  const chips = el("div","ml-vs"), meta = el("div","mmeta"), foot = el("div","mfoot");
+  if (vs.length > 1) card.append(chips);
+  card.append(meta, foot);
+  const paint = () => {
+    card.dataset.model = pick.model;
+    t.title = pick.model;
+    chips.innerHTML = "";
+    vs.forEach(a => {
+      const c = el("button","ml-v" + (a === pick ? " on" : "") + (a.enabled ? "" : " off"), chipLabel(a));
+      c.type = "button"; c.title = a.model + (isCur(a) ? " — in use" : "");
+      if (isCur(a)) c.classList.add("cur");
+      c.onclick = e => { e.stopPropagation(); pick = a; paint(); };
+      chips.append(c);
+    });
+    meta.innerHTML = "";
+    const pr = pick.price;
+    if (pick.info.ctx) meta.append(el("span", null, fmtCtx(pick.info.ctx) + " context"));
+    if (pr && pr.free) meta.append(el("span","ok", "free"));
+    else if (pr) {
+      const c = el("span", null, "$" + price2(pr.in) + " \u00b7 $" + price2(pr.out) + " / 1M");
+      c.title = "$" + pr.in + " in \u00b7 $" + pr.out + " out, per 1M tokens"; meta.append(c);
+    }
+    if (!pick.enabled) { const w = el("span","amb", "not connected"); w.title = "connect this family to use it"; meta.append(w); }
+    foot.innerHTML = "";
+    const idl = el("span","ml-id", pick.model); idl.title = "the id that goes in model="; foot.append(idl);
+    if (!isCur(pick)) foot.append(el("button","mbtn" + (pick.enabled ? "" : " amb"), pick.enabled ? "Use model" : "Connect"));
+  };
+  paint();
+  if (on) card.append(modelCurrentTag());
+  card.onclick = () => { if (isCur(pick)) return; pick.enabled ? useModel(pick.model, pick.backend) : unlockFamily(fid, pick.pid); };
+  return card;
+}
+// What the grid draws: a model line, or a model that stands alone (a
+// per-token model, a deployment, a local model, a dated snapshot).
+function unitCard(u, fid, cur, famName, prefer) {
+  return u.one ? myModelCard(u.one, fid, cur, famName) : lineCard(u, fid, cur, famName, prefer);
+}
+// An open model you can use per token: the per-token card (one model, each
+// provider that serves it inside), given the grid's own dataset so search,
+// the filters and the sorts treat it like every other card.
+function ptModelCard(a, fid, famName) {
+  const r = a.pt;
+  const card = ptCard(r);
+  card.dataset.fam = fid; card.dataset.model = a.model; card.dataset.pid = a.pid;
+  card.dataset.state = "ready"; card.dataset.free = "";
+  card.dataset.q = [r.name, r.hf_id, (r.routes || []).map(rt => rt.provider_name + " " + rt.model).join(" "),
+    famName || fid, "per token", r.context ? Math.round(r.context / 1000) + "k" : ""].join(" ").toLowerCase();
+  if (r.in_use) card.append(modelCurrentTag());
+  return card;
+}
+// the current model wears the same slanted tag the provider cards wear, so
+// the two pages mark "in use" in one language — every model card, one tag
+function modelCurrentTag() {
+  const st = el("span","ac-st cur cornertag");
+  st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
+  st.title = "the model mantis is using right now";
+  return st;
+}
 function myModelCard(a, fid, cur, famName) {
+  if (a.pt) return ptModelCard(a, fid, famName);
   // a deployment is current when mantis points at ITS endpoint; a rented
   // model of the same id is not, even though the names match
   const on = a.dep ? !!a.dep.in_use : (a.model === cur && !MM_SELFCUR);
@@ -7118,45 +7734,31 @@ function myModelCard(a, fid, cur, famName) {
   head.append(tt);
   card.append(head);
 
-  // THE READINGS. What it can hold, and what it charges going in and coming
-  // out — the numbers you actually pick a model on, each in the same place on
-  // every card so a row can be compared straight across.
-  const stats = el("div","mstats");
-  const cs = stat(a.info.ctx ? fmtCtx(a.info.ctx) : "—", "context", a.info.ctx ? "" : "mute");
-  if (a.info.ctx_learned) {
-    cs.querySelector("b").textContent += "*";
-    cs.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned);
+  // THE QUIET LINE — what it holds and what it charges, then its state, as one
+  // line of plain facts. It used to be a row of boxed readings, and on most
+  // cards half the boxes said "—": a price nobody listed is left unsaid, and
+  // capabilities true of nearly everything ("tools · effort") are never here.
+  const meta = el("div","mmeta");
+  if (a.info.ctx) {
+    const c = el("span", null, fmtCtx(a.info.ctx) + (a.info.ctx_learned ? "*" : "") + " context");
+    if (a.info.ctx_learned) c.title = "ceiling learned from the endpoint: " + fmtCtx(a.info.ctx_learned);
+    meta.append(c);
   }
-  stats.append(cs);
-  // A card with one price-tile, not two, still fills its row: the tile spans
-  // the space the in/out pair would take, so no card ends in a hole.
   if (a.dep) {
     const r = depRate(a.dep);
-    const g = stat(fmtRate(r), r != null ? "GPU while running" : "rate not quoted", "span2" + (r != null ? "" : " mute"));
+    const g = el("span", null, r != null ? fmtRate(r) + " GPU while running" : "rate not quoted");
     g.title = "you pay " + (PROV_SHORT[a.dep.provider] || a.dep.provider) + " by the hour for the GPU, not per token";
-    stats.append(g);
+    meta.append(g);
   } else if (pr && pr.free) {
-    const f = stat("Free", a.local ? "runs on your machine" : "no API charge", "acc span2");
+    const f = el("span","ok", a.local ? "free · your machine" : "free");
     f.title = "your hardware, no API charge";
-    stats.append(f);
+    meta.append(f);
   } else if (pr) {
-    const i = stat("$" + price2(pr.in), "in / 1M");
-    const o = stat("$" + price2(pr.out), "out / 1M");
-    i.title = "$" + pr.in + " per 1M input tokens"
+    const c = el("span", null, "$" + price2(pr.in) + " · $" + price2(pr.out) + " / 1M");
+    c.title = "$" + pr.in + " in · $" + pr.out + " out, per 1M tokens"
             + (pr.cache_read != null ? " · cache read $" + pr.cache_read : "");
-    o.title = "$" + pr.out + " per 1M output tokens";
-    stats.append(i, o);
-  } else {
-    const q = stat("—", "no price listed", "mute span2"); q.title = "no row in the price table"; stats.append(q);
+    meta.append(c);
   }
-  card.append(stats);
-
-  // THE QUIET LINE — state, never a capability list. "tools · effort" was on
-  // nearly every card in the grid, and a fact true of everything tells you
-  // nothing about any one of them; unexplained, it just read as noise. What
-  // is left here is only what differs card to card and changes what you do:
-  // it is loaded, it needs a key, it has dated pins, or it is one.
-  const meta = el("div","mmeta");
   if (a.local && a.local.loaded) { const c = el("span","ok", "loaded"); c.title = "in memory now"; meta.append(c); }
   // readiness is printed ONLY when it is not "ready": every card that can be
   // used already says so with its action, and a grid of "ready" marks would
@@ -7177,14 +7779,7 @@ function myModelCard(a, fid, cur, famName) {
     foot.append(go);
   }
   card.append(foot);
-  // the current model wears the same slanted tag the provider cards wear, so
-  // the two pages mark "in use" in one language
-  if (on) {
-    const st = el("span","ac-st cur cornertag");
-    st.append(el("span","ac-stg"), el("span","ac-stl", "Current"));
-    st.title = "the model mantis is using right now";
-    card.append(st);
-  }
+  if (on) card.append(modelCurrentTag());
   // `unlock` deep-links into this family's setup with its recommended method
   // already chosen — the same link the locked row used to carry
   card.onclick = () => a.dep ? useSelfhosted(a, card.querySelector(".mbtn"))
@@ -7224,8 +7819,10 @@ async function loadModels() {
   const pad = document.getElementById("modelspad");
   const my = ++modelsReq;
   if (!pad.childElementCount) skeleton(pad);
-  const m = await api("/api/models");
+  const [m, ptr] = await Promise.all([api("/api/models"),
+    api("/api/deploy/per-token").catch(e => ({ ok: false, error: e.message, models: [] }))]);
   if (my !== modelsReq) return;   // a newer loadModels() superseded this one
+  PT.data = ptr;
   pad.innerHTML = "";
   const cur = (m.current && m.current.model) || "—";
   const h = m.hosting || {};
@@ -7233,44 +7830,13 @@ async function loadModels() {
   // Reachability is a per-provider action on the provider's own card below —
   // a page-level "test this route" strip said less and sat in the way.
   pageHead(pad, "My models", null, null);
-  {
-    const served = new Set();
-    (m.providers || []).forEach(pv => (pv.models || []).forEach(x => served.add(x)));
-    ((m.ollama || {}).models || []).forEach(o => served.add(o.name));
-    (m.deployments || []).forEach(d => served.add(d.served_model_name || d.model));
-    pageReads(pad, [
-      { v: fmt(served.size), k: "models" },
-      { v: (m.families || []).length + ((m.deployments || []).length ? 1 : 0), k: "families", opt: 2 },
-    ], "What you are running, and what else you could.",
-       "Windows and prices come from the SDK's own tables, not from the provider.");
-  }
+  // the readings count what you can USE — filled in once the grid knows
+  const readsBox = el("div"); pad.append(readsBox);
 
   MSTATE = m;
   paintSubs();
   // ---- what you are running ----------------------------------------------
   nowRunning(pad, m);
-
-  // ---- setup, folded ------------------------------------------------------
-  // The provider grid is this page's other altitude: it answers "why can't I
-  // use that one", which is a question you ask after the models, not before
-  // them. It keeps every part it had — the three groups, the overlay panel,
-  // the motif — inside a strip that opens, and it opens itself when nothing
-  // is connected, because then setup IS the job.
-  const authSec = section(pad, "Providers");
-  const sum = el("button","provsum"); sum.id = "provsum";
-  const authBox = el("div","provbox"); authBox.id = "auth-cards";
-  const setProv = on => {
-    authBox.classList.toggle("on", on);
-    sum.setAttribute("aria-expanded", on ? "true" : "false");
-    const x = sum.querySelector(".provsum-x");
-    if (x) x.textContent = on ? "Hide setup" : "Manage providers \u2192";
-  };
-  sum.onclick = () => setProv(!authBox.classList.contains("on"));
-  AUTH.setProv = setProv;
-  setProv(false);
-  sum.setAttribute("aria-controls", "auth-cards");
-  authSec.append(sum, authBox);
-  loadAuthFamilies(authBox);
 
   // ---- the model table ------------------------------------------------
   // Not a list of strings: what each model can do, side by side, from the
@@ -7287,10 +7853,31 @@ async function loadModels() {
   const famIdx = f => { const i = famOrder.indexOf(f); return i < 0 ? 99 : i; };
   const oll = m.ollama || {};
   const allModels = [];
-  m.providers.forEach(p => (p.models || []).forEach(x =>
+  // The open models you can use per token are ONE card each with every
+  // connected provider that serves it (the Deploy page's list, moved here):
+  // the raw per-provider ids they cover — and Fireworks' routers and "auto"
+  // aliases — would only repeat them under longer names.
+  const ptRows = (ptr.models || []);
+  const covered = new Set(), ptProv = new Set();
+  ptRows.forEach(r => (r.routes || []).forEach(rt => { covered.add(rt.provider + "\u0000" + rt.model); ptProv.add(rt.provider); }));
+  // Fireworks' and Cerebras' own lists hold nothing but these models, their
+  // unpriced twins and Fireworks' routers — once the per-token list speaks for
+  // them, none of their raw ids is a model of its own
+  const hidden = (pid, x) => covered.has(pid + "\u0000" + x) || ((pid === "fireworks" || pid === "cerebras") && ptProv.has(pid));
+  // the ones you can use come first in their family
+  ptRows.forEach(r => {
+    const best = (r.routes || [])[0]; if (!best) return;
+    allModels.push({ model: best.model, label: (r.routes || []).map(rt => rt.provider_name).join(" · "),
+                     pid: best.provider, fam: "oss", backend: best.backend, enabled: true,
+                     info: { ctx: r.context, tools: r.tools },
+                     price: best.price_in != null ? { in: best.price_in, out: best.price_out } : null, pt: r });
+  });
+  m.providers.forEach(p => (p.models || []).forEach(x => {
+    if (p.enabled && hidden(p.id, x)) return;
     allModels.push({ model: x, label: p.label || p.id, pid: p.id, fam: p.family || "oss",
                      backend: p.base_url, enabled: p.enabled, info: info[x] || {},
-                     price: (p.prices || {})[x] || null })));
+                     price: (p.prices || {})[x] || null });
+  }));
   (oll.models || []).forEach(om => allModels.push({
     model: om.name, label: "local · " + fmtBytes(om.size), pid: "ollama",
     fam: "oss", backend: oll.base_url, enabled: true, info: info[om.name] || {}, local: om,
@@ -7308,21 +7895,80 @@ async function loadModels() {
   }
   const folded = foldSnapshots(allModels);
   allModels.length = 0; folded.forEach(x => allModels.push(x));
-  // the grid's own counts describe the CARDS it shows, so they count the
-  // aliases; the snapshots behind them are reached from the alias itself
-  const nPrimary = allModels.filter(a => !a.snapOf).length;
+  // What you can use comes first: in every family, the connected models lead
+  // and the ones that need a key follow; and the families you're connected to
+  // lead the ones you aren't (Self-hosted, when there is one, stays first —
+  // it's the one billing by the hour). Both sorts are stable, so the order
+  // within each half is the provider's own.
+  allModels.sort((x, y) => (y.enabled ? 1 : 0) - (x.enabled ? 1 : 0) || mmBack(x) - mmBack(y));
+  const famReady = f => allModels.some(a => a.fam === f && a.enabled) ? 1 : 0;
+  famOrder.sort((x, y) => (y === "selfhost") - (x === "selfhost") || famReady(y) - famReady(x));
+  // the grid draws model LINES: the variants of one model are one card
+  const units = [], byLine = new Map();
+  allModels.forEach(a => {
+    if (a.pt || a.dep || a.local || a.snapOf) { units.push({ fam: a.fam, pid: a.pid, rows: [a], one: a }); return; }
+    const sr = seriesOf(a.model), k = a.fam + "\u0000" + a.pid + "\u0000" + sr.base;
+    let u = byLine.get(k);
+    if (!u) { u = { fam: a.fam, pid: a.pid, base: sr.base, rows: [] }; byLine.set(k, u); units.push(u); }
+    u.rows.push(a);
+  });
+  units.forEach(u => { u.enabled = u.rows.some(a => a.enabled); u.snap = !!(u.one && u.one.snapOf); });
+  // the grid's own counts describe the CARDS it shows, so they count lines;
+  // the snapshots behind them are reached by a search
+  const nPrimary = units.filter(u => !u.snap).length;
   if (allModels.length) {
     const nFam = new Set(allModels.map(a => a.fam)).size;
-    const sec = section(pad, "Choose a model", nPrimary + " across " + nFam + " famil" + (nFam===1?"y":"ies"));
+    const readyN = units.filter(u => u.enabled && !u.snap).length;
+    // ---- quick picks: four answers to "which one?", each a FACT ------------
+    // the cheapest, the biggest window, and the two you used last — never a
+    // quality ranking this machine has no way to know
+    {
+      // every usable variant is a candidate, so a line is judged by its best
+      // variant for the question — and the card opens on that variant
+      const live = units.filter(u => u.enabled && !u.snap && !(u.one && (u.one.dep || u.one.local)));
+      const cands = [];
+      live.forEach(u => (u.one ? [u.one] : u.rows.filter(a => a.enabled)).forEach(a => {
+        const rt = a.pt ? (a.pt.routes || [])[0] : null;
+        const pin = rt ? rt.price_in : a.price && !a.price.free ? a.price.in : null;
+        const pout = rt ? rt.price_out : a.price && !a.price.free ? a.price.out : null;
+        cands.push({ u, a, ctx: a.pt ? a.pt.context : a.info.ctx,
+                     blend: pin != null && pout != null ? (3 * pin + pout) / 4 : null });
+      }));
+      const picks = [], took = new Set();
+      const take = (label, c, prefer) => { if (c && !took.has(c.u)) { took.add(c.u); picks.push({ label, u: c.u, prefer: prefer || c.a.model }); } };
+      take("Cheapest", cands.filter(c => c.blend != null).sort((x, y) => x.blend - y.blend)[0]);
+      take("Biggest context", cands.filter(c => c.ctx).sort((x, y) =>
+        (y.ctx - x.ctx) || ((x.blend ?? 1e9) - (y.blend ?? 1e9)))[0]);
+      (m.recent || []).forEach(id => {
+        if (picks.length >= 4) return;
+        const c = cands.find(v => v.a.model === id || (v.a.pt && (v.a.pt.routes || []).some(r => r.model === id)));
+        take("Used recently", c, id);
+      });
+      if (picks.length) {
+        const qs = section(pad, "Quick picks"); qs.id = "mm-picks";
+        const g = el("div","mm-grid qp-grid");
+        picks.forEach(pk => {
+          const c = unitCard(pk.u, pk.u.fam, cur, famLabel[pk.u.fam] || pk.u.fam, pk.prefer);
+          c.classList.add("qpick");
+          const l = el("div","qp-l", pk.label);
+          c.prepend(l);
+          g.append(c);
+        });
+        qs.append(g);
+      }
+    }
+    const sec = section(pad, "Your models", readyN + " ready to use");
+    sec.id = "mm-yours";
     // Family tabs: one pill per family (plus Local for what Ollama has pulled),
     // each carrying its count. "All" keeps the grouped view; a family tab
     // narrows to that family and drops the group headers. The choice lives in
     // the hash (#models/claude) so a refresh or a pasted link keeps it.
     const TAB_LABEL = { oss: "Open models", selfhost: "Self-hosted" };
-    const tabs = [{ id: "all", label: "All", n: nPrimary }];
+    const tabs = [{ id: "all", label: "All", n: units.filter(u => !u.snap && u.enabled).length }];
     famOrder.concat([...new Set(allModels.map(a => a.fam))].filter(f => !famOrder.includes(f))).forEach(fid => {
-      const n = allModels.filter(a => a.fam === fid && !a.snapOf).length;
-      if (n) tabs.push({ id: fid, label: TAB_LABEL[fid] || famLabel[fid] || fid, n, logo: famLogo[fid] });
+      const n = units.filter(u => u.fam === fid && !u.snap).length;
+      const ready = units.filter(u => u.fam === fid && !u.snap && u.enabled).length;
+      if (n) tabs.push({ id: fid, label: TAB_LABEL[fid] || famLabel[fid] || fid, n: ready || n, logo: famLogo[fid], off: !ready });
     });
     const nLocal = allModels.filter(a => a.local).length;
     // Local IS Ollama, so here the llama is the honest mark
@@ -7333,12 +7979,15 @@ async function loadModels() {
     // same order the Deploy picker already uses.
     const tabRow = el("div","mtabs");
     tabs.forEach(t => {
-      const c = el("button","fchip" + (t.id === MODEL_TAB ? " on" : ""));
+      const c = el("button","fchip" + (t.id === MODEL_TAB ? " on" : "") + (t.off ? " off" : ""));
       // All is every family at once, so it wears no mark — the same choice
       // the Deploy page's All pill makes
       if (t.id !== "all") c.append(famMark(t.id, t.logo, t.label));
       c.append(el("span", null, t.label));
-      c.append(el("span","tn2", String(t.n)));
+      // a family you haven't connected says so instead of a count of models
+      // you can't use
+      c.append(el("span","tn2", t.off ? "connect" : String(t.n)));
+      if (t.off) c.title = "not connected — its models and the way in";
       c.onclick = () => {
         MODEL_TAB = t.id;
         tabRow.querySelectorAll(".fchip").forEach(x => x.classList.toggle("on", x === c));
@@ -7352,8 +8001,10 @@ async function loadModels() {
     const find = findBox("Filter — gpt, claude, grok, 200k, free, local…  ( / )");
     find.wrap.style.marginBottom = "0"; find.wrap.style.flex = "1";
     bar.append(find.wrap);
-    const FILTERS = [["all","all"], ["ready","ready to use"], ["locked","not connected"], ["free","free / local"]];
-    let mode = "all";
+    // What you can use is the default; "Everything" adds the models behind a
+    // provider you haven't connected, and a search always finds those too.
+    const FILTERS = [["ready","Ready to use"], ["all","Everything"], ["free","Free"]];
+    let mode = "ready";
     const chips = el("div","fchips");
     FILTERS.forEach(([k, lab]) => {
       const c = el("button","fchip" + (k === mode ? " on" : ""), lab);
@@ -7390,10 +8041,12 @@ async function loadModels() {
       const fh = el("div","mm-glabel"); fh.dataset.fam = fid;
       fh.append(famMark(fid, famLogo[fid], famLabel[fid] || fid));
       fh.append(document.createTextNode(famLabel[fid] || fid));
-      const nr = rows.filter(a => !a.snapOf).length;
-      fh.append(el("span","mm-gn", nr + " model" + (nr===1?"":"s")));
+      const famUnits = units.filter(u => u.fam === fid);
+      const nr = famUnits.filter(u => !u.snap).length;
+      const gn = el("span","mm-gn", nr + " model" + (nr===1?"":"s"));
+      fh.append(gn);
       const grid = el("div","mm-grid"); grid.dataset.fam = fid;
-      rows.forEach(a => grid.append(myModelCard(a, fid, cur, famLabel[fid] || fid)));
+      famUnits.forEach(u => grid.append(unitCard(u, fid, cur, famLabel[fid] || fid)));
       // a whole family behind one connection says so once, above its cards;
       // Open models is many vendors with a key each, so it never gets one
       let lock = null;
@@ -7401,17 +8054,22 @@ async function loadModels() {
         lock = el("div","mm-lock"); lock.dataset.fam = fid;
         grid.classList.add("famlock");
       }
+      // a family shows its newest few; the rest are one click away
+      const more = el("button","mm-more"); more.type = "button"; more.dataset.fam = fid;
+      more.onclick = () => { MM_OPEN[fid] = !MM_OPEN[fid]; apply(); };
       list.append(fh);
       if (lock) list.append(lock);
-      list.append(grid);
-      groups.push([fh, grid, lock]);
+      list.append(grid, more);
+      groups.push([fh, grid, lock, more]);
     });
     // The same cards, in one grid, when the question is not "whose is it".
     // They are MOVED, never rebuilt, so a card keeps its band, its tag and
     // its handlers whichever ordering it is under.
     const flatH = el("div","mm-glabel mm-flat"); flatH.id = "mm-flath";
     const flat = el("div","mm-grid mm-flat"); flat.id = "mm-flat";
-    list.append(flatH, flat);
+    const flatMore = el("button","mm-more mm-flat"); flatMore.type = "button"; flatMore.id = "mm-flatmore";
+    flatMore.onclick = () => { MM_OPEN.__flat = !MM_OPEN.__flat; apply(); };
+    list.append(flatH, flat, flatMore);
     const cards = [];
     groups.forEach(([, g]) => [...g.children].forEach(c => cards.push(c)));
     const keyOf = a => {
@@ -7425,9 +8083,10 @@ async function loadModels() {
     allModels.forEach(a => { byId[a.model + "\u0000" + a.pid] = a; });
     resort = () => {
       const flatOn = MODEL_SORT !== "family";
-      groups.forEach(([fh, g, lock]) => { fh.classList.toggle("mm-off", flatOn); g.classList.toggle("mm-off", flatOn);
+      groups.forEach(([fh, g, lock, more]) => { fh.classList.toggle("mm-off", flatOn); g.classList.toggle("mm-off", flatOn);
+        more.classList.toggle("mm-off", flatOn);
         if (lock) lock.classList.toggle("mm-off", flatOn); });
-      flatH.classList.toggle("on", flatOn); flat.classList.toggle("on", flatOn);
+      flatH.classList.toggle("on", flatOn); flat.classList.toggle("on", flatOn); flatMore.classList.toggle("on", flatOn);
       if (!flatOn) {
         groups.forEach(([, g]) => {
           cards.forEach(c => { if (c.dataset.fam === g.dataset.fam) g.append(c); });
@@ -7436,7 +8095,7 @@ async function loadModels() {
         const rows = cards.slice().sort((x, y) => {
           const a = byId[x.dataset.model + "\u0000" + x.dataset.pid];
           const b = byId[y.dataset.model + "\u0000" + y.dataset.pid];
-          const d = keyOf(a) - keyOf(b);
+          const d = ((b.enabled ? 1 : 0) - (a.enabled ? 1 : 0)) || keyOf(a) - keyOf(b);
           return d || x.dataset.model.localeCompare(y.dataset.model);
         });
         rows.forEach(c => flat.append(c));
@@ -7451,32 +8110,59 @@ async function loadModels() {
     };
     sec.append(list);
     MM_ROWS = allModels;      // the hero's Switch menu reads these too
+    const famHasReady = {};
+    allModels.forEach(a => { if (a.enabled) famHasReady[a.fam] = true; });
+    const MM_CAP = 8, MM_FLAT_CAP = 24;
     const apply = () => {
       const q = find.input.value.trim().toLowerCase();
       let shown = 0;
-      const perFam = {};
+      const perFam = {}, capped = {};
+      // a family shows its first few cards until you open it — unless you are
+      // searching, or looking at that one family, which are asks for all of it
+      const flatOn = MODEL_SORT !== "family";
+      const capOn = !q && MODEL_TAB === "all";
       list.querySelectorAll(".mmcard").forEach(r => {
         const okQ = !q || q.split(/\s+/).every(t => r.dataset.q.includes(t));
-        const okF = mode === "all" || (mode === "free" ? !!r.dataset.free : r.dataset.state === mode);
+        // ready by default; a search or a family with nothing connected yet
+        // shows the rest, each with its Connect
+        const okF = mode === "all" || (mode === "free" ? !!r.dataset.free
+          : r.dataset.state === "ready" || !!q || (MODEL_TAB !== "all" && !famHasReady[r.dataset.fam]));
         const okT = MODEL_TAB === "all" || (MODEL_TAB === "local" ? !!r.dataset.local : r.dataset.fam === MODEL_TAB);
         // A dated snapshot is never on the grid by itself — its alias stands
         // for it, with no label saying so. Only a search reaches one, because
         // typing a date has to be able to find it.
         const okS = !r.dataset.snap || !!q;
-        const on = okQ && okF && okT && okS;
+        let on = okQ && okF && okT && okS;
+        if (on && capOn) {
+          const k = flatOn ? "__flat" : r.dataset.fam, lim = flatOn ? MM_FLAT_CAP : MM_CAP;
+          const n = (capped[k] = capped[k] || { shown: 0, over: 0 });
+          if (n.shown >= lim && !MM_OPEN[k]) { n.over++; on = false; } else n.shown++;
+        }
         r.style.display = on ? "" : "none";
         r.classList.remove("kb");
         if (on) { shown++; perFam[r.dataset.fam] = (perFam[r.dataset.fam] || 0) + 1; }
       });
+      const moreLabel = (k, label) => {
+        const n = capped[k] || { shown: 0, over: 0 };
+        return MM_OPEN[k] && n.shown > (k === "__flat" ? MM_FLAT_CAP : MM_CAP) ? "Show fewer"
+          : n.over ? "Show all " + (n.shown + n.over) + (label ? " " + label : "") + " models" : "";
+      };
       // one family selected → the group label is noise; "All" keeps it. A
       // group with nothing left in it takes its grid down too, or the page
       // keeps its gaps.
-      groups.forEach(([fh, grid, lock]) => {
+      groups.forEach(([fh, grid, lock, more]) => {
         const n = perFam[fh.dataset.fam] || 0;
         fh.style.display = (MODEL_TAB === "all" && n) ? "" : "none";
         grid.style.display = n ? "" : "none";
         if (lock) lock.style.display = n ? "" : "none";
+        const t = !flatOn && n ? moreLabel(fh.dataset.fam, famLabel[fh.dataset.fam] || "") : "";
+        more.textContent = t; more.style.display = t ? "" : "none";
+        // the group's count is of what this view holds, folded ones included
+        const c = capped[fh.dataset.fam], all = c ? c.shown + c.over : n;
+        const gn = fh.querySelector(".mm-gn"); if (gn) gn.textContent = all + " model" + (all === 1 ? "" : "s");
       });
+      const ft = flatOn ? moreLabel("__flat", "") : "";
+      flatMore.textContent = ft; flatMore.style.display = ft ? "" : "none";
       // a flat ordering has no families to label
       const fh2 = document.getElementById("mm-flath");
       if (fh2) fh2.style.display = (MODEL_SORT !== "family" && shown) ? "" : "none";
@@ -7488,6 +8174,13 @@ async function loadModels() {
     };
     applyModelFilter = apply;
     fillLockStrips();
+    const famsOn = new Set(units.filter(u => u.enabled).map(u => u.fam)).size;
+    pageReads(readsBox, [
+      { v: fmt(readyN), k: "ready to use" },
+      ...(ptRows.length ? [{ v: ptRows.length, k: "per token" }] : []),
+      { v: famsOn, k: "families", opt: 2 },
+    ], "What you are running, and what else you could.",
+       "Prices and windows come from the providers' own lists where they publish one, else the SDK's tables.");
     find.input.oninput = apply;
     resort();                 // lays the cards out, then filters them
     // Keyboard: / focuses (global handler), ↑↓ walk the visible cards, Enter switches to one.
@@ -7505,39 +8198,47 @@ async function loadModels() {
     };
   }
 
-  // ---- local models — what Ollama has on disk, and what's in memory ----
-  const oSec = section(pad, "Local models · Ollama", (oll.base_url || "").replace(/^https?:\/\//, ""));
-  if (!oll.reachable) {
-    oSec.append(zero("Ollama isn't answering" + (oll.base_url ? " at " + oll.base_url.replace(/^https?:\/\//, "") : ""),
-      "Start it with `ollama serve` (or point OLLAMA_HOST at the box that runs it) and this list fills " +
-      "with every pulled model, its size on disk, and whether it's loaded in memory right now."));
-  } else if (!(oll.models || []).length) {
-    oSec.append(zero("Ollama is up, nothing pulled yet",
-      "`ollama pull gpt-oss:20b` (or any tag) and it appears here, ready to use with no key."));
-  } else {
-    const box = el("div","list");
-    oll.models.forEach(om => {
-      const row = el("div","orow" + (om.name===cur ? " cur" : ""));
-      row.append(el("span","on2", om.name));
-      row.append(el("span","osz", fmtBytes(om.size)));
-      row.append(el("span","opq", [om.param, om.quant].filter(Boolean).join(" ")));
-      const st = el("span","ost");
-      st.append(el("span","t2 " + (om.loaded ? "acc" : ""), om.loaded ? "loaded" + (om.vram ? " · " + fmtBytes(om.vram) : "") : "on disk"));
-      row.append(st);
-      row.append(el("span","ogo", om.name===cur ? "current" : "use →"));
-      row.title = (om.family ? om.family + " · " : "") + (om.modified_at ? "pulled " + String(om.modified_at).slice(0, 10) : "");
-      row.onclick = () => useModel(om.name, oll.base_url);
-      box.append(row);
-    });
-    oSec.append(box);
-  }
+  // ---- add more models ---------------------------------------------------
+  // Everything you are not using yet sits at the foot of the page, after the
+  // models: providers to connect, a local runtime, your own server. It answers
+  // "how do I get more", which is asked after "what can I use", not before.
+  // The provider grid keeps every part it had inside a strip that opens.
+  const authSec = section(pad, "Add more models");
+  authSec.id = "mm-add";
+  const sum = el("button","provsum"); sum.id = "provsum";
+  const authBox = el("div","provbox"); authBox.id = "auth-cards";
+  const setProv = on => {
+    authBox.classList.toggle("on", on);
+    sum.setAttribute("aria-expanded", on ? "true" : "false");
+    const x = sum.querySelector(".provsum-x");
+    if (x) x.textContent = on ? "Hide providers" : "Connect more \u2192";
+  };
+  sum.onclick = () => setProv(!authBox.classList.contains("on"));
+  AUTH.setProv = setProv;
+  setProv(false);
+  sum.setAttribute("aria-controls", "auth-cards");
+  authSec.append(sum, authBox);
+  loadAuthFamilies(authBox);
 
-  // ---- connect a provider ----------------------------------------------
-  // This is setup, so it reads as setup: a progress bar over the twelve, the
-  // connected ones first, and every unconnected row offering the one action
-  // that changes its state. Expanding a row IS the setup form.
-  // self-host / custom endpoint — a first-class card in the same visual system
-  const shSec = section(pad, "Or bring your own server");
+
+  // a local runtime, in one line: what state it is in and the one command
+  // that changes it — its models, when it has any, are cards in the grid above
+  if (!oll.reachable || !(oll.models || []).length) {
+    const row = el("div","mm-addrow");
+    row.append(fillMark(el("span","omark"), "ollama", "Ollama"));
+    const t = el("div","mm-addt");
+    t.append(el("b", null, oll.reachable ? "Ollama is running, nothing pulled yet" : "Ollama isn\u2019t running here"),
+             el("span", null, oll.reachable ? "ollama pull gpt-oss:20b — and it shows up above, free"
+               : "start it with ollama serve to run models on this machine, free"));
+    row.append(t);
+    authSec.append(row);
+  }
+  // your own server: any OpenAI-compatible URL, folded until you want it
+  const shBox = el("details","mm-own");
+  const shSum = el("summary");
+  shSum.append(el("b", null, "Your own server"), el("span", null, " \u2014 vLLM, llama.cpp or any OpenAI-compatible URL"));
+  shBox.append(shSum);
+  if (h.kind === "selfhost") shBox.open = true;
   const sh = el("div","card selfhost-card");
   const shNote = el("div","note");
   shNote.append(document.createTextNode("Point mantis at any OpenAI-compatible URL you run — vLLM, llama.cpp, a Modal/RunPod box. Sets it as your current model.  "));
@@ -7566,7 +8267,8 @@ async function loadModels() {
   const f = el("div","fields");
   const r1 = el("div","r"); r1.append(inUrl, inModel);
   const r2 = el("div","r"); r2.append(inKey, connectBtn);
-  f.append(r1, r2); sh.append(f); shSec.append(sh);
+  f.append(r1, r2); sh.append(f); shBox.append(sh);
+  authSec.append(shBox);
 
   // deep-link: /?guide=<provider|selfhost> opens that guide directly
   const gp = new URLSearchParams(location.search).get("guide");

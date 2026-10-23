@@ -339,7 +339,7 @@ def test_page_carries_the_setup_surface_and_the_unlock_deep_link(fake):
         httpd.shutdown()
         httpd.server_close()
     for marker in ("loadAuthFamilies", "renderAuthCards", "authCard", "authEntries", "authMethodForm", "oauthFlow",
-                   "unlockFamily", 'section(pad, "Providers")', 'authBox.id = "auth-cards"', "acard", "ac-types",
+                   "unlockFamily", 'section(pad, "Add more models")', 'authBox.id = "auth-cards"', "acard", "ac-types",
                    "/api/auth/families", "/api/auth/set", "/api/auth/validate",
                    "/api/auth/oauth/start", "/api/auth/oauth/finish", "Sign in with", "Save & test",
                    "recommended", "Found on this machine", "Use different credentials",

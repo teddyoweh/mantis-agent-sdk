@@ -327,6 +327,23 @@ async def inspect_model(model: str, *, hf_token: str | None = None) -> ModelInfo
     return preflight.build_model_info(meta, config)
 
 
+async def per_token_offers(model: str) -> list[Any]:
+    """Ways to use ``model`` billed per token on a provider's own serving —
+    Fireworks serverless, Modal Shared Endpoints — instead of renting a GPU.
+    See :mod:`mantis_agent.deploy.serverless`."""
+    from . import serverless  # noqa: PLC0415
+
+    return list(await serverless.offers(model))
+
+
+async def per_token_catalog() -> list[Any]:
+    """Every model the connected providers serve per token — the Deploy
+    page's "Use now" list (:func:`mantis_agent.deploy.serverless.catalog`)."""
+    from . import serverless  # noqa: PLC0415
+
+    return list(await serverless.catalog())
+
+
 async def search_models(query: str = "", *, limit: int = 25, sort: str = "trending",
                         source: str = "auto") -> list[ModelInfo]:
     """Search the HF Hub for text-generation models (plus the curated list

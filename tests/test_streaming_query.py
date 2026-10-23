@@ -433,6 +433,37 @@ def test_query_dict_options_result_message_accumulates_usage_across_turns():
     assert "fourteen" in result.result
 
 
+def test_query_result_bills_a_priced_model_without_a_budget():
+    """No ``max_usd`` means no budget tracker, but the model's price is known:
+    ``total_cost_usd`` must match the priced ``modelUsage`` breakdown, not
+    report $0 beside it (seen on Fireworks serverless runs from ``mantis -p``)."""
+    from mantis_agent.capabilities import HOSTED_PROFILES
+
+    events = (
+        _msg()
+        + _text_block(0, "ok")
+        + _stop(stop_reason="end_turn", usage=Usage(input_tokens=1_000_000, output_tokens=1_000_000))
+    )
+
+    provider = _TwoTurnMock(events, events)
+    provider.backend_capability = HOSTED_PROFILES["fireworks"]  # prices by the Fireworks rows
+
+    async def main() -> list:
+        out: list = []
+        async for msg in query(
+            prompt="hi",
+            options={"model": "accounts/fireworks/models/glm-5p3-flash",
+                     "provider": provider, "max_turns": 2, "include_memory": False},
+        ):
+            out.append(msg)
+        return out
+
+    result = next(m for m in reversed(anyio.run(main)) if isinstance(m, SDKResultMessage))
+    mu = result.modelUsage["accounts/fireworks/models/glm-5p3-flash"]
+    assert mu.costUSD == pytest.approx(0.15 + 0.50)
+    assert result.total_cost_usd == pytest.approx(mu.costUSD)
+
+
 # ---------------------------------------------------------------------------
 # 5. Mid-stream BudgetExceededError still maps to the right subtype.
 # ---------------------------------------------------------------------------

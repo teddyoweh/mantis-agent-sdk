@@ -341,7 +341,12 @@ async def test_deploy_requires_credentials(env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_status_and_wait_ready_503_then_200(env, monkeypatch):
+async def test_status_without_the_control_plane_never_touches_the_endpoint(env, monkeypatch):
+    """No ``modal`` package / no profile: the app list can't be read. status()
+    used to fall back to GET /health — which boots a scaled-to-zero GPU — so a
+    dashboard listing the deployment woke an H200 ×4 each time it was opened.
+    Now the state is unknown and the message says why; only wait_ready, whose
+    job IS to wait for it to come up, probes."""
     monkeypatch.setenv("MODAL_PROXY_TOKEN_ID", "wk-1")
     monkeypatch.setenv("MODAL_PROXY_TOKEN_SECRET", "ws-1")
     prov = ModalDeployProvider()
@@ -350,36 +355,39 @@ async def test_status_and_wait_ready_503_then_200(env, monkeypatch):
             httpx.Response(503), httpx.Response(503), httpx.Response(200, text="OK"),
         ])
         dep = await prov.status(_dep())
-        assert dep.status == "scaled_to_zero" and "503" in dep.message
-        sent = route.calls[0].request.headers
-        assert sent["Modal-Key"] == "wk-1" and sent["Modal-Secret"] == "ws-1"
+        assert dep.status == "unknown" and "wakes the GPU" in dep.message
+        assert route.call_count == 0
 
         dep = await prov.wait_ready(dep, timeout_s=60)
         assert dep.status == "running" and dep.message == "healthy"
         assert route.call_count == 3
+        sent = route.calls[0].request.headers
+        assert sent["Modal-Key"] == "wk-1" and sent["Modal-Secret"] == "ws-1"
 
 
-async def test_status_warm_pool_503_is_starting_and_errors(env):
+async def test_health_probe_maps_warm_pool_503_and_errors(env):
     prov = ModalDeployProvider()
     with respx.mock(assert_all_called=False) as router:
         router.get(URL + "/health").mock(return_value=httpx.Response(503))
-        dep = await prov.status(_dep(opts=DeployOpts(min_replicas=1)))
+        dep = await prov._probe_health(_dep(opts=DeployOpts(min_replicas=1)))
         assert dep.status == "starting"
+        dep = await prov._probe_health(_dep())
+        assert dep.status == "scaled_to_zero" and "503" in dep.message
         router.get(URL + "/health").mock(return_value=httpx.Response(401))
-        dep = await prov.status(_dep())
+        dep = await prov._probe_health(_dep())
         assert dep.status == "unknown" and "MODAL_PROXY_TOKEN_ID" in dep.message
         router.get(URL + "/health").mock(side_effect=httpx.ConnectError("boom"))
-        dep = await prov.status(_dep())
+        dep = await prov._probe_health(_dep())
         assert dep.status == "unknown" and "ConnectError" in dep.message
     dep = await prov.status(_dep(endpoint_url=None))
     assert dep.status == "unknown"
 
 
-async def test_status_sends_bearer_for_unauthenticated_deploy(env, monkeypatch):
+async def test_health_probe_sends_bearer_for_unauthenticated_deploy(env, monkeypatch):
     monkeypatch.setenv("MANTIS_DEPLOY_X_KEY", "sk-mantis-abc")
     with respx.mock() as router:
         route = router.get(URL + "/health").mock(return_value=httpx.Response(200))
-        await ModalDeployProvider().status(_dep(auth_headers={}, auth_env="MANTIS_DEPLOY_X_KEY"))
+        await ModalDeployProvider()._probe_health(_dep(auth_headers={}, auth_env="MANTIS_DEPLOY_X_KEY"))
         assert route.calls[0].request.headers["Authorization"] == "Bearer sk-mantis-abc"
         assert "Modal-Key" not in route.calls[0].request.headers
 

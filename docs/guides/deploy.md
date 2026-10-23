@@ -321,6 +321,30 @@ provider, paste the key once, search the Hub, see which GPUs the model fits
 the deployments list and cost figures are the ones `deploy ls` and
 `deploy status` print.
 
+### Per token, before any GPU
+
+**My models → Open models** leads with every model a connected provider serves
+on its own fleet: one card each, listing every provider you're connected to
+that serves it and its price per 1M tokens in · out — Fireworks serverless,
+Cerebras and OpenRouter (live, from their model lists — only once you've added
+their key), and Modal shared endpoints you've made. **Use** switches mantis to
+the picked provider. The Deploy page links there, and a model's own Deploy
+sheet lists the same options above its GPUs:
+
+- **Fireworks serverless** — which models qualify comes live from Fireworks
+  (`supports_serverless=true` on its library); prices are the dated rows in
+  `budget.PRICING_TABLE`. **Use it** switches mantis to
+  `accounts/fireworks/models/<slug>` on `api.fireworks.ai/inference/v1` with
+  the `FIREWORKS_API_KEY` you already saved. Nothing is deployed, nothing to stop.
+- **Modal Shared Endpoints** (Team and Enterprise plans) — create the shared
+  endpoint on Modal (the sheet links to it; no API creates one), paste its
+  model id (`<name>.us-west.modal.direct`) and your proxy token once. mantis
+  checks the id against the gateway's `/v1/models` and connects through
+  `inference.us-west.modal.direct/v1` with the joined `wk-….ws-…` bearer.
+
+Prices live in `mantis_agent/deploy/serverless.py` (Modal) and
+`mantis_agent/budget.py` (Fireworks) — update them when the providers do.
+
 ## Cost and idle behaviour
 
 - `deploy status <id>` shows `$/h running` (list price × max replicas) and

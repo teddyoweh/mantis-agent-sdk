@@ -156,6 +156,7 @@ _ORG_NAME_BASE: dict[str, str] = {
     "perplexity-ai": "Perplexity", "liquid": "Liquid AI", "lgai-exaone": "LG AI",
     "servicenow": "ServiceNow", "salesforce": "Salesforce", "amazon": "Amazon",
     "apple": "Apple", "arcee-ai": "Arcee", "jinaai": "Jina", "voyageai": "Voyage",
+    "thinkingmachines": "Thinking Machines",
 }
 
 
